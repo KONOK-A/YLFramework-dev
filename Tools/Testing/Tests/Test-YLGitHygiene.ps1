@@ -22,6 +22,7 @@ $localOnly = @(
     '^Assets/YLFramework/AGENTS\.md(?:\.meta)?$'
     '^(\.mcp\.json|opencode\.json|\.vscode/mcp\.json)$'
     '^Assets/Plugins/Editor Enhancers Bundle(?:/|\.meta$)'
+    '^Assets/Plugins/NuGet(?:/|\.meta$)'
     '^Assets/YLFramework/Tests/Integrations/HybridCLR/PlayMode/Resources/YLHybridCLRTests/(?!\.gitkeep$)'
 )
 $forbidden = @(

@@ -64,6 +64,10 @@ Desktop.ini
 /[Aa]ssets/AssetStoreTools*
 /[Aa]ssets/Plugins/Editor/JetBrains*
 
+# ---------- MCP 自动恢复的 NuGet 依赖 ----------
+/Assets/Plugins/NuGet/
+/Assets/Plugins/NuGet.meta
+
 # ---------- 单独授权的本机编辑器插件 ----------
 /Assets/Plugins/Editor Enhancers Bundle/
 /Assets/Plugins/Editor Enhancers Bundle.meta
