@@ -9,7 +9,7 @@
   "editors": [
     { "fileVersion": "2022.3.62", "productVersion": "2022.3.62f3c1_1623fc0bbb97", "version": "2022.3.62f3c1", "testFramework": "1.3.9", "ugui": "1.0.0" },
     { "fileVersion": "2022.3.62", "productVersion": "2022.3.62f3_96770f904ca7", "version": "2022.3.62f3", "testFramework": "1.3.9", "ugui": "1.0.0" },
-    { "fileVersion": "6000.3.27", "productVersion": "6000.3.27f1_672d562a42a7", "version": "6000.3.27f1", "testFramework": "1.3.9", "ugui": "2.0.0" }
+    { "fileVersion": "6000.3.27", "productVersion": "6000.3.27f1_672d562a42a7", "version": "6000.3.27f1", "testFramework": "1.6.0", "ugui": "2.0.0" }
   ],
   "modules": [
     {

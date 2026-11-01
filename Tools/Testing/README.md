@@ -23,6 +23,8 @@ $workspace = $env:YL_TEST_WORKSPACE
 
 Unity 2022 与 Unity 6 使用各自真实可执行文件，支持的完整 ProductVersion 统一以 `TestSuites.json` 为准。它们与来源工程 `ProjectVersion.txt` 是不同身份；没有对应声明时不能仅替换路径声称兼容。
 
+2022 自动化宿主的包基线位于 `Profiles/Unity2022`，这里只保存依赖配置，不是第二个 Unity 工程。人工兼容验证工程独立放在仓库外，导入正式框架包，不共享开发工程的源码目录或 Library。
+
 ## 操作
 
 默认操作只列声明，不创建工作区，不编译、不运行测试、不启动 Unity：
@@ -204,6 +206,19 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistrib
 - 同一产物启动两次，分别写`PlayerRun`/`PlayerRepeat`。要求普通exit0、Job后代清零、版本/run/host/实际PID与编译宏后端匹配、完整有序阶段、无运行错误且产物SHA256未变，不能只凭日志PASS或旧报告接受。JSON字段类型严格校验，不允许布尔或数字通过PowerShell字符串强制转换冒充身份或阶段。
 - 构建与运行分别记录在`Build/report.json`、`PlayerRun/result.json`和`PlayerRepeat/result.json`；超时、缺报告、残余租约、错误身份及非普通退出均不是通过。
 - 普通冒烟采用`-batchmode -nographics`，证明对应Mono/IL2CPP后端的本场景逻辑与Resources运行链，不证明渲染、真实音频输出、任意反射类型保留或其他平台。默认分发构建仍不包含探针；HybridCLR需要下面独立显式模式。
+
+### 跨版本分发
+
+`-Unity` 指定导出 Editor，可选 `-ImportUnity` 指定接收、检查、构建与运行的 Editor；省略时保持同版本行为。两者均须匹配 `TestSuites.json` 的完整 ProductVersion。下面从 Unity 6.3 导出一份正式包，再将同一份包交给 Unity 2022.3 接收，示例变量必须指向本机实际安装：
+
+```powershell
+$unity6 = $env:YL_TEST_UNITY6
+$unity2022 = $env:YL_TEST_UNITY2022
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistribution.ps1 `
+  -Unity $unity6 -ImportUnity $unity2022 -WorkspaceRoot $workspace -RunPlayer
+```
+
+本轮 `summary.json` 分别保存 `sourceUnity`、`targetUnity` 和 `package.sha256` / `package.importSha256`。包只导出一次，导入前后及验收收尾均核实相同 SHA256；实际包内路径、payload、metadata、GUID 和 Prefab 检查不省略。通过后仍只证明本轮源码、两个定点 Editor 和所选后端，不外推所有补丁版本或平台。跨版本 HybridCLR 明确拒绝，应在各自匹配的 Editor/native/基座上独立验收。
 
 ### HybridCLR 原生闭环
 

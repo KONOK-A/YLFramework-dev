@@ -1,6 +1,21 @@
 #requires -Version 7.6
 #requires -PSEdition Core
 
+function Get-YLUnityPackageInputs([object] $EditorProfile) {
+    if ($null -eq $EditorProfile -or $null -eq $EditorProfile.PSObject.Properties['productVersion'] -or
+        $null -eq $EditorProfile.PSObject.Properties['version'] -or $EditorProfile.productVersion -isnot [string] -or $EditorProfile.version -isnot [string]) {
+        throw 'An exact declared Editor profile is required to select source Packages.'
+    }
+    $root = switch -CaseSensitive ($EditorProfile.productVersion) {
+        '2022.3.62f3c1_1623fc0bbb97' { 'Tools/Testing/Profiles/Unity2022' }
+        '2022.3.62f3_96770f904ca7' { 'Tools/Testing/Profiles/Unity2022' }
+        '6000.3.27f1_672d562a42a7' { 'Packages' }
+        default { throw "No source Packages layout is declared for Editor profile: $($EditorProfile.productVersion)" }
+    }
+    if ($EditorProfile.version -cne $EditorProfile.productVersion.Split('_')[0]) { throw 'The declared Editor profile version and ProductVersion do not match.' }
+    return @("$root/manifest.json", "$root/packages-lock.json")
+}
+
 function Get-YLHostManagedPath([object] $HostRecord, [string] $Relative) {
     if ([IO.Path]::IsPathRooted($Relative)) { throw 'Host input names must be relative.' }
     $path = Get-YLTestPath (Join-Path $HostRecord.path $Relative)
@@ -112,7 +127,7 @@ function Invoke-YLUnitySuite {
         [string] $Unity, [string] $WorkspaceRoot, [string] $Action, [string] $Suite, [string] $Module,
         [int] $TimeoutSeconds, [string] $Selection, [bool] $KeepArtifacts, [Collections.IDictionary] $Summary
     )
-    $sources = Get-SelectedSources -Native
+    $sources = Get-SelectedSources -Native -EditorProfile $EditorProfile
     $sessionScene = $Suite -ceq 'Special' -and 'prepareSessionScene' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSessionScene
     $desktop = $Suite -ceq 'Special' -and 'interactiveDesktop' -cin $Definition.PSObject.Properties.Name -and $Definition.interactiveDesktop
     $profile = "Unity-$($EditorProfile.version)-UTF$($EditorProfile.testFramework)-UGUI$($EditorProfile.ugui)-$Suite-$($Definition.nativeLayout)-Graphics$($Definition.graphics)-IsolatedModes"
@@ -178,11 +193,12 @@ function Invoke-YLUnitySuite {
             'com.unity.modules.jsonserialize' = '1.0.0'
         }
         if ($Definition.nativeLayout -ceq 'Framework') {
-            $projectManifest = [IO.File]::ReadAllText((Join-Path $Repository 'Packages/manifest.json')) | ConvertFrom-Json -DateKind String
+            $packageInputs = @(Get-YLUnityPackageInputs -EditorProfile $EditorProfile)
+            $projectManifest = [IO.File]::ReadAllText((Join-Path $Repository $packageInputs[0])) | ConvertFrom-Json -DateKind String
             foreach ($dependency in $projectManifest.dependencies.PSObject.Properties | Where-Object { $_.Name.StartsWith('com.unity.modules.', [StringComparison]::Ordinal) }) {
                 $dependencies[$dependency.Name] = $dependency.Value
             }
-            $projectLock = [IO.File]::ReadAllText((Join-Path $Repository 'Packages/packages-lock.json')) | ConvertFrom-Json -DateKind String
+            $projectLock = [IO.File]::ReadAllText((Join-Path $Repository $packageInputs[1])) | ConvertFrom-Json -DateKind String
             $dependencies['com.unity.nuget.newtonsoft-json'] = $projectLock.dependencies.'com.unity.nuget.newtonsoft-json'.version
         }
         $files['Packages/manifest.json'] = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Json -InputObject @{ dependencies = $dependencies } -Depth 5))
@@ -237,7 +253,7 @@ function Invoke-YLUnitySuite {
         }
 
         $discovered = Invoke-NativeOperation -Operation Discover
-        $fresh = Get-SelectedSources -Native
+        $fresh = Get-SelectedSources -Native -EditorProfile $EditorProfile
         $sourceRecheck = Get-YLTestInputIdentity -Repository $Repository -Paths $fresh.inputs -Toolchain @($Unity) -Profile $profile
         if ($sourceRecheck.sha256 -cne $identity.sha256) { throw 'Source inputs drifted during Unity discovery.' }
         $toolFiles = @($Unity, (Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($discovered.response.compiledInputs)
@@ -260,7 +276,7 @@ function Invoke-YLUnitySuite {
                 $modeTests = @($actualSelection.tests | Where-Object { $_.mode -ceq $mode })
                 $execution = Invoke-NativeOperation -Operation Run -Tests $modeTests -Mode $mode
                 if ($execution.response.status -cne 'Passed') { throw 'Native execution was not an ordinary test pass.' }
-                $fresh = Get-SelectedSources -Native
+                $fresh = Get-SelectedSources -Native -EditorProfile $EditorProfile
                 $currentTools = @($Unity, (Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($execution.response.compiledInputs)
                 $current = Get-YLTestInputIdentity -Repository $Repository -Paths $fresh.inputs -Toolchain $currentTools -Profile $profile
                 Read-YLTestXml -Path (Join-Path $execution.output "results-$mode.xml") -Selection $actualSelection -InputIdentity $current -Mode $mode -ProcessResult $execution.process
