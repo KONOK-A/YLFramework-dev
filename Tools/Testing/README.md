@@ -14,6 +14,8 @@
 - Framework 模块需要声明中的现有插件、包锁和资产元数据。离线引用包含来源工程已导入的 UGUI 与 Json.NET，必须先完成真实 Unity 导入，工具不会伪造这些 DLL。
 - Native 宿主只安装模块声明需要的包与源码，不恢复历史游戏或接收工程。图形模块不能使用无图形模式替代。
 
+MCP 仅为开发工程工具，依赖声明与锁定结果保留在 `Packages/manifest.json` / `packages-lock.json`。`Assets/Plugins/NuGet/` 中的 DLL、`.meta`、安装状态及同级 `NuGet.meta` 由 MCP 恢复器生成，只在本机保留，不纳入 Git 或框架测试输入。普通 Editor 首次打开时会自动还原，需能够访问 OpenUPM 和 NuGet。
+
 示例从当前进程环境变量取值并显式传参。运行者须先将它们设为本机实际 Editor 路径和明确的独立工作根，不复制其他机器或历史验收的路径：
 
 ```powershell
@@ -176,7 +178,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLUnity.p
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLUnitySafety.ps1 -WorkspaceRoot $workspace -Unity $unity
 ```
 
-Git 卫生入口只读 Git 索引：拒绝整个 `.kilo/`、本机 AI 指令与工具规则、本机缓存、连接配置、商业 Editor Enhancers、生成工程和 HybridCLR 本机输入被跟踪，检查已跟踪路径不命中忽略规则，并保留两个手维护 Analyzer SDK 项目。它不读取配置值、不清理资产，不把空目录 `.meta` 简单判为孤立文件，也不代表 Unity 编译或测试通过。
+Git 卫生入口只读 Git 索引：拒绝整个 `.kilo/`、本机 AI 指令与工具规则、本机缓存、连接配置、MCP NuGet 自动恢复目录、商业 Editor Enhancers、生成工程和 HybridCLR 本机输入被跟踪，检查已跟踪路径不命中忽略规则，并保留两个手维护 Analyzer SDK 项目。它不读取配置值、不清理资产，不把空目录 `.meta` 简单判为孤立文件，也不代表 Unity 编译或测试通过。
 
 安全回归在自有源码夹具中验证真实失败、增加叶子后拒旧选集、取消、进程清理与同宿主恢复。
 还会实际排除整个PlayMode程序集验证正式CLI拒绝“漏一整组模式”；owner、宿主回执/响应与轮换摘要先检查JSON字段类型，再比较身份，不允许布尔强转为合法字符串。
@@ -242,6 +244,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistrib
 ## CI 分层
 
 `.github/workflows/dotnet.yml` 在 Windows runner 运行 Git 索引卫生、格式、Analyzer 的 .NET 构建测试及测试工具合同自检。此工具层不安装 Unity、不需要 Unity 许可证，也不等同于主体 Unity 编译、UTF 或 Player 验收。
+
+此工具层及按模块声明准备的独立框架测试宿主均不加载 MCP，无需恢复其 DLL。若以后在 Unity CI 中直接打开带 MCP 的开发工程，必须在编译前显式恢复依赖；当前 MCP 恢复器检测到 CI 环境时会跳过自动下载，不能把本机安装或已有缓存当作 CI 前置已满足。
 
 Unity 测试层仍沿用同一CLI、模块声明和退出合同，不再维护另一套测试名单或结果解释器。
 CI必须提供明确Editor/SDK/可选包与短的独占工作根；缺前置报告未运行，不安装未授权依赖或改报通过。
