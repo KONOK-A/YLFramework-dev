@@ -328,6 +328,523 @@ try {
         }
     }
     if ($Group -in @('All', 'Results')) {
+        function Invoke-NativePackageFixture([string] $EditorVersion = '2022.3.62f3', [string] $Fault = '') {
+            $root = Join-Path $sandbox ('NativePackages-' + [Guid]::NewGuid().ToString('N'))
+            $repository = Join-Path $root 'Repository'
+            $fixtureWorkspace = Join-Path $root 'Workspace'
+            $null = [IO.Directory]::CreateDirectory($repository)
+            foreach ($relative in @('Invoke-YLTests.ps1', 'UnityHost.ps1', 'TestSuites.json', 'Common/Workspace.ps1', 'Common/Process.ps1', 'Common/Results.ps1')) {
+                $target = Join-Path $repository "Tools/Testing/$relative"
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+                [IO.File]::Copy((Join-Path $PSScriptRoot "../$relative"), $target)
+            }
+            $files = [ordered]@{
+                'Assets/Runtime/Product.cs' = 'class Product {}'
+                'Assets/Runtime/Product.asmdef' = '{"name":"Fixture.Runtime"}'
+                'Assets/Tests/EditMode/EditCase.cs' = 'class EditCase {}'
+                'Assets/Tests/PlayMode/PlayCase.cs' = 'class PlayCase {}'
+                'Assets/YLFramework/Tests/Infrastructure/Editor/YLTestEntry.cs' = 'class Entry {}'
+                'Assets/YLFramework/Tests/Infrastructure/Editor/YLFramework.Tests.Infrastructure.Editor.asmdef' = '{"name":"Fixture.Entry"}'
+                'Packages/manifest.json' = '{"dependencies":{"com.unity.modules.jsonserialize":"1.0.0","com.unity.modules.audio":"1.0.0","com.unity.modules.accessibility":"1.0.0","com.unity.modules.adaptiveperformance":"1.0.0","com.unity.modules.vectorgraphics":"1.0.0","com.unity.render-pipelines.universal":"17.3.0"}}'
+                'Packages/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.2"}}}'
+                'Tools/Testing/Profiles/Unity2022/manifest.json' = '{"dependencies":{"com.unity.modules.jsonserialize":"1.0.0","com.unity.modules.audio":"1.0.0","com.unity.render-pipelines.universal":"14.0.12"}}'
+                'Tools/Testing/Profiles/Unity2022/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.1"}}}'
+                'Unity.exe' = 'native-editor-fixture'
+            }
+            foreach ($entry in $files.GetEnumerator()) {
+                $target = Join-Path $repository $entry.Key
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+                [IO.File]::WriteAllText($target, $entry.Value, [Text.UTF8Encoding]::new($false))
+                if ($entry.Key.StartsWith('Assets/', [StringComparison]::Ordinal)) { [IO.File]::WriteAllText(($target + '.meta'), ('guid: ' + [Guid]::NewGuid().ToString('N'))) }
+            }
+            foreach ($relative in @('Assets/Runtime', 'Assets/Tests/EditMode', 'Assets/Tests/PlayMode')) {
+                [IO.File]::WriteAllText((Join-Path $repository ($relative + '.meta')), ('guid: ' + [Guid]::NewGuid().ToString('N')))
+            }
+            $definition = [pscustomobject]@{
+                runtimeSources = @('Assets/Runtime'); nativeSources = @(); assemblyMetadata = @('Assets/Runtime/Product.asmdef')
+                editTests = @('Assets/Tests/EditMode'); playTests = @('Assets/Tests/PlayMode'); nativeLayout = 'Framework'; graphics = $false
+                category = ''; assemblies = @('Fixture.Tests'); excludedCategories = @(); sortingLayer = ''
+            }
+            $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
+            $editor = @($configuration.editors | Where-Object { $_.version -ceq $EditorVersion })[0]
+            switch -CaseSensitive ($Fault) {
+                'unknown-profile' { $editor.productVersion = '2022.3.62f3_unknown' }
+                'mismatched-profile' { $editor.version = '2022.3.62f3c1' }
+                'boolean-profile' { $editor.productVersion = $true }
+                'missing-packages' { [IO.File]::Delete((Join-Path $repository 'Tools/Testing/Profiles/Unity2022/packages-lock.json')) }
+            }
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../Invoke-YLTests.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'The CLI source selection must parse.'
+            $definitionAst = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-SelectedSources' }, $true)
+            Assert-That ($null -ne $definitionAst) 'The real CLI source selector is missing.'
+            . ([scriptblock]::Create($definitionAst.Extent.Text))
+            $state = @{ calls = 0 }
+            function Invoke-TestingProcess([string] $Exe, [string[]] $Arguments) {
+                $state.calls++
+                $requestPath = $Arguments[[Array]::IndexOf($Arguments, '-ylTestRequest') + 1]
+                $request = [IO.File]::ReadAllText($requestPath) | ConvertFrom-Json -DateKind String
+                $project = $Arguments[[Array]::IndexOf($Arguments, '-projectPath') + 1]
+                $packagePrefix = if ($EditorVersion -ceq '6000.3.27f1') { 'Packages' } else { 'Tools/Testing/Profiles/Unity2022' }
+                [IO.File]::Copy((Join-Path $repository "$packagePrefix/packages-lock.json"), (Join-Path $project 'Packages/packages-lock.json'), $true)
+                $tests = @(
+                    @{ assembly = 'Fixture.Tests'; fullName = 'Fixture.Edit'; mode = 'EditMode'; runState = 'Runnable' },
+                    @{ assembly = 'Fixture.Tests'; fullName = 'Fixture.Play'; mode = 'PlayMode'; runState = 'Runnable' }
+                )
+                Write-YLTestJson -Path (Join-Path $request.output 'response.json') -Value @{
+                    schemaVersion = 1; hostId = $request.hostId; inputHash = $request.inputHash; unityVersion = $editor.version
+                    status = $(if ($request.action -ceq 'Run') { 'Passed' } else { 'Completed' }); isBatchMode = $true
+                    testFrameworkVersion = $editor.testFramework; runtimeReferences = @(); compiledInputs = @(); excludedTests = @(); tests = $tests
+                }
+                if ($request.action -ceq 'Run') {
+                    $mode = $request.tests[0].mode
+                    $leaf = if ($mode -ceq 'EditMode') { 'Fixture.Edit' } else { 'Fixture.Play' }
+                    [IO.File]::WriteAllText((Join-Path $request.output "results-$mode.xml"),
+                        ('<test-run result="Passed" total="1" passed="1" failed="0" skipped="0" inconclusive="0"><test-suite type="Assembly" name="Fixture.Tests.dll" result="Passed"><test-case fullname="' + $leaf + '" result="Passed"/></test-suite></test-run>'))
+                }
+                if ($request.action -ceq 'Discover') {
+                    switch -CaseSensitive ($Fault) {
+                        'manifest-drift' { [IO.File]::AppendAllText((Join-Path $repository "$packagePrefix/manifest.json"), ' ') }
+                        'lock-drift' { [IO.File]::AppendAllText((Join-Path $repository "$packagePrefix/packages-lock.json"), ' ') }
+                        'unselected-drift' { [IO.File]::AppendAllText((Join-Path $repository 'Packages/manifest.json'), ' ') }
+                    }
+                }
+                return [pscustomobject]@{ status = 'Exited'; observedExit = $true; exitCode = 0; timedOut = $false; cancelled = $false
+                    forcedCleanup = $false; observerError = $null; cleanupError = $null; jobAssigned = $true; activeProcesses = 0; streamsDrained = $true }
+            }
+            $summary = [ordered]@{ xml = @() }
+            try {
+                Invoke-YLUnitySuite -Repository $repository -Definition $definition -EditorProfile $editor -Unity (Join-Path $repository 'Unity.exe') `
+                    -WorkspaceRoot $fixtureWorkspace -Action Run -Suite Daily -Module Fixture -TimeoutSeconds 15 -Selection '' -KeepArtifacts $false -Summary $summary
+            } catch {
+                if ($Fault -cin @('unknown-profile', 'mismatched-profile', 'boolean-profile', 'missing-packages')) {
+                    Assert-That ($state.calls -eq 0 -and -not [IO.Path]::Exists($fixtureWorkspace)) 'An invalid package source was rejected only after workspace creation or engine invocation.'
+                }
+                throw
+            }
+            $hostManifest = [IO.File]::ReadAllText((Join-Path $summary.host.path 'Packages/manifest.json')) | ConvertFrom-Json -DateKind String
+            return [pscustomobject]@{ summary = $summary; manifest = $hostManifest; calls = $state.calls; root = $root }
+        }
+
+        Test-Case 'Native Framework hosts bind dependencies and exact input files to the declared target Editor package layout' {
+            foreach ($case in @(
+                @{ version = '2022.3.62f3'; prefix = 'Tools/Testing/Profiles/Unity2022'; newtonsoft = '3.2.1'; ugui = '1.0.0'; utf = '1.3.9'; unity6 = $false },
+                @{ version = '2022.3.62f3c1'; prefix = 'Tools/Testing/Profiles/Unity2022'; newtonsoft = '3.2.1'; ugui = '1.0.0'; utf = '1.3.9'; unity6 = $false },
+                @{ version = '6000.3.27f1'; prefix = 'Packages'; newtonsoft = '3.2.2'; ugui = '2.0.0'; utf = '1.6.0'; unity6 = $true }
+            )) {
+                $fixture = Invoke-NativePackageFixture -EditorVersion $case.version
+                $dependencies = $fixture.manifest.dependencies
+                Assert-That ($dependencies.'com.unity.nuget.newtonsoft-json' -ceq $case.newtonsoft) 'The host took Newtonsoft from the wrong source project lock.'
+                Assert-That ($dependencies.'com.unity.ugui' -ceq $case.ugui -and $dependencies.'com.unity.test-framework' -ceq $case.utf) 'The target Editor package profile was lost.'
+                foreach ($module in @('com.unity.modules.accessibility', 'com.unity.modules.adaptiveperformance', 'com.unity.modules.vectorgraphics')) {
+                    Assert-That (($module -cin $dependencies.PSObject.Properties.Name) -eq $case.unity6) 'Unity 6-only built-in modules crossed the target Editor package boundary.'
+                }
+                Assert-That ('com.unity.render-pipelines.universal' -cnotin $dependencies.PSObject.Properties.Name) 'A native test host must not inherit unrelated development-host packages.'
+                $packageFiles = @($fixture.summary.inputIdentity.files.path | Where-Object { $_ -match '^(?:Packages|Tools/Testing/Profiles/Unity2022)/' } | Sort-Object)
+                Assert-That (($packageFiles -join ',') -ceq "$($case.prefix)/manifest.json,$($case.prefix)/packages-lock.json") 'Input identity does not bind the actual selected source Packages, or still binds the other engine project.'
+                Assert-That ($fixture.summary.status -ceq 'Passed' -and $fixture.summary.testResult.total -eq 2 -and $fixture.calls -eq 3) 'Source-package identity did not survive discovery and both declared execution modes.'
+            }
+        }
+
+        foreach ($fault in @('unknown-profile', 'mismatched-profile', 'boolean-profile')) {
+            Test-Case "Native Framework refuses $fault before workspace creation" {
+                Assert-Rejected { Invoke-NativePackageFixture -Fault $fault } 'profile|declared'
+            }
+        }
+        Test-Case 'Native Framework never falls back to root Packages when the target source lock is missing' {
+            Assert-Rejected { Invoke-NativePackageFixture -Fault 'missing-packages' } 'packages-lock.json'
+        }
+        foreach ($fault in @('manifest-drift', 'lock-drift')) {
+            Test-Case "Native Framework rejects selected package $fault during discovery" {
+                Assert-Rejected { Invoke-NativePackageFixture -Fault $fault } 'drift'
+            }
+        }
+        Test-Case 'Native Framework 2022 input identity ignores unrelated root-6 package changes' {
+            $fixture = Invoke-NativePackageFixture -Fault 'unselected-drift'
+            Assert-That ($fixture.summary.status -ceq 'Passed') 'An unselected development-host package file contaminated the 2022 source identity.'
+        }
+
+        function Invoke-DistributionFixture([bool] $CrossVersion = $true, [string] $Fault = '', [switch] $Hybrid, [string] $Backend = 'Mono') {
+            $root = Join-Path $sandbox ('Distribution-' + [Guid]::NewGuid().ToString('N'))
+            $fixtureRepository = Join-Path $root 'Repository'
+            $null = [IO.Directory]::CreateDirectory($fixtureRepository)
+            foreach ($relative in @('DistributionEntry.cs', 'PlayerSmoke.cs', 'UnityHost.ps1', 'TestSuites.json',
+                'Common/Workspace.ps1', 'Common/Process.ps1', 'Common/Results.ps1', 'Tests/Test-YLDistribution.ps1')) {
+                $target = Join-Path $fixtureRepository "Tools/Testing/$relative"
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+                [IO.File]::Copy((Join-Path $PSScriptRoot "../$relative"), $target)
+            }
+            $files = [ordered]@{
+                'Assets/YLFramework/Editor/Distribution/ExportUnityPackage.cs' = '_exportRoots = { "Assets/YLFramework/Runtime" };'
+                'Assets/YLFramework/Runtime/Product.cs' = 'class Product {}'
+                'Assets/YLFramework.meta' = "guid: 00000000000000000000000000000001`n"
+                'Assets/YLFramework/Runtime.meta' = "guid: 00000000000000000000000000000002`n"
+                'Assets/YLFramework/Runtime/Product.cs.meta' = "guid: 00000000000000000000000000000003`n"
+                'Packages/manifest.json' = '{"dependencies":{"com.unity.ugui":"2.0.0","com.unity.modules.jsonserialize":"1.0.0","com.unity.modules.accessibility":"1.0.0"}}'
+                'Packages/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.2"}}}'
+                'Tools/Testing/Profiles/Unity2022/manifest.json' = '{"dependencies":{"com.unity.ugui":"1.0.0","com.unity.modules.jsonserialize":"1.0.0"}}'
+                'Tools/Testing/Profiles/Unity2022/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.1"}}}'
+                'Source Unity.exe' = 'source-editor-fixture'
+                'Import Unity.exe' = 'import-editor-fixture'
+            }
+            foreach ($entry in $files.GetEnumerator()) {
+                $target = Join-Path $fixtureRepository $entry.Key
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+                [IO.File]::WriteAllText($target, $entry.Value, [Text.UTF8Encoding]::new($false))
+            }
+            if ($Fault -ceq 'missing-target-packages') { [IO.File]::Delete((Join-Path $fixtureRepository 'Tools/Testing/Profiles/Unity2022/packages-lock.json')) }
+            Add-Type -AssemblyName System.Formats.Tar
+            $archive = Join-Path $root 'official.unitypackage'
+            $stream = [IO.File]::Create($archive)
+            $gzip = [IO.Compression.GZipStream]::new($stream, [IO.Compression.CompressionMode]::Compress)
+            $writer = [System.Formats.Tar.TarWriter]::new($gzip, $true)
+            try {
+                foreach ($asset in @('Assets/YLFramework', 'Assets/YLFramework/Runtime', 'Assets/YLFramework/Runtime/Product.cs')) {
+                    $meta = [IO.File]::ReadAllText((Join-Path $fixtureRepository ($asset + '.meta')))
+                    $guid = [regex]::Match($meta, 'guid: ([0-9a-f]{32})').Groups[1].Value
+                    if ($Fault -ceq 'package-guid') { $meta = "guid: ffffffffffffffffffffffffffffffff`n" }
+                    $members = [ordered]@{ pathname = [Text.Encoding]::UTF8.GetBytes($asset); 'asset.meta' = [Text.Encoding]::UTF8.GetBytes($meta) }
+                    if ([IO.File]::Exists((Join-Path $fixtureRepository $asset))) { $members['asset'] = [IO.File]::ReadAllBytes((Join-Path $fixtureRepository $asset)) }
+                    if ($Fault -ceq 'package-payload' -and $members.Contains('asset')) { $members['asset'] = [Text.Encoding]::UTF8.GetBytes('changed payload') }
+                    foreach ($member in $members.GetEnumerator()) {
+                        $record = [System.Formats.Tar.PaxTarEntry]::new([System.Formats.Tar.TarEntryType]::RegularFile, "$guid/$($member.Key)")
+                        $record.DataStream = [IO.MemoryStream]::new([byte[]]$member.Value, $false)
+                        try { $writer.WriteEntry($record) } finally { $record.DataStream.Dispose() }
+                    }
+                }
+            } finally { $writer.Dispose(); $gzip.Dispose(); $stream.Dispose() }
+            $configuration = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../TestSuites.json')) | ConvertFrom-Json -DateKind String
+            $sourceExe = Join-Path $fixtureRepository 'Source Unity.exe'
+            $targetExe = if ($CrossVersion) { Join-Path $fixtureRepository 'Import Unity.exe' } else { $sourceExe }
+            $versionInfos = @{
+                $sourceExe = [pscustomobject]@{ FileMajorPart = 6000; FileMinorPart = 3; FileBuildPart = 27; ProductVersion = '6000.3.27f1_672d562a42a7' }
+            }
+            if ($CrossVersion) { $versionInfos[$targetExe] = [pscustomobject]@{ FileMajorPart = 2022; FileMinorPart = 3; FileBuildPart = 62; ProductVersion = '2022.3.62f3_96770f904ca7' } }
+            if ($Fault -ceq 'unknown-target') { $versionInfos[$targetExe].ProductVersion = '2022.3.62f3_unknown' }
+            $targetVersion = if ($CrossVersion) { '2022.3.62f3' } else { '6000.3.27f1' }
+            $state = @{ calls = [Collections.Generic.List[object]]::new(); resultRoot = $null; exitCode = 0 }
+            function Invoke-YLTestProcess([Diagnostics.ProcessStartInfo] $StartInfo, [string] $Log, [long] $TimeoutMilliseconds) {
+                $output = [IO.Path]::GetDirectoryName($Log)
+                $phase = [IO.Path]::GetFileName($output)
+                $fact = [pscustomobject]@{ status = 'Exited'; observedExit = $true; exitCode = 0; timedOut = $false; cancelled = $false
+                    forcedCleanup = $false; observerError = $null; cleanupError = $null; jobAssigned = $true; activeProcesses = 0; streamsDrained = $true; pid = 42 }
+                $call = @{ phase = $phase; executable = $StartInfo.FileName; arguments = @($StartInfo.ArgumentList); timeout = $TimeoutMilliseconds }
+                $state.calls.Add($call)
+                if ($phase -cin @('PlayerRun', 'PlayerRepeat')) {
+                    $buildRequest = [IO.File]::ReadAllText((Join-Path $state.resultRoot 'Build/request.json')) | ConvertFrom-Json -DateKind String
+                    Write-YLTestJson -Path (Join-Path $output 'result.json') -Value @{
+                        schemaVersion = 1; purpose = 'YLTesting.PlayerSmoke'; status = 'Passed'; resultId = $buildRequest.resultId
+                        hostId = $buildRequest.hostId; unityVersion = $targetVersion; pid = 42; isEditor = $false; platform = 'WindowsPlayer'
+                        frames = 2; error = ''; backend = $Backend; recordCount = 0; leaseCount = 0
+                        stages = @('Started', 'ResourceLoaded', 'ReddotLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown')
+                    }
+                    [IO.File]::WriteAllText((Join-Path $output 'player.log'), ('[YLPlayerSmoke] PASS ' + $buildRequest.resultId))
+                    return $fact
+                }
+                $request = [IO.File]::ReadAllText((Join-Path $output 'request.json')) | ConvertFrom-Json -DateKind String
+                $state.resultRoot = $request.resultRoot
+                $call['request'] = $request
+                $project = $StartInfo.ArgumentList[$StartInfo.ArgumentList.IndexOf('-projectPath') + 1]
+                $call['projectVersion'] = [IO.File]::ReadAllText((Join-Path $project 'ProjectSettings/ProjectVersion.txt'))
+                $call['manifest'] = [IO.File]::ReadAllText((Join-Path $project 'Packages/manifest.json')) | ConvertFrom-Json -DateKind String
+                $engineVersion = $versionInfos[$StartInfo.FileName].ProductVersion.Split('_')[0]
+                $result = @{ status = 'Passed' }
+                if ($phase -ceq 'Export') {
+                    $package = Join-Path $output 'YLFramework.unitypackage'
+                    [IO.File]::Copy($archive, $package)
+                    $result = @{ status = 'Completed'; package = $package; bytes = [IO.FileInfo]::new($package).Length }
+                } elseif ($phase -ceq 'Import') {
+                    $package = $StartInfo.ArgumentList[$StartInfo.ArgumentList.IndexOf('-importPackage') + 1]
+                    $call['package'] = $package
+                    $call['packageHash'] = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
+                    if ($Fault -ceq 'package-import') { [IO.File]::AppendAllText($package, 'changed during import') }
+                    return $fact
+                } elseif ($phase -ceq 'Build') {
+                    $executable = Join-Path $output 'Player/YLDistribution.exe'
+                    $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($executable))
+                    [IO.File]::WriteAllText($executable, 'player-artifact-fixture')
+                    $result = @{ status = 'Passed'; backend = $Backend; executable = $executable }
+                    if ($Fault -like 'prerequisite-*') { $result.status = 'PrerequisiteNotMet'; $fact.status = 'NonZeroExit'; $fact.exitCode = 2 }
+                    switch -CaseSensitive ($Fault) {
+                        'prerequisite-timeout' { $fact.timedOut = $true }
+                        'prerequisite-cancelled' { $fact.cancelled = $true }
+                        'prerequisite-observer' { $fact.observerError = 'lost' }
+                        'prerequisite-cleanup' { $fact.cleanupError = 'incomplete' }
+                        'prerequisite-streams' { $fact.streamsDrained = $false }
+                        'target-toolchain' { [IO.File]::AppendAllText($targetExe, 'changed during build') }
+                    }
+                    if ($Fault -ceq 'package-build') { [IO.File]::AppendAllText((Join-Path $state.resultRoot 'Export/YLFramework.unitypackage'), 'changed during build') }
+                }
+                $report = @{ schemaVersion = 1; hostId = $request.hostId; resultId = $request.resultId; unityVersion = $engineVersion; phase = $phase; result = $result }
+                if ($phase -ceq 'Inspect') {
+                    if ($Fault -ceq 'source-manifest-drift') { [IO.File]::AppendAllText((Join-Path $fixtureRepository 'Packages/manifest.json'), ' ') }
+                    if ($Fault -ceq 'target-manifest-drift') { [IO.File]::AppendAllText((Join-Path $fixtureRepository 'Tools/Testing/Profiles/Unity2022/manifest.json'), ' ') }
+                    if ($Fault -ceq 'source-version') { $report.unityVersion = '6000.3.27f1' }
+                    foreach ($field in @('schemaVersion', 'hostId', 'resultId', 'unityVersion', 'phase')) {
+                        if ($Fault -ceq "boolean-$field") { $report[$field] = $true }
+                    }
+                    if ($Fault -ceq 'boolean-status') { $result.status = $true }
+                    if ($Fault -ceq 'timeout') { $fact.status = 'TimedOut'; $fact.timedOut = $true; $fact.forcedCleanup = $true }
+                }
+                if ($phase -ceq 'Build' -and $Fault -ceq 'prerequisite-source-version') { $report.unityVersion = '6000.3.27f1' }
+                Write-YLTestJson -Path (Join-Path $output 'report.json') -Value $report
+                return $fact
+            }
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Test-YLDistribution.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'Distribution script must parse.'
+            # Keep the real controller, filesystem, archive and validators; replace metadata, launch and terminal shell-exit boundaries.
+            $statements = foreach ($statement in $ast.EndBlock.Statements) {
+                if ($statement -is [Management.Automation.Language.PipelineAst] -and
+                    $statement.PipelineElements[0] -is [Management.Automation.Language.CommandAst] -and
+                    $statement.PipelineElements[0].InvocationOperator -eq [Management.Automation.Language.TokenKind]::Dot) { continue }
+                if ($statement -is [Management.Automation.Language.AssignmentStatementAst]) {
+                    switch -CaseSensitive ($statement.Left.Extent.Text) {
+                        '$repository' { '$repository = $fixtureRepository'; continue }
+                        '$configuration' { continue }
+                        '$version' { '$version = $versionInfos[$Unity]'; continue }
+                        '$importVersion' { '$importVersion = $versionInfos[$ImportUnity]'; continue }
+                        default { $statement.Extent.Text }
+                    }
+                } else {
+                    $exit = $statement.Find({ param($node) $node -is [Management.Automation.Language.ExitStatementAst] }, $true)
+                    if ($null -ne $exit) { $statement.Extent.Text.Replace($exit.Extent.Text, '$state.exitCode = 2') }
+                    else { $statement.Extent.Text }
+                }
+            }
+            $controller = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n" + ($statements -join "`n"))
+            $arguments = @{ WorkspaceRoot = (Join-Path $root 'Workspace'); Unity = $sourceExe; RunPlayer = $true; TimeoutSeconds = 123; PlayerTimeoutSeconds = 17; Backend = $Backend }
+            if ($CrossVersion) { $arguments['ImportUnity'] = $targetExe }
+            if ($Hybrid) { $arguments['HybridCLR'] = $true; $arguments['Backend'] = 'IL2CPP'; $arguments['NativeSource'] = (Join-Path $root 'Native') }
+            try { $null = & $controller @arguments }
+            catch {
+                if ($Hybrid -or $Fault -ceq 'unknown-target') {
+                    Assert-That ($state.calls.Count -eq 0 -and -not [IO.Path]::Exists($arguments.WorkspaceRoot)) 'The unsupported Editor combination was rejected only after workspace creation or process invocation.'
+                }
+                throw
+            }
+            $summary = [IO.File]::ReadAllText((Join-Path $state.resultRoot 'summary.json')) | ConvertFrom-Json -DateKind String
+            return [pscustomobject]@{ summary = $summary; calls = $state.calls.ToArray(); sourceExe = $sourceExe; targetExe = $targetExe; root = $root; exitCode = $state.exitCode }
+        }
+
+        Test-Case 'Distribution defaults the import engine to Unity and rejects an explicit empty import engine' {
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Test-YLDistribution.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'Distribution script must parse.'
+            $binding = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n" + '[pscustomobject]@{ source = $Unity; target = $ImportUnity }')
+            $bound = & $binding -WorkspaceRoot $sandbox -Unity 'Source Unity.exe'
+            Assert-That ($bound.source -ceq 'Source Unity.exe' -and $bound.target -ceq 'Source Unity.exe') 'The omitted import engine must retain the existing single-engine behavior.'
+            $bound = & $binding -WorkspaceRoot $sandbox -Unity 'Source Unity.exe' -ImportUnity 'Target Unity.exe'
+            Assert-That ($bound.target -ceq 'Target Unity.exe') 'The explicit import engine was not bound.'
+            Assert-Rejected { & $binding -WorkspaceRoot $sandbox -Unity 'Source Unity.exe' -ImportUnity '' } 'ImportUnity|empty'
+        }
+
+        Test-Case 'Distribution routes export and receiving host dependencies, requests and Player identity to their exact engines' {
+            foreach ($cross in @($false, $true)) {
+                $fixture = Invoke-DistributionFixture -CrossVersion $cross
+                $summary = $fixture.summary
+                Assert-That ($summary.status -ceq 'Passed' -and $summary.checks -eq 5 -and $summary.playerRuns.Count -eq 2) 'The complete controller did not close its five checks and repeat Player runs.'
+                Assert-That (($fixture.calls.phase -join ',') -ceq 'Export,Import,Inspect,Build,PlayerRun,PlayerRepeat') 'The verifier must export exactly one package and reuse it through import, inspection, build and repeat runs.'
+                foreach ($call in $fixture.calls | Where-Object { $_.phase -cin @('Export', 'Import', 'Inspect', 'Build') }) {
+                    $isExport = $call.phase -ceq 'Export'
+                    $expectedExe = if ($isExport) { $fixture.sourceExe } else { $fixture.targetExe }
+                    $expectedVersion = if ($isExport -or -not $cross) { '6000.3.27f1' } else { '2022.3.62f3' }
+                    $expectedUgui = if ($isExport -or -not $cross) { '2.0.0' } else { '1.0.0' }
+                    Assert-That ($call.executable -ceq $expectedExe -and $call.request.unityVersion -ceq $expectedVersion) "Wrong executable or request identity for $($call.phase)."
+                    Assert-That ($call.projectVersion.Trim() -ceq "m_EditorVersion: $expectedVersion") "Wrong owned host version for $($call.phase)."
+                    Assert-That ($call.manifest.dependencies.'com.unity.ugui' -ceq $expectedUgui) "Wrong engine package dependencies for $($call.phase)."
+                    $expectedJson = if ($isExport -or -not $cross) { '3.2.2' } else { '3.2.1' }
+                    Assert-That ($call.manifest.dependencies.'com.unity.nuget.newtonsoft-json' -ceq $expectedJson) "Wrong target Json.NET package for $($call.phase)."
+                    Assert-That (('com.unity.modules.accessibility' -cin $call.manifest.dependencies.PSObject.Properties.Name) -eq ($isExport -or -not $cross)) "Unity 6 modules leaked into the receiving 2022 host for $($call.phase)."
+                    Assert-That ($call.timeout -eq 123000) 'Editor timeout routing changed.'
+                }
+                $import = @($fixture.calls | Where-Object { $_.phase -ceq 'Import' })[0]
+                Assert-That ($summary.package.path -ceq $import.package -and $summary.package.sha256 -ceq $import.packageHash -and $summary.package.importSha256 -ceq $import.packageHash) 'Import must consume and record the exact exported package bytes.'
+                Assert-That ($summary.sourceUnity.version -ceq '6000.3.27f1' -and $summary.sourceUnity.productVersion -ceq '6000.3.27f1_672d562a42a7') 'The source Editor identity was lost.'
+                $targetProduct = if ($cross) { '2022.3.62f3_96770f904ca7' } else { '6000.3.27f1_672d562a42a7' }
+                Assert-That ($summary.targetUnity.productVersion -ceq $targetProduct -and $summary.targetUnity.executable -ceq $fixture.targetExe) 'The receiving Editor identity was lost.'
+                Assert-That (@($summary.inputIdentity.toolchain | Where-Object { $_.path -ceq $fixture.targetExe }).Count -eq 1) 'The receiving executable bytes are absent from the input identity.'
+                Assert-That ($summary.inputIdentity.profile.Contains($targetProduct)) 'The receiving full ProductVersion is absent from the input profile.'
+                $packageFiles = @($summary.inputIdentity.files.path | Where-Object { $_ -match '^(?:Packages|Tools/Testing/Profiles/Unity2022)/' } | Sort-Object)
+                $expectedPackages = if ($cross) { 'Packages/manifest.json,Packages/packages-lock.json,Tools/Testing/Profiles/Unity2022/manifest.json,Tools/Testing/Profiles/Unity2022/packages-lock.json' } else { 'Packages/manifest.json,Packages/packages-lock.json' }
+                Assert-That (($packageFiles -join ',') -ceq $expectedPackages) 'Both exact engine package inputs must be bound, without unrelated package files.'
+                foreach ($call in $fixture.calls | Where-Object { $_.phase -cin @('PlayerRun', 'PlayerRepeat') }) {
+                    Assert-That ($call.timeout -eq 17000) 'Player timeout routing changed.'
+                }
+                if ($cross) { Assert-That ([IO.Path]::GetFileName([IO.Path]::GetDirectoryName($import.request.resultRoot)).Contains('-To-2022.3.62f3-')) 'Cross-engine result rotation was not isolated by target Editor profile.' }
+            }
+        }
+
+        Test-Case 'Distribution supports both receiving backends with bounded exact-profile result keys' {
+            foreach ($backend in @('Mono', 'IL2CPP')) {
+                $fixture = Invoke-DistributionFixture -Backend $backend
+                Assert-That ($fixture.summary.status -ceq 'Passed' -and $fixture.summary.backend -ceq $backend) 'The receiving backend did not complete its real controller contract.'
+                $result = @($fixture.calls | Where-Object { $_.phase -ceq 'Import' })[0].request.resultRoot
+                Assert-That ([IO.Path]::GetFileName([IO.Path]::GetDirectoryName($result)).Length -le 80) 'A valid backend exceeded the owned-directory key contract.'
+            }
+        }
+
+        foreach ($fault in @('source-version', 'boolean-schemaVersion', 'boolean-hostId', 'boolean-resultId', 'boolean-unityVersion',
+            'boolean-phase', 'boolean-status', 'prerequisite-source-version', 'timeout', 'package-guid', 'package-payload', 'package-import', 'package-build', 'target-toolchain',
+            'prerequisite-timeout', 'prerequisite-cancelled', 'prerequisite-observer', 'prerequisite-cleanup', 'prerequisite-streams',
+            'source-manifest-drift', 'target-manifest-drift')) {
+            Test-Case "Distribution rejects $fault without accepting wrong-engine or nonordinary evidence" {
+                Assert-Rejected { Invoke-DistributionFixture -Fault $fault } 'identity|type|match|process|exit|package|Package|inputs changed'
+            }
+        }
+
+        Test-Case 'Distribution never falls back to root Packages when the receiving project lock is missing' {
+            Assert-Rejected { Invoke-DistributionFixture -Fault 'missing-target-packages' } 'packages-lock.json'
+        }
+
+        Test-Case 'Distribution preserves a genuine receiving-engine prerequisite result as exit 2, not a pass' {
+            $fixture = Invoke-DistributionFixture -Fault 'prerequisite-valid'
+            Assert-That ($fixture.summary.status -ceq 'PrerequisiteNotMet' -and $fixture.summary.player -ceq 'PrerequisiteNotMet' -and $fixture.exitCode -eq 2) 'A real receiving-host prerequisite result was not retained as nonpassing exit 2.'
+            Assert-That (($fixture.calls.phase -join ',') -ceq 'Export,Import,Inspect,Build') 'Player runs must not start without a successful build.'
+        }
+
+        Test-Case 'Distribution rejects an undeclared receiving ProductVersion before workspace creation' {
+            Assert-Rejected { Invoke-DistributionFixture -Fault 'unknown-target' } 'Unsupported|ambiguous'
+        }
+
+        Test-Case 'Distribution refuses cross-version HybridCLR before creating a workspace or invoking an engine' {
+            Assert-Rejected { Invoke-DistributionFixture -Hybrid } 'Cross-version HybridCLR|cross-version HybridCLR'
+        }
+
+        function Invoke-DistributionSdkFixture([string] $EditorVersion, [string] $Fault = '') {
+            $fixtureRoot = Join-Path $sandbox ('DistributionSdk-' + [Guid]::NewGuid().ToString('N'))
+            $repository = Join-Path $fixtureRoot 'Repository'
+            $null = [IO.Directory]::CreateDirectory($repository)
+            foreach ($relative in @('Tools/Testing/DistributionEntry.cs', 'Tools/Testing/PlayerSmoke.cs', 'Tools/Testing/HybridCLREntry.cs',
+                'Tools/Testing/HybridCLRSmoke.cs', 'Tools/Testing/UnityHost.ps1', 'Tools/Testing/TestSuites.json',
+                'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1',
+                'Tools/Testing/Tests/Test-YLDistribution.ps1', 'Packages/manifest.json', 'Packages/packages-lock.json',
+                'Tools/Testing/Profiles/Unity2022/manifest.json', 'Tools/Testing/Profiles/Unity2022/packages-lock.json')) {
+                $target = Join-Path $repository $relative
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+                [IO.File]::Copy((Join-Path $PSScriptRoot "../../../$relative"), $target)
+            }
+            $files = [ordered]@{
+                'Assets/YLFramework/Runtime/Product.cs' = 'class Product {}'
+                'Assets/YLFramework.meta' = "guid: 00000000000000000000000000000001`n"
+                'Assets/YLFramework/Runtime.meta' = "guid: 00000000000000000000000000000002`n"
+                'Assets/YLFramework/Runtime/Product.cs.meta' = "guid: 00000000000000000000000000000003`n"
+                'Unity.exe' = 'editor-metadata-only-fixture'
+            }
+            foreach ($entry in $files.GetEnumerator()) {
+                $target = Join-Path $repository $entry.Key
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+                [IO.File]::WriteAllText($target, $entry.Value, [Text.UTF8Encoding]::new($false))
+            }
+            $sdkKey = 'com.code-philosophy.hybridclr'
+            $sdkManifestPath = Join-Path $repository 'Packages/manifest.json'
+            $sdkLockPath = Join-Path $repository 'Packages/packages-lock.json'
+            if ($Fault -cin @('missing-declaration', 'boolean-declaration', 'empty-declaration', 'object-declaration', 'unpinned-declaration')) {
+                $document = [IO.File]::ReadAllText($sdkManifestPath) | ConvertFrom-Json -AsHashtable -DateKind String
+                switch -CaseSensitive ($Fault) {
+                    'missing-declaration' { $null = $document.dependencies.Remove($sdkKey) }
+                    'boolean-declaration' { $document.dependencies[$sdkKey] = $true }
+                    'empty-declaration' { $document.dependencies[$sdkKey] = '' }
+                    'object-declaration' { $document.dependencies[$sdkKey] = @{ version = '9.0.3' } }
+                    'unpinned-declaration' { $document.dependencies[$sdkKey] = 'https://gitee.com/focus-creative-games/hybridclr_unity.git#main' }
+                }
+                [IO.File]::WriteAllText($sdkManifestPath, (ConvertTo-Json -InputObject $document -Depth 10), [Text.UTF8Encoding]::new($false))
+            }
+            if ($Fault -cin @('missing-sdk-lock', 'boolean-sdk-lock', 'mismatched-sdk-lock', 'wrong-sdk-source', 'invalid-sdk-hash')) {
+                $document = [IO.File]::ReadAllText($sdkLockPath) | ConvertFrom-Json -AsHashtable -DateKind String
+                switch -CaseSensitive ($Fault) {
+                    'missing-sdk-lock' { $null = $document.dependencies.Remove($sdkKey) }
+                    'boolean-sdk-lock' { $document.dependencies[$sdkKey] = $true }
+                    'mismatched-sdk-lock' { $document.dependencies[$sdkKey].version = 'https://gitee.com/focus-creative-games/hybridclr_unity.git#main' }
+                    'wrong-sdk-source' { $document.dependencies[$sdkKey].source = 'registry' }
+                    'invalid-sdk-hash' { $document.dependencies[$sdkKey].hash = $true }
+                }
+                [IO.File]::WriteAllText($sdkLockPath, (ConvertTo-Json -InputObject $document -Depth 10), [Text.UTF8Encoding]::new($false))
+            }
+            $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
+            $editor = @($configuration.editors | Where-Object { $_.version -ceq $EditorVersion })[0]
+            $importEditor = $editor
+            $version = [pscustomobject]@{ ProductVersion = $editor.productVersion }
+            $importVersion = $version
+            $Unity = Join-Path $repository 'Unity.exe'
+            $toolchain = [Collections.Generic.List[string]]::new()
+            $toolchain.Add($Unity)
+            $roots = @('Assets/YLFramework/Runtime')
+            $leafPaths = @()
+            $HybridCLR = $true
+            $RunPlayer = $true
+            $Backend = 'IL2CPP'
+            $summary = [ordered]@{ probeInputs = @() }
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Test-YLDistribution.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'The distribution SDK binding must parse.'
+            $body = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.TryStatementAst] })[0].Body.Statements
+            # Execute the real input/manifest preparation, then only SDK injection; never native provenance, configure, build or Player phases.
+            $start = -1; $end = -1
+            for ($index = 0; $index -lt $body.Count; $index++) {
+                if ($body[$index] -isnot [Management.Automation.Language.AssignmentStatementAst]) { continue }
+                if ($body[$index].Left.Extent.Text -ceq '$paths') { $start = $index }
+                if ($body[$index].Left.Extent.Text -ceq '$hosts') { $end = $index; break }
+            }
+            Assert-That ($start -ge 0 -and $end -gt $start) 'The real distribution preparation boundary is missing.'
+            . ([scriptblock]::Create(($body[$start..($end - 1)].Extent.Text -join "`n")))
+            $bareManifest = [Text.Encoding]::UTF8.GetString([byte[]]$bootstrap['Packages/manifest.json']) | ConvertFrom-Json -DateKind String
+            $workspace = Initialize-YLTestWorkspace -WorkspaceRoot (Join-Path $fixtureRoot 'Workspace') -Repository $repository
+            $hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key 'SdkBinding'
+            $hostLease = Lock-YLTestDirectory -Workspace $workspace -Path $hostRecord.path
+            try {
+                Sync-YLUnityHost -HostRecord $hostRecord -Files $bootstrap -Identity $identity -EditorVersion $editor.version
+                $hosts = @{ Import = $hostRecord }
+                $injection = $ast.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left.Extent.Text -ceq '$dependencies[''com.code-philosophy.hybridclr'']' }, $true)
+                Assert-That ($null -ne $injection) 'The real explicit SDK injection is missing.'
+                $binding = $injection.Parent.Statements
+                $statements = foreach ($statement in $binding) {
+                    if ($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -ceq '$configure') { break }
+                    $statement.Extent.Text
+                }
+                . ([scriptblock]::Create(($statements -join "`n")))
+                $installed = [IO.File]::ReadAllText((Join-Path $hostRecord.path 'Packages/manifest.json')) | ConvertFrom-Json -DateKind String
+                if ($Fault -ceq 'sdk-manifest-drift') { [IO.File]::AppendAllText($sdkManifestPath, ' ') }
+                if ($Fault -ceq 'sdk-lock-drift') { [IO.File]::AppendAllText($sdkLockPath, ' ') }
+                for ($index = 0; $index -lt $body.Count; $index++) {
+                    if ($body[$index] -is [Management.Automation.Language.AssignmentStatementAst] -and $body[$index].Left.Extent.Text -ceq '$current') { break }
+                }
+                Assert-That ($index + 1 -lt $body.Count) 'The real final source identity check is missing.'
+                . ([scriptblock]::Create(($body[$index..($index + 1)].Extent.Text -join "`n")))
+                return [pscustomobject]@{ bare = $bareManifest; installed = $installed; identity = $identity }
+            } finally { $hostLease.Dispose() }
+        }
+
+        foreach ($editorVersion in @('2022.3.62f3', '6000.3.27f1')) {
+            Test-Case "Distribution $editorVersion HybridCLR binds the real root SDK without replacing target base dependencies" {
+                $fixture = Invoke-DistributionSdkFixture -EditorVersion $editorVersion
+                Assert-That ($fixture.installed.dependencies.'com.code-philosophy.hybridclr' -ceq 'https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3') 'The root exact HybridCLR SDK declaration was not injected.'
+                Assert-That ('com.code-philosophy.hybridclr' -cnotin $fixture.bare.dependencies.PSObject.Properties.Name) 'The SDK leaked into the bare product import.'
+                $unity6 = $editorVersion -ceq '6000.3.27f1'
+                $expectedJson = if ($unity6) { '3.2.2' } else { '3.2.1' }
+                $expectedUgui = if ($unity6) { '2.0.0' } else { '1.0.0' }
+                Assert-That ($fixture.installed.dependencies.'com.unity.nuget.newtonsoft-json' -ceq $expectedJson -and $fixture.installed.dependencies.'com.unity.ugui' -ceq $expectedUgui) 'SDK injection replaced the target engine package dependencies.'
+                foreach ($module in @('com.unity.modules.accessibility', 'com.unity.modules.adaptiveperformance', 'com.unity.modules.vectorgraphics')) {
+                    Assert-That (($module -cin $fixture.installed.dependencies.PSObject.Properties.Name) -eq $unity6) 'SDK declaration lookup leaked root Unity 6-only modules into the 2022 host.'
+                }
+                $packageFiles = @($fixture.identity.files.path | Where-Object { $_ -match '^(?:Packages|Tools/Testing/Profiles/Unity2022)/' } | Sort-Object)
+                $expectedPackages = if ($unity6) { 'Packages/manifest.json,Packages/packages-lock.json' } else { 'Packages/manifest.json,Packages/packages-lock.json,Tools/Testing/Profiles/Unity2022/manifest.json,Tools/Testing/Profiles/Unity2022/packages-lock.json' }
+                Assert-That (($packageFiles -join ',') -ceq $expectedPackages) 'The SDK declaration and lock are not both covered by the initial source fingerprint.'
+            }
+        }
+        foreach ($fault in @('missing-declaration', 'boolean-declaration', 'empty-declaration', 'object-declaration', 'unpinned-declaration',
+            'missing-sdk-lock', 'boolean-sdk-lock', 'mismatched-sdk-lock', 'wrong-sdk-source', 'invalid-sdk-hash')) {
+            Test-Case "Distribution HybridCLR rejects $fault explicitly instead of consuming a target-host SDK or coercing values" {
+                Assert-Rejected { Invoke-DistributionSdkFixture -EditorVersion '2022.3.62f3' -Fault $fault } 'HybridCLR SDK'
+            }
+        }
+        foreach ($fault in @('sdk-manifest-drift', 'sdk-lock-drift')) {
+            Test-Case "Distribution 2022 HybridCLR detects $fault through the real final input check" {
+                Assert-Rejected { Invoke-DistributionSdkFixture -EditorVersion '2022.3.62f3' -Fault $fault } 'Distribution source inputs changed'
+            }
+        }
+
         Test-Case 'Production Runtime graph rejects undeclared dependencies without a vendor blacklist' {
             $tokens = $null; $errors = $null
             $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Test-YLAssemblyLayout.ps1'), [ref]$tokens, [ref]$errors)

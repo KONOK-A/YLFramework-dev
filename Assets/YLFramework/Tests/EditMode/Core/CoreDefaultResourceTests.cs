@@ -59,13 +59,18 @@ namespace YLFramework.Core.Tests
                     }
                 }
             }
+#if UNITY_6000_0_OR_NEWER
+            const string UguiRuntimeRoot = "Packages/com.unity.ugui/Runtime/UGUI/";
+#else
+            const string UguiRuntimeRoot = "Packages/com.unity.ugui/Runtime/";
+#endif
             var allowedDependencies = new[]
             {
                 path, AdaptationPath,
                 "Assets/YLFramework/Runtime/Core/UI/Roots/UIRootContext.cs",
-                "Packages/com.unity.ugui/Runtime/UI/Core/Layout/CanvasScaler.cs",
-                "Packages/com.unity.ugui/Runtime/UI/Core/GraphicRaycaster.cs",
-                "Packages/com.unity.ugui/Runtime/EventSystem/EventSystem.cs"
+                UguiRuntimeRoot + "UI/Core/Layout/CanvasScaler.cs",
+                UguiRuntimeRoot + "UI/Core/GraphicRaycaster.cs",
+                UguiRuntimeRoot + "EventSystem/EventSystem.cs"
             };
             Assert.That(AssetDatabase.GetDependencies(path), Is.SubsetOf(allowedDependencies));
         }

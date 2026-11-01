@@ -52,7 +52,7 @@ function Invoke-TestingProcess([string] $Exe, [string[]] $Arguments) {
     return $fact
 }
 
-function Get-SelectedSources([switch] $Native) {
+function Get-SelectedSources([switch] $Native, [object] $EditorProfile) {
     $tests = [Collections.Generic.List[string]]::new()
     $folders = @($definition.editTests)
     $runtimeSources = @($definition.runtimeSources)
@@ -102,8 +102,7 @@ function Get-SelectedSources([switch] $Native) {
     if ($Native) {
         $null = $inputs.Add('Tools/Testing/UnityHost.ps1')
         if ($definition.nativeLayout -ceq 'Framework') {
-            $null = $inputs.Add('Packages/manifest.json')
-            $null = $inputs.Add('Packages/packages-lock.json')
+            foreach ($relative in @(Get-YLUnityPackageInputs -EditorProfile $EditorProfile)) { $null = $inputs.Add($relative) }
         }
     }
     else { $null = $inputs.Add('Tools/Testing/NUnitHost.cs'); $null = $inputs.Add('Tools/YLFramework.Analyzers/global.json') }

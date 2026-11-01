@@ -10,7 +10,8 @@ param(
     [ValidateSet('Mono', 'IL2CPP')][string] $Backend = 'Mono',
     [switch] $HybridCLR,
     [string] $NativeSource,
-    [string] $NativeSourceManifest
+    [string] $NativeSourceManifest,
+    [ValidateNotNullOrEmpty()][string] $ImportUnity = $Unity
 )
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
@@ -21,11 +22,20 @@ $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $configuration = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../TestSuites.json')) | ConvertFrom-Json -DateKind String
 $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($Unity)
 $editor = Get-YLTestEditorProfile -Editors $configuration.editors -VersionInfo $version
+$importVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($ImportUnity)
+$importEditor = Get-YLTestEditorProfile -Editors $configuration.editors -VersionInfo $importVersion
 if ($HybridCLR -and ($Backend -cne 'IL2CPP' -or -not $RunPlayer -or -not $NativeSource)) {
     throw 'HybridCLR acceptance requires explicit IL2CPP, RunPlayer and an existing native source.'
 }
+if ($HybridCLR -and $version.ProductVersion -cne $importVersion.ProductVersion) {
+    throw 'Cross-version HybridCLR distribution acceptance is not supported; use the same exact Editor build for export and import.'
+}
 $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $repository
 $key = "Tooling-Distribution-$($version.ProductVersion)"
+if ($version.ProductVersion -cne $importVersion.ProductVersion) {
+    $pairHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$($version.ProductVersion)|$($importVersion.ProductVersion)"))).Substring(0, 8)
+    $key = "Tooling-Distribution-$($editor.version)-To-$($importEditor.version)-$pairHash"
+}
 if ($Backend -ceq 'IL2CPP') { $key += '-IL2CPP' }
 if ($HybridCLR) { $key += '-HybridCLR' }
 if ($RunPlayer) { $key += '-Smoke' }
@@ -35,6 +45,8 @@ $summary = [ordered]@{ schemaVersion = 1; ownerId = $run.id; action = 'Run'; sui
 $summary['playerRun'] = @{ status = 'NotRun' }
 $summary['playerRuns'] = @()
 $summary['backend'] = $Backend
+$summary['sourceUnity'] = @{ executable = $Unity; version = $editor.version; productVersion = $version.ProductVersion }
+$summary['targetUnity'] = @{ executable = $ImportUnity; version = $importEditor.version; productVersion = $importVersion.ProductVersion }
 $hostLeases = [Collections.Generic.List[IDisposable]]::new()
 $nativeVariant = $null
 $baselineRoot = $null
@@ -45,12 +57,17 @@ $playerOwnerId = $null
 
 function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase, [object[]] $Guids = @(), [string] $Package = '') {
     Assert-YLUnityHostIdle $HostRecord
+    $phaseEditor = if ($Phase -ceq 'Export') { $editor } else { $importEditor }
+    $phaseUnity = if ($Phase -ceq 'Export') { $Unity } else { $ImportUnity }
+    if ($Phase -ceq 'Import' -and (Get-FileHash -LiteralPath $Package -Algorithm SHA256).Hash -cne $summary.package.sha256) {
+        throw 'The actual exported package changed before import.'
+    }
     $output = Join-Path $run.path $Phase
     $null = [IO.Directory]::CreateDirectory($output)
     $request = Join-Path $output 'request.json'
-    Write-YLTestJson -Path $request -Value @{ schemaVersion = 1; hostId = $HostRecord.id; resultId = $run.id; resultRoot = $run.path; unityVersion = $editor.version; phase = $Phase; output = $output; guids = @($Guids); smoke = [bool]$RunPlayer; backend = $Backend
+    Write-YLTestJson -Path $request -Value @{ schemaVersion = 1; hostId = $HostRecord.id; resultId = $run.id; resultRoot = $run.path; unityVersion = $phaseEditor.version; phase = $Phase; output = $output; guids = @($Guids); smoke = [bool]$RunPlayer; backend = $Backend
         hybridCLR = [bool]$HybridCLR; nativeSource = $NativeSource; nativeVariant = $nativeVariant; baseline = $baselineRoot; runtimeCache = $runtimeCache; cacheOwnerId = $cacheOwnerId; playerRoot = $nativePlayerRoot; playerOwnerId = $playerOwnerId }
-    $start = [Diagnostics.ProcessStartInfo]::new($Unity)
+    $start = [Diagnostics.ProcessStartInfo]::new($phaseUnity)
     $start.UseShellExecute = $false
     $start.WorkingDirectory = $HostRecord.path
     $arguments = @('-batchmode', '-projectPath', $HostRecord.path, '-logFile', (Join-Path $output 'unity.log'))
@@ -60,22 +77,45 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase, [obje
     foreach ($argument in $arguments) { $start.ArgumentList.Add($argument) }
     $fact = Invoke-YLTestProcess -StartInfo $start -Log (Join-Path $output 'process.log') -TimeoutMilliseconds ([long]$TimeoutSeconds * 1000)
     $summary.processes += $fact
-    if ($Phase -ceq 'Build' -and $fact.observedExit -and $fact.exitCode -eq 2 -and -not $fact.forcedCleanup -and $fact.activeProcesses -eq 0) {
-        $report = [IO.File]::ReadAllText((Join-Path $output 'report.json')) | ConvertFrom-Json -DateKind String
+    $prerequisite = $Phase -ceq 'Build' -and $fact.observedExit -and $fact.exitCode -eq 2 -and -not $fact.forcedCleanup -and $fact.activeProcesses -eq 0
+    if ($prerequisite) {
+        foreach ($field in @('observedExit', 'jobAssigned', 'streamsDrained')) {
+            if ($fact.$field -isnot [bool] -or -not $fact.$field) { throw "Incomplete prerequisite process observation: $field" }
+        }
+        foreach ($field in @('timedOut', 'cancelled', 'forcedCleanup')) {
+            if ($fact.$field -isnot [bool] -or $fact.$field) { throw "Nonordinary prerequisite process outcome: $field" }
+        }
+        if ($fact.status -isnot [string] -or $fact.status -cne 'NonZeroExit' -or
+            ($fact.exitCode -isnot [int] -and $fact.exitCode -isnot [long]) -or
+            ($fact.activeProcesses -isnot [int] -and $fact.activeProcesses -isnot [uint32] -and $fact.activeProcesses -isnot [long]) -or
+            -not [string]::IsNullOrEmpty($fact.observerError) -or -not [string]::IsNullOrEmpty($fact.cleanupError)) {
+            throw 'The prerequisite process has no ordinary exit/cleanup outcome.'
+        }
+    } else { Assert-YLTestProcessSucceeded $fact }
+    if ($Phase -ceq 'Import') {
+        $summary.package['importSha256'] = (Get-FileHash -LiteralPath $Package -Algorithm SHA256).Hash
+        if ($summary.package.importSha256 -cne $summary.package.sha256) { throw 'The actual exported package changed during import.' }
+        return
+    }
+    $report = [IO.File]::ReadAllText((Join-Path $output 'report.json')) | ConvertFrom-Json -DateKind String
+    foreach ($field in @('hostId', 'resultId', 'unityVersion', 'phase')) {
+        if ($report.$field -isnot [string]) { throw 'Distribution evidence identity fields must be strings.' }
+    }
+    if ($report.schemaVersion -isnot [long] -or $report.schemaVersion -ne 1 -or $report.result.status -isnot [string] -or
+        $report.hostId -cne $HostRecord.id -or $report.resultId -cne $run.id -or $report.unityVersion -cne $phaseEditor.version -or
+        $report.phase -cne $Phase) { throw 'Distribution evidence identity does not match.' }
+    if ($prerequisite) {
         if ($report.result.status -cne 'PrerequisiteNotMet') { throw 'Missing real Player prerequisite evidence.' }
         return $report
     }
-    Assert-YLTestProcessSucceeded $fact
-    if ($Phase -ceq 'Import') { return }
-    $report = [IO.File]::ReadAllText((Join-Path $output 'report.json')) | ConvertFrom-Json -DateKind String
-    if ($report.hostId -cne $HostRecord.id -or $report.resultId -cne $run.id -or $report.unityVersion -cne $editor.version -or
-        $report.phase -cne $Phase -or $report.result.status -cnotin @('Completed', 'Passed')) { throw 'Distribution evidence identity does not match.' }
+    if ($report.result.status -cnotin @('Completed', 'Passed')) { throw 'Distribution evidence identity does not match.' }
     return $report
 }
 
 try {
     $toolchain = [Collections.Generic.List[string]]::new()
     $toolchain.Add($Unity)
+    if ($ImportUnity -ine $Unity) { $toolchain.Add($ImportUnity) }
     $leafPaths = @()
     if ($HybridCLR) {
         $NativeSource = Get-YLTestPath $NativeSource
@@ -148,36 +188,66 @@ try {
     $null = $paths.Add('Assets/YLFramework.meta')
     $null = $paths.Add('Tools/Testing/DistributionEntry.cs')
     $null = $paths.Add('Tools/Testing/Tests/Test-YLDistribution.ps1')
-    $null = $paths.Add('Packages/manifest.json')
-    $null = $paths.Add('Packages/packages-lock.json')
+    $exportPackageInputs = @(Get-YLUnityPackageInputs -EditorProfile $editor)
+    $importPackageInputs = @(Get-YLUnityPackageInputs -EditorProfile $importEditor)
+    foreach ($relative in $exportPackageInputs + $importPackageInputs) { $null = $paths.Add($relative) }
     foreach ($relative in @('Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1',
         'Tools/Testing/UnityHost.ps1', 'Tools/Testing/TestSuites.json')) { $null = $paths.Add($relative) }
     if ($RunPlayer) { $null = $paths.Add('Tools/Testing/PlayerSmoke.cs') }
     $productPaths = @($paths)
     if ($HybridCLR) {
-        foreach ($path in $leafPaths + @('Tools/Testing/HybridCLREntry.cs', 'Tools/Testing/HybridCLRSmoke.cs')) { $null = $paths.Add($path) }
+        foreach ($path in $leafPaths + @('Tools/Testing/HybridCLREntry.cs', 'Tools/Testing/HybridCLRSmoke.cs', 'Packages/manifest.json', 'Packages/packages-lock.json')) { $null = $paths.Add($path) }
     }
-    $identity = Get-YLTestInputIdentity -Repository $repository -Paths @($paths) -Toolchain $toolchain.ToArray() -Profile "Distribution-$($version.ProductVersion)-$Backend-Hybrid$HybridCLR"
+    $profile = "Distribution-$($version.ProductVersion)-To-$($importVersion.ProductVersion)-$Backend-Hybrid$HybridCLR"
+    $identity = Get-YLTestInputIdentity -Repository $repository -Paths @($paths) -Toolchain $toolchain.ToArray() -Profile $profile
     $summary['inputIdentity'] = $identity
+    if ($HybridCLR) {
+        $sdkManifest = [IO.File]::ReadAllText((Join-Path $repository 'Packages/manifest.json')) | ConvertFrom-Json -AsHashtable -NoEnumerate -DateKind String
+        if ($sdkManifest -isnot [Collections.IDictionary] -or $sdkManifest['dependencies'] -isnot [Collections.IDictionary] -or
+            $sdkManifest['dependencies']['com.code-philosophy.hybridclr'] -isnot [string] -or
+            $sdkManifest['dependencies']['com.code-philosophy.hybridclr'] -cnotmatch '^https://[^\s#]+\.git#v9\.0\.3$') {
+            throw 'The root HybridCLR SDK declaration must be an explicit Git URL pinned to v9.0.3.'
+        }
+        $sdkDeclaration = $sdkManifest['dependencies']['com.code-philosophy.hybridclr']
+        $sdkLock = [IO.File]::ReadAllText((Join-Path $repository 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable -NoEnumerate -DateKind String
+        if ($sdkLock -isnot [Collections.IDictionary] -or $sdkLock['dependencies'] -isnot [Collections.IDictionary] -or
+            $sdkLock['dependencies']['com.code-philosophy.hybridclr'] -isnot [Collections.IDictionary]) {
+            throw 'The root HybridCLR SDK lock entry is missing or invalid.'
+        }
+        $sdkPackage = $sdkLock['dependencies']['com.code-philosophy.hybridclr']
+        if ($sdkPackage['version'] -isnot [string] -or $sdkPackage['version'] -cne $sdkDeclaration -or
+            $sdkPackage['source'] -isnot [string] -or $sdkPackage['source'] -cne 'git' -or
+            $sdkPackage['hash'] -isnot [string] -or $sdkPackage['hash'] -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'The root HybridCLR SDK lock must match the exact declaration and Git commit.'
+        }
+    }
     $bootstrap = [ordered]@{}
     $bootstrap['Assets/YLTestingDistribution/Editor/DistributionEntry.cs'] = [IO.File]::ReadAllBytes((Join-Path $repository 'Tools/Testing/DistributionEntry.cs'))
-    $dependencies = [ordered]@{ 'com.unity.ugui' = $editor.ugui }
-    $sourceManifest = [IO.File]::ReadAllText((Join-Path $repository 'Packages/manifest.json')) | ConvertFrom-Json -DateKind String
-    foreach ($entry in $sourceManifest.dependencies.PSObject.Properties | Where-Object { $_.Name.StartsWith('com.unity.modules.', [StringComparison]::Ordinal) }) { $dependencies[$entry.Name] = $entry.Value }
-    $sourceLock = [IO.File]::ReadAllText((Join-Path $repository 'Packages/packages-lock.json')) | ConvertFrom-Json -DateKind String
-    $dependencies['com.unity.nuget.newtonsoft-json'] = $sourceLock.dependencies.'com.unity.nuget.newtonsoft-json'.version
-    $bootstrap['Packages/manifest.json'] = [Text.Encoding]::UTF8.GetBytes((@{ dependencies = $dependencies } | ConvertTo-Json -Depth 8) + "`n")
+    $hostManifests = @{}
+    foreach ($phase in @('Export', 'Import')) {
+        $phaseEditor = if ($phase -ceq 'Export') { $editor } else { $importEditor }
+        $packageInputs = if ($phase -ceq 'Export') { $exportPackageInputs } else { $importPackageInputs }
+        $dependencies = [ordered]@{ 'com.unity.ugui' = $phaseEditor.ugui }
+        $sourceManifest = [IO.File]::ReadAllText((Join-Path $repository $packageInputs[0])) | ConvertFrom-Json -DateKind String
+        foreach ($entry in $sourceManifest.dependencies.PSObject.Properties | Where-Object { $_.Name.StartsWith('com.unity.modules.', [StringComparison]::Ordinal) }) { $dependencies[$entry.Name] = $entry.Value }
+        $sourceLock = [IO.File]::ReadAllText((Join-Path $repository $packageInputs[1])) | ConvertFrom-Json -DateKind String
+        $dependencies['com.unity.nuget.newtonsoft-json'] = $sourceLock.dependencies.'com.unity.nuget.newtonsoft-json'.version
+        $hostManifests[$phase] = [Text.Encoding]::UTF8.GetBytes((@{ dependencies = $dependencies } | ConvertTo-Json -Depth 8) + "`n")
+    }
+    $bootstrap['Packages/manifest.json'] = $hostManifests.Import
     $exportFiles = [ordered]@{}
     foreach ($key in $bootstrap.Keys) { $exportFiles[$key] = $bootstrap[$key] }
+    $exportFiles['Packages/manifest.json'] = $hostManifests.Export
     foreach ($relative in $productPaths | Where-Object { $_.StartsWith('Assets/', [StringComparison]::Ordinal) }) { $exportFiles[$relative] = [IO.File]::ReadAllBytes((Join-Path $repository $relative)) }
     $hosts = @{}
     foreach ($phase in @('Export', 'Import')) {
-        $hostKey = if ($HybridCLR -and $phase -ceq 'Import') { "H$($run.id.Substring(0, 7))" } else { "D-$phase-$($editor.version)-$($run.id.Substring(0, 8))" }
+        $hostEditor = if ($phase -ceq 'Export') { $editor } else { $importEditor }
+        $hostKey = if ($HybridCLR -and $phase -ceq 'Import') { "H$($run.id.Substring(0, 7))" } else { "D-$phase-$($hostEditor.version)-$($run.id.Substring(0, 8))" }
         if ([IO.Path]::Exists((Join-Path $workspace.root "Hosts/$hostKey"))) { throw 'Do not adopt an existing distribution host.' }
         $record = New-YLTestDirectory -Workspace $workspace -Kind Host -Key $hostKey
         $hostLeases.Add((Lock-YLTestDirectory -Workspace $workspace -Path $record.path))
         Assert-YLUnityHostIdle $record
-        Sync-YLUnityHost -HostRecord $record -Files $(if ($phase -ceq 'Export') { $exportFiles } else { $bootstrap }) -Identity $identity -EditorVersion $editor.version
+        Sync-YLUnityHost -HostRecord $record -Files $(if ($phase -ceq 'Export') { $exportFiles } else { $bootstrap }) -Identity $identity -EditorVersion $hostEditor.version
         $hosts[$phase] = $record
     }
     $export = Invoke-DistributionProcess -HostRecord $hosts.Export -Phase Export
@@ -280,7 +350,7 @@ try {
             if ((Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash -cne [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$bootstrap['Packages/manifest.json']))) {
                 throw 'Do not rewrite an altered receiving-host package manifest.'
             }
-            $dependencies['com.code-philosophy.hybridclr'] = $sourceManifest.dependencies.'com.code-philosophy.hybridclr'
+            $dependencies['com.code-philosophy.hybridclr'] = $sdkDeclaration
             [IO.File]::WriteAllText($manifestPath, ((@{ dependencies = $dependencies } | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
             $summary.probeInputs += @{ path = $manifestPath; sha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash }
             $configure = Invoke-DistributionProcess -HostRecord $hosts.Import -Phase HybridConfigure
@@ -316,7 +386,7 @@ try {
             foreach ($argument in $arguments) { $start.ArgumentList.Add($argument) }
             $fact = Invoke-YLTestProcess -StartInfo $start -Log (Join-Path $output 'process.log') -TimeoutMilliseconds ([long]$PlayerTimeoutSeconds * 1000)
             $summary.processes += $fact
-            $summary.playerRun = Read-YLPlayerSmoke -Path (Join-Path $output 'result.json') -ResultId $run.id -HostId $hosts.Import.id -UnityVersion $editor.version -Backend $Backend -HybridCLR $expectedHybrid -ProcessResult $fact
+            $summary.playerRun = Read-YLPlayerSmoke -Path (Join-Path $output 'result.json') -ResultId $run.id -HostId $hosts.Import.id -UnityVersion $importEditor.version -Backend $Backend -HybridCLR $expectedHybrid -ProcessResult $fact
             $summary.playerRuns += $summary.playerRun
             $playerLog = [IO.File]::ReadAllText((Join-Path $output 'player.log'))
             if (-not $playerLog.Contains('[YLPlayerSmoke] PASS ' + $run.id) -or $playerLog -match '(?m)^.*(?:Exception:|Assertion failed|\[YLPlayerSmoke\] FAIL)') { throw 'Player log does not close the matching successful smoke run.' }
@@ -330,8 +400,9 @@ try {
             if ((Get-FileHash -LiteralPath $inputFile.path -Algorithm SHA256).Hash -cne $inputFile.sha256) { throw 'Smoke inputs changed during build/execution.' }
         }
     }
-    $current = Get-YLTestInputIdentity -Repository $repository -Paths @($paths) -Toolchain $toolchain.ToArray() -Profile "Distribution-$($version.ProductVersion)-$Backend-Hybrid$HybridCLR"
+    $current = Get-YLTestInputIdentity -Repository $repository -Paths @($paths) -Toolchain $toolchain.ToArray() -Profile $profile
     if ($current.sha256 -cne $identity.sha256) { throw 'Distribution source inputs changed during verification.' }
+    if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash -cne $summary.package.sha256) { throw 'The actual exported package changed during verification.' }
     $summary.status = if ($summary.player -ceq 'Passed') { 'Passed' } else { 'PrerequisiteNotMet' }
 } catch { $summary.reason = $_.Exception.Message; throw }
 finally {
