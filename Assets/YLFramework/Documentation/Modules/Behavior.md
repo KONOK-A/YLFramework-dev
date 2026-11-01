@@ -2,7 +2,7 @@
 
 > [文档首页](../README.md) · [架构](../Architecture.md) · [轻量 FSM](FSM.md) · [Editor 扩展](Editor.md)
 
-Overlap、CharacterController2D、MoveablePlatform 与配置式 StateMachine 是独立使用的能力，不要求 Root、Module、旧 XF 或输入包。它们使用自己的组件与资产，不自动重绑其他框架的 Scene、Prefab 或状态类型。
+Overlap、CharacterController2D、MoveablePlatform 与配置式 StateMachine 是独立使用的能力，不要求 Root、Module、旧宿主扩展或输入包。它们使用自己的组件与资产，不自动重绑其他框架的 Scene、Prefab 或状态类型。
 
 ## Overlap
 
@@ -43,7 +43,7 @@ namespace 为 `YLFramework.Platform2D`，包括 Moveable、MoveablePlatform2D �
 | `YLFramework.FSM.Fsm<TStateId>` | 轻量纯代码状态机，由调用方推进与回收，完整用法见 [FSM](FSM.md) |
 | `YLFramework.StateMachine` | 运行层、状态脚本、参数、条件组、层级 / 子状态机与图形作者流程 |
 
-两者不共享运行态或自动结束责任，也不把旧 XFFSM 配置、状态脚本或 GUID 自动转换为 YL 资产。
+两者不共享运行态或自动结束责任，也不把外部状态机的配置、状态脚本或 GUID 自动转换为 YL 资产。
 
 ### 创建与驱动
 

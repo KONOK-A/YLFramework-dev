@@ -105,7 +105,7 @@ namespace YLFramework.Editor.Localization
             }
             if (!root)
             {
-                EditorGUILayout.HelpBox("选择或新建YL多语言根。不会自动登记旧XF配置。", MessageType.Info);
+                EditorGUILayout.HelpBox("选择或新建YL多语言根。不会自动登记外部配置。", MessageType.Info);
                 return;
             }
             if (_selected && !root.Languages.Contains(_selected))

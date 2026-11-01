@@ -14,6 +14,6 @@
         "redistributionAuthorized": false,
         "installation": "Obtain the unchanged official Standard archive separately, including its Runtime Modules and original readme. Do not use DOTween Pro as a substitute."
     },
-    "wrapperLicense": "MIT; retain Assets/YLFramework/LICENSE.md and its QFramework attribution",
+    "wrapperLicense": "MIT; retain Assets/YLFramework/LICENSE.md and its source attributions",
     "nativeOrPlayerAcceptance": false
 }

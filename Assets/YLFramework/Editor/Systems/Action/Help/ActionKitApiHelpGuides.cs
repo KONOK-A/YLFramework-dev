@@ -43,7 +43,7 @@ namespace YLFramework.Editor.Actions
                 "若动作回调中请求关闭，实际收尾会等执行栈退出后完成。",
                 "只在应用级边界调用 Shutdown，不要把它作为每个动作使用者的停用处理。清理错误会向调用方报告。" +
                 "关闭回调或初始化补丁中不能立即重新初始化；需要等当前动作调用及其关闭收尾全部返回。\n" +
-                "Interface 不是旧框架的 IArchitecture，不提供系统、模型、工具的注册，也不提供旧命令、查询或事件容器。",
+                "Interface 只返回当前 ActionKit 模块实例，不提供系统、模型、工具的注册，也不提供命令、查询或事件容器。",
                 MethodContext + "\n下面的方法由应用入口在动作执行栈外调用，例如切换一轮运行环境时；" +
                 "不要从 Callback、OnExecute、OnFinish 或 OnRegisterPatch 内调用它。普通动作启动不需要这段代码。",
                 "public static void RestartAtApplicationBoundary()\n{\n" +
@@ -322,7 +322,7 @@ namespace YLFramework.Editor.Actions
                 "OnApplicationPause 与 OnApplicationFocus 使用带 bool 参数的事件，分别表示暂停和焦点状态。\n" +
                 "运行时访问这些事件属性可能创建全局宿主。Register 返回注销句柄（IUnregister），" +
                 "可绑定到对象销毁时注销，也可以由调用方自行注销。",
-                "这些是本模块的消息事件，不是旧 QFramework 事件总线。每个监听都要有明确生命周期，" +
+                "这些是 YLFramework.Actions 的 Unity 消息事件。每个监听都要有明确生命周期，" +
                 "不能只注册而忽略注销。OnGUI 等消息由 Unity 的相应阶段触发，不等同于每帧一次普通 Update。",
                 MethodContext + "\nSubscribeToMessages(owner) 将监听绑定到 owner 的 GameObject 销毁，" +
                 "只禁用 owner 组件不会触发这里的销毁注销。更新监听在示例中不执行额外操作，焦点变化输出中文消息。" +

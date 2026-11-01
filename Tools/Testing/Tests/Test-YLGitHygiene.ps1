@@ -17,7 +17,9 @@ $sdkProjects = @(
 )
 $localOnly = @(
     '^(Library|Temp|Obj|Logs|UserSettings|Build|Builds|AssetBundles|MemoryCaptures|Recordings|UIElementsSchema|\.vs|\.idea)/'
-    '^\.kilo/(worktrees/|agent-manager\.json$)'
+    '^\.kilo/'
+    '^(AGENTS\.md|kilocodeignore)$'
+    '^Assets/YLFramework/AGENTS\.md(?:\.meta)?$'
     '^(\.mcp\.json|opencode\.json|\.vscode/mcp\.json)$'
     '^Assets/Plugins/Editor Enhancers Bundle(?:/|\.meta$)'
     '^Assets/YLFramework/Tests/Integrations/HybridCLR/PlayMode/Resources/YLHybridCLRTests/(?!\.gitkeep$)'

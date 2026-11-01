@@ -164,9 +164,16 @@ namespace YLFramework.Core.Tests
                     }
                     foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies().Where(a =>
                         a.GetName().Name.StartsWith("YLFramework", StringComparison.Ordinal) ||
-                        new[] { "XFABManager", "XFGameFramework", "XFFSM", "Unity.InputSystem" }.Contains(a.GetName().Name)))
+                        a.GetName().Name == "Unity.InputSystem"))
                     {
                         Assert.That(IsAllowedReference(assembly.Location, contents, extra, editor), Is.False, assembly.FullName);
+                    }
+
+                    foreach (var name in new[] { "Unrelated.Library.dll", "External.Resources.dll", "External.StateMachine.dll" })
+                    {
+                        var fake = Path.Combine(folder, name);
+                        File.Copy(extra[0], fake, true);
+                        Assert.That(IsAllowedReference(fake, contents, extra, editor), Is.False, fake);
                     }
 
                     Assert.That(IsAllowedReference(typeof(LogAssert).Assembly.Location, contents, extra, editor), Is.False);

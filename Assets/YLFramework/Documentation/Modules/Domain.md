@@ -77,7 +77,7 @@ Skill / Buff / Mission / Equipment 使用各自的 `SkillsConfig`、`BuffsConfig
 新：ProjectSettings/YLFramework/Core/YLFramework.Editor.Buff.BuffSystemSettings.asset
 ```
 
-迁移先验证类型、备份原始字节，再不覆盖地移动与重载；不改写 YAML 或认领外来 XF 设置。新旧并存、类型错误或路径冲突会拒绝；中途失败保留现场，按报错路径处理，不自动覆盖或删除。使用真实旧资产验证，合成夹具不代表所有外部数据已迁移。
+迁移先验证类型、备份原始字节，再不覆盖地移动与重载；不改写 YAML 或认领外部框架设置。新旧并存、类型错误或路径冲突会拒绝；中途失败保留现场，按报错路径处理，不自动覆盖或删除。使用真实旧资产验证，合成夹具不代表所有外部数据已迁移。
 
 ## DomainExcel
 

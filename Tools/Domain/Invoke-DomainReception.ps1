@@ -245,7 +245,8 @@ function Audit-FormalPackage {
     foreach ($guid in $guids) {
         $folder = Join-Path $unpacked $guid; Reject-Link $folder
         $path = [IO.File]::ReadAllText((Join-Path $folder 'pathname'), [Text.Encoding]::UTF8).TrimEnd([char]0, [char]13, [char]10)
-        if (-not $expected.ContainsKey($path) -or $path -match '(?i)(?:^|/)(?:Tests?|Integrations|Packages|StreamingAssets|\.git|\.env|\.mcp)(?:/|\.|$)|XFAB|XFGameFramework|MiniExcel|Editor Enhancers|AcceptanceBuild|(?:secret|credential|private[-_]?key)|\.(?:pfx|p12|pem|key|jks|keystore)$|/(?:bcrypt|ncrypt|crypt32|Newtonsoft\.Json)\.dll$') { throw "Excluded/unexpected package path: $path" }
+        if (-not $expected.ContainsKey($path) -or $path -match '(?i)(?:^|/)(?:Tests?|Integrations|Packages|StreamingAssets|\.git|\.env|\.mcp)(?:/|\.|$)|MiniExcel|Editor Enhancers|AcceptanceBuild|(?:secret|credential|private[-_]?key)|\.(?:pfx|p12|pem|key|jks|keystore)$|/(?:bcrypt|ncrypt|crypt32|Newtonsoft\.Json)\.dll$' -or
+            ($path -match '(?i)\.(dll|so|bundle)$' -and $path -cnotin @('Assets/YLFramework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll','Assets/YLFramework/Runtime/Core/Analyzers/YLFramework.Analyzers.dll'))) { throw "Excluded/unexpected package path: $path" }
         $metaPath = Join-Path $folder 'asset.meta'
         $meta = [IO.File]::ReadAllText($metaPath)
         if ($meta -notmatch '(?m)^guid:\s*([0-9a-f]{32})\s*\r?$' -or $Matches[1] -cne $guid) { throw "Archive GUID mismatch: $path" }

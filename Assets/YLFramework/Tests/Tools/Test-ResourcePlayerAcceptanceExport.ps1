@@ -7,7 +7,12 @@ $root = [IO.Path]::GetFullPath($EvidenceRoot)
 $carrier = (Get-Content -LiteralPath (Join-Path $root 'carrier-location.json') -Raw | ConvertFrom-Json).Carrier
 $identity = Get-Content -LiteralPath (Join-Path $carrier 'source-identity.json') -Raw | ConvertFrom-Json
 $formal = @{}; $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-foreach ($row in $identity | Where-Object { $_.Path.StartsWith('Assets/YLFramework', [StringComparison]::Ordinal) }) {
+$formalRoots = @('Assets/YLFramework/Editor','Assets/YLFramework/Plugins/BouncyCastle','Assets/YLFramework/Prefabs',
+    'Assets/YLFramework/Runtime','Assets/YLFramework/Samples','Assets/YLFramework/Documentation','Assets/YLFramework/LICENSE.md')
+foreach ($row in $identity | Where-Object {
+    $path = $_.Path
+    $path -ceq 'Assets/YLFramework.meta' -or @($formalRoots | Where-Object { $path -ceq $_ -or $path -ceq ($_ + '.meta') -or $path.StartsWith($_ + '/', [StringComparison]::Ordinal) }).Count -gt 0
+}) {
     $formal[$row.Path] = $row
     if ($row.Path.EndsWith('.meta', [StringComparison]::Ordinal)) { $null = $expected.Add($row.Path.Substring(0,$row.Path.Length-5)) }
 }
@@ -45,13 +50,14 @@ foreach ($pair in $records.GetEnumerator()) {
         $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$record['asset'])).ToLowerInvariant()
         if ($sha -cne $formal[$path].Sha256 -or $record['asset'].LongLength -ne $formal[$path].Length) { throw "Package payload differs: $path" }
     } elseif ($record.ContainsKey('asset') -and $record['asset'].Length -ne 0) { throw 'Directory has an unexpected payload.' }
-    if ($path -match '/Tests/|/R810/|^Packages/|/StreamingAssets/|^Temp/|^Library/|XFAB|DOTween\.dll$|/(bcrypt|ncrypt|crypt32|Newtonsoft\.Json)\.dll$|\.(pfx|p12|pem|key)$') { throw "Excluded delivery path: $path" }
+    if ($path -match '/Tests/|/R810/|^Packages/|/StreamingAssets/|^Temp/|^Library/|DOTween\.dll$|/(bcrypt|ncrypt|crypt32|Newtonsoft\.Json)\.dll$|\.(pfx|p12|pem|key)$' -or
+        ($path -match '(?i)\.(dll|so|bundle)$' -and $path -cnotin @('Assets/YLFramework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll','Assets/YLFramework/Runtime/Core/Analyzers/YLFramework.Analyzers.dll'))) { throw "Excluded delivery path: $path" }
 }
-# 原Exporter显式导出六根、LICENSE和AGENTS；其共同父目录身份用于载体，但不是必导出的第七根。
+# Exporter 显式导出六个目录和 LICENSE；其共同父目录身份用于载体，不是额外导出根。
 $required = [Collections.Generic.HashSet[string]]::new($expected,[StringComparer]::Ordinal)
 $null = $required.Remove('Assets/YLFramework')
 if (-not $required.IsSubsetOf($paths)) { throw ('The exact export-root/meta closure is incomplete: ' + (($required | Where-Object { -not $paths.Contains($_) }) -join ', ')) }
-foreach ($required in @('Assets/YLFramework/LICENSE.md','Assets/YLFramework/AGENTS.md','Assets/YLFramework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll',
+foreach ($required in @('Assets/YLFramework/LICENSE.md','Assets/YLFramework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll',
     'Assets/YLFramework/Plugins/BouncyCastle/SOURCE.txt')) {
     if (-not $paths.Contains($required)) { throw "Applicable notice missing: $required" }
 }
@@ -64,7 +70,9 @@ $pe = [System.Reflection.PortableExecutable.PEReader]::new($input)
 try {
     $metadata = [System.Reflection.Metadata.PEReaderExtensions]::GetMetadataReader($pe)
     $references = @($metadata.AssemblyReferences | ForEach-Object { $metadata.GetString($metadata.GetAssemblyReference($_).Name) })
-    if ($references -notcontains 'Newtonsoft.Json' -or $references -notcontains 'BouncyCastle.Cryptography' -or @($references | Where-Object { $_ -match 'UnityEditor|XFAB|Assembly-CSharp|Tests|Tink' }).Count) { throw 'Player Runtime assembly dependency boundary changed.' }
+    if ($references -notcontains 'Newtonsoft.Json' -or $references -notcontains 'BouncyCastle.Cryptography' -or @($references | Where-Object {
+        $_ -cnotmatch '^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$' -or $_ -match 'TestRunner|Tests|Editor|Analyzer'
+    }).Count) { throw 'Player Runtime assembly dependency boundary changed.' }
 } finally { $pe.Dispose(); $input.Dispose() }
 foreach ($notice in @('YLFramework-MIT.md','BouncyCastle-SOURCE.txt','Json.NET-UPM-LICENSE.md','Json.NET-UPM-THIRD-PARTY-NOTICES.md')) {
     if (-not (Test-Path -LiteralPath (Join-Path $build ('Licenses/' + $notice)) -PathType Leaf)) { throw "Player applicable notice missing: $notice" }

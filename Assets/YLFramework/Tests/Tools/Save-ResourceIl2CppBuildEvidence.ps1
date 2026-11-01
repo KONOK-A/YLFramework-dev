@@ -80,7 +80,9 @@ $native = @(foreach ($path in @('GameAssembly.dll','ResourceAcceptance.exe','Uni
     @{ Path=$path; Length=([IO.FileInfo]$file).Length; Sha256=(Hash $file) }
 })
 $runtime = @($assemblies | Where-Object Name -CEQ 'YLFramework.Runtime.dll')
-if ($runtime.Count -ne 1 -or @($runtime[0].References | Where-Object { $_ -match 'UnityEditor|Assembly-CSharp|Tests|XFAB|Tink' }).Count) { throw 'Actual stripped Runtime assembly dependency boundary failed.' }
+if ($runtime.Count -ne 1 -or @($runtime[0].References | Where-Object {
+    $_ -cnotmatch '^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$' -or $_ -match 'TestRunner|Tests|Editor|Analyzer'
+}).Count) { throw 'Actual stripped Runtime assembly dependency boundary failed.' }
 $receipt = @{ Build=$BuildName; Backend=$report.Backend; Unity=$report.Unity; ManagedStripping=$report.ManagedStripping; CppConfiguration=$report.CppConfiguration;
     SourceIdentitySha256=$report.SourceIdentitySha256; FormalSourceFiles=@($snapshot).Count; NativeArtifacts=$native; StrippedFiles=$assemblies; StrippedFileCount=$assemblies.Count; StrippedAssemblyCount=@($assemblies | Where-Object Name -Like '*.dll').Count; GeneratedCppFiles=$cppFiles; Passed=$true;
     Note='ManagedStripped are actual linker outputs, not shipped managed Player DLLs; their hashes need not equal the approved unstripped BC binary. Native GameAssembly/metadata are actual Player artifacts.' }

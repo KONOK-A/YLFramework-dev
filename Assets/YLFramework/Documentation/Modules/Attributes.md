@@ -54,7 +54,7 @@
 
 混值、不同类型的多对象、不可编辑目标、不兼容或损坏的数据明确拒绝；原生解析器不能可靠处理的 ManagedReference、ExposedReference、FixedBufferSize 和 double 也拒绝。`IsCanPaste` 对这些输入返回 `false`，实际复制/粘贴抛出 `InvalidOperationException` 说明原因；Unity 私有 API 缺失或签名变化时抛出包含 Unity 版本与成员信息的 `NotSupportedException`，不静默回退。空 ObjectReference/ExposedReference 的 `GetValueText` 显示 `None`。专项回归位于 `Tests/EditMode/Editor/Core/CoreSerializedPropertyTests.cs`。
 
-这些编辑器功能与下述 Core 使用诊断分属不同消费链。原 XF 生态使用原包特性，不建立跨框架特性桥。
+这些编辑器功能与下述 Core 使用诊断分属不同消费链。外部框架使用自己的特性，不建立跨框架特性桥。
 
 ## Core 使用诊断
 
@@ -160,14 +160,14 @@ IEnumerator WaitForEnd(AudioPlayRequest request)
 - 自有泛型摘要只沿含参数的实例 field、auto-property backing 与构造 BaseType 证明内容位，有限定义图按固定点收敛。`Box<Box<Args>>` 有值槽则报告，phantom/static-only wrapper 不报告；互环无叶不误判，有叶正确传播，未知 metadata 不猜持有。入口不全对象图扫描无关 non-generic 成员；这不是通用泄漏/closure 逃逸检查。
 - YL0005 仅豁免实际 Core 的精确 owner 字段：`LoadViewArgs._pool` 的 private static readonly 真实 `ObjectPool<LoadViewArgs>`、`LoadViewRequest<T>._args` 的 private instance，以及 `PanelManager.PanelOperation.Args` 的 internal instance。后者一对一对应 Module pending 消费者，不是给业务保存参数的公开权限。同名伪类型、其他成员/public/static/错误嵌套或泛型形态不自动豁免。故意契约测试使用声明级局部 pragma，不排除整个 Editor/Test/Core。
 - YL0006 包含 compound/coalesce/inc/dec/deconstruction 各左值叶、ref/out/ref local/ref return 的可写暴露；读取、`in`/`ref readonly`、static 成员和 event subscription 不报。结构体值链写回外层保护成员，引用对象内部 mutation 不当成外层写；保护层级自身仍可修改状态。不追任意被调副作用或 ref 别名后续写入。
-- YL0007 是声明级提示，普通 MonoBehaviour、XF/伪 View、普通 nested helper、static/有参/generic/非 void overload 不报。消息遮蔽可能破坏订阅轮次，使 OnDestroy 的及时关闭延后到兜底扫描；不等于必然永久泄漏，也不改变 Runtime 可见性。
+- YL0007 是声明级提示，普通 MonoBehaviour、非 Core 的 View 或伪同名 View、普通 nested helper、static/有参/generic/非 void overload 不报。消息遮蔽可能破坏订阅轮次，使 OnDestroy 的及时关闭延后到兜底扫描；不等于必然永久泄漏，也不改变 Runtime 可见性。
 - YL0008 不检查 init-only **属性**的构造期约束，不推断 private 扫描、容器配置或依赖是否能解析；显式 field-target 按实际字段检查，包括属性/record 参数的 readonly backing field 与 static 事件字段。`[property: Inject]` 的合法可写或 init 属性不等同于 readonly 字段。YL0009 只匹配真实 Module 的两个泛型方法族，同名业务包装方法不是自动受管入口。
 - YL0010 只看 yield 所直接归属方法/局部函数的非泛型 `System.Collections.IEnumerator` 返回类型和表达式原始静态类型，不把外层协程身份套给内部泛型数据迭代器。自定义调度器可自定义对象等待协议，因此这条规则按标准 Unity 协程解释，不推测调用者意图。
 - object/接口擦除、反射/Activator/dynamic、无约束泛型工厂、所有执行路径和跨过程所有权不保证。错误符号交给编译器，不吞异常或把 analyzer failure 当无诊断；这些 Warning 不是运行时安全边界。
 
 ### Unity 接入与配置
 
-DLL 的 Importer 禁用 Any / Editor / 普通平台，关闭自动 Runtime 引用，仅标为 `RoslynAnalyzer`。它位于 `YLFramework.Runtime` 的 asmdef 范围内；分析范围由 Runtime 及真实引用消费者决定，Editor / Tests / 游戏 / 预定义程序集应按引用图和实际 csc 输入核对。不要复制第二套 DLL 扩大范围，不把 Analyzer 或 Roslyn 依赖添加为 Player Runtime 引用，也不要为启用自有诊断关闭原 XF / Logger 规则。
+DLL 的 Importer 禁用 Any / Editor / 普通平台，关闭自动 Runtime 引用，仅标为 `RoslynAnalyzer`。它位于 `YLFramework.Runtime` 的 asmdef 范围内；分析范围由 Runtime 及真实引用消费者决定，Editor / Tests / 游戏 / 预定义程序集应按引用图和实际 csc 输入核对。不要复制第二套 DLL 扩大范围，不把 Analyzer 或 Roslyn 依赖添加为 Player Runtime 引用，也不要为启用自有诊断关闭其他分析器的规则。
 
 推荐从 `YLFramework/Core/分析器规则` 打开原生 Project Settings 页面，流程为：选择业务程序集、调整单 ID、预览原文/新内容、明确应用。选项为继承、Warning、Error、关闭（None）；**继承是移除本地覆盖，不代表强制恢复 Warning**。页面不会建立第二套 ScriptableObject 设置，也不会写全局 `Assets/Default.ruleset`。
 

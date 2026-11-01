@@ -84,7 +84,7 @@ namespace YLFramework.Singletons
                 }
             }
 
-            //在 Awake 前被 Instance 获取的实例同样需要持久化 (QF v1.0.197 修复)
+            //在 Awake 前被 Instance 获取的实例同样需要持久化（上游 v1.0.197 修复）。
             DontDestroyOnLoad(gameObject);
         }
 

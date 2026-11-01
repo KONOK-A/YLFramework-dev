@@ -7,7 +7,7 @@
 ## 职责与依赖
 
 - `Module` 是唯一业务 owner。`Panel : View` 只扩展独立 UI 会话，复用 Core 的 Model、事件、请求失效与实例归还协议。
-- 主体在 `Runtime/Core/UI/Windows`，根、输入、Tips、适配分别分组；namespace 为 `YLFramework.Core`，程序集为 `YLFramework.Runtime`。主体依赖 UGUI，不要求 XFABManager。
+- 主体在 `Runtime/Core/UI/Windows`，根、输入、Tips、适配分别分组；namespace 为 `YLFramework.Core`，程序集为 `YLFramework.Runtime`。主体依赖 UGUI，不要求外部资源后端。
 - `PanelManager` 是同一个协调器的 partial，不是资源服务或第二套窗口 owner。不存在必须先注册的窗口目录、业务 key、另一套加载器或 UI 池。
 - 普通根 View 使用 `LoadView/LoadViewAsync`，已有实例使用 `AttachView`；根组件实际是 Panel 时必须使用 Panel 入口。普通 View 的 object[]、LoadViewArgs、Model 和生命周期契约不变。
 - Module/Panel/View、参数袋和显示操作均在 Unity 主线程使用。入口见 [`Module.Panels.cs`](../../Runtime/Core/Modules/Module.Panels.cs)，会话与显示契约见 [`Panel.cs`](../../Runtime/Core/UI/Windows/Panel.cs) 和 [`View.cs`](../../Runtime/Core/MVC/Views/View.cs)。
@@ -202,6 +202,6 @@ named/direct 解析到同一 Prefab 可共享 Single，但成功实例的租约�
 
 ## 历史说明
 
-历史集成、资产迁移、输入后端、连续 Play 与 Windows64 IL2CPP 结果见 [融合记录](../IntegrationPlan.md)；详细版本、稳定证据与未验证范围位于源码仓库 `.kilo/plans/1791960935353-ui-panel-redesign.md`。当时实际加载的 Unity/包版本与 manifest 的部分声明不同，不能只据配置文件复用验收结论。
+历史集成、资产迁移、输入后端、连续 Play 与 Windows64 IL2CPP 结果见 [融合记录](../IntegrationPlan.md)；详细版本、稳定证据与未验证范围以对应历史提交为准。当时实际加载的 Unity/包版本与 manifest 的部分声明不同，不能只据配置文件复用验收结论。
 
 历史结果只覆盖对应版本和输入矩阵，不外推到其他平台、自定义输入、零原生泄漏或性能预算。原游戏、Resource 实现与 Workbench 的验证各归其专题。

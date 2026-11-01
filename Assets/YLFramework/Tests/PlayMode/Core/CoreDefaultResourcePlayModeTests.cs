@@ -197,13 +197,10 @@ namespace YLFramework.Core.Tests
 
 #if ENABLE_LEGACY_INPUT_MANAGER
         [UnityTest]
-        [Category("YL.Integration.LegacyXF")]
-        public IEnumerator ExistingXFEventSystemIsReusedWithoutTakingOwnershipOrChangingInput()
+        public IEnumerator ExistingExternalEventSystemIsReusedWithoutTakingOwnershipOrChangingInput()
         {
-            var originalPrefab = Resources.Load<GameObject>("XFGameFramework/EventSystem");
-            Assert.That(originalPrefab, Is.Not.Null);
-            var external = UnityEngine.Object.Instantiate(originalPrefab);
-            _ownedObjects.Add(external); // The fixture owns this XF instance, not PanelManager.
+            var external = new GameObject("ExistingExternalInput", typeof(EventSystem), typeof(StandaloneInputModule));
+            _ownedObjects.Add(external);
             var eventSystem = external.GetComponent<EventSystem>();
             var input = external.GetComponent<StandaloneInputModule>();
             var selected = new GameObject("ExternalSelection");
@@ -245,14 +242,15 @@ namespace YLFramework.Core.Tests
 #endif
 
         [UnityTest]
-        [Category("YL.Integration.LegacyXF")]
-        public IEnumerator ExplicitRootsPreserveNativeConfigurationAndCoexistWithXFCanvas()
+        public IEnumerator ExplicitRootsPreserveNativeConfigurationAlongsideExternalCanvas()
         {
-            var originalPrefab = Resources.Load<GameObject>("XFGameFramework/Canvas");
-            Assert.That(originalPrefab, Is.Not.Null);
-            var original = UnityEngine.Object.Instantiate(originalPrefab);
-            _ownedObjects.Add(original);
-            var originalComponents = original.GetComponents<Component>();
+            var external = new GameObject("ExternalCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler),
+                typeof(GraphicRaycaster));
+            _ownedObjects.Add(external);
+            var externalCanvas = external.GetComponent<Canvas>();
+            externalCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            externalCanvas.sortingOrder = 0;
+            var externalComponents = external.GetComponents<Component>();
             var ui = CreateRoot(order: 23);
             var persistent = CreateRoot(persistent: true, order: 71);
             yield return null;
@@ -278,8 +276,8 @@ namespace YLFramework.Core.Tests
             PanelManager.RegisterRoot(persistent);
             Assert.That(ui.Canvas.sortingOrder, Is.EqualTo(23));
             Assert.That(persistent.Canvas.sortingOrder, Is.EqualTo(71));
-            Assert.That(original.GetComponents<Component>(), Is.EqualTo(originalComponents));
-            Assert.That(original.GetComponent<Canvas>().sortingOrder, Is.Zero);
+            Assert.That(external.GetComponents<Component>(), Is.EqualTo(externalComponents));
+            Assert.That(externalCanvas.sortingOrder, Is.Zero);
             Assert.That(UnityEngine.Object.FindObjectsOfType<EventSystem>(), Has.Length.EqualTo(1));
         }
 

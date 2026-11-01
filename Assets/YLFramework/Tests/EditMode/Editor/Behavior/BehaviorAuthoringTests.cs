@@ -501,7 +501,7 @@ namespace YLFramework.Tests.Extensions.Behavior
                 Assert.That(layers.arraySize, Is.EqualTo(1));
                 Assert.That(layers.GetArrayElementAtIndex(0).FindPropertyRelative("name").stringValue, Is.EqualTo("Gameplay"));
                 Assert.That(layers.GetArrayElementAtIndex(0).FindPropertyRelative("controller").objectReferenceValue, Is.EqualTo(asset));
-                Assert.That(serialized.FindProperty("_runtimeFSMController"), Is.Null, "Unreleased YL assets must not retain the old XF flat-controller schema or its migration path.");
+                Assert.That(serialized.FindProperty("_runtimeFSMController"), Is.Null, "Unreleased YL assets must not retain the old flat-controller schema or its migration path.");
             }
             string path = _folder + "/NamedLayerHost.prefab";
             PrefabUtility.SaveAsPrefabAsset(obj, path);

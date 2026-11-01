@@ -53,11 +53,11 @@ $target = Join-Path $cases 'junction-target'; $null = [IO.Directory]::CreateDire
 $null = New-Item -ItemType Junction -Path (Join-Path $arguments.DeliveryRoot 'ReceiverA') -Target $target
 Expect-Rejected 'Linked receiver' $arguments 'Linked path rejected'
 
-# 从真实候选包删除唯一 AGENTS 根，不修改源文件或既有归档。
+# 从真实候选包删除唯一 LICENSE 根，不修改源文件或既有归档。
 Add-Type -AssemblyName System.Formats.Tar
 $audit = Get-Content -LiteralPath (Join-Path $root ($Package + '.files.json')) -Raw | ConvertFrom-Json
-$agents = @($audit | Where-Object Path -CEQ 'Assets/YLFramework/AGENTS.md')
-if ($agents.Count -ne 1) { throw 'Candidate package audit must identify the exact AGENTS root.' }
+$license = @($audit | Where-Object Path -CEQ 'Assets/YLFramework/LICENSE.md')
+if ($license.Count -ne 1) { throw 'Candidate package audit must identify the exact LICENSE root.' }
 $case = New-Case 'missing-root'
 $badPackage = 'missing-root.unitypackage'
 $inputStream = [IO.File]::OpenRead((Join-Path $root $Package))
@@ -68,7 +68,7 @@ $reader = [System.Formats.Tar.TarReader]::new($decompress)
 $writer = [System.Formats.Tar.TarWriter]::new($compress)
 try {
     while ($null -ne ($item = $reader.GetNextEntry($true))) {
-        if (-not $item.Name.TrimStart('./').StartsWith($agents[0].Guid + '/', [StringComparison]::Ordinal)) { $writer.WriteEntry($item) }
+        if (-not $item.Name.TrimStart('./').StartsWith($license[0].Guid + '/', [StringComparison]::Ordinal)) { $writer.WriteEntry($item) }
     }
 } finally { $writer.Dispose(); $reader.Dispose(); $compress.Dispose(); $decompress.Dispose(); $outputStream.Dispose(); $inputStream.Dispose() }
 Expect-Rejected 'Missing export root' @{ DeliveryRoot=$case; Operation='AuditPackage'; Package=$badPackage } 'formal export closure is incomplete'

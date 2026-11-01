@@ -126,13 +126,15 @@ public static class Stage9DeliveryEditor
         }
         YLFramework.Editor.Core.UIPanelAssetMigration.ValidateAssets();
         var packages = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages();
-        if (packages.Any(p => p.name.StartsWith("com.xf", StringComparison.Ordinal) || p.name.Contains("mcp")))
+        if (packages.Any(p => !p.name.StartsWith("com.unity.modules.", StringComparison.Ordinal) &&
+            !new[] { "com.unity.ugui", "com.unity.nuget.newtonsoft-json" }.Contains(p.name)))
         {
-            throw new InvalidDataException("An original XF or MCP package entered the receiver.");
+            throw new InvalidDataException("A package outside the declared bare-product closure entered the receiver.");
         }
 
         var references = typeof(ResourceSystem).Assembly.GetReferencedAssemblies().Select(x => x.Name).ToArray();
-        if (references.Any(x => x.Contains("XF") || x.Contains("Tests") || x == "Assembly-CSharp"))
+        if (references.Any(x => !Regex.IsMatch(x,
+            @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|UnityEditor(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$") || x.Contains("TestRunner") || x.Contains("Tests")))
         {
             throw new InvalidDataException("Product Editor-profile runtime reverse dependency: " + string.Join(", ", references));
         }
@@ -140,7 +142,8 @@ public static class Stage9DeliveryEditor
         var player = CompilationPipeline.GetAssemblies(AssembliesType.Player).Single(a => a.name == "YLFramework.Runtime");
         var playerReferences = player.compiledAssemblyReferences.Select(Path.GetFileNameWithoutExtension)
             .Concat(player.assemblyReferences.Select(a => a.name)).ToArray();
-        if (playerReferences.Any(x => x.Contains("XF") || x.Contains("UnityEditor") || x.Contains("Tests") || x == "Assembly-CSharp"))
+        if (playerReferences.Any(x => !Regex.IsMatch(x,
+            @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$") || x.Contains("TestRunner") || x.Contains("Tests")))
         {
             throw new InvalidDataException("Product Player-profile runtime reverse dependency: " + string.Join(", ", playerReferences));
         }
@@ -474,40 +477,7 @@ public static class Stage9DeliveryEditor
         }
 
         Directory.CreateDirectory(output);
-        var optional = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().SingleOrDefault(p => p.name == "com.xfkj.xfgameframework.loggersystem");
-        JObject optionalEvidence = null;
-        if (optional != null)
-        {
-            var artifact = JObject.Parse(File.ReadAllText(Path.Combine(Delivery, "Optional/logger-final-receipt.json")));
-            if (optional.version != "1.0.1" || optional.source.ToString() != "LocalTarball" || Sha((string)artifact["Artifact"]) != (string)artifact["Sha256"])
-            {
-                throw new InvalidDataException("Optional Logger must come from the exact separately audited local tarball.");
-            }
-
-            foreach (var item in artifact["Files"])
-            {
-                if (Sha(Path.Combine(optional.resolvedPath, (string)item["Path"])) != (string)item["Sha256"])
-                {
-                    throw new InvalidDataException("Optional Logger loaded bytes differ from the fixed artifact: " + item["Path"]);
-                }
-            }
-
-            optionalEvidence = JObject.FromObject(new
-            {
-                optional.name,
-                optional.version,
-                Source = optional.source.ToString(),
-                optional.packageId,
-                optional.resolvedPath,
-                ArtifactSha256 = (string)artifact["Sha256"],
-                RequiredByProduct = false
-            });
-        }
-        var scene = EditorSceneManager.OpenScene(Root + "/Bootstrap.unity", OpenSceneMode.Single);
-        var consumer = Object.FindObjectOfType<Stage9DeliveryProbe>();
-        consumer.optionalLogger = optional != null;
-        EditorUtility.SetDirty(consumer);
-        EditorSceneManager.SaveScene(scene, Root + "/Bootstrap.unity");
+        EditorSceneManager.OpenScene(Root + "/Bootstrap.unity", OpenSceneMode.Single);
         PlayerSettings.companyName = Path.GetFileName(Delivery);
         PlayerSettings.productName = Path.GetFileName(Project) + "-" + name;
         PlayerSettings.SetApiCompatibilityLevel(BuildTargetGroup.Standalone, ApiCompatibilityLevel.NET_Standard);
@@ -518,6 +488,9 @@ public static class Stage9DeliveryEditor
             PlayerSettings.SetIl2CppCompilerConfiguration(BuildTargetGroup.Standalone, Il2CppCompilerConfiguration.Release);
         }
 
+        var ownerSha = Sha(Path.Combine(Project, "stage9-owner.json"));
+        var templatePaths = new[] { Root + "/Editor/Stage9DeliveryEditor.cs", Root + "/Stage9DeliveryProbe.cs", Root + "/Stage9DeliveryPanel.cs" };
+        var templateHashes = JObject.FromObject(templatePaths.ToDictionary(Path.GetFileNameWithoutExtension, Sha));
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
             scenes = new[] { Root + "/Bootstrap.unity", Root + "/Stage9Neutral.unity" },
@@ -525,6 +498,11 @@ public static class Stage9DeliveryEditor
             target = BuildTarget.StandaloneWindows64,
             options = BuildOptions.None
         });
+        if (ownerSha != Sha(Path.Combine(Project, "stage9-owner.json")) ||
+            templatePaths.Any(path => Sha(path) != (string)templateHashes[Path.GetFileNameWithoutExtension(path)]))
+        {
+            throw new InvalidDataException("Build owner or templates changed during the actual native build; preserve the output without claiming it.");
+        }
         var licenses = Path.Combine(output, "Licenses");
         Directory.CreateDirectory(licenses);
         foreach (var path in new[] { "Assets/YLFramework/LICENSE.md",
@@ -544,13 +522,11 @@ public static class Stage9DeliveryEditor
                 }
             }
         }
-        if (optional != null)
-        {
-            File.Copy(Path.Combine(optional.resolvedPath, "LICENSE"), Path.Combine(licenses, "Optional-LoggerSystem-MIT-LICENSE.txt"));
-        }
-
         var receipt = new JObject
         {
+            ["Schema"] = "Stage9NativeBuild-v2",
+            ["OwnerSha256"] = ownerSha,
+            ["TemplateSha256"] = templateHashes,
             ["Result"] = report.summary.result.ToString(),
             ["Errors"] = report.summary.totalErrors,
             ["Warnings"] = report.summary.totalWarnings,
@@ -559,7 +535,6 @@ public static class Stage9DeliveryEditor
             ["Backend"] = backend.ToString(),
             ["Stripping"] = PlayerSettings.GetManagedStrippingLevel(BuildTargetGroup.Standalone).ToString(),
             ["BuildGuid"] = report.summary.guid.ToString(),
-            ["OptionalLogger"] = optionalEvidence,
             ["Unity"] = Application.unityVersion,
             ["Project"] = Project,
             ["Pid"] = System.Diagnostics.Process.GetCurrentProcess().Id,

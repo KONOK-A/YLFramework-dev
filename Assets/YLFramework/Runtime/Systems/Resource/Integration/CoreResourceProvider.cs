@@ -32,7 +32,7 @@ namespace YLFramework.Resource
         }
     }
 
-    /// <summary>Core 的唯一正式资源后端；不读取 XF 设置，不持有第二份资源表或实例池。</summary>
+    /// <summary>Core 的唯一正式资源后端；只消费显式资源配置，不持有第二份资源表或实例池。</summary>
     public sealed class CoreResourceProvider : ICoreResourceProvider
     {
         private readonly ResourceSystem _owner;

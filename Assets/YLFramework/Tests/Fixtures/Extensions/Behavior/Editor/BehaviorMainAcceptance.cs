@@ -254,7 +254,10 @@ namespace YLFramework.Behavior.Acceptance
             {
                 foreach (string reference in item.references)
                 {
-                    if (new[] { "XFFSM", "XFGameFramework", "XFAB", "EPPlus" }.Any(part => reference.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0))
+                    var referenceName = new AssemblyName(reference).Name;
+                    if (!new[] { "mscorlib", "netstandard", "System", "System.Core", "Newtonsoft.Json", "BouncyCastle.Cryptography", names[0] }
+                        .Contains(referenceName) && !referenceName.StartsWith("UnityEngine.", StringComparison.Ordinal) &&
+                        !referenceName.StartsWith("UnityEditor.", StringComparison.Ordinal))
                     {
                         errors.Add(item.name + " -> " + reference);
                     }

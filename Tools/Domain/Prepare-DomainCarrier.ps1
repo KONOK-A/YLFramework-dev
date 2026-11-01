@@ -66,7 +66,7 @@ Copy-Item -LiteralPath (Join-Path $fixture 'DomainPlayerProbe.cs.txt') -Destinat
 Copy-Item -LiteralPath (Join-Path $fixture 'DomainFixtureAuthoring.cs.txt') -Destination (Join-Path $target 'Assets/DomainFixture/Editor/DomainFixtureAuthoring.cs')
 Copy-Item -LiteralPath (Join-Path $fixture 'link.xml.txt') -Destination (Join-Path $target 'Assets/DomainFixture/link.xml')
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'DomainCarrierBootstrap.cs.txt') -Destination (Join-Path $target 'Assets/DomainFixture/Editor/DomainCarrierBootstrap.cs')
-[IO.File]::WriteAllText((Join-Path $target 'domain-carrier.json'), (@{ owner = $owner; sourceHead = (& git -C $owner rev-parse HEAD); createdUtc = [DateTime]::UtcNow.ToString('o'); sourceFiles = $records; noSourceLibraryCopied = $true; noXF = $true } | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $target 'domain-carrier.json'), (@{ owner = $owner; sourceHead = (& git -C $owner rev-parse HEAD); createdUtc = [DateTime]::UtcNow.ToString('o'); sourceFiles = $records; noSourceLibraryCopied = $true; declaredPackages = @($dependencies.Keys) } | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 if ($BCommit) {
     if ($BCommit -notmatch '^[0-9a-f]{7,40}$') { throw 'Unsafe B commit.' }
     $exact = & git -C $owner rev-parse $BCommit
@@ -88,4 +88,4 @@ if ($BCommit) {
     if ((Get-FileHash -LiteralPath $mini -Algorithm SHA256).Hash.ToLowerInvariant() -ne '0a49b66224bef9fdcec12800e4660267a993b1ece87727d9fe15c7dabf58ba1e') { throw 'Pinned MiniExcel mismatch.' }
     [IO.File]::WriteAllText((Join-Path $target 'B-input-commit.txt'), $exact + "`n", [Text.UTF8Encoding]::new($false))
 }
-"Prepared independent carrier=$target sourceFiles=$($records.Count). Product source and metadata copied; no original game, XF, MCP, PackageCache or Library copied."
+"Prepared independent carrier=$target sourceFiles=$($records.Count). Only declared product/test sources and metadata copied; no host game, SDK, MCP, PackageCache or Library copied."

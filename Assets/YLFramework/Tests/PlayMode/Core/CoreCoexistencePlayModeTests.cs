@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using NUnit.Framework;
@@ -14,13 +13,9 @@ namespace YLFramework.Core.Tests
     public class CoreCoexistencePlayModeTests
     {
         [UnityTest]
-        [Category("YL.Integration.LegacyXF")]
-        public IEnumerator RetiredLogUtilLeavesNoGlobalCallbacksOrFileSideEffectsAndOriginalTypeStillCoexists()
+        public IEnumerator RetiredLogUtilLeavesNoGlobalCallbacksOrFileSideEffects()
         {
             Assert.That(typeof(Module).Assembly.GetType("YLFramework.Core.LogUtil"), Is.Null);
-            var original = AppDomain.CurrentDomain.GetAssemblies().Single(a => a.GetName().Name == "XFGameFramework");
-            // 只读取类型身份；不能触碰原包惰性日志入口而触发订阅、写盘或历史文件清理。
-            Assert.That(original.GetType("XFGameFramework.LogUtil"), Is.Not.Null);
             var oldDirectory = Path.Combine(Application.temporaryCachePath, "Logs");
             var previousLogs = Snapshot(oldDirectory);
             var ylDirectory = Path.Combine(Application.temporaryCachePath, "YLFramework", "Core", "Logs");

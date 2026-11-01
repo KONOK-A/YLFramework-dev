@@ -310,7 +310,7 @@ namespace YLFramework.Events
         }
     }
 
-    /// <summary>七参数实例事件，保留 XF 的多参数能力，不要求将消息强制改成 DTO。</summary>
+    /// <summary>七参数实例事件，不要求将多参数消息强制改成 DTO。</summary>
     /// <remarks>重复注册、同步快照、异常与解绑责任遵循无参 EventChannel 的规则。</remarks>
     public class EventChannel<T1, T2, T3, T4, T5, T6, T7> : EventChannelBase, IEventSource
     {

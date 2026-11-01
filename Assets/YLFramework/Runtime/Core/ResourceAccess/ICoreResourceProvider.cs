@@ -187,7 +187,7 @@ namespace YLFramework.Core
         CoreResourceRequest<CoreSceneResult> LoadSceneAsync(string projectId, string address, LoadSceneMode mode);
     }
 
-    /// <summary>显式主线程绑定槽，无默认后端、无 XFAB 回退、无加载表。</summary>
+    /// <summary>显式主线程绑定槽，无默认后端、隐式回退或加载表。</summary>
     public static class CoreResourceAccess
     {
         private static ICoreResourceProvider _provider;

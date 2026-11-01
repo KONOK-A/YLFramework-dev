@@ -28,7 +28,7 @@ namespace YLFramework.Core.Examples
     /// <summary>业务模块入口；资源会话由应用先行启动，本脚本不负责初始化全局资源服务。</summary>
     public class {ModuleName} : global::YLFramework.Core.SingletonModule<{ModuleName}>
     {
-        // ProjectName 是正式 YL Resource ProjectId，不是 XFAB 项目名或 BundleName。
+        // ProjectName 是正式 YL Resource ProjectId，不是外部项目名或 BundleName。
         // 应用先通过 ResourceConfiguration.Create 和 ResourceStartup 显式启动，选择 bindCore:true，
         // StartAsync 成功后再启动本 Module；Module 不自行初始化资源或覆盖全局 Provider。
         // 完整配置、同一业务的 Simulation/Bundle 和 Core/Audio 可运行例见 Samples/ResourceStartup。

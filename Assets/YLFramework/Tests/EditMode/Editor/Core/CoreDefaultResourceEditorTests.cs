@@ -443,7 +443,8 @@ namespace YLFramework.Core.Editor.Tests
                     Assert.That(GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(transform.gameObject), Is.Zero);
                     foreach (var component in transform.GetComponents<Component>())
                     {
-                        Assert.That(component.GetType().Assembly.GetName().Name, Does.Not.StartWith("XFGameFramework"));
+                        CollectionAssert.Contains(new[] { typeof(UIRootContext).Assembly,
+                            typeof(EventSystem).Assembly, typeof(Transform).Assembly, typeof(Canvas).Assembly }, component.GetType().Assembly);
                     }
                 }
                 if (name == "Canvas")
@@ -570,18 +571,18 @@ namespace YLFramework.Core.Editor.Tests
         [TestCase("Assets/Games/MainModule/Resources/Canvas.prefab")]
         [TestCase("Assets/Resources/Canvas.prefab")]
         [TestCase("Assets/Resources/EventSystem.prefab")]
-        [TestCase("Assets/Resources/XFGameFramework/Canvas.prefab")]
-        [TestCase("Assets/Resources/XFGameFramework/EventSystem.prefab")]
-        [TestCase("Packages/com.xfkj.xfgameframework/Runtime/Resources/Canvas.prefab")]
+        [TestCase("Assets/Resources/ExternalUI/Canvas.prefab")]
+        [TestCase("Assets/Resources/ExternalUI/EventSystem.prefab")]
+        [TestCase("Packages/com.example.ui/Runtime/Resources/Canvas.prefab")]
         [TestCase("Assets/YLFramework/Editor/Help")]
         [TestCase("Assets/YLFramework/Editor/Core")]
-        [TestCase("Assets/YLFramework/Runtime/XFMain")]
+        [TestCase("Assets/YLFramework/Runtime/Unrelated")]
         [TestCase("Assets/YLFramework/Runtime")]
         [TestCase("Assets/YLFramework")]
         [TestCase("Assets/YLFramework/Runtime/Core/Resources/YLFramework/CoreExtra")]
         [TestCase("Assets/YLFramework/Runtime/Core/Resources/YLFramework/Core/Unrelated.asset")]
         [TestCase("Assets/YLFramework/Runtime/Core/Resources/YLFramework/Core/Canvas.prefab.backup")]
-        public void DeletionCallbackDoesNotBlockGameOriginalXFHelpOrUnrelatedAssets(string path)
+        public void DeletionCallbackDoesNotBlockGameExternalUIHelpOrUnrelatedAssets(string path)
         {
             Assert.That(ListenerFileChange.IsProtectedDefaultResource(path), Is.False);
             Assert.That(ListenerFileChange.OnWillDeleteAsset(path, RemoveAssetOptions.DeleteAssets),

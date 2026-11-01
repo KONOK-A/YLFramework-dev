@@ -328,6 +328,144 @@ try {
         }
     }
     if ($Group -in @('All', 'Results')) {
+        Test-Case 'Production Runtime graph rejects undeclared dependencies without a vendor blacklist' {
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Test-YLAssemblyLayout.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'Assembly boundary script must parse.'
+            $guard = $ast.Find({ param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Clauses[0].Item1.Extent.Text -ceq '$Group -in @(''Player'', ''All'')' }, $true)
+            Assert-That ($null -ne $guard) 'The production Player graph guard is missing.'
+            $body = [scriptblock]::Create(($guard.Clauses[0].Item2.Statements.Extent.Text -join "`n"))
+            $allowed = @('mscorlib', 'netstandard', 'System.Core', 'UnityEngine.CoreModule', 'UnityEngine.UI', 'Microsoft.Win32.Primitives', 'Microsoft.Win32.Primitives.dll', 'Newtonsoft.Json.dll', 'BouncyCastle.Cryptography.dll')
+            foreach ($extra in @('', 'ThirdParty.Runtime', 'MiniExcel.dll', 'Microsoft.Win32.Unrelated.dll', 'Microsoft.Win32.Primitives.Extra', 'Microsoft.Win32.Primitives.Extra.dll', 'UnityEditor.CoreModule', 'YLFramework.Editor', 'YLFramework.Tests.PlayMode', 'YLFramework.Runtime.Extra')) {
+                $graph = [pscustomobject]@{ player = @([pscustomobject]@{ name = 'YLFramework.Runtime'; sources = @('Assets/YLFramework/Runtime/Product.cs'); references = $allowed + @($extra | Where-Object { $_ }); precompiled = @() }) }
+                $violations = @(& { param($graph, $body) $failures = [Collections.Generic.List[string]]::new(); . $body; $failures.ToArray() } $graph $body)
+                Assert-That (($violations.Count -eq 0) -eq ($extra -ceq '')) "Runtime graph dependency admission is wrong for '$extra'."
+            }
+        }
+
+        Test-Case 'Optional Equipment export binds product license bytes and the exact Editor closure' {
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../../Equipment/Invoke-EquipmentReception.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'Equipment reception script must parse.'
+            foreach ($name in @('Hash', 'Assert-EquipmentOptionalExport')) {
+                $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+                Assert-That ($null -ne $definition) "Optional export validator is missing: $name"
+                . ([scriptblock]::Create($definition.Extent.Text))
+            }
+            Add-Type -AssemblyName System.Formats.Tar
+            $fixture = Join-Path $sandbox 'EquipmentOptional'
+            $null = [IO.Directory]::CreateDirectory($fixture)
+            $inputs = [ordered]@{
+                'Assets/YLFramework/Integrations/Excel/Editor' = $null
+                'Assets/YLFramework/Integrations/Excel/Editor/MiniExcel.dll' = 'fixture binary'
+                'Assets/YLFramework/Integrations/Excel/Editor/MiniExcel-LICENSE.txt' = 'fixture dependency license'
+                'Assets/YLFramework/Integrations/Excel/Editor/Dependencies.json' = '{}'
+                'Assets/YLFramework/Integrations/DomainExcel/Editor' = $null
+                'Assets/YLFramework/Integrations/DomainExcel/Editor/DomainExcelCommands.cs' = 'class Commands {}'
+                'Assets/YLFramework/LICENSE.md' = 'fixture product copyright and MIT license'
+            }
+            $identities = @{}; $index = 0
+            foreach ($path in $inputs.Keys) {
+                $absolute = Join-Path $fixture $path
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($absolute))
+                if ($null -eq $inputs[$path]) { $null = [IO.Directory]::CreateDirectory($absolute) }
+                else { [IO.File]::WriteAllText($absolute, $inputs[$path]) }
+                $identities[$path] = (++$index).ToString('x32')
+                [IO.File]::WriteAllText(($absolute + '.meta'), "guid: $($identities[$path])`n")
+            }
+            foreach ($fault in @('none', 'missing-license', 'changed-license', 'changed-meta', 'extra-root-file', 'extra-editor-file', 'missing-editor-source', 'duplicate-path')) {
+                $package = Join-Path $fixture ($fault + '.unitypackage')
+                $stream = [IO.File]::Create($package)
+                $gzip = [IO.Compression.GZipStream]::new($stream, [IO.Compression.CompressionMode]::Compress)
+                $writer = [System.Formats.Tar.TarWriter]::new($gzip, $true)
+                try {
+                    $members = @($inputs.Keys)
+                    if ($fault -ceq 'extra-root-file') { $members += 'Assets/YLFramework/NOTICE.md' }
+                    if ($fault -ceq 'extra-editor-file') { $members += 'Assets/YLFramework/Integrations/Excel/Editor/Foreign.cs' }
+                    if ($fault -ceq 'duplicate-path') { $members += 'Assets/YLFramework/LICENSE.md' }
+                    foreach ($path in $members) {
+                        if (($fault -ceq 'missing-license' -and $path -ceq 'Assets/YLFramework/LICENSE.md') -or
+                            ($fault -ceq 'missing-editor-source' -and $path.EndsWith('/DomainExcelCommands.cs'))) { continue }
+                        $guid = if ($identities.ContainsKey($path)) { $identities[$path] } else { 'ffffffffffffffffffffffffffffffff' }
+                        if ($fault -ceq 'duplicate-path' -and $path -ceq $members[-1]) { $guid = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' }
+                        $meta = if ($identities.ContainsKey($path)) { [IO.File]::ReadAllBytes((Join-Path $fixture ($path + '.meta'))) } else { [Text.Encoding]::UTF8.GetBytes("guid: $guid`n") }
+                        if ($fault -ceq 'changed-meta' -and $path -ceq 'Assets/YLFramework/LICENSE.md') { $meta = [Text.Encoding]::UTF8.GetBytes("guid: $guid`nchanged: true`n") }
+                        $data = if ($inputs.Contains($path) -and $null -ne $inputs[$path]) { [string]$inputs[$path] } else { '' }
+                        if ($fault -ceq 'changed-license' -and $path -ceq 'Assets/YLFramework/LICENSE.md') { $data = 'not the actual license' }
+                        foreach ($entry in @(@('pathname', [Text.Encoding]::UTF8.GetBytes($path)), @('asset.meta', $meta), @('asset', [Text.Encoding]::UTF8.GetBytes($data)))) {
+                            $record = [System.Formats.Tar.PaxTarEntry]::new([System.Formats.Tar.TarEntryType]::RegularFile, ($guid + '/' + $entry[0]))
+                            $record.DataStream = [IO.MemoryStream]::new([byte[]]$entry[1], $false)
+                            try { $writer.WriteEntry($record) } finally { $record.DataStream.Dispose() }
+                        }
+                    }
+                } finally { $writer.Dispose(); $gzip.Dispose(); $stream.Dispose() }
+                if ($fault -ceq 'none') {
+                    $paths = @(Assert-EquipmentOptionalExport $package $fixture)
+                    Assert-That ($paths.Count -eq 7 -and $paths -ccontains 'Assets/YLFramework/LICENSE.md') 'Complete optional export was not accepted.'
+                } else {
+                    Assert-Rejected { Assert-EquipmentOptionalExport $package $fixture } 'Optional|optional|GUID|Meta|Payload|Duplicate|Unexpected'
+                }
+            }
+        }
+
+        Test-Case 'Stage9 native collection rejects unbound reports, stale owners and template drift' {
+            $controller = Join-Path $PSScriptRoot '../../../Assets/YLFramework/Tests/Tools/Invoke-Stage9Delivery.ps1'
+            foreach ($operation in @('InstallLogger', 'UpdateLogger')) {
+                Assert-Rejected { & $controller -DeliveryRoot $sandbox -Operation $operation } 'ValidateSet|validate argument|belong to the set'
+            }
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile($controller, [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'Stage9 controller must parse.'
+            foreach ($name in @('Hash', 'Assert-Stage9BuildBinding')) {
+                $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+                Assert-That ($null -ne $definition) "Native build validator is missing: $name"
+                . ([scriptblock]::Create($definition.Extent.Text))
+            }
+            $root = Join-Path $sandbox 'Stage9Binding'
+            $project = Join-Path $root 'Receiver'
+            $templateRoot = Join-Path $root 'Sources'
+            $Package = 'Product.unitypackage'
+            $null = [IO.Directory]::CreateDirectory((Join-Path $project 'Assets/Stage9/Editor'))
+            $null = [IO.Directory]::CreateDirectory($templateRoot)
+            $owner = Join-Path $project 'stage9-owner.json'
+            [IO.File]::WriteAllText($owner, 'owned fixture identity')
+            [IO.File]::WriteAllText((Join-Path $root $Package), 'fixture package bytes')
+            $hashes = @{}; $inputs = @($owner, (Join-Path $root $Package))
+            foreach ($name in @('Stage9DeliveryEditor','Stage9DeliveryProbe','Stage9DeliveryPanel')) {
+                $source = Join-Path $templateRoot ($name + '.cs.txt')
+                $installed = Join-Path $project ('Assets/Stage9/' + $(if ($name.EndsWith('Editor')) { 'Editor/' } else { '' }) + $name + '.cs')
+                [IO.File]::WriteAllText($source, "fixture $name")
+                [IO.File]::Copy($source, $installed)
+                $hashes[$name] = Hash $source
+                $inputs += @($source, $installed)
+            }
+            $report = [pscustomobject]@{ Schema = 'Stage9NativeBuild-v2'; Project = $project; OwnerSha256 = (Hash $owner); PackageSha256 = (Hash (Join-Path $root $Package)); TemplateSha256 = [pscustomobject]$hashes }
+            Assert-Stage9BuildBinding $report $project $templateRoot
+            $old = $report | Select-Object -Property * -ExcludeProperty Schema
+            Assert-Rejected { Assert-Stage9BuildBinding $old $project $templateRoot } 'Build binding'
+            $report.Schema = 'Stage9NativeBuild-v1'
+            Assert-Rejected { Assert-Stage9BuildBinding $report $project $templateRoot } 'Build binding'
+            $report.Schema = 'Stage9NativeBuild-v2'
+            foreach ($field in @('Schema','Project','OwnerSha256','PackageSha256','TemplateSha256')) {
+                $invalid = $report | Select-Object -Property *
+                $invalid.$field = $true
+                Assert-Rejected { Assert-Stage9BuildBinding $invalid $project $templateRoot } 'Build binding'
+            }
+            foreach ($name in $hashes.Keys) {
+                $invalid = $report | Select-Object -Property *
+                $invalid.TemplateSha256 = $report.TemplateSha256 | Select-Object -Property *
+                $invalid.TemplateSha256.$name = $true
+                Assert-Rejected { Assert-Stage9BuildBinding $invalid $project $templateRoot } 'Build binding'
+            }
+            foreach ($path in $inputs) {
+                $original = [IO.File]::ReadAllText($path)
+                [IO.File]::WriteAllText($path, $original + ' drift')
+                Assert-Rejected { Assert-Stage9BuildBinding $report $project $templateRoot } 'Build binding'
+                [IO.File]::WriteAllText($path, $original)
+            }
+            Assert-Stage9BuildBinding $report $project $templateRoot
+        }
+
         Test-Case 'Unity response identity rejects boolean and noninteger wire fields' {
             $request = [pscustomobject]@{ hostId = 'host'; inputHash = 'hash'; action = 'Run'; mode = 'EditMode' }
             $valid = @{ schemaVersion = 1; hostId = 'host'; inputHash = 'hash'; status = 'Completed'; unityVersion = '2022.3.62f3' }

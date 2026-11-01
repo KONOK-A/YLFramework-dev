@@ -113,8 +113,9 @@ public sealed class Stage9SceneLoopProbe : MonoBehaviour
             throw new InvalidOperationException("Expected exact Windows64 non-Development control Player.");
         }
 
-        if (AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name.StartsWith("YLFramework", StringComparison.Ordinal) ||
-            a.GetName().Name.StartsWith("XF", StringComparison.Ordinal) || a.GetName().Name.IndexOf("MCP", StringComparison.OrdinalIgnoreCase) >= 0))
+        if (AppDomain.CurrentDomain.GetAssemblies().Any(a => !System.Text.RegularExpressions.Regex.IsMatch(a.GetName().Name,
+            @"^(?:Assembly-CSharp|mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|Mono(?:\.[A-Za-z0-9_]+)*|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity(?:\.[A-Za-z0-9_]+)+|Newtonsoft\.Json)$") ||
+            a.GetName().Name.Contains("Tests") || a.GetName().Name.Contains("TestRunner")))
         {
             throw new InvalidOperationException("Pure Unity control loaded product or host assemblies.");
         }

@@ -141,7 +141,7 @@ private void OnDisable() => _background.Cancel();
 - 对象执行器与延迟回收驱动仍独立推进；全局消息、执行器和回收之间不保证执行全序。公共宿主被外部销毁或停用时不自动恢复既有工作；共享更新源不构成性能提升结论。
 - 对象执行器、当前场景宿主、跨场景全局宿主保留独立生命周期；不能用 TimerScope 清理 Action，也不将 Action Delay 改成 Timer 包装。
 - internal `ActionPool<T>` 无缓存数量上限，模块外不可配置，组合 YL 池并以 LIFO 复用；回收队列、回收标记与租约由 Action 管理。同一动作不能同时交给两个执行器；归还后不能继续使用原始动作或控制器引用。
-- [`ScreenTransitionCanvas.prefab`](../../Runtime/Systems/Action/Resources/ActionKit/ScreenTransitionCanvas.prefab) 随模块归位，Resources key 为 `ActionKit/ScreenTransitionCanvas`；菜单 `YLFramework/Action/创建屏幕过渡资源` 创建该资源。不新增 YL Resource / XFAB Loader。
+- [`ScreenTransitionCanvas.prefab`](../../Runtime/Systems/Action/Resources/ActionKit/ScreenTransitionCanvas.prefab) 随模块归位，Resources key 为 `ActionKit/ScreenTransitionCanvas`；菜单 `YLFramework/Action/创建屏幕过渡资源` 创建该资源。不新增 ResourceSystem 或外部资源后端的 Loader。
 
 ## 测试与帮助
 
@@ -158,4 +158,4 @@ private void OnDisable() => _background.Cancel();
 
 ## 历史说明
 
-集成与历史验证范围见 [融合记录](../IntegrationPlan.md)。详细方案位于源码仓库 `.kilo/plans/qf-to-xf/03-actionkit-implementation.md` 与 `.kilo/plans/xf-yl-2.3-update.md`，不是导出包运行依赖。
+集成与历史验证范围见 [融合记录](../IntegrationPlan.md)。详细方案保留在 Git 历史中，不是导出包运行依赖。

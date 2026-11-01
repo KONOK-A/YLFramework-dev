@@ -35,6 +35,8 @@ namespace YLFramework.Tests.Audio
             Assert.IsNull(AudioKit.CurrentSettings, "Creating help must not initialize Settings.");
             Assert.AreEqual(9, module.Guides.Length);
             var overview = module.Guides.Single(page => page.Id == "overview");
+            Assert.That(overview.RelatedTypes.All(type => type.Assembly == typeof(AudioKit).Assembly), Is.True);
+            StringAssert.Contains("直接复用 YL 池、Binding 和 Events", overview.SearchText);
             foreach (var contract in new[] { "AudioKit.PlayMusic(musicClip)", "AudioKit.PlayVoice(voiceClip)", "AudioKit.PlaySound(soundClip)",
                          "AudioMusicPlayer", "Button.onClick", "AudioEmitter.Play", "Settings Slider", "SetValueWithoutNotify", "AudioListener",
                          "无需初始化", "MusicDefaults", "Defaults.Loop=false", "Volume=0", "Pitch=0", "不自动改 true",

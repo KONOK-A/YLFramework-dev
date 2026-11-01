@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Compilation;
@@ -15,6 +16,76 @@ namespace YLFramework.Tests
         private const string ScenePath = "Assets/Scenes/YLFrameworkDev.unity";
         private const string FrameworkPrefabPath = "Assets/YLFramework/Prefabs/YLFramework.prefab";
         private const string GameRoot = "Assets/Games/MainModule";
+        private static readonly string[] _allowedPackageNames =
+        {
+            "com.code-philosophy.hybridclr", "com.ivanmurzak.unity.mcp", "com.ivanmurzak.unity.mcp.animation",
+            "com.ivanmurzak.unity.mcp.cinemachine", "com.ivanmurzak.unity.mcp.inputsystem", "com.ivanmurzak.unity.mcp.probuilder",
+            "com.ivanmurzak.unity.mcp.tilemap", "com.ivanmurzak.unity.mcp.timeline", "extensions.unity.playerprefsex",
+            "com.unity.2d.animation", "com.unity.2d.aseprite", "com.unity.2d.common", "com.unity.2d.pixel-perfect",
+            "com.unity.2d.psdimporter", "com.unity.2d.sprite", "com.unity.2d.spriteshape", "com.unity.2d.tilemap",
+            "com.unity.2d.tilemap.extras", "com.unity.burst", "com.unity.cinemachine", "com.unity.collections",
+            "com.unity.ext.nunit", "com.unity.feature.2d", "com.unity.ide.rider", "com.unity.ide.visualstudio",
+            "com.unity.inputsystem", "com.unity.mathematics", "com.unity.nuget.newtonsoft-json", "com.unity.probuilder",
+            "com.unity.render-pipelines.core", "com.unity.render-pipelines.universal", "com.unity.render-pipelines.universal-config",
+            "com.unity.searcher", "com.unity.settings-manager", "com.unity.shadergraph", "com.unity.splines",
+            "com.unity.test-framework", "com.unity.timeline", "com.unity.ugui", "com.unity.visualscripting",
+            "com.unity.modules.ai", "com.unity.modules.androidjni", "com.unity.modules.animation", "com.unity.modules.assetbundle",
+            "com.unity.modules.audio", "com.unity.modules.cloth", "com.unity.modules.director", "com.unity.modules.imageconversion",
+            "com.unity.modules.imgui", "com.unity.modules.jsonserialize", "com.unity.modules.particlesystem", "com.unity.modules.physics",
+            "com.unity.modules.physics2d", "com.unity.modules.screencapture", "com.unity.modules.subsystems", "com.unity.modules.terrain",
+            "com.unity.modules.terrainphysics", "com.unity.modules.tilemap", "com.unity.modules.ui", "com.unity.modules.uielements",
+            "com.unity.modules.umbra", "com.unity.modules.unityanalytics", "com.unity.modules.unitywebrequest",
+            "com.unity.modules.unitywebrequestassetbundle", "com.unity.modules.unitywebrequestaudio",
+            "com.unity.modules.unitywebrequesttexture", "com.unity.modules.unitywebrequestwww", "com.unity.modules.vehicles",
+            "com.unity.modules.video", "com.unity.modules.vr", "com.unity.modules.wind", "com.unity.modules.xr"
+        };
+
+        [Test]
+        public void DevelopmentHostDeclaresOnlyApprovedPackageDependencies()
+        {
+            var dependencies = (JObject)JObject.Parse(File.ReadAllText("Packages/manifest.json"))["dependencies"];
+            Assert.That(dependencies, Is.Not.Null);
+            Assert.That(dependencies.Properties().Select(property => property.Name), Is.SubsetOf(_allowedPackageNames));
+            Assert.That((string)dependencies["com.unity.nuget.newtonsoft-json"], Is.EqualTo("3.2.1"));
+
+            var packages = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages();
+            Assert.That(packages.Select(package => package.name), Is.SubsetOf(_allowedPackageNames));
+            var jsonPackage = packages.Single(package => package.name == "com.unity.nuget.newtonsoft-json");
+            Assert.That(jsonPackage.version, Is.EqualTo("3.2.1"));
+            Assert.That(jsonPackage.isDirectDependency, Is.True);
+            Assert.That(Directory.GetDirectories("Packages"), Is.Empty, "The development host has no embedded package overrides.");
+        }
+
+        [Test]
+        public void DevelopmentHostResourcesAndSettingsHaveExplicitOwners()
+        {
+            Assert.That(Directory.GetFiles("Assets/Resources", "*", SearchOption.AllDirectories)
+                .Select(path => path.Replace('\\', '/')), Is.SubsetOf(new[]
+                {
+                    "Assets/Resources/DOTweenSettings.asset", "Assets/Resources/DOTweenSettings.asset.meta"
+                }));
+            var allowedSettings = new[]
+            {
+                "AudioManager.asset", "BurstAotSettings_StandaloneOSX.json", "BurstAotSettings_StandaloneWindows.json",
+                "ClusterInputManager.asset", "CommonBurstAotSettings.json", "DynamicsManager.asset", "EditorBuildSettings.asset",
+                "EditorSettings.asset", "GraphicsSettings.asset", "HybridCLRSettings.asset", "InputManager.asset", "MemorySettings.asset",
+                "MultiplayerManager.asset", "NavMeshAreas.asset", "NetworkManager.asset", "PackageManagerSettings.asset", "Packages",
+                "Physics2DSettings.asset", "PresetManager.asset", "ProjectSettings.asset", "ProjectVersion.txt", "QualitySettings.asset",
+                "SceneTemplateSettings.json", "ShaderGraphSettings.asset", "TagManager.asset", "TimelineSettings.asset", "TimeManager.asset",
+                "UnityConnectSettings.asset", "URPProjectSettings.asset", "VersionControlSettings.asset", "VFXManager.asset", "XRSettings.asset",
+                "YLFramework"
+            };
+            Assert.That(Directory.GetFileSystemEntries("ProjectSettings").Select(Path.GetFileName), Is.SubsetOf(allowedSettings));
+
+            foreach (var path in AssetDatabase.GetDependencies(ScenePath, true))
+            {
+                var package = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(path);
+                Assert.That(path == ScenePath || path.StartsWith("Assets/YLFramework/", StringComparison.Ordinal) ||
+                    path == "Resources/unity_builtin_extra" || path == "Library/unity default resources" ||
+                    (package != null && new[] { "com.unity.ugui", "com.unity.render-pipelines.core",
+                        "com.unity.render-pipelines.universal" }.Contains(package.name)), Is.True, path);
+            }
+        }
 
         [Test]
         public void DefaultBuildEntryAndIdentityBelongToFrameworkDevelopmentHost()

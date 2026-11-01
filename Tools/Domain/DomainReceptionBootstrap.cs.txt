@@ -277,13 +277,15 @@ namespace YLFramework.Tests.DomainReception.Editor
                 keys.Add(key, asset);
             }
         }
-        private static bool ForbiddenAssembly(string name) => Regex.IsMatch(name,
-            @"(?i)(?:^XF|MCP|MiniExcel|UnityEditor|nunit|TestRunner|(?:^|[.\-])Editor(?:$|[.\-])|(?:^|[.\-])Tests?(?:$|[.\-])|YLFramework\.Analyzers)");
+        private static bool ForbiddenAssembly(string name) => !Regex.IsMatch(name,
+            @"^(?:Assembly-CSharp|YLFramework\.Runtime|YLFramework\.ResourceStartup\.Sample|mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|Mono(?:\.[A-Za-z0-9_]+)*|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity(?:\.[A-Za-z0-9_]+)+|Newtonsoft\.Json|BouncyCastle\.Cryptography)$") || Regex.IsMatch(name,
+            @"(?i)(?:MCP|MiniExcel|UnityEditor|nunit|TestRunner|(?:^|[.\-])Editor(?:$|[.\-])|(?:^|[.\-])Tests?(?:$|[.\-])|YLFramework\.Analyzers)");
         private static void CheckReferences(string name, IEnumerable<string> references)
         {
             if (ForbiddenAssembly(name)) throw new InvalidDataException("Forbidden Player assembly: " + name);
             foreach (var reference in references)
-                if (ForbiddenAssembly(reference) || (name.StartsWith("YLFramework.", StringComparison.Ordinal) && reference.StartsWith("Assembly-CSharp", StringComparison.Ordinal)))
+                if (ForbiddenAssembly(reference) || (name.StartsWith("YLFramework.", StringComparison.Ordinal) && reference.StartsWith("Assembly-CSharp", StringComparison.Ordinal)) ||
+                    (name == "YLFramework.Runtime" && !Regex.IsMatch(reference, @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$")))
                     throw new InvalidDataException("Forbidden Player reverse dependency: " + name + " -> " + reference);
         }
         private static JArray PlayerGraph()
@@ -328,7 +330,9 @@ namespace YLFramework.Tests.DomainReception.Editor
             foreach (var file in Files(output))
             {
                 var relative = Relative(output, file);
-                if (Regex.IsMatch(relative, @"(?i)(?:^|/)(?:Tests?|Integrations|Editor|Packages|PackageCache|\.git|\.env|\.mcp)(?:/|\.|$)|(?:^|/)XF[^/]*\.(?:dll|so|bundle)$|XFGameFramework|XFAB|MiniExcel|MCP|nunit|TestRunner|YLFramework\.Editor|Assembly-CSharp-Editor|YLFramework\.Analyzers|(?:secret|credential|private[-_]?key)|\.(?:pfx|p12|pem|key|jks|keystore|unitypackage)$"))
+                if (Regex.IsMatch(relative, @"(?i)(?:^|/)(?:Tests?|Integrations|Editor|Packages|PackageCache|\.git|\.env|\.mcp)(?:/|\.|$)|MiniExcel|MCP|nunit|TestRunner|YLFramework\.Editor|Assembly-CSharp-Editor|YLFramework\.Analyzers|(?:secret|credential|private[-_]?key)|\.(?:so|bundle|pfx|p12|pem|key|jks|keystore|unitypackage)$") ||
+                    (file.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && ForbiddenAssembly(Path.GetFileNameWithoutExtension(file)) &&
+                     !new[] { "GameAssembly.dll", "UnityPlayer.dll", "MonoPosixHelper.dll", "mono-2.0-bdwgc.dll" }.Contains(Path.GetFileName(file))))
                     throw new InvalidDataException("Forbidden Player output file: " + relative);
             }
         }

@@ -203,7 +203,10 @@ namespace YLFramework.Tests.Actions
                 Assert.That(method.GetGenericArguments()[0].GenericParameterAttributes, Is.EqualTo(GenericParameterAttributes.None));
                 Assert.That(method.GetParameters().Any(parameter => parameter.IsOptional), Is.False);
             }
-            Assert.That(type.Assembly.GetReferencedAssemblies().Any(reference => reference.Name == "UniRx" || reference.Name.Contains("DOTween") || reference.Name.StartsWith("QFramework")), Is.False);
+            Assert.That(type.Assembly.GetReferencedAssemblies().All(reference =>
+                new[] { "netstandard", "mscorlib", "System", "System.Core", "Newtonsoft.Json", "BouncyCastle.Cryptography" }.Contains(reference.Name) ||
+                reference.Name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
+                reference.Name.StartsWith("UnityEditor.", StringComparison.Ordinal)), Is.True);
         }
 
         [Test]

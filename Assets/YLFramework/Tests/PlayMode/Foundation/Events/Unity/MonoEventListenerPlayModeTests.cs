@@ -58,7 +58,7 @@ namespace YLFramework.Tests.CommonSystem
             _root = new GameObject("CommonSystem lifecycle");
             _root.SetActive(false);
             var type = typeof(YLFramework.Events.EventListener).Assembly.GetType("YLFramework.Events.MonoEventListener");
-            Assert.That(type, Is.Not.Null, "The local lifecycle bridge must belong to YL, not the XF global type.");
+            Assert.That(type, Is.Not.Null, "The local lifecycle bridge must belong to the YL event namespace.");
             return _root.AddComponent(type);
         }
 

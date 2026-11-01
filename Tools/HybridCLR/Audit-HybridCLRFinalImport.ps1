@@ -16,7 +16,8 @@ foreach ($run in @('final-base-product-only','final-optional-product-only')) {
 $lock = [IO.File]::ReadAllText((Join-Path $project 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable
 $package = $lock.dependencies['com.code-philosophy.hybridclr']
 if ($package.source -ne 'git' -or $package.version -ne 'https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3' -or $package.hash -ne '6cadd24d101f4cbd00cd80190106f6621132d24d') { throw 'Wrong official package provenance.' }
-if (@($lock.dependencies.Keys | Where-Object { $_ -match 'xfkj|xfab|test-framework' }).Count) { throw 'No XF or test facilities belong to final product compilation proof.' }
+if (@($lock.dependencies.Keys | Where-Object { -not $_.StartsWith('com.unity.modules.', [StringComparison]::Ordinal) -and
+    $_ -cnotin @('com.unity.ugui','com.unity.nuget.newtonsoft-json','com.code-philosophy.hybridclr') }).Count) { throw 'Only the declared product and official SDK package closure belongs to final compilation proof.' }
 foreach ($run in @('final-base-product-only','final-optional-product-only','final-resolve-official')) {
     $stream = [IO.File]::Open((Join-Path $Root ($run + '.log')), 'Open', 'Read', [IO.FileShare]::ReadWrite)
     $reader = [IO.StreamReader]::new($stream)
@@ -31,7 +32,7 @@ $assemblies = @('YLFramework.Runtime','YLFramework.Editor','YLFramework.HybridCL
 if ([IO.Directory]::Exists((Join-Path $project 'Assets/YLFramework/Tests')) -or [IO.Directory]::Exists((Join-Path $project 'Assets/HCLRReceptionHarness'))) { throw 'Do not install test or acceptance consumers before this proof.' }
 $output = Join-Path $Root 'final-supported-import.json'
 if ([IO.File]::Exists($output)) { throw 'Preserve prior final import evidence.' }
-[IO.File]::WriteAllText($output, (@{ passed=$true; sourceOnlyProducts=$true; noTestsOrXf=$true; officialHash=$package.hash; assemblies=$assemblies;
+[IO.File]::WriteAllText($output, (@{ passed=$true; sourceOnlyProducts=$true; packageClosure=@($lock.dependencies.Keys); officialHash=$package.hash; assemblies=$assemblies;
     defaultPackageSha256=(Get-FileHash -LiteralPath (Join-Path $Root 'YLFramework.unitypackage') -Algorithm SHA256).Hash;
     optionalPackageSha256=(Get-FileHash -LiteralPath (Join-Path $Root 'YLFramework-HybridCLR.unitypackage') -Algorithm SHA256).Hash; utc=[DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Depth 10))
 "Final real product-only supported-package import passed; $($assemblies.Count) actual assemblies; receipt=$output"

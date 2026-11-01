@@ -115,6 +115,17 @@ namespace YLFramework.Tests
         }
 
         [Test]
+        public void DefaultExportDoesNotContainLocalAiInstructions()
+        {
+            var roots = (string[])typeof(YLFramework.Editor.Distribution.ExportUnityPackage)
+                .GetField("_exportRoots", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            foreach (var path in new[] { "AGENTS.md", FrameworkRoot + "/AGENTS.md", FrameworkRoot + "/AGENTS.md.meta", "kilocodeignore" })
+            {
+                Assert.That(roots.Any(root => IsAtOrBelow(path, root)), Is.False, path);
+            }
+        }
+
+        [Test]
         public void DefaultExportDoesNotContainTheRepositoryOnlyUiAcceptanceBuilder()
         {
             var path = AssetDatabase.GUIDToAssetPath("358ebd50e0ddc2d4b8c4f0266f11ff1e");
@@ -139,8 +150,7 @@ namespace YLFramework.Tests
                 FrameworkRoot + "/Runtime",
                 FrameworkRoot + "/Samples",
                 FrameworkRoot + "/Documentation",
-                FrameworkRoot + "/LICENSE.md",
-                FrameworkRoot + "/AGENTS.md"
+                FrameworkRoot + "/LICENSE.md"
             }));
             foreach (var root in roots)
             {
@@ -210,7 +220,6 @@ namespace YLFramework.Tests
                 FrameworkRoot + "/Editor/Systems/Audio/AudioClipLibraryMigration.cs",
                 FrameworkRoot + "/Documentation/Modules/Attributes.md",
                 FrameworkRoot + "/Documentation/CodingStyle.md",
-                FrameworkRoot + "/AGENTS.md",
                 AnalyzerPath,
                 FrameworkRoot + "/Runtime/csc.rsp",
                 FrameworkRoot + "/Documentation/Modules/Action.md",
@@ -312,8 +321,6 @@ namespace YLFramework.Tests
                 "Assets/Plugins/Editor Enhancers Bundle",
                 FrameworkRoot + "/Runtime/Tools/AssemblyTool",
                 FrameworkRoot + "/Runtime/Tools/Attributes",
-                FrameworkRoot + "/Runtime/XFMain",
-                FrameworkRoot + "/Editor/XFMain",
                 FrameworkRoot + "/Runtime/Core/Extensions",
                 FrameworkRoot + "/Runtime/Core/Tools",
                 FrameworkRoot + "/Runtime/Core/UI/Windows/Tools",
@@ -329,6 +336,10 @@ namespace YLFramework.Tests
                 "YLFramework.Foundation.Runtime.asmdef", "YLFramework.Core.Runtime.asmdef", "YLFramework.Utilities.ZipTool.asmdef",
                 "YLFramework.Core.Editor.asmdef", "YLFramework.Editor.Help.asmdef",
                 "ResManager.cs", "ResLoader.cs", "ServiceManager.cs", "GameObjectLoader.cs", "SubProject.cs", "SubProjectData.cs" };
+            Assert.That(Directory.GetDirectories(FrameworkRoot + "/Runtime").Select(Path.GetFileName),
+                Is.EquivalentTo(new[] { "Foundation", "Core", "Systems", "Utilities" }));
+            Assert.That(Directory.GetDirectories(FrameworkRoot + "/Editor").Select(Path.GetFileName),
+                Is.EquivalentTo(new[] { "Foundation", "Core", "Systems", "Utilities", "Common", "Tools", "Help", "Distribution" }));
             var tempDirectory = Path.Combine(@"C:\Users\Kano\AppData\Local\Temp\kilo", "YLFramework.ExportTests-" + Guid.NewGuid().ToString("N"));
             var packagePath = Path.Combine(tempDirectory, "framework.unitypackage");
             try
@@ -509,9 +520,10 @@ namespace YLFramework.Tests
                         Assert.That(File.Exists(Path.Combine(projectRoot, retiredPath + ".meta")), Is.False, retiredPath + ".meta");
                     }
                 }
-                foreach (var oldPath in new[] { "/Runtime/XFMain/Manager/HttpManager.cs", "/Runtime/XFMain/AsyncOperation/SendWebRequest.cs" })
+                foreach (var name in new[] { "HttpManager.cs", "SendWebRequest.cs" })
                 {
-                    Assert.That(recordsByPath.ContainsKey(FrameworkRoot + oldPath), Is.False, oldPath);
+                    Assert.That(recordsByPath.Keys.Where(path => Path.GetFileName(path) == name),
+                        Is.EqualTo(new[] { FrameworkRoot + "/Runtime/Systems/Http/" + name }), name);
                 }
 
                 var prefabYaml = Encoding.UTF8.GetString(recordsByPath[PrefabPath].Payload);

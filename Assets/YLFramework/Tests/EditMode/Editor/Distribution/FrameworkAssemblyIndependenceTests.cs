@@ -17,14 +17,16 @@ namespace YLFramework.Tests.Resource
     public class FrameworkAssemblyIndependenceTests
     {
         [Test]
-        public void AcceptanceAssemblyDoesNotRequireTheGameOrXf()
+        public void AcceptanceAssemblyUsesOnlyApprovedFrameworkAndPlatformDependencies()
         {
             var assembly = AppDomain.CurrentDomain.GetAssemblies()
                 .Single(value => value.GetName().Name == "YLFramework.UI.Acceptance");
             foreach (var reference in assembly.GetReferencedAssemblies())
             {
                 Assert.IsFalse(reference.Name.StartsWith("Project.Game.", StringComparison.Ordinal), reference.FullName);
-                Assert.IsFalse(IsXfab(reference.Name), reference.FullName);
+                var dependency = System.Reflection.Assembly.Load(reference);
+                Assert.That(IsApprovedBinary(dependency, true) ||
+                    (reference.Name == "Unity.InputSystem" && IsGraphOutput(dependency)), Is.True, reference.FullName);
             }
         }
 
@@ -63,11 +65,16 @@ namespace YLFramework.Tests.Resource
         [TestCase(AssembliesType.Editor, "YLFramework.Runtime")]
         [TestCase(AssembliesType.Editor, "YLFramework.Editor")]
         [TestCase(AssembliesType.Player, "YLFramework.Runtime")]
-        public void ActualCompilationAndBinaryClosuresDoNotRequireXfab(AssembliesType profile, string name)
+        public void ActualCompilationAndBinaryClosuresUseOnlyApprovedDependencies(AssembliesType profile, string name)
         {
             Assert.That(EditorUtility.scriptCompilationFailed, Is.False);
             var graph = CompilationPipeline.GetAssemblies(profile).Single(a => a.name == name);
             Assert.That(graph.sourceFiles, Is.Not.Empty);
+            var editor = profile == AssembliesType.Editor;
+            var testInputs = graph.defines.Contains("UNITY_INCLUDE_TESTS");
+            var allowedGraphNames = new[] { "YLFramework.Runtime", "UnityEngine.UI" }
+                .Concat(editor ? new[] { "YLFramework.Editor", "UnityEditor.UI" } : Array.Empty<string>())
+                .Concat(testInputs ? new[] { "UnityEngine.TestRunner", "UnityEditor.TestRunner" } : Array.Empty<string>()).ToArray();
             var pending = new Stack<Assembly>(new[] { graph });
             var visited = new HashSet<string>(StringComparer.Ordinal);
             while (pending.Count != 0)
@@ -78,7 +85,7 @@ namespace YLFramework.Tests.Resource
                     continue;
                 }
 
-                Assert.That(IsXfab(assembly.name), Is.False, assembly.name);
+                CollectionAssert.Contains(allowedGraphNames, assembly.name, assembly.name);
                 foreach (var reference in assembly.assemblyReferences)
                 {
                     pending.Push(reference);
@@ -88,7 +95,10 @@ namespace YLFramework.Tests.Resource
             // 第三方程序集的真实必要依赖则由下面的已编译 AssemblyRef 闭包核对。
             foreach (var reference in graph.compiledAssemblyReferences)
             {
-                Assert.That(IsXfab(reference), Is.False, reference);
+                Assert.That(IsAllowedReference(reference, EditorApplication.applicationContentsPath,
+                    typeof(UnityEngine.UI.Image).Assembly.Location, editor, typeof(Newtonsoft.Json.JsonConvert).Assembly.Location) ||
+                    (testInputs && Path.GetFullPath(reference) == Path.GetFullPath(typeof(TestAttribute).Assembly.Location)),
+                    Is.True, reference);
             }
 
             var binaries = new Stack<System.Reflection.Assembly>(new[] { System.Reflection.Assembly.Load(name) });
@@ -103,16 +113,38 @@ namespace YLFramework.Tests.Resource
 
                 foreach (var reference in assembly.GetReferencedAssemblies())
                 {
-                    Assert.That(IsXfab(reference.Name), Is.False, assembly.GetName().Name + " -> " + reference);
-                    binaries.Push(System.Reflection.Assembly.Load(reference));
+                    var dependency = System.Reflection.Assembly.Load(reference);
+                    // 当前 AppDomain 装载的是 Editor 二进制；Player 隔离由对应编译图及下方独立源码编译验证。
+                    Assert.That(IsApprovedBinary(dependency, true) || IsAllowedSdkBinaryDependency(assembly.Location,
+                        dependency.Location, EditorApplication.applicationContentsPath), Is.True,
+                        assembly.GetName().Name + " -> " + reference + " @ " + dependency.Location);
+                    binaries.Push(dependency);
                 }
             }
             TestContext.WriteLine("{0}: {1} sources; binary closure: {2}", profile, graph.sourceFiles.Length,
                 string.Join(", ", visited.OrderBy(x => x, StringComparer.Ordinal)));
         }
 
-        private static bool IsXfab(string name) => new[] { "xfab", "xfgameframework", "xffsm", "ICSharpCode.SharpZipLib", "EPPlus", "MiniExcel" }
-            .Any(part => name.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0);
+        private static bool IsGraphOutput(System.Reflection.Assembly assembly)
+        {
+            var graph = CompilationPipeline.GetAssemblies(AssembliesType.Editor)
+                .Single(value => value.name == assembly.GetName().Name);
+            return string.Equals(Path.GetFullPath(assembly.Location), Path.GetFullPath(graph.outputPath),
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsApprovedBinary(System.Reflection.Assembly assembly, bool editor)
+        {
+            var name = assembly.GetName().Name;
+            if (name == "YLFramework.Runtime" || name == "UnityEngine.UI" ||
+                (editor && (name == "YLFramework.Editor" || name == "UnityEditor.UI")))
+            {
+                return IsGraphOutput(assembly);
+            }
+
+            return IsAllowedReference(assembly.Location, EditorApplication.applicationContentsPath,
+                typeof(UnityEngine.UI.Image).Assembly.Location, editor, typeof(Newtonsoft.Json.JsonConvert).Assembly.Location);
+        }
 
         [Test]
         public void ReferenceAllowlistOnlyAddsTheExactApprovedBouncyCastleFile()
@@ -132,12 +164,171 @@ namespace YLFramework.Tests.Resource
                 Path.Combine(Application.dataPath, "YLFramework/Plugins/BouncyCastle/BouncyCastle.Crypto.dll"),
                 Path.Combine(Application.dataPath, "YLFramework/Plugins/BouncyCastle/System.Fake.dll"),
                 Path.Combine(Application.dataPath, "YLFramework/Plugins/BouncyCastle/UnityEngine.Fake.dll"),
-                Path.Combine(Application.dataPath, "YLFramework/Plugins/BouncyCastle/XFABManager.dll"),
+                Path.Combine(Application.dataPath, "YLFramework/Plugins/BouncyCastle/Unrelated.Library.dll"),
                 Path.Combine(Application.dataPath, "YLFramework/Plugins/Sirenix/Sirenix.OdinInspector.Attributes.dll")
             })
             {
                 Assert.That(IsApprovedBouncyCastleReference(path), Is.False, path);
                 Assert.That(Allowed(path), Is.False, path);
+            }
+        }
+
+        [Test]
+        public void EditorRootReferencesBelongToTheActiveInstallation()
+        {
+            var contents = EditorApplication.applicationContentsPath;
+            var ui = typeof(UnityEngine.UI.Image).Assembly.Location;
+            var references = Directory.GetFiles(Path.Combine(contents, "Managed"), "UnityEditor*.dll", SearchOption.TopDirectoryOnly)
+                .Where(path => Path.GetFileName(path) != "UnityEditor.TestRunner.dll").ToArray();
+            Assert.That(references, Is.Not.Empty);
+            foreach (var reference in references)
+            {
+                Assert.That(IsAllowedReference(reference, contents, ui, true), Is.True, reference);
+                Assert.That(IsAllowedReference(reference, contents, ui, false), Is.False, reference);
+            }
+
+            var folder = Path.Combine(Path.GetTempPath(), "kilo", "YLFramework.EditorReference-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                var fake = Path.Combine(folder, Path.GetFileName(references[0]));
+                File.Copy(references[0], fake);
+                Assert.That(IsAllowedReference(fake, contents, ui, true), Is.False, fake);
+                Assert.That(IsAllowedReference(Path.Combine(contents, "Managed/UnityEditor.TestRunner.dll"), contents, ui, true), Is.False);
+            }
+            finally
+            {
+                Directory.Delete(folder, true);
+            }
+        }
+
+        [Test]
+        public void EditorPlatformReferencesBelongToTheActiveInstallation()
+        {
+            var contents = EditorApplication.applicationContentsPath;
+            var ui = typeof(UnityEngine.UI.Image).Assembly.Location;
+            var references = CompilationPipeline.GetAssemblies(AssembliesType.Editor).Single(assembly => assembly.name == "YLFramework.Editor")
+                .compiledAssemblyReferences.Where(path => IsInsideFolder(path, Path.Combine(contents, "PlaybackEngines")) &&
+                    (Path.GetFileName(path).StartsWith("Unity.", StringComparison.Ordinal) ||
+                     Path.GetFileName(path).StartsWith("UnityEditor.", StringComparison.Ordinal))).ToArray();
+            Assert.That(references, Is.Not.Empty);
+            var folder = Path.Combine(Path.GetTempPath(), "kilo", "YLFramework.PlatformReference-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                foreach (var reference in references)
+                {
+                    Assert.That(IsAllowedReference(reference, contents, ui, true), Is.True, reference);
+                    Assert.That(IsAllowedReference(reference, contents, ui, false), Is.False, reference);
+                    var fake = Path.Combine(folder, Path.GetFileName(reference));
+                    File.Copy(reference, fake);
+                    Assert.That(IsAllowedReference(fake, contents, ui, true), Is.False, fake);
+                }
+            }
+            finally
+            {
+                Directory.Delete(folder, true);
+            }
+        }
+
+        [Test]
+        public void JsonVariantsBelongToTheSameLockedOfficialPackage()
+        {
+            var package = UnityEditor.PackageManager.PackageInfo.FindForAssetPath("Packages/com.unity.nuget.newtonsoft-json/Runtime/Newtonsoft.Json.dll");
+            Assert.That(package, Is.Not.Null);
+            Assert.That(package.name, Is.EqualTo("com.unity.nuget.newtonsoft-json"));
+            Assert.That(package.version, Is.EqualTo("3.2.1"));
+            Assert.That(package.source, Is.EqualTo(UnityEditor.PackageManager.PackageSource.Registry));
+            var contents = EditorApplication.applicationContentsPath;
+            var ui = typeof(UnityEngine.UI.Image).Assembly.Location;
+            var variants = new[] { Path.Combine(package.resolvedPath, "Runtime/Newtonsoft.Json.dll"),
+                Path.Combine(package.resolvedPath, "Runtime/AOT/Newtonsoft.Json.dll") };
+            foreach (var reference in variants)
+            {
+                Assert.That(File.Exists(reference), Is.True, reference);
+                foreach (var json in variants)
+                {
+                    Assert.That(IsAllowedReference(reference, contents, ui, true, json), Is.True, reference);
+                    Assert.That(IsAllowedReference(reference, contents, ui, false, json), Is.True, reference);
+                }
+                Assert.That(IsAllowedReference(reference, contents, ui, true), Is.False, "Json must be explicitly requested.");
+            }
+
+            var folder = Path.Combine(Path.GetTempPath(), "kilo", "YLFramework.JsonReference-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                var fake = Path.Combine(folder, "Newtonsoft.Json.dll");
+                File.Copy(variants[0], fake);
+                Assert.That(IsAllowedReference(fake, contents, ui, true, variants[0]), Is.False);
+                Assert.That(IsAllowedReference(fake, contents, ui, false, fake), Is.False);
+                Assert.That(IsAllowedReference(variants[0], contents, ui, true, fake), Is.False);
+            }
+            finally
+            {
+                Directory.Delete(folder, true);
+            }
+        }
+
+        [Test]
+        public void Win32PrimitiveReferencesBelongToTheActiveInstallation()
+        {
+            var contents = EditorApplication.applicationContentsPath;
+            var ui = typeof(UnityEngine.UI.Image).Assembly.Location;
+            var references = CompilationPipeline.GetAssemblies(AssembliesType.Editor)
+                .Where(assembly => assembly.name == "YLFramework.Runtime" || assembly.name == "YLFramework.Editor")
+                .SelectMany(assembly => assembly.compiledAssemblyReferences)
+                .Where(path => Path.GetFileName(path) == "Microsoft.Win32.Primitives.dll").Distinct().ToArray();
+            Assert.That(references, Is.Not.Empty);
+            var folder = Path.Combine(Path.GetTempPath(), "kilo", "YLFramework.Win32Reference-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                foreach (var reference in references)
+                {
+                    Assert.That(IsAllowedReference(reference, contents, ui, true), Is.True, reference);
+                    Assert.That(IsAllowedReference(reference, contents, ui, false), Is.True, reference);
+                    foreach (var name in new[] { "Microsoft.Win32.Unrelated.dll", "Microsoft.Win32.Primitives.Extra.dll" })
+                    {
+                        Assert.That(IsAllowedReference(Path.Combine(Path.GetDirectoryName(reference), name), contents, ui, true), Is.False, name);
+                    }
+                }
+                var fake = Path.Combine(folder, "Microsoft.Win32.Primitives.dll");
+                File.Copy(references[0], fake);
+                Assert.That(IsAllowedReference(fake, contents, ui, true), Is.False, fake);
+            }
+            finally
+            {
+                Directory.Delete(folder, true);
+            }
+        }
+
+        [Test]
+        public void SdkInternalReferencesDoNotAuthorizeProjectCopiesOrDirectProductDependencies()
+        {
+            var contents = EditorApplication.applicationContentsPath;
+            var parent = typeof(UnityEditor.Editor).Assembly;
+            var dependency = System.Reflection.Assembly.Load(parent.GetReferencedAssemblies().Single(reference => reference.Name == "Unity.Cecil"));
+            Assert.That(IsAllowedSdkBinaryDependency(parent.Location, dependency.Location, contents), Is.True);
+            Assert.That(IsApprovedBinary(dependency, true), Is.False, "An SDK private library is not a direct product dependency.");
+            Assert.That(IsAllowedSdkBinaryDependency(typeof(ResourceSystem).Assembly.Location, dependency.Location, contents), Is.False);
+            var folder = Path.Combine(Path.GetTempPath(), "kilo", "YLFramework.SdkReference-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                var fake = Path.Combine(folder, Path.GetFileName(dependency.Location));
+                File.Copy(dependency.Location, fake);
+                Assert.That(IsAllowedSdkBinaryDependency(parent.Location, fake, contents), Is.False);
+                Assert.That(IsAllowedSdkBinaryDependency(fake, dependency.Location, contents), Is.False);
+                foreach (var name in new[] { "Newtonsoft.Json.dll", "BouncyCastle.Cryptography.dll", "UnityEngine.TestRunner.dll",
+                    "UnityEditor.TestRunner.dll", "nunit.framework.dll" })
+                {
+                    Assert.That(IsAllowedSdkBinaryDependency(parent.Location, Path.Combine(contents, "Managed", name), contents), Is.False, name);
+                }
+            }
+            finally
+            {
+                Directory.Delete(folder, true);
             }
         }
 
@@ -156,13 +347,13 @@ namespace YLFramework.Tests.Resource
         }
 
         [UnityTest]
-        public IEnumerator CompleteRuntimeAndEditorSourcesCompileWithoutXfabOrOptionalAdapters()
+        public IEnumerator CompleteRuntimeAndEditorSourcesCompileWithOnlyApprovedDependencies()
         {
             return CompileSubjects(true);
         }
 
         [UnityTest]
-        public IEnumerator CompleteRuntimeSourcesCompileWithoutXfabInWindowsDevelopmentProfile()
+        public IEnumerator CompleteRuntimeSourcesCompileWithOnlyApprovedDependenciesInWindowsDevelopmentProfile()
         {
             return CompileSubjects(false);
         }
@@ -211,7 +402,8 @@ namespace YLFramework.Tests.Resource
                     var effective = builder.defaultReferences.Except(builder.excludeReferences).Concat(builder.additionalReferences)
                         .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                     Assert.That(effective.All(p => Allowed(p) || p == runtimeOutput), Is.True);
-                    Assert.That(effective.Any(IsXfab), Is.False);
+                    Assert.That(effective.Any(p => new[] { "ICSharpCode.SharpZipLib.dll", "EPPlus.dll", "MiniExcel.dll" }
+                        .Contains(Path.GetFileName(p), StringComparer.OrdinalIgnoreCase)), Is.False);
                     Assert.That(effective.Count(p => Path.GetFileName(p) == "UnityEngine.UI.dll"), Is.EqualTo(1));
                     Assert.That(effective.Count(p => Path.GetFileName(p) == "Newtonsoft.Json.dll"), Is.EqualTo(1));
                     if (name == "YLFramework.Runtime")

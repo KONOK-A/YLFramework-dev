@@ -10,7 +10,7 @@
 
 - 运行时：[`Runtime/Utilities/ZipTool/`](../../Runtime/Utilities/ZipTool/)
 - 对外封装：[`Utilities/`](../../Runtime/Utilities/ZipTool/Utilities/)；内置库：[`ICSharpCode.SharpZipLib/`](../../Runtime/Utilities/ZipTool/ICSharpCode.SharpZipLib/)
-- 自有包装 namespace：`YLFramework.Compression`，消费者使用 `using YLFramework.Compression;`；内置 SharpZipLib 子树仍保留现有 `YLFramework.Utilities.ZipTool.*` 身份。两者归 `YLFramework.Runtime` 主体，不新增 DLL 或旧 namespace 转发壳；工具源码保持 BCL-only，不等于整个主体 DLL 无引擎依赖。主体已解除 XFAB 编译依赖。
+- 自有包装 namespace：`YLFramework.Compression`，消费者使用 `using YLFramework.Compression;`；内置 SharpZipLib 子树仍保留现有 `YLFramework.Utilities.ZipTool.*` 身份。两者归 `YLFramework.Runtime` 主体，不新增 DLL 或旧 namespace 转发壳；工具源码保持 BCL-only，不等于整个主体 DLL 无引擎依赖。主体不依赖已退休宿主扩展。
 - 常规业务直接使用 `ZipUtility` / `GZipUtility`，多次读取同一归档使用 `using` 管理 `ZipArchiveReader`；无需 Manager、组件挂载或公共 Root。
 
 ## 用法

@@ -75,7 +75,12 @@ namespace YLFramework.Tests.Extensions.Behavior
             {
                 var source = File.ReadAllText(file);
                 Assert.That(source, Does.Not.Contain("using UnityEditor"), file);
-                Assert.That(source, Does.Not.Contain("XFGameFramework"), file);
+                Assert.That(source, Does.Contain("namespace YLFramework.Overlap"), file);
+                foreach (System.Text.RegularExpressions.Match import in System.Text.RegularExpressions.Regex.Matches(source, @"(?m)^using\s+([^;]+);"))
+                {
+                    CollectionAssert.Contains(new[] { "System", "System.Collections", "System.Collections.Generic",
+                        "UnityEngine", "UnityEngine.Events", "YLFramework.Extensions" }, import.Groups[1].Value, file);
+                }
                 Assert.That(source, Does.Not.Contain("Handles."), file);
             }
         }

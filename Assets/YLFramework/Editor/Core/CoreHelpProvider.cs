@@ -35,8 +35,8 @@ namespace YLFramework.Editor.Core
                     HelpBlock.Paragraph("MVC 所有权", "通过 Module.AddModel / GetModel、AddController / GetController 管理注册，不从 View 改写 Model 的受保护状态。" +
                         "Model/Controller 的 OnInit 与 OnExit 对应每次注册；Module 负责退出，业务监听与借用资源仍须按自身所有权收尾。"),
                     HelpBlock.Notice("接入边界", "业务 asmdef 显式引用 YLFramework.Runtime；Core、Foundation 和 ZipTool 共用该主体程序集，仍按职责组织源码。" +
-                        "ProjectName 是正式 YL Resource ProjectId，不是 XFAB 项目名或 BundleName。命名加载无 XFAB 回退；缺失 Provider 明确失败。" +
-                        "Core 与 Audio 使用唯一正式 ResourceSystem，旧 Resource 运行栈已退出；主体不依赖 XFABManager。"),
+                        "ProjectName 是正式 YL Resource ProjectId，不是外部项目名或 BundleName。命名加载无隐式回退；缺失 Provider 明确失败。" +
+                        "Core 与 Audio 使用唯一正式 ResourceSystem，不建立第二套资源运行栈。"),
                     HelpBlock.Paragraph("资源启动与退出", "应用持有 ResourceConfiguration，等待 ResourceSystem.InitializeAsync 完成并 TakeResult，调用 resources.BindCoreResourceProvider() 后再启动 Module。" +
                         "关闭业务 Module 后，按所有权归还实例、清理缓存、卸载 Scene，再等待 ShutdownAsync；成功关闭只解绑自身 Provider。SceneLease 释放不卸载场景，SceneRecord 持有依赖直到 native sceneUnloaded。")),
                 Guide("view-ui", "View 与 UI", "Module 唯一拥有业务；Panel 继承 View，使用统一请求和可选配置快照，不需要窗口目录。",
@@ -58,7 +58,7 @@ namespace YLFramework.Editor.Core
                     HelpBlock.Paragraph("Module 模板", "Assets/Create/YLFramework/Core/Module 输出 Assets/YLFramework/Examples/Core/Modules 下的独立示例和 asmdef，拒绝覆盖已有目录。" +
                         "namespace 为 YLFramework.Core.Examples；不会生成完整 MVC/View/Panel 代码或改写 Assets/Games。"),
                     HelpBlock.Paragraph("默认资源与资源常量", "YLFramework/Core/Create Missing Default Resources 只补缺失的 Core Canvas/EventSystem，不替换已有身份。" +
-                        "YLFramework/Resource/Workbench 通过 ResourceProject、Group 和 Catalog 配置资源。项目可登记多个已有来源目录，每个目录使用 GUID 和明确的地址前缀；由组中的选择项决定内容，无需搬动已有资源。现有Editor配置已统一为此模型，不再保留旧单根配置的读取或迁移。Core Editor 预览使用同一资源模拟层，不查询 XFAB 项目。资源地址常量可生成到 Assets/YLFrameworkData/YLResourceReferences.cs，类型为 YLFramework.Generated.ResourceNames；" +
+                        "YLFramework/Resource/Workbench 通过 ResourceProject、Group 和 Catalog 配置资源。项目可登记多个已有来源目录，每个目录使用 GUID 和明确的地址前缀；由组中的选择项决定内容，无需搬动已有资源。现有Editor配置已统一为此模型，不再保留旧单根配置的读取或迁移。Core Editor 预览使用同一资源模拟层，不查询外部资源项目。资源地址常量可生成到 Assets/YLFrameworkData/YLResourceReferences.cs，类型为 YLFramework.Generated.ResourceNames；" +
                         "业务 asmdef 需显式引用生成程序集，未知/手写承载拒绝覆盖。这些用户生成物不在默认导出范围。"),
                     Document("资源工具与生成承载", "Modules/Resource.md")),
                 Guide("analyzers", "自有分析器 " + AnalyzerRuleCatalog.Rules[0].Id + "～" + AnalyzerRuleCatalog.Rules[AnalyzerRuleCatalog.Rules.Count - 1].Id,
@@ -68,11 +68,11 @@ namespace YLFramework.Editor.Core
                     HelpBlock.Paragraph("规则与改正方向", string.Join("\n", AnalyzerRuleCatalog.Rules.Select(rule =>
                         rule.Id + " " + rule.Description))),
                     HelpBlock.Paragraph("作用域与匹配", "唯一 YLFramework.Analyzers.dll 位于 Runtime/Core/Analyzers，即 YLFramework.Runtime 的 asmdef 范围，带 RoslynAnalyzer 标签。" +
-                        "主体 Runtime 和实际引用它的 Editor/Test/游戏消费者参与；原 XF/XFAB/XFFSM、未引用主体或预定义程序集的作用域以真实编译图和 csc 输入为准。" +
+                        "主体 Runtime 和实际引用它的 Editor/Test/游戏消费者参与；外部包、未引用主体或预定义程序集的作用域以真实编译图和 csc 输入为准。" +
                         "匹配正式程序集的 marker/View 符号，不按短名或 namespace 冒认。Editor/Test/Core 不整体豁免；生成代码默认不分析。"),
                     HelpBlock.Notice("编译器资产与静态限制", "DLL 的 Any/Editor/普通平台均禁用，关闭自动 Runtime 引用，只作为 -analyzer 输入，不加入 Runtime precompiledReferences。" +
                         "YL0005 只保留 LoadViewArgs._pool、LoadViewRequest<T>._args 与 PanelManager.PanelOperation.Args 三个真实内部 owner 例外；反射、object 擦除、闭包逃逸、任意跨过程副作用和所有控制流不保证。" +
-                        "原 XF/Logger 分析器是不同身份，不关闭或替代它们。"),
+                        "其他分析器拥有独立身份，不关闭或替代它们。"),
                     HelpBlock.Paragraph("单 ID 配置", "IDE/SDK 使用 .editorconfig 的 dotnet_diagnostic.YL0002.severity 等设置；Unity 2022.3 Console 不自动遵循 IDE 的 editorconfig。" +
                         "Unity 使用消费者 asmdef 目录的叶子 .ruleset 配置单 ID，Error 阻止编译，None 抑制该 ID；不要为局部需求覆盖根 Default.ruleset。" +
                          "故意契约测试可在声明/语句处精确 pragma warning disable 并立即 restore，不禁用整套诊断。"),

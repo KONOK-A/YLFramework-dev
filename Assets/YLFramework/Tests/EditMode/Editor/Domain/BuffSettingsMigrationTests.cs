@@ -20,7 +20,7 @@ namespace YLFramework.Tests.Extensions.Domain
         private const string SettingsDirectory = "ProjectSettings/YLFramework/Core";
         private const string LegacyPath = SettingsDirectory + "/YLFramework.BuffSystem.BuffSystemSettings.asset";
         private const string CurrentPath = SettingsDirectory + "/YLFramework.Editor.Buff.BuffSystemSettings.asset";
-        private const string ForeignPath = "ProjectSettings/XFGameFramework.BuffSystem.BuffSystemSettings.asset";
+        private const string ForeignPath = "ProjectSettings/Unrelated.BuffSystem.BuffSystemSettings.asset";
         private const string ScriptGuid = "fa93ecda799c52b4fab6e3d7efc0d510";
         private const BindingFlags PrivateInstance = BindingFlags.NonPublic | BindingFlags.Instance;
         private const BindingFlags PrivateStatic = BindingFlags.NonPublic | BindingFlags.Static;
@@ -186,7 +186,7 @@ namespace YLFramework.Tests.Extensions.Domain
                 }
                 if (_foreignBefore.HasValue ? !Matches(ForeignPath, _foreignBefore.Value) : File.Exists(ForeignPath))
                 {
-                    errors.Add("Foreign XF settings must remain byte-for-byte unchanged; never restore or delete them.");
+                    errors.Add("Foreign settings must remain byte-for-byte unchanged; never restore or delete them.");
                 }
 
                 Assert.That(errors, Is.Empty, string.Join(Environment.NewLine, errors));

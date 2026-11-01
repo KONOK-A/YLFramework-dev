@@ -33,18 +33,18 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         }
 
         [Test]
-        public void LegacyXfPackageAndAutomaticBuildHooksAreRetired()
+        public void OfficialSdkAndOwnedBuildGuardHaveSingleIdentities()
         {
-            Assert.That(PackageInfo.GetAllRegisteredPackages().Any(p => p.name == "com.xfkj.xfgameframework.hybridclr"), Is.False);
-            Assert.That(Directory.Exists("Packages/com.xfkj.xfgameframework.hybridclr"), Is.False);
+            Assert.That(PackageInfo.FindForAssembly(typeof(global::HybridCLR.Settings.HybridCLRSettings).Assembly).name, Is.EqualTo(PackageName));
             Assert.That(TypeCache.GetTypesDerivedFrom<UnityEditor.Build.IPreprocessBuildWithReport>()
-                .Any(t => t.Assembly.GetName().Name == "XFGameFramework.HybridCLREditor"), Is.False);
+                .Where(type => type.Assembly == typeof(HybridCLRBuildPipeline).Assembly),
+                Is.EquivalentTo(new[] { typeof(HybridCLRPlayerBuildGuard) }));
         }
 
         [TestCase(AssembliesType.Editor, "YLFramework.Runtime")]
         [TestCase(AssembliesType.Editor, "YLFramework.Editor")]
         [TestCase(AssembliesType.Player, "YLFramework.Runtime")]
-        public void SubjectCompilationClosureDoesNotRequireHybridClrOrXf(AssembliesType profile, string name)
+        public void SubjectCompilationClosureUsesOnlyApprovedNativeDependencies(AssembliesType profile, string name)
         {
             Assert.That(EditorUtility.scriptCompilationFailed, Is.False);
             var root = CompilationPipeline.GetAssemblies(profile).Single(a => a.name == name);
@@ -58,7 +58,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                     continue;
                 }
 
-                Assert.That(IsOptionalDependency(assembly.name), Is.False, assembly.name);
+                Assert.That(IsApprovedSubjectDependency(assembly.name, profile == AssembliesType.Editor), Is.True, assembly.name);
                 foreach (var reference in assembly.assemblyReferences)
                 {
                     pending.Push(reference);
@@ -66,7 +66,8 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             }
             foreach (var reference in root.compiledAssemblyReferences)
             {
-                Assert.That(IsOptionalDependency(Path.GetFileNameWithoutExtension(reference)), Is.False, reference);
+                Assert.That(IsApprovedSubjectDependency(Path.GetFileNameWithoutExtension(reference), profile == AssembliesType.Editor) ||
+                    (profile == AssembliesType.Editor && IsApprovedEditorPlatformReference(reference)), Is.True, reference);
             }
         }
 
@@ -87,10 +88,19 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Assert.That(version.Value<string>("expression"), Is.EqualTo("[9.0.3,9.0.4)"));
             Assert.That(version.Value<string>("define"), Is.EqualTo(VersionDefine));
             CollectionAssert.AreEqual(editorOnly ? new[] { "Editor" } : Array.Empty<string>(), definition["includePlatforms"].Values<string>());
-            foreach (var reference in definition["references"].Values<string>())
-            {
-                Assert.That(reference.IndexOf("xf", StringComparison.OrdinalIgnoreCase), Is.LessThan(0), reference);
-            }
+            var expectedReferences = test
+                ? (editorOnly
+                    ? new[] { "YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "YLFramework.HybridCLR.Editor",
+                        "YLFramework.HybridCLR.Sample.Editor", "HybridCLR.Editor", "UnityEngine.TestRunner", "UnityEditor.TestRunner" }
+                    : new[] { "YLFramework.Runtime", "YLFramework.HybridCLR", "UnityEngine.TestRunner" })
+                : (editorOnly
+                    ? new[] { "YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "HybridCLR.Runtime", "HybridCLR.Editor" }
+                    : new[] { "YLFramework.Runtime", "HybridCLR.Runtime" });
+            Assert.That(definition["references"].Values<string>(), Is.EquivalentTo(expectedReferences));
+            var expectedPrecompiled = new[] { "Newtonsoft.Json.dll" }
+                .Concat(test ? new[] { "nunit.framework.dll" } : Array.Empty<string>())
+                .Concat(editorOnly ? new[] { "dnlib.dll" } : Array.Empty<string>());
+            Assert.That(definition["precompiledReferences"].Values<string>(), Is.EquivalentTo(expectedPrecompiled));
 
             if (!editorOnly)
             {
@@ -103,7 +113,20 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             }
         }
 
-        private static bool IsOptionalDependency(string name) => new[] { "hybridclr", "dnlib", "xfab", "xfgameframework" }
-            .Any(part => name.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0);
+        private static bool IsApprovedSubjectDependency(string name, bool editor) =>
+            new[] { "YLFramework.Runtime", "mscorlib", "netstandard", "System", "UnityEngine", "Newtonsoft.Json",
+                "BouncyCastle.Cryptography", "nunit.framework", "Microsoft.CSharp", "Microsoft.Win32.Primitives" }.Contains(name) ||
+            name.StartsWith("System.", StringComparison.Ordinal) ||
+            (editor && (name == "YLFramework.Editor" || name == "UnityEditor" || name.StartsWith("UnityEditor.", StringComparison.Ordinal))) ||
+            name.StartsWith("UnityEngine.", StringComparison.Ordinal);
+
+        private static bool IsApprovedEditorPlatformReference(string path)
+        {
+            var name = Path.GetFileName(path);
+            var root = Path.GetFullPath(Path.Combine(EditorApplication.applicationContentsPath, "PlaybackEngines"))
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            return name.StartsWith("Unity.", StringComparison.Ordinal) && name.EndsWith(".dll", StringComparison.Ordinal) &&
+                Path.GetFullPath(path).StartsWith(root, StringComparison.OrdinalIgnoreCase) && File.Exists(path);
+        }
     }
 }

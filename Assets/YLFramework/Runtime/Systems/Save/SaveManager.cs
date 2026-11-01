@@ -10,7 +10,7 @@ namespace YLFramework.Save
 {
     /// <summary>Unity 入口，仅负责主线程默认路径捕获和既有 API；所有存档、模型、设置及缓存均由 SaveStore 实现。</summary>
     /// <remarks>
-    /// 仅支持当前索引格式；不转换历史YL/XF存档，不自动清空损坏档。
+    /// 仅支持当前索引格式；不转换历史存档，不自动清空损坏档。
     /// 对象/设置仍为裸 JSON。损坏无可用备份、版本、IO 和权限失败会抛异常；备份读取不修盘。
     /// 新异步接口在调用线程序列化快照后异步 IO；DTO/Converter 不得在线程池调用 Unity API。
     /// SetStorageRoot / Close 取消并排空旧 owner，不能把旧请求的缓存写入新根。

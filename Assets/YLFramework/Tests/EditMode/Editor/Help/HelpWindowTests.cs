@@ -303,11 +303,9 @@ namespace YLFramework.Tests.Help
             var menu = type.GetMethod("OpenMenu", BindingFlags.NonPublic | BindingFlags.Static).GetCustomAttribute<MenuItem>();
             Assert.That(menu.menuItem, Is.EqualTo("YLFramework/帮助"));
             var references = type.Assembly.GetReferencedAssemblies().Select(assembly => assembly.Name).ToArray();
-            Assert.That(references.Any(name => name.StartsWith("Project.ActionKit", StringComparison.Ordinal) ||
-                name.Contains("AudioKit") || name.Contains("QFramework") ||
-                name.StartsWith("XF", StringComparison.Ordinal) ||
-                (name.StartsWith("YLFramework.", StringComparison.Ordinal) && name != "YLFramework.Runtime") ||
-                name.StartsWith("DOTween", StringComparison.Ordinal)), Is.False);
+            Assert.That(references.All(name => new[] { "mscorlib", "netstandard", "System", "System.Core", "System.Xml", "System.Xml.Linq",
+                "Newtonsoft.Json", "YLFramework.Runtime" }.Contains(name) || name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
+                name.StartsWith("UnityEditor.", StringComparison.Ordinal)), Is.True, string.Join(", ", references));
         }
 
         [Test]

@@ -77,11 +77,14 @@ namespace YLFramework.DomainFixture
         {
             Owned();
             var packages = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages();
-            if (packages.Any(package => package.name.StartsWith("com.xfkj", StringComparison.OrdinalIgnoreCase) || package.name.Contains("mcp"))) throw new InvalidOperationException("Carrier contains forbidden XF/MCP package.");
+            if (packages.Any(package => !package.name.StartsWith("com.unity.modules.", StringComparison.Ordinal) &&
+                !new[] { "com.unity.ugui", "com.unity.nuget.newtonsoft-json", "com.unity.test-framework", "com.unity.ext.nunit" }.Contains(package.name))) throw new InvalidOperationException("Carrier contains a package outside its declared product/test closure.");
             var roots = CompilationPipeline.GetAssemblies(AssembliesType.Player);
             var runtime = roots.Single(assembly => assembly.name == "YLFramework.Runtime");
             var edges = runtime.assemblyReferences.Select(assembly => assembly.name).Concat(runtime.compiledAssemblyReferences.Select(Path.GetFileNameWithoutExtension)).Distinct().ToArray();
-            if (edges.Any(name => name.StartsWith("XF", StringComparison.OrdinalIgnoreCase) || name.StartsWith("UnityEditor", StringComparison.Ordinal) || name.Contains("Excel.Editor"))) throw new InvalidOperationException("Invalid Player reference closure.");
+            if (edges.Any(name => !System.Text.RegularExpressions.Regex.IsMatch(name,
+                @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$") ||
+                name.Contains("TestRunner") || name.Contains("Editor"))) throw new InvalidOperationException("Invalid Player reference closure.");
             PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, backend);
             PlayerSettings.SetManagedStrippingLevel(BuildTargetGroup.Standalone, backend == ScriptingImplementation.IL2CPP ? ManagedStrippingLevel.Low : ManagedStrippingLevel.Disabled);
             if (backend == ScriptingImplementation.IL2CPP) PlayerSettings.SetIl2CppCompilerConfiguration(BuildTargetGroup.Standalone, Il2CppCompilerConfiguration.Release);

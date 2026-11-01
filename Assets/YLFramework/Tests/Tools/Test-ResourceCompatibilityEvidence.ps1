@@ -219,7 +219,9 @@ function Get-ResourceCompatibilityRuntimeMetadata([string] $Path) {
         $references=@($reader.AssemblyReferences | ForEach-Object { $reader.GetString($reader.GetAssemblyReference($_).Name) })
         $methods=@($reader.MethodDefinitions | ForEach-Object { $reader.GetString($reader.GetMethodDefinition($_).Name) })
         $types=@($reader.TypeDefinitions | ForEach-Object { $reader.GetString($reader.GetTypeDefinition($_).Name) })
-        Confirm-ResourceCompatibility (@($references | Where-Object { $_ -match 'UnityEditor|Assembly-CSharp|Tests|XFAB|Tink' }).Count -eq 0) 'runtime dependency boundary'
+        Confirm-ResourceCompatibility (@($references | Where-Object {
+            $_ -cnotmatch '^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$' -or $_ -match 'TestRunner|Tests|Editor|Analyzer'
+        }).Count -eq 0) 'runtime dependency boundary'
         return @{ Mvid=$reader.GetGuid($reader.GetModuleDefinition().Mvid).ToString(); Name=$reader.GetString($reader.GetAssemblyDefinition().Name); Methods=$methods; Types=$types }
     } finally { $pe.Dispose(); $input.Dispose() }
 }

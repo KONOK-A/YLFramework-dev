@@ -8,7 +8,7 @@
 
 本模块**不提供可视化 FSM Editor**，也**不以大型状态图制作为目标**：没有 GraphView、节点编辑器、状态机资产、序列化状态图、Hierarchical FSM、State Stack、异步 / 线程安全等能力。需要这些能力时应使用专门的状态机或行为树方案。
 
-YL 的配置/可视化状态机位于 `Runtime/Systems/StateMachine/` 与 `Editor/Systems/StateMachine/`，namespace 为 `YLFramework.StateMachine` / `YLFramework.Editor.StateMachine`；轻量 FSM 归 Utilities，不与之合并。外部 XF `XFFSM` 也可独立共存；本模块不替代或依赖它们，也不需要 Module、统一状态机 Manager 或公共 Root。调用方自行驱动并管理回收，Module 关闭不会自动停止外部 FSM。
+YL 的配置/可视化状态机位于 `Runtime/Systems/StateMachine/` 与 `Editor/Systems/StateMachine/`，namespace 为 `YLFramework.StateMachine` / `YLFramework.Editor.StateMachine`；轻量 FSM 归 Utilities，不与之合并。外部状态机也可独立共存；本模块不替代或依赖上述配置式状态机或其他外部实现，也不需要 Module、统一状态机 Manager 或公共 Root。调用方自行驱动并管理回收，Module 关闭不会自动停止外部 FSM。
 
 ## 位置
 
@@ -16,7 +16,7 @@ YL 的配置/可视化状态机位于 `Runtime/Systems/StateMachine/` 与 `Edito
   - `Abstractions/`：`IState`、`IFsmOwner`、`MachineState`
   - `Core/`：`Fsm<TStateId>`
   - `States/`：`CustomState`、`AbstractState<TStateId>`
-- namespace：`YLFramework.FSM`；程序集：`YLFramework.Runtime`。有 asmdef 的使用者引用 Runtime 即可，不需要引用 `YLFramework.Core.Runtime` 或 XFFSM。
+- namespace：`YLFramework.FSM`；程序集：`YLFramework.Runtime`。有 asmdef 的使用者引用 Runtime 即可，不需要引用 `YLFramework.Core.Runtime` 或外部状态机程序集。
 
 ## 快速使用
 

@@ -13,7 +13,7 @@ Foundation 中唯一的独立到期任务内核，提供 Scaled / Unscaled 秒�
 ## 位置与接入
 
 - 运行时：[`Runtime/Foundation/Timing/`](../../Runtime/Foundation/Timing/)，归属 `YLFramework.Runtime`，namespace 为 `YLFramework.Timing`。
-- 业务 asmdef 显式引用 Runtime；计时的中立源码不消费 Core/Systems/Utilities、Root/UI 或 XF/XFAB。Runtime 主体保留必要 UGUI/Json.NET 依赖，但不要求 XFAB。
+- 业务 asmdef 显式引用 Runtime；计时的中立源码不消费 Core/Systems/Utilities、Root/UI 或外部资源后端。Runtime 主体保留必要 UGUI/Json.NET 依赖。
 - `Internal/` 的 run、堆、生命周期监听和默认驱动均为实现细节，不公开可写堆字段。
 - `TimerObject` 归 [`Timing/Components/`](../../Runtime/Foundation/Timing/Components/)，当前全名为 `YLFramework.Timing.TimerObject`，脚本 GUID 保留；事件字段为 `onCompleted/onAborted`，通过 FormerlySerializedAs 读取旧 `Action/Abort` 字段。默认 TimerDriver 自动建立，不手动挂载；字段迁移不等于旧类型字符串自动兼容。
 - 源码入口：[`Timer.cs`](../../Runtime/Foundation/Timing/Timer.cs)、[`TimerScheduler.cs`](../../Runtime/Foundation/Timing/TimerScheduler.cs)、[`TimerHandle.cs`](../../Runtime/Foundation/Timing/TimerHandle.cs)、[`TimerScope.cs`](../../Runtime/Foundation/Timing/TimerScope.cs)。
@@ -140,7 +140,7 @@ producer 被停止或其 owner 销毁时，不保证原生等待恢复，不能�
 
 ## 接入与兼容边界
 
-当前只保留 `YLFramework.Timing` 内核。旧 TimeExtend、Core TimerManager/Core.Timer/TimerType、Tools/Timing 的 Timer/TimeItem/TimerHelper/public Heap 均不提供兼容门面；原 XF 包与原游戏仍使用自己的类型，不由本模块自动迁移。
+当前只保留 `YLFramework.Timing` 内核。旧 TimeExtend、Core TimerManager/Core.Timer/TimerType、Tools/Timing 的 Timer/TimeItem/TimerHelper/public Heap 均不提供兼容门面；外部包与原游戏的类型不由本模块自动迁移。
 
 | 需求或旧用法 | 当前选择 |
 |---|---|
@@ -175,6 +175,6 @@ TimerObject 的旧 C# 调用须更新 `YLFramework.Core.TimerObject` 为 `YLFram
 ## 验证与历史
 
 - 测试入口：`Tests/EditMode/Foundation/Timing/`、Foundation 下的 `Timer*Tests` / `ReusableTimerTests`，以及 `Tests/PlayMode/Foundation/Timing/`、`TimerDriverPlayModeTests` / `TimerBindingPlayModeTests` / `TimerWaitPlayModeTests`。用例涵盖内核、Scope、复用、绑定、TimerObject、等待与观察；路径存在不等于已执行。
-- 历史 Unity 编译、内核/生命周期、连续 Editor Play 与 View/Action 协作结果见 [融合记录](../IntegrationPlan.md)；详细方案为源码仓库 `.kilo/plans/xf-yl-2.4-timer.md`。原 XF Logger 的测试环境隔离只用于当时 Timer 验收，不证明整框架或原 Logger 支持无 Domain Reload。
+- 历史 Unity 编译、内核/生命周期、连续 Editor Play 与 View/Action 协作结果见 [融合记录](../IntegrationPlan.md)，详细方案保留在 Git 历史中。旧日志插件的测试环境隔离只用于当时 Timer 验收，不证明整框架或该日志插件支持无 Domain Reload。
 
 历史连续 Play 使用关闭 Domain Reload、正常 Scene Reload，不能外推到关闭 Scene Reload、Editor/Player 应用退出、Player/IL2CPP、完整游戏或性能。仓库 Plan 不是导出包运行依赖。

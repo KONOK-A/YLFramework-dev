@@ -202,9 +202,12 @@ namespace YLFramework.Testing
 
         private static void RejectReferences(string[] references)
         {
-            if (references.Any(reference => Regex.IsMatch(reference, "^XF|^MiniExcel(?:\\.dll)?$|UnityEditor|TestRunner|nunit|YLFramework.*(Tests|Acceptance|Editor|Analyzer)", RegexOptions.IgnoreCase)))
+            var rejectedReferences = references.Where(reference => !Regex.IsMatch(reference,
+                @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)(?:\.dll)?$") ||
+                Regex.IsMatch(reference, "TestRunner|Tests|Editor|Analyzer", RegexOptions.IgnoreCase)).ToArray();
+            if (rejectedReferences.Length != 0)
             {
-                throw new InvalidOperationException("Production Runtime has a forbidden reference.");
+                throw new InvalidOperationException("Production Runtime has forbidden references: " + string.Join(", ", rejectedReferences));
             }
         }
 

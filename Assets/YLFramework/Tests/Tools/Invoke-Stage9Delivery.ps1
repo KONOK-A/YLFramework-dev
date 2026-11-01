@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string] $DeliveryRoot,
-    [Parameter(Mandatory)][ValidateSet('Initialize','PublishTools','AuditPackage','Create','Import','RecoverImport','InstallHarness','SyncHarness','InstallNativeInput','InstallInputProfile','InstallOptional','InstallOptionalTests','SyncOptionalTests','InstallTests','SyncTestSources','InstallSceneLoop','InstallLogger','UpdateLogger','Editor','Tests','Player','RecoverPlayer','Protect','Finalize')][string] $Operation,
+    [Parameter(Mandatory)][ValidateSet('Initialize','PublishTools','AuditPackage','Create','Import','RecoverImport','InstallHarness','SyncHarness','InstallNativeInput','InstallInputProfile','InstallOptional','InstallOptionalTests','SyncOptionalTests','InstallTests','SyncTestSources','InstallSceneLoop','Editor','Tests','Player','RecoverPlayer','Protect','Finalize')][string] $Operation,
     [string] $Repository,
     [ValidatePattern('^(Receiver[A-Z][0-9]*|[a-z][0-9]?)$')][string] $Receiver = 'ReceiverA',
     [ValidatePattern('^[A-Za-z0-9-]+$')][string] $Run = 'initial',
@@ -123,10 +123,10 @@ function Read-ExportRoots([string] $Source) {
     $roots = @([regex]::Matches($declarations[0].Groups[1].Value, '"(Assets/[^"\r\n]+)"') | ForEach-Object { $_.Groups[1].Value })
     $required = @('Assets/YLFramework/Editor','Assets/YLFramework/Plugins/BouncyCastle','Assets/YLFramework/Prefabs',
         'Assets/YLFramework/Runtime','Assets/YLFramework/Samples','Assets/YLFramework/Documentation',
-        'Assets/YLFramework/LICENSE.md','Assets/YLFramework/AGENTS.md')
+        'Assets/YLFramework/LICENSE.md')
     if ($roots.Count -ne $required.Count -or @($roots | Sort-Object -Unique).Count -ne $required.Count -or
         @($required | Where-Object { $roots -cnotcontains $_ }).Count -ne 0) {
-        throw 'The formal export closure must contain the exact six product directories and two root files.'
+        throw 'The formal export closure must contain the exact six product directories and one root file.'
     }
     $roots
 }
@@ -189,6 +189,29 @@ function Receiver-PackageHash {
     if (-not $audit.Passed -or $audit.Package -cne $identity.Package -or $sha -cne $identity.PackageSha256 -or $sha -cne $audit.Sha256) { throw 'Receiver/package/audited identity mismatch.' }
     $sha
 }
+function Assert-Stage9BuildBinding($Report, [string]$Project, [string]$TemplateRoot) {
+    if ($Report -isnot [pscustomobject]) { throw 'Build binding: expected a serialized build object.' }
+    foreach ($field in @('Schema','OwnerSha256','TemplateSha256','Project','PackageSha256')) {
+        if (-not $Report.PSObject.Properties[$field]) { throw 'Build binding: historical unbound build reports are not current native delivery evidence.' }
+    }
+    foreach ($field in @('Schema','Project','OwnerSha256','PackageSha256')) {
+        if ($Report.$field -isnot [string] -or [string]::IsNullOrEmpty($Report.$field)) { throw "Build binding: invalid serialized identity field: $field" }
+    }
+    if ($Report.OwnerSha256 -cnotmatch '^[0-9a-f]{64}$' -or $Report.PackageSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $Report.TemplateSha256 -isnot [pscustomobject]) { throw 'Build binding: invalid serialized input hashes.' }
+    if ($Report.Schema -cne 'Stage9NativeBuild-v2' -or $Report.Project -cne $Project -or
+        $Report.OwnerSha256 -cne (Hash (Join-Path $Project 'stage9-owner.json')) -or
+        $Report.PackageSha256 -cne (Hash (Join-Path $root $Package))) { throw 'Build binding: owner/project/package differs from this native delivery.' }
+    foreach ($name in @('Stage9DeliveryEditor','Stage9DeliveryProbe','Stage9DeliveryPanel')) {
+        $source=Join-Path $TemplateRoot ($name+'.cs.txt')
+        $installed=Join-Path $Project ('Assets/Stage9/'+$(if ($name.EndsWith('Editor')) { 'Editor/' } else { '' })+$name+'.cs')
+        if (-not $Report.TemplateSha256.PSObject.Properties[$name] -or
+            $Report.TemplateSha256.$name -isnot [string] -or $Report.TemplateSha256.$name -cnotmatch '^[0-9a-f]{64}$' -or
+            $Report.TemplateSha256.$name -cne (Hash $source) -or $Report.TemplateSha256.$name -cne (Hash $installed)) {
+            throw 'Build binding: current source/installed templates differ; obtain a new actual build.'
+        }
+    }
+}
 function Run-Unity([string[]] $Arguments, [string] $Log, [switch] $Creating) {
     Verify-Unity
     $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'Unity.exe'")
@@ -250,7 +273,7 @@ if ($Operation -eq 'Initialize') {
     Json (Join-Path $root 'protected-before.json') @(Protected-Files)
     Json (Join-Path $root 'source-baseline.json') @{ Head=(& git -C $repo rev-parse HEAD); Branch=(& git -C $repo branch --show-current); Status=@(& git -C $repo status --short --untracked-files=all); Worktrees=$worktrees; Utc=[DateTime]::UtcNow.ToString('O') }
     foreach ($directory in @('Runs','Stores','Tools')) { $null=[IO.Directory]::CreateDirectory((Join-Path $root $directory)) }
-    foreach ($file in @('Invoke-Stage9Delivery.ps1','Stage9DeliveryEditor.cs.txt','Stage9DeliveryProbe.cs.txt','Stage9DeliveryPanel.cs.txt','Test-Stage9OptionalLogger.ps1','Run-Stage9Representative.ps1')) {
+    foreach ($file in @('Invoke-Stage9Delivery.ps1','Stage9DeliveryEditor.cs.txt','Stage9DeliveryProbe.cs.txt','Stage9DeliveryPanel.cs.txt','Run-Stage9Representative.ps1')) {
         if ([IO.File]::Exists((Join-Path $PSScriptRoot $file))) { [IO.File]::Copy((Join-Path $PSScriptRoot $file),(Join-Path $root ('Tools/' + $file))) }
     }
     'Initialized independent delivery protection snapshot.'
@@ -260,7 +283,7 @@ if ($Operation -eq 'PublishTools') {
     $history=Join-Path $root ('ToolsHistory/DeliveryTools-' + $Run)
     if (Test-Path -LiteralPath $history) { throw 'Preserve delivered tool revisions.' }
     $null=[IO.Directory]::CreateDirectory($history); $null=[IO.Directory]::CreateDirectory((Join-Path $root 'Tools'))
-    $files=@(foreach ($name in @('Invoke-Stage9Delivery.ps1','Stage9DeliveryEditor.cs.txt','Stage9DeliveryProbe.cs.txt','Stage9DeliveryPanel.cs.txt','Test-Stage9OptionalLogger.ps1','Run-Stage9Representative.ps1')) {
+    $files=@(foreach ($name in @('Invoke-Stage9Delivery.ps1','Stage9DeliveryEditor.cs.txt','Stage9DeliveryProbe.cs.txt','Stage9DeliveryPanel.cs.txt','Run-Stage9Representative.ps1')) {
         $source=Join-Path $PSScriptRoot $name; $destination=Join-Path $root ('Tools/' + $name)
         if ([IO.File]::Exists($destination)) { [IO.File]::Copy($destination,(Join-Path $history $name)) }
         if ($source -cne $destination) { [IO.File]::Copy($source,$destination,$true) }
@@ -276,13 +299,6 @@ if ($Operation -eq 'Protect') {
     $changes=@(foreach ($row in $after) { if (-not $old.ContainsKey($row.Path) -or $old[$row.Path] -cne $row.Sha256) { $row.Path }; $old.Remove($row.Path) }; $old.Keys)
     $authorized=@(); $unapproved=@($changes)
     if ($Run -eq 'final') {
-        $logger=Get-Content -LiteralPath (Join-Path $root 'Optional/logger-final-receipt.json') -Raw | ConvertFrom-Json
-        $authorized=@(foreach ($relative in @('CHANGELOG.md','Runtime/LoggerManager.cs')) {
-            $path=Join-Path $repo ('Packages/com.xfkj.xfgameframework.loggersystem/'+$relative)
-            $entry=@($logger.Files | Where-Object Path -CEQ $relative)
-            if ($entry.Count -ne 1 -or (Hash $path) -cne $entry[0].Sha256) { throw 'Authorized Logger repair differs from the tested final artifact.' }
-            if ($changes -ccontains $path) { @{ Path=$path; Sha256=Hash $path; Basis='User stage9 direct-delivery defect repair; exact separately audited artifact bytes' } }
-        })
         $settings=Join-Path $repo 'ProjectSettings/ProjectSettings.asset'
         & git -C $repo diff --quiet HEAD -- 'ProjectSettings/ProjectSettings.asset'
         if ($LASTEXITCODE -ne 0) { throw 'The user-authorized two-default cleanup did not restore the exact baseline representation.' }
@@ -293,20 +309,20 @@ if ($Operation -eq 'Protect') {
     Json (Join-Path $root ('protection-' + $Run + '.json')) @{ Passed=$unapproved.Count -eq 0; Before=$before.Count; After=$after.Count;
         AllDifferences=$changes; AuthorizedDifferences=$authorized; UnapprovedDifferences=$unapproved }
     if ($unapproved.Count) { throw 'Unapproved protected inputs changed; preserve and investigate without reverting.' }
-    'Protected files unchanged apart from exact authorized delivery repairs and the explicitly approved default cleanup.'
+    'Protected files unchanged apart from the exact historical default-cleanup allowance.'
     return
 }
 if ($Operation -eq 'Finalize') {
+    $head=& git -C $repo rev-parse HEAD
+    if ($head -cne '586eebedaf900d926d2e30301b20ed3129decb27') { throw 'Historical-only finalization requires its original frozen source; never rebind old receipts to a current delivery.' }
     $first=Get-Content -LiteralPath (Join-Path $root ($Receiver+'-first-import-initial.json')) -Raw | ConvertFrom-Json
     $audit=Get-Content -LiteralPath (Join-Path $root ($Receiver+'-audit-final.json')) -Raw | ConvertFrom-Json
     $protection=Get-Content -LiteralPath (Join-Path $root 'protection-final.json') -Raw | ConvertFrom-Json
     $packageReceipt=Get-Content -LiteralPath (Join-Path $root ($Package+'.receipt.json')) -Raw | ConvertFrom-Json
     $finalFiles=Get-Content -LiteralPath (Join-Path $root ($Package+'.files.json')) -Raw | ConvertFrom-Json
     $testedFiles=Get-Content -LiteralPath (Join-Path $root 'YLFramework-Stage9.unitypackage.files.json') -Raw | ConvertFrom-Json
-    $logger=Get-Content -LiteralPath (Join-Path $root 'Optional/logger-final-receipt.json') -Raw | ConvertFrom-Json
     if (-not $first.Passed -or $first.HarnessPresent -or -not $audit.Passed -or -not $protection.Passed -or -not $packageReceipt.Passed -or
-        $first.PackageSha256 -cne $packageReceipt.Sha256 -or $packageReceipt.Sha256 -cne (Hash (Join-Path $root $Package)) -or
-        $logger.Sha256 -cne (Hash $logger.Artifact)) { throw 'Final import/audit/protection/artifact gates are not all established.' }
+        $first.PackageSha256 -cne $packageReceipt.Sha256 -or $packageReceipt.Sha256 -cne (Hash (Join-Path $root $Package))) { throw 'Final import/audit/protection/artifact gates are not all established.' }
     $tested=@{}; foreach ($file in $testedFiles) { $tested[$file.Path]=$file }
     $postExportJournal=[Collections.Generic.List[object]]::new()
     $documentationChanges=@(foreach ($file in $finalFiles) {
@@ -333,7 +349,7 @@ if ($Operation -eq 'Finalize') {
     $runs=@(
         @{ Backend='Mono'; Run='smoke4' }, @{ Backend='Mono'; Run='mono-update1' }, @{ Backend='Mono'; Run='mono-restart2' },
         @{ Backend='Mono'; Run='mono-rollback1' }, @{ Backend='Mono'; Run='mono-restart1' }, @{ Backend='Mono'; Run='mono-encrypted' },
-        @{ Backend='Mono'; Run='mono-missing-key' }, @{ Backend='Mono'; Run='mono-sample' }, @{ Backend='Mono'; Run='mono-final-logger' },
+        @{ Backend='Mono'; Run='mono-missing-key' }, @{ Backend='Mono'; Run='mono-sample' },
         @{ Backend='Il2Cpp'; Run='il2cpp-final-smoke' }, @{ Backend='Il2Cpp'; Run='il2cpp-final-update1' }, @{ Backend='Il2Cpp'; Run='il2cpp-final-restart2' },
         @{ Backend='Il2Cpp'; Run='il2cpp-final-rollback1' }, @{ Backend='Il2Cpp'; Run='il2cpp-final-restart1' }, @{ Backend='Il2Cpp'; Run='il2cpp-final-encrypted' },
         @{ Backend='Il2Cpp'; Run='il2cpp-final-missing-key' }, @{ Backend='Il2Cpp'; Run='il2cpp-final-sample' }
@@ -346,14 +362,14 @@ if ($Operation -eq 'Finalize') {
         @{ Backend=$case.Backend; Run=$case.Run; Verdict=$verdict; VerdictSha256=Hash (Join-Path $folder 'verdict.json') }
     })
     $receiverB=Join-Path $root 'ReceiverB'
-    $reports=@(foreach ($name in @('m-ugui1','m-mf','i-l2')) {
+    $reports=@(foreach ($name in @('m-ugui1','i-l2')) {
         $build=Join-Path $receiverB ('P/'+$name); $path=Join-Path $build 'BuildReport.json'
         $report=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        Assert-Stage9BuildBinding $report $receiverB $PSScriptRoot
         if ($report.Result -cne 'Succeeded' -or $report.Errors -ne 0 -or $report.Development -or $report.Options -cne 'None') { throw 'Required non-Development build missing.' }
         foreach ($file in $report.PlayerFiles) { if ((Hash (Join-Path $build $file.Path)) -cne $file.Sha256) { throw 'A required build artifact changed.' } }
         if ($name -eq 'i-l2' -and ($report.Stripping -cne 'Low' -or $report.Backend -cne 'IL2CPP')) { throw 'Incorrect IL2CPP support configuration.' }
-        $optional=if ($report.PSObject.Properties['OptionalLogger']) { $report.OptionalLogger } else { $null }
-        @{ Directory=$build; ReportSha256=Hash $path; BuildGuid=$report.BuildGuid; Backend=$report.Backend; Stripping=$report.Stripping; Errors=$report.Errors; Warnings=$report.Warnings; OptionalLogger=$optional }
+        @{ Directory=$build; ReportSha256=Hash $path; BuildGuid=$report.BuildGuid; Backend=$report.Backend; Stripping=$report.Stripping; Errors=$report.Errors; Warnings=$report.Warnings }
     })
     $nativeRoot=Join-Path $receiverB 'P/i-l2'
     $backup=Join-Path $nativeRoot 'Stage9Delivery_BackUpThisFolder_ButDontShipItWithYourGame'
@@ -365,12 +381,13 @@ if ($Operation -eq 'Finalize') {
         @{ Name=[IO.Path]::GetFileName($dll); Sha256=Hash $dll; References=$references }
     })
     $runtime=@($managed | Where-Object Name -CEQ 'YLFramework.Runtime.dll')
-    if ($runtime.Count -ne 1 -or @($runtime[0].References | Where-Object { $_ -match 'UnityEditor|Assembly-CSharp|Tests|XF|Tink' }).Count) { throw 'Actual IL2CPP managed input runtime dependency boundary failed.' }
-    if (@($managed | Where-Object Name -CEQ 'XFGameFramework.LoggerSystem.dll').Count -ne 1) { throw 'Fixed optional Logger absent from actual IL2CPP managed backup.' }
+    if ($runtime.Count -ne 1 -or @($runtime[0].References | Where-Object {
+        $_ -cnotmatch '^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$' -or $_ -match 'TestRunner|Tests|Editor|Analyzer'
+    }).Count) { throw 'Actual IL2CPP managed input runtime dependency boundary failed.' }
     $generated=@(foreach ($file in [IO.Directory]::GetFiles((Join-Path $backup 'il2cppOutput'),'*',[IO.SearchOption]::AllDirectories)) {
         @{ Path=[IO.Path]::GetRelativePath($backup,$file).Replace('\','/'); Length=([IO.FileInfo]$file).Length; Sha256=Hash $file }
     })
-    if (-not @($generated | Where-Object Path -Like '*YLFramework.Runtime*.cpp').Count -or -not @($generated | Where-Object Path -Like '*XFGameFramework.LoggerSystem*.cpp').Count) { throw 'Actual generated C++ evidence missing.' }
+    if (-not @($generated | Where-Object Path -Like '*YLFramework.Runtime*.cpp').Count) { throw 'Actual generated product C++ evidence missing.' }
     $native=@(foreach ($relative in @('GameAssembly.dll','UnityPlayer.dll','Stage9Delivery.exe','Stage9Delivery_Data/il2cpp_data/Metadata/global-metadata.dat')) {
         $file=Join-Path $nativeRoot $relative; @{ Path=$relative; Length=([IO.FileInfo]$file).Length; Sha256=Hash $file }
     })
@@ -379,7 +396,6 @@ if ($Operation -eq 'Finalize') {
     $main=Get-Content -LiteralPath (Join-Path $root 'main-final-state.json') -Raw | ConvertFrom-Json
     if ($main.Project -cne $repo -or $main.Pid -ne 32168 -or $main.IsPlaying -or $main.IsCompiling -or $main.CompilationFailed -or
         $main.InputHandling -ne 2 -or @($main.Scenes | Where-Object Dirty).Count -or $main.Backend -cne 'Mono2x' -or $main.Stripping -cne 'Disabled') { throw 'Main Editor protection final-state gate failed.' }
-    $head=& git -C $repo rev-parse HEAD
     if ($head -cne '586eebedaf900d926d2e30301b20ed3129decb27' -or @(& git -C $repo diff --cached --name-only).Count) { throw 'HEAD or staging changed; do not finalize as an uncommitted delivery.' }
     if ($Run -eq 'preflight') {
         'All required final import, executable identity, Player, IL2CPP native, license and protection gates verified; ready to freeze the final delivery binding.'
@@ -392,7 +408,7 @@ if ($Operation -eq 'Finalize') {
     $patch=& git -C $repo diff --binary
     [IO.File]::WriteAllText((Join-Path $root 'final-source.patch'),($patch -join "`n")+"`n",[Text.UTF8Encoding]::new($false))
     $value=@{ Passed=$true; Statement='阶段9独立工程交付技术验收完成，待用户验收。'; Baseline=$head; Branch=(& git -C $repo branch --show-current);
-        CommitCreated=$false; Staged=$false; Pushed=$false; Repository=$repo; FinalPackage=$packageReceipt; OptionalLogger=$logger;
+        CommitCreated=$false; Staged=$false; Pushed=$false; Repository=$repo; FinalPackage=$packageReceipt;
         FinalReceiver=$first; FinalAudit=$audit; PlayerReceiver=$receiverB; ExecutablePayloadsEqualToPlayerTestedPackage=$true;
         FinalDocumentationDifferences=$documentationChanges; PostExportAcceptanceJournal=$postExportJournal; Builds=$reports; PlayerVerdicts=$verdicts; NativeArtifacts=$native;
         Il2CppManagedInputs=$managed; GeneratedCpp=$generated; MainEditor=$main; Protection=$protection; CurrentSourceFiles=$sourceFiles;
@@ -401,13 +417,11 @@ if ($Operation -eq 'Finalize') {
         'Current modal input uses actual Canvas raycast and public UGUI handlers, not OS physical input',
         'Audio resource/native playback/release verified; zero output sample is not evidence of audible sound',
         'Historical Scene risk, positive ordinary-CA networking untested, and no zero-native-leak telemetry claim remain',
-        'Some owned batch Editors hung/crashed during native exit; preserved and stopped by exact PID, not recorded as normal Editor exit',
-        'Optional Logger Analyzer exposes existing documentation warnings; no diagnostic suppression'); Utc=[DateTime]::UtcNow.ToString('O') }
+        'Some owned batch Editors hung/crashed during native exit; preserved and stopped by exact PID, not recorded as normal Editor exit'); Utc=[DateTime]::UtcNow.ToString('O') }
     Json (Join-Path $root 'delivery-binding.json') $value
     [IO.File]::WriteAllText((Join-Path $root 'delivery-binding.sha256'),(Hash (Join-Path $root 'delivery-binding.json'))+"  delivery-binding.json`n",[Text.UTF8Encoding]::new($false))
     $sums=@(
         ((Hash (Join-Path $root $Package))+'  '+$Package)
-        ((Hash $logger.Artifact)+'  Optional/Final/com.xfkj.xfgameframework.loggersystem-1.0.1.tgz')
         ((Hash (Join-Path $root 'delivery-binding.json'))+'  delivery-binding.json')
     )
     [IO.File]::WriteAllText((Join-Path $root 'SHA256SUMS.txt'),($sums -join "`n")+"`n",[Text.UTF8Encoding]::new($false))
@@ -442,7 +456,8 @@ if ($Operation -eq 'AuditPackage') {
         $record=$pair.Value
         if (-not $record.ContainsKey('pathname') -or -not $record.ContainsKey('asset.meta')) { throw 'Missing package identity.' }
         $relative=[Text.Encoding]::UTF8.GetString($record['pathname']).TrimEnd([char]0,"`r","`n")
-        if (-not $expected.ContainsKey($relative) -or $relative -match '/Tests/|Editor Enhancers|AcceptanceBuild|^Packages/|/StreamingAssets/|XFAB|\.(pfx|p12|pem|key)$|/(bcrypt|ncrypt|crypt32|Newtonsoft\.Json)\.dll$') { throw "Excluded/unexpected package path: $relative" }
+        if (-not $expected.ContainsKey($relative) -or $relative -match '/Tests/|Editor Enhancers|AcceptanceBuild|^Packages/|/StreamingAssets/|\.(pfx|p12|pem|key)$|/(bcrypt|ncrypt|crypt32|Newtonsoft\.Json)\.dll$' -or
+            ($relative -match '(?i)\.(dll|so|bundle)$' -and $relative -cnotin @('Assets/YLFramework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll','Assets/YLFramework/Runtime/Core/Analyzers/YLFramework.Analyzers.dll'))) { throw "Excluded/unexpected package path: $relative" }
         $meta=[Text.Encoding]::UTF8.GetString($record['asset.meta'])
         if ($meta -notmatch '(?m)^guid:\s*([0-9a-f]{32})\s*\r?$' -or $Matches[1] -cne $pair.Key) { throw "GUID mismatch: $relative" }
         $metaSha=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$record['asset.meta'])).ToLowerInvariant()
@@ -1051,31 +1066,11 @@ if ($Operation -eq 'Editor') {
     "Completed explicit receiver entry: $Method / $Run"
     return
 }
-if ($Operation -in @('InstallLogger','UpdateLogger')) {
-    $null=Receiver-PackageHash
-    $proof=Get-Content -LiteralPath (Join-Path $root ('Runs/'+$Receiver+'-Mono-'+$ProofRun+'/verdict.json')) -Raw | ConvertFrom-Json
-    if (-not $proof.Passed -or -not $proof.IdentityMatched -or $proof.ProcessExitCode -ne 0) { throw 'First prove a real product-only independent Player passes without Logger.' }
-    $artifact=Get-Content -LiteralPath (Join-Path $root 'Optional/logger-final-receipt.json') -Raw | ConvertFrom-Json
-    if (-not $artifact.Passed -or $artifact.RequiredByYLFramework -or $artifact.Sha256 -cne (Hash $artifact.Artifact)) { throw 'The explicit optional licensed artifact must match its audit.' }
-    $path=Join-Path $project 'Packages/manifest.json'
-    $manifest=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
-    if ($Operation -eq 'InstallLogger') {
-        if ($manifest.dependencies.ContainsKey('com.xfkj.xfgameframework.loggersystem')) { throw 'Never overwrite an existing optional dependency.' }
-        Json (Join-Path $root ($Receiver+'-manifest-before-optional.json')) $manifest
-    } else {
-        $prior=Get-Content -LiteralPath (Join-Path $root ($Receiver+'-optional-install-request.json')) -Raw | ConvertFrom-Json
-        if ($manifest.dependencies['com.xfkj.xfgameframework.loggersystem'] -cne ('file:'+$prior.Artifact.Replace('\','/'))) { throw 'Only replace the exact owned failed predecessor artifact.' }
-        Json (Join-Path $root ($Receiver+'-manifest-before-final-logger.json')) $manifest
-    }
-    $manifest.dependencies['com.xfkj.xfgameframework.loggersystem']='file:'+$artifact.Artifact.Replace('\','/')
-    [IO.File]::WriteAllText($path,($manifest | ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
-    Json (Join-Path $root ($Receiver+$(if ($Operation -eq 'UpdateLogger') { '-optional-final-install-request.json' } else { '-optional-install-request.json' }))) @{ ProductOnlyPlayerProof=$ProofRun; Artifact=$artifact.Artifact; Sha256=$artifact.Sha256; RequiredByProduct=$false }
-    'Declared only the separately audited optional standalone Logger; not used to repair product dependencies.'
-    return
-}
 if ($Operation -in @('Player','RecoverPlayer')) {
     $build=Join-Path $project ('P/' + $(if ($Backend -eq 'Mono') { 'm-' } else { 'i-' }) + $BuildRun)
     $report=Get-Content -LiteralPath (Join-Path $build 'BuildReport.json') -Raw | ConvertFrom-Json
+    $null=Receiver-PackageHash
+    Assert-Stage9BuildBinding $report $project $PSScriptRoot
     if ($report.Result -cne 'Succeeded' -or $report.Errors -ne 0 -or $report.Development) { throw 'A successful non-Development build is required.' }
     foreach ($file in $report.PlayerFiles) {
         if ((Hash (Join-Path $build $file.Path)) -cne $file.Sha256) { throw "Player artifact differs from the real build: $($file.Path)" }

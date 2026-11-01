@@ -263,7 +263,7 @@
     },
     "com.unity.nuget.newtonsoft-json": {
       "version": "3.2.1",
-      "depth": 1,
+      "depth": 0,
       "source": "registry",
       "dependencies": {},
       "url": "https://packages.unity.com"
@@ -385,126 +385,6 @@
         "com.unity.modules.jsonserialize": "1.0.0"
       },
       "url": "https://packages.unity.com"
-    },
-    "com.xfkj.xfabmanager": {
-      "version": "https://gitee.com/xianfengkeji/xfabmanager.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {
-        "com.unity.nuget.newtonsoft-json": "3.2.1"
-      },
-      "hash": "c35dc4058ecd831409199b43cb328024202d4557"
-    },
-    "com.xfkj.xffsm": {
-      "version": "https://gitee.com/xianfengkeji/xffsm.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "b06333c2cdc801fcc401f14c252853bf099aa1b7"
-    },
-    "com.xfkj.xfgameframework": {
-      "version": "https://gitee.com/xianfengkeji/XFGameFramework.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "2182708aecc596f30739fa8634fe2b9b6946ddd7"
-    },
-    "com.xfkj.xfgameframework.archivesystem": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.archive-system.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "8046fe56f82983e6081a5c110559915d94df9e3e"
-    },
-    "com.xfkj.xfgameframework.buffsystem": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.buff-system.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "01d05626b01bcb01e0c27a1040119f41b534f902"
-    },
-    "com.xfkj.xfgameframework.charactercontroller2d": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.character-controller2d.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "f0241054744ca0673ec370d5fad39c32b789d81c"
-    },
-    "com.xfkj.xfgameframework.commonsystem": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.common-system.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "fee858a64b73de70cea54d773970d9691c5f376c"
-    },
-    "com.xfkj.xfgameframework.equipmentsystem": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.equipment-system.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "48952da775e2fc2c8459c404ad80b3eab8a1c205"
-    },
-    "com.xfkj.xfgameframework.excelsystem": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.excel-system.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "725f94f23327de190111573870146af66e9484b6"
-    },
-    "com.xfkj.xfgameframework.localization": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.localization.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "743876d52c5fe636effc0b63c34bd261d6cad243"
-    },
-    "com.xfkj.xfgameframework.loggersystem": {
-      "version": "file:com.xfkj.xfgameframework.loggersystem",
-      "depth": 0,
-      "source": "embedded",
-      "dependencies": {}
-    },
-    "com.xfkj.xfgameframework.missionsystem": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.mission-system.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "a3da5d37ae61d24becd915281f2b676cb1210749"
-    },
-    "com.xfkj.xfgameframework.moveableplatform": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.moveable-platform.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "1e1265d8e6adb4ebab6febe8bc51288972e2b234"
-    },
-    "com.xfkj.xfgameframework.overlap": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.overlap.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "4961d8358119485c94d6f0f74b6ca5d8b4163460"
-    },
-    "com.xfkj.xfgameframework.reddotsystem": {
-      "version": "https://gitee.com/xianfengkeji/xfgameframework.reddot-system.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "8e2c23e435a4ff1eb4dbc441a6d4fb389ee58c89"
-    },
-    "com.xfkj.xfgameframework.scriptableobjectconfigs": {
-      "version": "https://gitee.com/xianfengkeji/xfgameframework.scriptableobjectconfigs.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "d7b6c171999e05a1840f413e1f3e2080e3853163"
-    },
-    "com.xfkj.xfgameframework.skillsystem": {
-      "version": "https://gitee.com/xianfengkeji/xfgame-framework.skill-system.git",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {},
-      "hash": "4c9d8f5d3120cdf7333a9a040a85ee9583af072f"
     },
     "extensions.unity.playerprefsex": {
       "version": "2.1.5",

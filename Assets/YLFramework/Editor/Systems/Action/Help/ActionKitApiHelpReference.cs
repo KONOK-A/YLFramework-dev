@@ -17,7 +17,7 @@ namespace YLFramework.Editor.Actions
 
         private static readonly Dictionary<string, string> _typeDescriptions = new Dictionary<string, string>
         {
-            { "ActionKit", "现代动作工厂、Unity 消息订阅及模块初始化入口。工厂通常只配置动作，需显式启动；不是旧 QFramework 的通用 Architecture 容器。" },
+            { "ActionKit", "YLFramework 内建的动作工厂、Unity 消息订阅及模块初始化入口。工厂通常只配置动作，需显式启动；模块实例只负责自身生命周期，不是通用服务容器。" },
             { "IAction", "现代动作生命周期契约，定义标识、状态、暂停、启动/推进/结束钩子及重置、释放。具体状态类型和清理行为由实现决定。" },
             { "AbstractAction", "现代动作的可继承池化基类。Allocate 为本次使用分配 ActionId 并重置状态；派生类通过 OnReset/OnDeinit 管理自身数据。" },
             { "ActionStatus", "现代动作的三个执行状态；取消由 IsDeinitialized 标志表达，不占用额外的状态值。" },
@@ -342,7 +342,7 @@ namespace YLFramework.Editor.Actions
                         case "Initialize":
                             return "初始化模块实例，调用 Init 和 OnRegisterPatch；已有实例时直接返回。";
                         case "InitArchitecture":
-                            return "调用 Initialize，保留旧入口名称，但不重建通用 Architecture 服务。";
+                            return "Initialize 的同义入口，初始化当前 ActionKit 模块，不创建通用服务容器。";
                         case "Init":
                             return "模块实例初始化钩子；基础实现为空，派生类可以覆盖。";
                         case "OnDeinit":
@@ -744,7 +744,7 @@ namespace YLFramework.Editor.Actions
                         case "OnRegisterPatch":
                             return "可替换的模块注册补丁委托，在每次新模块实例初始化的 Init 之后执行；Shutdown 不清空它。";
                         case "Interface":
-                            return "取得当前 ActionKit 模块实例；运行时代码读取会调用 Initialize，并非通用 IArchitecture。帮助页仅检查元数据。";
+                            return "取得当前 ActionKit 模块实例；运行时代码读取会调用 Initialize，只返回模块自身，不提供跨模块服务定位。帮助页仅检查元数据。";
                         case "Architecture":
                             return "派生模块可见的当前 ActionKit 实例引用，是模块生命周期状态，不是通用服务容器。";
                         case "OnUpdate":
@@ -858,7 +858,7 @@ namespace YLFramework.Editor.Actions
 
                     if (name.StartsWith("On", StringComparison.Ordinal) && member is PropertyInfo)
                     {
-                        return "运行时代码读取事件 getter 可能创建全局宿主；帮助页从不调用 getter。显式管理注销句柄的生命周期，这些事件不是旧框架总线。";
+                        return "运行时代码读取事件 getter 可能创建全局宿主；帮助页从不调用 getter。显式管理注销句柄的生命周期，这些是模块范围的 Unity 消息事件。";
                     }
 
                     break;

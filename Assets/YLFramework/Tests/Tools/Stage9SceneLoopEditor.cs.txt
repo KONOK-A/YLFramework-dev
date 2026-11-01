@@ -40,8 +40,9 @@ public static class Stage9SceneLoopEditor
         }
 
         var assemblies = CompilationPipeline.GetAssemblies(AssembliesType.Player);
-        if (assemblies.Any(a => a.name.StartsWith("YLFramework", StringComparison.Ordinal) ||
-            a.name.StartsWith("XF", StringComparison.Ordinal) || a.name.IndexOf("MCP", StringComparison.OrdinalIgnoreCase) >= 0))
+        if (assemblies.Any(a => !System.Text.RegularExpressions.Regex.IsMatch(a.name,
+            @"^(?:Assembly-CSharp|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity(?:\.[A-Za-z0-9_]+)+)$") ||
+            a.name.Contains("Tests") || a.name.Contains("TestRunner")))
         {
             throw new InvalidOperationException("Product or host entered the pure control compilation.");
         }

@@ -44,7 +44,7 @@ namespace YLFramework.Tests.ResourceBuild
             AssetDatabase.SaveAssetIfDirty(project);
             var simulation = new ResourceEditorSimulation(new[] { fixture.Project });
             var property = typeof(YLFramework.Editor.Common.EditorAssetTool).GetProperty("PreviewResolver");
-            Assert.That(property, Is.Not.Null, "Core Editor must consume an installed preview delegate, not XFAB project lookup.");
+            Assert.That(property, Is.Not.Null, "Core Editor must consume an explicitly installed preview delegate.");
             var resolver = (Func<string, string, string, UnityEngine.Object>)property.GetValue(null);
             Assert.That(resolver, Is.Not.Null, "The Resource Editor installs the formal resolver on domain load.");
             var main = AssetDatabase.LoadAssetAtPath<Texture2D>(fixture.Folder + "/Content/Shared.asset");
@@ -102,7 +102,7 @@ namespace YLFramework.Tests.ResourceBuild
         private static object Simulation(ResourceProject[] projects, ResourceCatalogDocument[] catalogs = null)
         {
             var type = typeof(ResourceProject).Assembly.GetType("YLFramework.Editor.Resource.ResourceEditorSimulation");
-            Assert.That(type, Is.Not.Null, "Editor simulation must use the formal Project/Catalog, without XFAB fallback.");
+            Assert.That(type, Is.Not.Null, "Editor simulation must use the formal Project/Catalog without implicit fallback.");
             return Activator.CreateInstance(type, new object[] { projects, catalogs });
         }
 

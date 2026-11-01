@@ -8,7 +8,7 @@
 
 提供本地存档能力：管理多个存档槽（创建 / 删除 / 排序 / 命名 / 查询）、当前槽与 `ISaveModel`，按“存档槽 + 文件名”保存和读取可序列化对象，并提供全局设置、同步/异步与明确的读取来源。
 
-**当前唯一引擎是 SaveStore，索引只支持 v2；不提供旧 YL/XF 档案迁移。** 单文件写入采用“flush 临时文件 → 原子替换 → 保留上一份备份”。损坏主件可从有效备份读取，但只有显式恢复才修盘。跨索引/目录操作不是全根多文件掉电事务，失败证据与 staging/tomb 保留，不承诺解决所有文件系统或超长路径问题。
+**当前唯一引擎是 SaveStore，索引只支持 v2；不提供旧 YL 档案或外部档案迁移。** 单文件写入采用“flush 临时文件 → 原子替换 → 保留上一份备份”。损坏主件可从有效备份读取，但只有显式恢复才修盘。跨索引/目录操作不是全根多文件掉电事务，失败证据与 staging/tomb 保留，不承诺解决所有文件系统或超长路径问题。
 
 ## 位置
 
@@ -29,7 +29,7 @@
 - 读取与可靠性：`ReadObject<T>` / `ReadObjectAsync<T>` / `ReadGlobalSetting<T>` 返回 `SaveReadResult<T>`；备份恢复、来源与异常边界见 [读取与恢复](#读取与恢复)。
 - 可测试 / 可替换存储：`StorageRoot` + `SetStorageRoot(path)`（默认 `Application.persistentDataPath`）；SaveManager 懒建引擎，业务对象按需读取。
 - 序列化扩展：`SerializerSettings`（可添加 `JsonConverter`，仅作用于业务对象与全局设置）与 `SerializationFormat`；对象/设置使用裸 JSON。索引 `SaveIndex` 使用内部固定设置，不受用户 converter 影响。
-- 不支持的索引版本抛 `SaveVersionException` 并保留原件；没有 `SaveMigration`、v1 复制、XF Archive 导入、旧档扫描或自动清空坏档。`SetStorageRoot` 只切换路径，不复制或迁移数据；普通 `DeleteObject<T>` 重载也不是迁移工具。
+- 不支持的索引版本抛 `SaveVersionException` 并保留原件；没有 `SaveMigration`、v1 复制、外部 Archive 导入、旧档扫描或自动清空坏档。`SetStorageRoot` 只切换路径，不复制或迁移数据；普通 `DeleteObject<T>` 重载也不是迁移工具。
 - 序列化辅助类型：Foundation 的统一 `SerializedDictionary<TKey,TValue>`（标准字典接口及 Unity 回调）；Save 自有 `SerializedVector3` / `SerializedVector2`、`SerializedColor` 及对应扩展。
 
 ## 主要类型
@@ -126,4 +126,4 @@ public class ExampleConfig : MonoBehaviour
 
 测试入口为 `Tests/EditMode/Systems/Save/SaveStoreSafetyTests.cs`、`SaveManagerFacadeTests.cs`、`SerializedDictionarySaveTests.cs`；字典原生编辑另见 `Tests/EditMode/Editor/Foundation/Serialization/SerializedDictionaryEditorTests.cs`。覆盖涉及槽位/模型、版本拒绝、文件安全、取消并发、缓存来源/显式恢复、Prefab 保存重开与隔离磁盘往返；字典专题不能替代 Save 全系统故障恢复验收。
 
-集成与历史验证导航见 [融合记录](../IntegrationPlan.md)，详细接收记录位于源码仓库 `.kilo/plans/1792420261057-xf-ecosystem-integration.md`，字典历史见 `.kilo/plans/xf-yl-2.5-serialized-dictionary.md`；这些不是导出包运行依赖。旧格式迁移结果不作为当前 v2 合同或新运行证明。
+集成与历史验证导航见 [融合记录](../IntegrationPlan.md)，详细接收与字典记录保留在 Git 历史中，不是导出包运行依赖。旧格式迁移结果不作为当前 v2 合同或新运行证明。

@@ -394,7 +394,8 @@ namespace YLFramework.Tests.Actions
         [Test]
         public void KnownIntegrationAndOwnershipBoundariesAreExplicit()
         {
-            StringAssert.Contains("不是旧框架的 IArchitecture", Topic("lifecycle").SearchText);
+            StringAssert.Contains("Interface 只返回当前 ActionKit 模块实例", Topic("lifecycle").SearchText);
+            StringAssert.Contains("不提供系统、模型、工具的注册", Topic("lifecycle").SearchText);
             StringAssert.Contains("不会 Dispose 或 Cancel", Topic("task").SearchText);
             StringAssert.Contains("父动作取消也不会取消", Topic("screen").SearchText);
             StringAssert.Contains("父动作不会随它完成", Topic("screen").SearchText);
@@ -409,6 +410,13 @@ namespace YLFramework.Tests.Actions
             StringAssert.DoesNotContain("当前没有提供 DOTween 或 Observable", Topic("distribution").SearchText);
             StringAssert.Contains("Time.frameCount", Topic("frames").SearchText);
             StringAssert.Contains("不是按动作实际获得的更新次数", Topic("frames").SearchText);
+            var module = ActionKitHelpProvider.CreateModule();
+            StringAssert.Contains("YLFramework", module.Documentation(typeof(ActionKit)).Summary);
+            foreach (var page in module.Guides.Concat(module.About))
+            {
+                Assert.That(page.RelatedTypes.All(type => type.Assembly == typeof(ActionKit).Assembly ||
+                    type.Assembly.GetName().Name == "YLFramework.Actions.DOTween"), Is.True, page.Id);
+            }
         }
 
         [Test]
@@ -606,7 +614,7 @@ namespace YLFramework.Tests.Actions
             StringAssert.Contains("mSource.mObserver = null", observable.Example);
             StringAssert.DoesNotContain("MonoBehaviour\n{", observable.Example);
             StringAssert.DoesNotContain("using UniRx", source);
-            StringAssert.DoesNotContain("QFramework.", source);
+            StringAssert.Contains("using YLFramework.Actions;", source);
             Assert.That(source.Contains("using DG.Tweening;"), Is.EqualTo(dotween.IsAvailable));
             StringAssert.Contains("DG.Tweening.DOTween.To", dotween.Example);
             StringAssert.Contains("float value = 0f;", dotween.Example);
@@ -948,7 +956,7 @@ namespace YLFramework.Tests.Actions
         [TestCase("YLFramework.Runtime.dll")]
         [TestCase("YLFramework.Foundation.Runtime.dll")]
         [TestCase("YLFramework.Utilities.ZipTool.dll")]
-        [TestCase("QFramework.dll")]
+        [TestCase("Unrelated.Library.dll")]
         [TestCase("YLFramework.Actions.DOTween.dll")]
         [TestCase("Assembly-CSharp.dll")]
         [TestCase("YLFramework.Tests.EditMode.dll")]

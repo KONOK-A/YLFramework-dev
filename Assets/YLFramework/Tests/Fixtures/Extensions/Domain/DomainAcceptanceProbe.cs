@@ -42,6 +42,38 @@ namespace YLFramework.Tests.DomainAcceptance
         private Receipt _receipt;
         private string _resultPath;
         private ILogHandler _original;
+        private ILogHandler _predecessor;
+
+        private sealed class ForwardingHandler : ILogHandler
+        {
+            private readonly ILogHandler _destination;
+            private readonly string _prefix;
+            internal readonly List<LogType> ProbeKinds = new();
+
+            internal ForwardingHandler(ILogHandler destination, string prefix)
+            {
+                _destination = destination;
+                _prefix = prefix;
+            }
+
+            public void LogException(Exception error, UnityEngine.Object context)
+            {
+                if (error.Message.StartsWith(_prefix, StringComparison.Ordinal))
+                {
+                    ProbeKinds.Add(LogType.Exception);
+                }
+                _destination.LogException(error, context);
+            }
+
+            public void LogFormat(LogType type, UnityEngine.Object context, string format, params object[] args)
+            {
+                if (string.Format(format, args).StartsWith(_prefix, StringComparison.Ordinal))
+                {
+                    ProbeKinds.Add(type);
+                }
+                _destination.LogFormat(type, context, format, args);
+            }
+        }
 
         [Serializable]
         private sealed class Receipt
@@ -90,6 +122,7 @@ namespace YLFramework.Tests.DomainAcceptance
             const string Backend = "Mono2x";
 #endif
             _original = Debug.unityLogger.logHandler;
+            _predecessor = _original;
             _receipt = new Receipt
             {
                 run = run,
@@ -142,6 +175,9 @@ namespace YLFramework.Tests.DomainAcceptance
                 MissionManager.Shutdown();
                 LoggerManager.Disable();
                 ReddotManager.Reset();
+                Require(ReferenceEquals(Debug.unityLogger.logHandler, _predecessor),
+                    "Logger did not restore its actual predecessor; leave an unexpected later owner untouched.");
+                Debug.unityLogger.logHandler = _original;
                 _receipt.handlerRestored = ReferenceEquals(Debug.unityLogger.logHandler, _original);
                 Require(_receipt.handlerRestored, "Logger did not restore its actual predecessor.");
             }
@@ -179,10 +215,14 @@ namespace YLFramework.Tests.DomainAcceptance
             Require(Path.IsPathRooted(_resultPath) && Directory.Exists(Path.GetDirectoryName(_resultPath)) && !File.Exists(_resultPath), "Result path is not a new owned artifact.");
             Require(_receipt.backend == expectedBackend && !Application.isBatchMode && !Debug.isDebugBuild, "Actual release backend mismatch.");
             Require(SystemInfo.graphicsDeviceType != GraphicsDeviceType.Null && Screen.width > 0 && Screen.height > 0, "Real graphical Player required.");
-            Require(_receipt.originalHandler.StartsWith("XFGameFramework.LoggerSystem.", StringComparison.Ordinal) == expectLegacyLogger, "Legacy Logger coexistence/independence mismatch.");
+            Require(ReferenceEquals(Debug.unityLogger.logHandler, _original), "The fixture must not replace the application's handler before its probe.");
             Require(!LoggerManager.IsEnabled, "YL Logger must remain passive until explicitly enabled.");
             string logger = Path.Combine(Path.GetDirectoryName(_resultPath), "logger-" + this.run);
             Require(!Directory.Exists(logger), "Do not overwrite a prior Logger probe.");
+            // 保留既有序列化开关；共存分支使用测试自有转发器，不要求外部包或修改应用 handler 的内部状态。
+            var forwarding = expectLegacyLogger ? new ForwardingHandler(_original, this.run + "/probe-") : null;
+            _predecessor = forwarding ?? _original;
+            Debug.unityLogger.logHandler = _predecessor;
             var session = LoggerManager.Enable(new LoggerOptions { WriteToFile = true, Directory = logger });
             var kinds = new List<LogType>();
             session.OnLogEvent += (type, _) => kinds.Add(type);
@@ -193,6 +233,10 @@ namespace YLFramework.Tests.DomainAcceptance
             Debug.unityLogger.Log(LogType.Assert, this.run + "/probe-assert");
             Debug.LogException(new InvalidOperationException(this.run + "/probe-exception"));
             Require(kinds.SequenceEqual(new[] { LogType.Log, LogType.Warning, LogType.Error, LogType.Assert, LogType.Exception }), "Five actual Debug kinds did not reach the YL writer.");
+            if (forwarding != null)
+            {
+                Require(forwarding.ProbeKinds.SequenceEqual(kinds), "Five actual Debug kinds must reach the owned predecessor exactly once.");
+            }
             _receipt.loggerFile = session.LogFilePath;
             var source = ReddotManager.RegisterPath("C/Inbox");
             ReddotManager.AddPath("C/Inbox");
@@ -248,7 +292,7 @@ namespace YLFramework.Tests.DomainAcceptance
             _receipt.resourceReturned = ResourceSystem.Current == null;
             Require(_receipt.resourceReturned, "Owned Resource authority remained active.");
             LoggerManager.Disable();
-            Require(ReferenceEquals(Debug.unityLogger.logHandler, _original), "YL replaced the original Logger.");
+            Require(ReferenceEquals(Debug.unityLogger.logHandler, _predecessor), "YL replaced its actual predecessor.");
             using (var file = new FileStream(session.LogFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
                 Require(file.Length > 0, "Writer remained locked/empty.");

@@ -50,7 +50,7 @@
 | 语言 | `language/displayName/languagesInfo` |
 | 语言条目 | `id/type/str/image/url/notes` |
 
-资源地址字段 `projectName/imageName/subAsset` 表示 YL ProjectId / Path / SubAsset，不转换为 XF 地址。作者工具生成到 `Assets/YLFrameworkData` 的条目属于使用工程，不是默认框架包源码。
+资源地址字段 `projectName/imageName/subAsset` 表示 YL ProjectId / Path / SubAsset，不转换为其他资源系统的地址。作者工具生成到 `Assets/YLFrameworkData` 的条目属于使用工程，不是默认框架包源码。
 
 ## Excel 作者后端
 

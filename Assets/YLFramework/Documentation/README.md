@@ -12,7 +12,7 @@ YLFramework 是 Unity C# 游戏框架，提供基础机制、Module / MVC / UI�
 | 组织业务模块与窗口 | 从 [UI / Module](Modules/UI.md) 开始，选择默认 UI 根或正式模板 |
 | 加载资源、场景和命名音频 | 从 [Resource 最小接入](Modules/Resource.md#可运行最小接入) 开始，明确初始化、Provider 和 lease |
 | 编辑配置与玩法定义 | 阅读 [配置数据](Modules/Data.md)、[领域系统](Modules/Domain.md) 和 [Editor 扩展](Modules/Editor.md) |
-| 理解或扩展框架 | 阅读 [架构](Architecture.md)、[代码规范](CodingStyle.md) 和 [维护约定](../AGENTS.md) |
+| 理解或扩展框架 | 阅读 [架构](Architecture.md) 和 [代码规范](CodingStyle.md) |
 
 ## 安装与分发
 
@@ -34,7 +34,7 @@ Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎�
 | Json.NET：`com.unity.nuget.newtonsoft-json` | 安装 Unity UPM 包；分发验证基线为 `3.2.1`，不可用同名替身 DLL 代替 |
 | `BouncyCastle.Cryptography 2.7.0` | netstandard2.0 DLL 与许可已随框架携带，用于 HKDF-SHA256；不要再导入冲突副本 |
 
-默认产品不要求 XF 生态、Odin、MCP、DOTween、MiniExcel 或 HybridCLR。可选依赖只在实际安装相应集成时需要。
+默认产品不要求可选宿主扩展、Odin、MCP、DOTween、MiniExcel 或 HybridCLR。可选依赖只在实际安装相应集成时需要。
 
 Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当前原生后端使用 Windows CNG；没有软件 GCM 或临时明文回退。具体平台、key provider 与失败合同见 [可选 Bundle 内容加密](Modules/Resource.md#可选-bundle-内容加密)。
 
@@ -50,7 +50,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 | `Plugins/BouncyCastle/` | 随包 DLL 与完整许可 |
 | `Prefabs/` | 正式 UI 模板，清单与继承关系见 [UI 资产准备](Modules/UI.md#资产准备与迁移) |
 | `Samples/` | 独立接入样例；生成的使用工程数据不属于该源码根 |
-| `Documentation/`、`AGENTS.md`、`LICENSE.md` | 当前产品说明、维护约束与来源许可 |
+| `Documentation/`、`LICENSE.md` | 产品文档与来源许可 |
 
 不导出 `Tests`、根 `Integrations`、源仓库 Tools、游戏、测试探针、SDK、NuGet 缓存或开发宿主配置。Core 生成器的 `Examples/Core/Modules` 也是非默认交付的生成输出，详见 [Editor 设置与生成](Modules/Editor.md#设置与生成)。Analyzer 以 RoslynAnalyzer 编译器输入交付，不作为 Player 插件；规则、安装与移除只维护在 [Attributes](Modules/Attributes.md#core-使用诊断)。
 
@@ -107,6 +107,6 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 
 ## 维护与来源
 
-框架代码规范见 [CodingStyle](CodingStyle.md)，维护规则见 [AGENTS](../AGENTS.md)，来源与许可见 [LICENSE](../LICENSE.md)。历史设计与迁移的查找入口为 [历史索引](IntegrationPlan.md)，不是当前待办、安装说明或授权。
+框架代码规范见 [CodingStyle](CodingStyle.md)，来源与许可见 [LICENSE](../LICENSE.md)。历史设计与迁移的查找入口为 [历史索引](IntegrationPlan.md)，不是当前待办或安装说明。
 
 源码仓库的 Tests、测试 CLI 与验收夹具不随默认包交付。消费方使用自己的真实编译、接入场景和目标平台验证；旧结果、缺失工具或同名 API 都不能代替当前使用环境的证据。

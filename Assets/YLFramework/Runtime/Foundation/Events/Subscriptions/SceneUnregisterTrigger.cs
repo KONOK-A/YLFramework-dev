@@ -8,7 +8,7 @@ namespace YLFramework.Events
 {
     /// <summary>
     /// 单例触发器：任意场景卸载时注销容器内的所有句柄。
-    /// 实际语义（与上游 QFramework 一致）：监听 <see cref="SceneManager.sceneUnloaded"/>，
+    /// 监听 <see cref="SceneManager.sceneUnloaded"/>，
     /// 任何场景卸载都会触发，包括 additive 加载的场景；不区分 active scene，也不区分句柄注册时所在场景。
     /// 实例常驻（DontDestroyOnLoad）并由 MonoSingletonProperty 管理；仅运行时可用。
     /// 同时承接显式 Scene.handle 的订阅；场景宿主迁移不会改变已捕获的场景所有权。

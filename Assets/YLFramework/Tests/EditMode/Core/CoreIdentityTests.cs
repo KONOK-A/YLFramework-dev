@@ -59,7 +59,8 @@ namespace YLFramework.Core.Tests
                 .Select(p => p.Replace('\\', '/')).ToArray();
             Assert.That(assembly.sourceFiles.Select(p => p.Replace('\\', '/')), Is.EquivalentTo(files));
             Assert.That(typeof(Module).Assembly, Is.SameAs(typeof(YLFramework.YLFrameworkRoot).Assembly));
-            Assert.That(System.IO.Directory.Exists("Assets/YLFramework/Runtime/XFMain"), Is.False);
+            Assert.That(System.IO.Directory.GetDirectories("Assets/YLFramework/Runtime").Select(System.IO.Path.GetFileName),
+                Is.EquivalentTo(new[] { "Foundation", "Core", "Systems", "Utilities" }));
         }
 
         [Test]
@@ -84,7 +85,6 @@ namespace YLFramework.Core.Tests
         }
 
         [Test]
-        [Category("YL.Integration.LegacyXF")]
         public void SerializedDictionaryHasOneFoundationOwnerAndLegacyTypesExit()
         {
             var foundation = typeof(CustomAsyncOperation<>).Assembly;
@@ -106,9 +106,6 @@ namespace YLFramework.Core.Tests
             Assert.That(runtime, Is.SameAs(foundation));
             Assert.That(foundation.GetReferencedAssemblies().Select(a => a.Name),
                 Does.Not.Contain("YLFramework.Foundation.Runtime"));
-            var original = AppDomain.CurrentDomain.GetAssemblies().Single(a => a.GetName().Name == "XFGameFramework");
-            Assert.That(original.GetType("XFGameFramework.SerializedDictionary`2"), Is.Not.Null);
-            Assert.That(original.GetType("XFGameFramework.DictionaryItem`2").IsPublic, Is.True);
         }
 
         [Test]
@@ -164,18 +161,19 @@ namespace YLFramework.Core.Tests
         }
 
         [Test]
-        public void CoreMetadataUsesUnifiedRuntimeAndUiWithoutOriginalXfBackend()
+        public void CoreMetadataUsesUnifiedRuntimeAndExplicitPlatformDependencies()
         {
             var references = typeof(Module).Assembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();
             Assert.That(references, Does.Not.Contain("YLFramework.Foundation.Runtime"));
             Assert.That(references, Does.Not.Contain("YLFramework.Core.Runtime"));
             Assert.That(references, Does.Not.Contain("YLFramework.Utilities.ZipTool"));
-            // asmdef 的过渡引用留待 8.6c；实际消费者移除后，编译产物不应再生成 XFAB 类型引用。
-            Assert.That(references, Does.Not.Contain("XFABManager"));
+            var platformReferences = new[] { "netstandard", "mscorlib", "System", "System.Core", "Newtonsoft.Json", "BouncyCastle.Cryptography" };
+            Assert.That(references.All(name => platformReferences.Contains(name) ||
+                name == "UnityEngine.UI" || name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
+                name.StartsWith("UnityEditor.", StringComparison.Ordinal)), Is.True, string.Join(", ", references));
             Assert.That(references, Does.Contain("UnityEngine.UI"));
-            Assert.That(references, Does.Not.Contain("XFGameFramework"));
             Assert.That(references, Does.Not.Contain("YLFramework.Runtime"));
-            Assert.That(references.Any(n => n.EndsWith(".Editor") || n == "XFGameFrameworkEditor"), Is.False);
+            Assert.That(references.Any(n => n.EndsWith(".Editor", StringComparison.Ordinal)), Is.False);
         }
 
         [Test]
@@ -200,9 +198,7 @@ namespace YLFramework.Core.Tests
                 Is.SameAs(typeof(CustomAsyncOperation<>).Assembly));
             Assert.That(core.GetTypes().Any(t => t.Namespace == "YLFramework.Core.Extensions"), Is.False);
 
-            var others = AppDomain.CurrentDomain.GetAssemblies().Where(a => a != core &&
-                (a.GetName().Name.StartsWith("YLFramework") || a.GetName().Name.StartsWith("XFGameFramework") ||
-                 a.GetName().Name == "XFABManager")).ToArray();
+            var others = AppDomain.CurrentDomain.GetAssemblies().Where(a => a != core).ToArray();
             foreach (var type in types)
             {
                 foreach (var assembly in others)

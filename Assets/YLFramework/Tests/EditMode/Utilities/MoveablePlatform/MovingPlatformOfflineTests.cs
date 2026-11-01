@@ -92,7 +92,13 @@ namespace YLFramework.Tests.Extensions.Behavior
 
             foreach (var source in Directory.GetFiles(directory, "*.cs").Select(File.ReadAllText))
             {
-                Assert.That(source.Contains("using UnityEditor") || source.Contains("XFGameFramework") || source.Contains("CharacterController2D"), Is.False);
+                Assert.That(source.Contains("using UnityEditor") || source.Contains("CharacterController2D"), Is.False);
+                Assert.That(source, Does.Contain("namespace YLFramework.Platform2D"));
+                foreach (System.Text.RegularExpressions.Match import in System.Text.RegularExpressions.Regex.Matches(source, @"(?m)^using\s+([^;]+);"))
+                {
+                    CollectionAssert.Contains(new[] { "System", "System.Collections", "System.Collections.Generic",
+                        "System.Reflection", "UnityEngine", "UnityEngine.Events", "static UnityEngine.GraphicsBuffer", "YLFramework.Extensions" }, import.Groups[1].Value);
+                }
                 Assert.That(source.Contains("static RaycastHit2D[]") || source.Contains("static ContactPoint2D[]"), Is.False);
                 Assert.That(source.Contains("Handles.") || source.Contains(".IsDestroy()"), Is.False);
             }

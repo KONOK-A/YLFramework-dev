@@ -30,7 +30,13 @@ namespace YLFramework.Tests.Extensions.Behavior
             foreach (var file in Directory.GetFiles(path, "*.cs", SearchOption.AllDirectories))
             {
                 var source = File.ReadAllText(file);
-                Assert.That(source.Contains("using UnityEditor") || source.Contains("UnityEditor.") || source.Contains("namespace XFFSM"), Is.False, file);
+                Assert.That(source.Contains("using UnityEditor") || source.Contains("UnityEditor."), Is.False, file);
+                Assert.That(source, Does.Contain("namespace YLFramework.StateMachine"), file);
+                foreach (Match import in Regex.Matches(source, @"(?m)^using\s+([^;]+);"))
+                {
+                    CollectionAssert.Contains(new[] { "System", "System.Collections", "System.Collections.Generic",
+                        "System.Text", "UnityEngine", "UnityEngine.Serialization" }, import.Groups[1].Value, file);
+                }
                 Assert.That(source.Contains("YLFramework.Utilities.FSM"), Is.False, "The two FSMs must not share a new execution kernel.");
             }
         }
@@ -47,7 +53,8 @@ namespace YLFramework.Tests.Extensions.Behavior
             Assert.That(Directory.GetFiles(path, "FSMSelectionDragger.cs", SearchOption.AllDirectories), Is.Empty);
             foreach (var source in Directory.GetFiles(path, "*.cs", SearchOption.AllDirectories).Select(File.ReadAllText))
             {
-                Assert.That(source.Contains("UnityEditor.Graphs") || source.Contains("Packages/com.xfkj.xffsm"), Is.False);
+                Assert.That(source.Contains("UnityEditor.Graphs") || source.Contains("Packages/"), Is.False);
+                Assert.That(source, Does.Contain("namespace YLFramework.Editor.StateMachine"));
             }
         }
 

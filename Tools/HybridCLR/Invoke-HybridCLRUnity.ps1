@@ -210,7 +210,9 @@ if ($Action -in @('ImportBase','ImportOptional','SyncOptional')) {
         @{ name=$_; sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash }
     }
     $lock = [IO.File]::ReadAllText((Join-Path $project 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable
-    if ($Action -ne 'SyncOptional' -and ($lock.dependencies.ContainsKey('com.code-philosophy.hybridclr') -or @($lock.dependencies.Keys | Where-Object { $_ -match 'xfkj|xfab' }).Count)) { throw 'No-package import must precede installation of HybridCLR/XF/test facilities.' }
+    if ($Action -ne 'SyncOptional' -and @($lock.dependencies.Keys | Where-Object {
+        -not $_.StartsWith('com.unity.modules.', [StringComparison]::Ordinal) -and $_ -cnotin @('com.unity.ugui','com.unity.nuget.newtonsoft-json')
+    }).Count) { throw 'Bare product import must precede all optional SDK and test facilities.' }
     $receipt = @{ action=$Action; passed=$true; assemblies=$assemblies; packageSha256=(Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash; testsPresent=[IO.Directory]::Exists((Join-Path $project 'Assets/YLFramework/Tests')); utc=[DateTime]::UtcNow.ToString('o') }
     if ($scope.IsCompatibility) {
         $receipt.UnityVersion=$scope.ExpectedUnityVersion; $receipt.UnityRevision=$scope.ExpectedUnityRevision

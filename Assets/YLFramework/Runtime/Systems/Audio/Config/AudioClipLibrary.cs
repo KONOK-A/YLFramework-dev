@@ -5,7 +5,7 @@ using YLFramework.Resource;
 
 namespace YLFramework.Audio
 {
-    /// <summary>素材定位方式；ExternalProvider 必须由调用方显式提供后端，不自动注册 XFAB。</summary>
+    /// <summary>素材定位方式；ExternalProvider 必须由调用方显式提供后端，不自动注册外部资源服务。</summary>
     public enum AudioClipSource
     {
         /// <summary>直接借用条目中的 Clip，由调用方保活。</summary>
@@ -41,7 +41,7 @@ namespace YLFramework.Audio
         /// <summary>Resource 模式的逻辑地址；ExternalProvider 模式为该后端的完整 key。</summary>
         [global::UnityEngine.Serialization.FormerlySerializedAs("Key")]
         public string key;
-        /// <summary>Resource 模式的稳定资源项目身份，不是旧 BundleName 或 XFAB ProjectName。</summary>
+        /// <summary>Resource 模式的稳定资源项目身份，不从旧 BundleName 或外部项目名称推断。</summary>
         [global::UnityEngine.Serialization.FormerlySerializedAs("ProjectId")]
         public string projectId;
         /// <summary>保留既有序列化值供一次性显式转换；运行时不使用或推断其含义。</summary>

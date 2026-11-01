@@ -138,7 +138,8 @@ namespace YLFramework.Tests.Extensions.Domain
                 }
                 var playerRefs = playerRuntime.assemblyReferences.Select(assembly => assembly.name)
                     .Concat(playerRuntime.compiledAssemblyReferences.Select(Path.GetFileNameWithoutExtension)).Distinct().OrderBy(name => name).ToArray();
-                if (playerRefs.Any(name => name.StartsWith("XF", StringComparison.Ordinal) || name.StartsWith("UnityEditor", StringComparison.Ordinal) || name == "MiniExcel" || name == "YLFramework.Excel.Editor"))
+                if (playerRefs.Any(name => !new[] { "mscorlib", "netstandard", "System", "System.Core", "Microsoft.CSharp",
+                    "Newtonsoft.Json", "BouncyCastle.Cryptography" }.Contains(name) && !name.StartsWith("UnityEngine.", StringComparison.Ordinal)))
                 {
                     throw new InvalidOperationException("Forbidden Player assembly edge.");
                 }
@@ -168,12 +169,12 @@ namespace YLFramework.Tests.Extensions.Domain
                 }
                 var domainPaths = AssetDatabase.GetAllAssetPaths().Where(IsDomainAsset).OrderBy(path => path).ToArray();
                 var metas = domainPaths.Select(path => new { path, guid = AssetDatabase.AssetPathToGUID(path) }).ToArray();
-                var xfRoots = new[] { "reddotsystem", "loggersystem", "skillsystem", "buffsystem", "missionsystem" };
-                var xfGuids = new HashSet<string>(AssetDatabase.GetAllAssetPaths().Where(path => xfRoots.Any(root => path.StartsWith("Packages/com.xfkj.xfgameframework." + root + "/", StringComparison.Ordinal)))
-                    .Select(path => AssetDatabase.AssetPathToGUID(path)).Where(guid => !string.IsNullOrEmpty(guid)), StringComparer.OrdinalIgnoreCase);
+                var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var entry in metas)
                 {
-                    if (entry.guid.Length != 32 || xfGuids.Contains(entry.guid) || !raw.TryGetValue(entry.guid, out var paths) || paths.Count != 1)
+                    if (entry.guid.Length != 32 || !identities.Add(entry.guid) ||
+                        AssetDatabase.GUIDToAssetPath(entry.guid) != entry.path ||
+                        !raw.TryGetValue(entry.guid, out var paths) || paths.Count != 1 || paths[0] != entry.path + ".meta")
                     {
                         throw new InvalidOperationException("Missing/duplicate C identity: " + entry.path);
                     }
@@ -189,7 +190,7 @@ namespace YLFramework.Tests.Extensions.Domain
                     playerReferences = playerRefs,
                     modules,
                     metas,
-                    sourceXfIdentityCount = xfGuids.Count,
+                    ownedIdentityCount = identities.Count,
                     symbols = runtime.defines,
                     enterPlayModeOptionsEnabled = EditorSettings.enterPlayModeOptionsEnabled,
                     enterPlayModeOptions = EditorSettings.enterPlayModeOptions.ToString(),

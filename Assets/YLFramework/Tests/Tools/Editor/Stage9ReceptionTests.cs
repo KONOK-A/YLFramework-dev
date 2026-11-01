@@ -30,8 +30,6 @@ public static class Stage9ReceptionTests
         "YLFramework.Tests.DomainMainAcceptanceInputTests",
         "YLFramework.Tests.ExportUnityPackageTests",
         "YLFramework.Core.Tests.CoreDefaultResourceTests",
-        "YLFramework.Core.Tests.CoreDefaultResourcePlayModeTests.ExistingXFEventSystemIsReusedWithoutTakingOwnershipOrChangingInput",
-        "YLFramework.Core.Tests.CoreDefaultResourcePlayModeTests.ExplicitRootsPreserveNativeConfigurationAndCoexistWithXFCanvas",
         "YLFramework.Core.Tests.CoreIdentityTests.SerializedDictionaryHasOneFoundationOwnerAndLegacyTypesExit",
         "YLFramework.Core.Tests.CoreCoexistencePlayModeTests",
         "YLFramework.Core.Editor.Tests.CoreEditorIdentityTests",

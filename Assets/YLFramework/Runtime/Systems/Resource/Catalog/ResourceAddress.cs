@@ -2,7 +2,7 @@ using System;
 
 namespace YLFramework.Resource
 {
-    /// <summary>不可变逻辑地址；按 ordinal 匹配，不修正大小写或猜测原 XFAB 项目名。</summary>
+    /// <summary>不可变逻辑地址；按 ordinal 匹配，不修正大小写或猜测外部项目名。</summary>
     public readonly struct ResourceAddress : IEquatable<ResourceAddress>
     {
         /// <summary>资源所属项目的稳定标识，不是 Unity 工程目录或 Bundle 名。</summary>

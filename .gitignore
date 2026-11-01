@@ -18,7 +18,7 @@
 /[Bb]uilds/
 /[Ee]xportedObj/
 /[Aa]ssetBundles/
-# XFABManager 与 YLFramework 构建后复制到 StreamingAssets 的 Bundle（由构建脚本重新生成）
+# 构建后复制到 StreamingAssets 的 Bundle（由构建脚本重新生成）
 /Assets/StreamingAssets/MainModule/
 /Assets/StreamingAssets/MainModule.meta
 /Assets/StreamingAssets/AssetBundles/
@@ -51,9 +51,6 @@ crashlytics-build.properties
 *.tmp
 *.orig
 
-# ---------- XFGameFramework 运行时生成的设置（含本地密钥字段，不入库） ----------
-/ProjectSettings/XFGameFramework.*.asset
-
 # ---------- 本机 / 工具遗留文件 ----------
 /Diagnostics/
 .DS_Store
@@ -75,20 +72,20 @@ Desktop.ini
 /Assets/YLFramework/Tests/Integrations/HybridCLR/PlayMode/Resources/YLHybridCLRTests/*
 !/Assets/YLFramework/Tests/Integrations/HybridCLR/PlayMode/Resources/YLHybridCLRTests/.gitkeep
 
-# ---------- 本地 AI 工具缓存（项目自身的 .kilo/ 与 AGENTS.md 仍然提交） ----------
+# ---------- 本机 AI 工具、指令与连接配置 ----------
 .agents/
 .claude/
 .codex/
 .kilocode/
 .opencode/
-/.kilo/worktrees/
-/.kilo/agent-manager.json
+/.kilo/
 /.mcp.json
 /.vscode/mcp.json
 /opencode.json
-
-# 临时反编译得到的文件
-XFGameFrameworkCodeAnalyzer/
+/AGENTS.md
+/Assets/YLFramework/AGENTS.md
+/Assets/YLFramework/AGENTS.md.meta
+/kilocodeignore
 
 # Hand-maintained analyzer SDK projects, not Unity-generated projects.
 !/Tools/YLFramework.Analyzers/Analyzer/YLFramework.Analyzers.csproj

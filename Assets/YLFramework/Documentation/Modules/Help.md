@@ -17,7 +17,7 @@ HelpKit 是 Unity Editor 内的只读帮助窗口基础设施：项目模块显�
 | [`Editor/Help/`](../../Editor/Help/) | `YLFramework.Editor` | 帮助注册、索引与窗口，共享 namespace `YLFramework.Editor.Help` |
 | [`Editor/Systems/Action/Help/`](../../Editor/Systems/Action/Help/)、[`Editor/Systems/Audio/Help/`](../../Editor/Systems/Audio/Help/) | `YLFramework.Editor` | 对应领域提供方，按显式类型索引 |
 | [`Editor/Help/FoundationToolsHelpProvider.cs`](../../Editor/Help/FoundationToolsHelpProvider.cs) | `YLFramework.Editor` | 基础机制与工具提供方，namespace 为 `YLFramework.Editor.Help` |
-| [`Editor/Core/CoreHelpProvider.cs`](../../Editor/Core/CoreHelpProvider.cs) | `YLFramework.Editor` | Core提供方；主体依赖Runtime/UGUI/Json.NET，不要求XFAB |
+| [`Editor/Core/CoreHelpProvider.cs`](../../Editor/Core/CoreHelpProvider.cs) | `YLFramework.Editor` | Core提供方；主体依赖Runtime/UGUI/Json.NET，不要求外部资源后端 |
 | 源码仓库 `Tests/EditMode/Editor/Help/` | `YLFramework.Tests.EditMode` | 复用普通 EditMode 程序集，不随默认包交付 |
 
 Core 提供方 namespace 为 `YLFramework.Editor.Core`，Action / Audio 提供方为 `YLFramework.Editor.Actions` / `.Audio`；所有正式编辑器类型共用 Editor-only 主体。帮助核心与领域提供方按职责分离，注册表不发现模块，API 索引不自动收集依赖程序集。

@@ -186,7 +186,7 @@ foreach ($kind in @('missing','non-folder')) {
         Fixture ('invalid-product-root-'+$kind)
         $meta=Join-Path $project 'Assets/YLFramework.meta'
         if ($kind -ceq 'missing') { [IO.File]::Delete($meta) }
-        else { [IO.File]::Copy((Join-Path $repo 'Assets/YLFramework/AGENTS.md.meta'),$meta,$true) }
+        else { [IO.File]::Copy((Join-Path $repo 'Assets/YLFramework/LICENSE.md.meta'),$meta,$true) }
         $Operation='InstallOptional'; $OptionalIntegration='DOTween'
         Reject { & $install } 'Imported product root folder identity required'
         if ([IO.Directory]::Exists((Join-Path $project 'Assets/Plugins')) -or

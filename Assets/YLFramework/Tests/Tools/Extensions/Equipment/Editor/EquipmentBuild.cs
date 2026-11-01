@@ -163,12 +163,19 @@ namespace YLFramework.Tests.EquipmentAcceptance
                 var assemblies = CompilationPipeline.GetAssemblies(AssembliesType.Player);
                 if (job.exit)
                 {
-                    Require(!UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Any(package => package.name.StartsWith("com.xfkj", StringComparison.OrdinalIgnoreCase) || package.name.Contains("mcp")), "Independent receiver contains XF/MCP packages.");
-                    Require(!assemblies.Any(assembly => assembly.name.StartsWith("XF", StringComparison.OrdinalIgnoreCase) || assembly.name.IndexOf("mcp", StringComparison.OrdinalIgnoreCase) >= 0), "Independent receiver contains forbidden assemblies.");
+                    Require(!UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Any(package =>
+                        !package.name.StartsWith("com.unity.modules.", StringComparison.Ordinal) &&
+                        !new[] { "com.unity.ugui", "com.unity.nuget.newtonsoft-json" }.Contains(package.name)), "Independent receiver contains an undeclared package.");
+                    Require(!assemblies.Any(assembly => !System.Text.RegularExpressions.Regex.IsMatch(assembly.name,
+                        @"^(?:YLFramework\.Runtime|YLFramework\.ResourceStartup\.Sample|YLFramework\.Equipment\.Acceptance\.Player|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity(?:\.[A-Za-z0-9_]+)+)$") ||
+                        assembly.name.Contains("Tests") || assembly.name.Contains("TestRunner")), "Independent receiver contains forbidden assemblies.");
                 }
-                // 主工程另含故意消费原XF链的历史UI验收程序集，不能把它当成YL产品。
+                // 宿主验收程序集不是产品依赖；每个正式 Player 消费者仍须保持独立的引用闭包。
                 foreach (var assembly in assemblies.Where(a => a.name == "YLFramework.Runtime" || a.name == "YLFramework.ResourceStartup.Sample" || a.name == "YLFramework.Equipment.Acceptance.Player"))
-                    Require(!assembly.assemblyReferences.Any(r => r.name.StartsWith("XF", StringComparison.Ordinal) || r.name.Contains("UnityEditor") || r.name.Contains("MiniExcel")), "Forbidden YL Player assembly reference: " + assembly.name);
+                    Require(!assembly.assemblyReferences.Select(reference => reference.name).Concat(assembly.compiledAssemblyReferences.Select(Path.GetFileNameWithoutExtension)).Any(name =>
+                        !(assembly.name != "YLFramework.Runtime" && name == "YLFramework.Runtime") &&
+                        (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$") ||
+                         name.Contains("TestRunner") || name.Contains("Editor"))), "Forbidden YL Player assembly reference: " + assembly.name);
                 Write(job.gate + "/inputs.json", new { job.run, job.il2cpp, scenePath, link = File.ReadAllText(folder + "/link.xml"),
                     assemblies = assemblies.Where(a => a.name.StartsWith("YLFramework", StringComparison.Ordinal)).Select(a => new { a.name, a.sourceFiles, references = a.assemblyReferences.Select(r => r.name).ToArray() }),
                     sources = Directory.GetFiles("Assets/YLFramework/Runtime", "*.cs", SearchOption.AllDirectories).ToDictionary(p => p, Hash) });

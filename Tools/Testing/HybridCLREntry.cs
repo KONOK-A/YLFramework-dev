@@ -147,9 +147,12 @@ namespace YLFramework.Testing
             }
             var runtime = Assembly.ReflectionOnlyLoadFrom(Path.Combine(managed, "YLFramework.Runtime.dll"));
             var references = runtime.GetReferencedAssemblies().Select(reference => reference.Name).ToArray();
-            if (references.Any(name => Regex.IsMatch(name, "^XF|^MiniExcel$|UnityEditor|TestRunner|nunit|YLFramework.*(Tests|Acceptance|Editor|Analyzer)", RegexOptions.IgnoreCase)))
+            var rejectedReferences = references.Where(name => !Regex.IsMatch(name,
+                @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$") ||
+                Regex.IsMatch(name, "TestRunner|Tests|Editor|Analyzer", RegexOptions.IgnoreCase)).ToArray();
+            if (rejectedReferences.Length != 0)
             {
-                throw new InvalidOperationException("The final AOT Runtime gained a forbidden reference.");
+                throw new InvalidOperationException("The final AOT Runtime gained forbidden references: " + string.Join(", ", rejectedReferences));
             }
             var evidence = new
             {

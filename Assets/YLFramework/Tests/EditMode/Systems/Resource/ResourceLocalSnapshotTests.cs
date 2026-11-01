@@ -15,7 +15,7 @@ namespace YLFramework.Tests.ResourceBuild
         internal static object Open(ResourceRelease release)
         {
             var type = typeof(ResourceSystem).Assembly.GetType("YLFramework.Resource.ResourceLocalSnapshot");
-            Assert.That(type, Is.Not.Null, "Runtime must mount an explicit verified Catalog v1 publication, without XFAB.");
+            Assert.That(type, Is.Not.Null, "Runtime must mount an explicit verified Catalog v1 publication through its owned resource service.");
             try
             {
                 return type.GetMethod("Open").Invoke(null, new object[] { release.DirectoryPath, release.Catalog.ProjectId,

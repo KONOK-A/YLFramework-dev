@@ -17,7 +17,7 @@ YLFramework 整体交付、按需使用。默认产品有 `YLFramework.Runtime` 
 | `Plugins/BouncyCastle` | 随包的批准依赖及完整来源许可；不递归整个宿主 Plugins |
 | `Tests` | 源仓库测试与夹具，不随默认包交付 |
 
-`YLFrameworkDev` 场景、宿主 ProjectSettings、XF 生态、MCP 和商业 Editor 插件属于源码开发环境，不是产品运行依赖。`Assets/YLFrameworkData` 是使用工程的作者数据；Resource 发布快照、HybridCLR 基座和普通框架包是不同交付物。
+`YLFrameworkDev` 场景、宿主 ProjectSettings、MCP 和商业 Editor 插件属于源码开发环境，不是产品运行依赖。主体依赖显式声明，不依赖已退休宿主扩展；承接源码的来源与许可见 [产品许可证](../LICENSE.md)。`Assets/YLFrameworkData` 是使用工程的作者数据；Resource 发布快照、HybridCLR 基座和普通框架包是不同交付物。
 
 ## 目录与程序集
 
@@ -29,14 +29,14 @@ Assets/YLFramework/
   Integrations/  DOTween/  Excel/  DomainExcel/  HybridCLR/
   Prefabs/  Samples/  Plugins/BouncyCastle/
   Documentation/  Tests/
-  AGENTS.md  LICENSE.md
+  LICENSE.md
 ```
 
 有 asmdef 的消费方仍需显式声明所需引用。正式 Sample 有自身 Runtime / Editor asmdef，均启用自动引用；“两个主体”不是默认包中只有两个 asmdef。实际平台、define、预编译白名单及嵌套测试归属以 `.asmdef` / `.asmref` 为准，不能从文件夹名推导。
 
 | 程序集 | autoReferenced | 依赖与限制 |
 | --- | --- | --- |
-| `YLFramework.Runtime` | true | Unity / UGUI、Json.NET、随包 BouncyCastle；不引用框架 Editor 或 XF |
+| `YLFramework.Runtime` | true | Unity / UGUI、Json.NET、随包 BouncyCastle；不引用框架 Editor 或已退休宿主扩展 |
 | `YLFramework.Editor` | true | Runtime、UGUI、Json.NET，仅 Editor；Help 不另建主体 DLL |
 | `YLFramework.Actions.DOTween` | false | Runtime + 外部 DOTween.dll，受 `DOTWEEN` 约束 |
 | `YLFramework.Excel.Editor` | true | Runtime、Editor、MiniExcel、Json.NET，仅 Editor |

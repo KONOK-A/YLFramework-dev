@@ -420,16 +420,20 @@ namespace YLFramework.Foundation.Tests
             var references = type.Assembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();
             Assert.That(references, Does.Not.Contain("YLFramework.Foundation.Runtime"));
             Assert.That(references, Does.Not.Contain("YLFramework.Core.Runtime"));
-            Assert.That(references.Any(n => n.StartsWith("YLFramework.Editor") || n == "XFGameFramework" || n == "XFFSM"),
-                Is.False, string.Join(", ", references));
-            // 中立源码闭包另行验证；主体仍有临时 XFAB/Json.NET 依赖，Player 必须保持 Editor 隔离。
+            var allowedReferences = new[] { "netstandard", "mscorlib", "System", "Microsoft.CSharp", "Microsoft.Win32.Primitives",
+                "UnityEngine", "Newtonsoft.Json", "BouncyCastle.Cryptography" };
+            Assert.That(references.All(name => allowedReferences.Contains(name) ||
+                name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
+                name.StartsWith("UnityEditor.", StringComparison.Ordinal)),
+                Is.True, string.Join(", ", references));
+            // 中立源码闭包另行验证；主体只接受批准的资源依赖，Player 必须保持 Editor 隔离。
             var player = CompilationPipeline.GetAssemblies(AssembliesType.Player)
                 .Single(a => a.name == "YLFramework.Runtime");
             var playerReferences = player.assemblyReferences.Select(a => a.name)
                 .Concat(player.compiledAssemblyReferences.Select(Path.GetFileNameWithoutExtension)).ToArray();
-            Assert.That(playerReferences.Any(n => n.StartsWith("YLFramework.Editor") || n.StartsWith("UnityEditor") ||
-                n == "XFGameFramework" || n == "XFFSM" || n == "YLFramework.Foundation.Runtime" || n == "YLFramework.Core.Runtime"),
-                Is.False, string.Join(", ", playerReferences));
+            Assert.That(playerReferences.All(name => allowedReferences.Contains(name) ||
+                name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("UnityEngine.", StringComparison.Ordinal)),
+                Is.True, string.Join(", ", playerReferences));
         }
 
         [Test]

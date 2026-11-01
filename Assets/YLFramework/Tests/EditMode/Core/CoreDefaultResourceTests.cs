@@ -13,39 +13,30 @@ namespace YLFramework.Core.Tests
     public class CoreDefaultResourceTests
     {
         private const string ResourceRoot = "Assets/YLFramework/Runtime/Core/Resources/";
-        private const string OriginalRoot = "Assets/Resources/XFGameFramework/";
         private const string OriginalAdaptationGuid = "abf116dc13c27ef4583812631aacc1c3";
         private const string AdaptationPath = "Assets/YLFramework/Runtime/Core/UI/Adaptation/AutomaticAdaptationCanvasScaler.cs";
 
-        [TestCase("Canvas")]
-        [TestCase("EventSystem")]
-        [Category("YL.Integration.LegacyXF")]
-        public void DefaultResourcesHaveUniqueKeysAndIndependentIdentities(string name)
+        [TestCase("Canvas", "0df4ee5a6aa484a40b5d537a1c23a2c0")]
+        [TestCase("EventSystem", "e5f419ca4a6e564439be23e0257ffb3c")]
+        public void DefaultResourcesHaveUniqueKeysAndOwnedIdentities(string name, string expectedGuid)
         {
             string key = "YLFramework/Core/" + name;
             string path = ResourceRoot + key + ".prefab";
             var prefab = Resources.Load<GameObject>(key);
-            var original = Resources.Load<GameObject>("XFGameFramework/" + name);
             Assert.That(prefab, Is.Not.Null);
-            Assert.That(original, Is.Not.Null);
-            Assert.That(prefab, Is.Not.SameAs(original));
             Assert.That(AssetDatabase.GetAssetPath(prefab), Is.EqualTo(path));
-            Assert.That(AssetDatabase.GetAssetPath(original), Is.EqualTo(OriginalRoot + name + ".prefab"));
             string guid = AssetDatabase.AssetPathToGUID(path);
             Assert.That(guid, Has.Length.EqualTo(32));
-            Assert.That(guid, Is.Not.EqualTo(AssetDatabase.AssetPathToGUID(OriginalRoot + name + ".prefab")));
+            Assert.That(guid, Is.EqualTo(expectedGuid));
             Assert.That(AssetDatabase.GUIDToAssetPath(guid), Is.EqualTo(path));
 
-            foreach (string resourceKey in new[] { key, "XFGameFramework/" + name })
+            var paths = AssetDatabase.GetAllAssetPaths().Where(p =>
             {
-                var paths = AssetDatabase.GetAllAssetPaths().Where(p =>
-                {
-                    int index = p.LastIndexOf("/Resources/", StringComparison.OrdinalIgnoreCase);
-                    return index >= 0 && !AssetDatabase.IsValidFolder(p) &&
-                        string.Equals(Path.ChangeExtension(p.Substring(index + 11), null), resourceKey, StringComparison.OrdinalIgnoreCase);
-                }).ToArray();
-                Assert.That(paths, Has.Length.EqualTo(1), resourceKey + ": " + string.Join(", ", paths));
-            }
+                int index = p.LastIndexOf("/Resources/", StringComparison.OrdinalIgnoreCase);
+                return index >= 0 && !AssetDatabase.IsValidFolder(p) &&
+                    string.Equals(Path.ChangeExtension(p.Substring(index + 11), null), key, StringComparison.OrdinalIgnoreCase);
+            }).ToArray();
+            Assert.That(paths, Is.EqualTo(new[] { path }), key + ": " + string.Join(", ", paths));
 
             foreach (var transform in prefab.GetComponentsInChildren<Transform>(true))
             {
@@ -53,7 +44,8 @@ namespace YLFramework.Core.Tests
                 foreach (var component in transform.GetComponents<Component>())
                 {
                     Assert.That(component, Is.Not.Null);
-                    Assert.That(component.GetType().Assembly.GetName().Name, Does.Not.StartWith("XFGameFramework"));
+                    CollectionAssert.Contains(new[] { typeof(UIRootContext).Assembly,
+                        typeof(EventSystem).Assembly, typeof(Transform).Assembly, typeof(Canvas).Assembly }, component.GetType().Assembly);
                     using (var serialized = new SerializedObject(component))
                     {
                         var property = serialized.GetIterator();
@@ -67,16 +59,25 @@ namespace YLFramework.Core.Tests
                     }
                 }
             }
-            Assert.That(AssetDatabase.GetDependencies(path).Any(p => p.StartsWith("Packages/com.xfkj.") || p.StartsWith(OriginalRoot)), Is.False);
+            var allowedDependencies = new[]
+            {
+                path, AdaptationPath,
+                "Assets/YLFramework/Runtime/Core/UI/Roots/UIRootContext.cs",
+                "Packages/com.unity.ugui/Runtime/UI/Core/Layout/CanvasScaler.cs",
+                "Packages/com.unity.ugui/Runtime/UI/Core/GraphicRaycaster.cs",
+                "Packages/com.unity.ugui/Runtime/EventSystem/EventSystem.cs"
+            };
+            Assert.That(AssetDatabase.GetDependencies(path), Is.SubsetOf(allowedDependencies));
         }
 
         [Test]
-        [Category("YL.Integration.LegacyXF")]
-        public void LightweightCanvasHasAnExplicitRootAndPreservesNativeScaleConfiguration()
+        public void LightweightCanvasHasAnExplicitRootAndFormalScaleConfiguration()
         {
             string path = ResourceRoot + "YLFramework/Core/Canvas.prefab";
             string adaptationGuid = AssetDatabase.AssetPathToGUID(AdaptationPath);
             Assert.That(adaptationGuid, Is.Not.Empty.And.Not.EqualTo(OriginalAdaptationGuid));
+            Assert.That(adaptationGuid, Is.EqualTo("36162b36843cfe2498fbdd4ff95ac2b4"));
+            Assert.That(AssetDatabase.GUIDToAssetPath(adaptationGuid), Is.EqualTo(AdaptationPath));
             var prefab = Resources.Load<GameObject>("YLFramework/Core/Canvas");
             Assert.That(AssetDatabase.GetAssetPath(prefab), Is.EqualTo(path));
             Assert.That(prefab.GetComponents<Component>().Select(c => c.GetType()), Is.SupersetOf(new[]
@@ -99,13 +100,12 @@ namespace YLFramework.Core.Tests
             Assert.That(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(adaptation)), Is.EqualTo(AdaptationPath));
             Assert.That(prefab.GetComponent<Canvas>().renderMode, Is.EqualTo(RenderMode.ScreenSpaceOverlay));
             Assert.That(prefab.GetComponent<CanvasScaler>().referenceResolution, Is.EqualTo(new Vector2(1920, 1080)));
-            var original = Resources.Load<GameObject>("XFGameFramework/Canvas").GetComponent<CanvasScaler>();
             var scaler = prefab.GetComponent<CanvasScaler>();
-            Assert.That(scaler.uiScaleMode, Is.EqualTo(original.uiScaleMode));
-            Assert.That(scaler.scaleFactor, Is.EqualTo(original.scaleFactor));
-            Assert.That(scaler.screenMatchMode, Is.EqualTo(original.screenMatchMode));
-            Assert.That(scaler.matchWidthOrHeight, Is.EqualTo(original.matchWidthOrHeight));
-            Assert.That(scaler.referencePixelsPerUnit, Is.EqualTo(original.referencePixelsPerUnit));
+            Assert.That(scaler.uiScaleMode, Is.EqualTo(CanvasScaler.ScaleMode.ScaleWithScreenSize));
+            Assert.That(scaler.scaleFactor, Is.EqualTo(1));
+            Assert.That(scaler.screenMatchMode, Is.EqualTo(CanvasScaler.ScreenMatchMode.MatchWidthOrHeight));
+            Assert.That(scaler.matchWidthOrHeight, Is.EqualTo(1));
+            Assert.That(scaler.referencePixelsPerUnit, Is.EqualTo(100));
         }
 
         [Test]

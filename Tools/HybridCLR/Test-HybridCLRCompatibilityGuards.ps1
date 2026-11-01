@@ -476,7 +476,7 @@ Case 'unknown invocation output is not overwritten' {
     [IO.File]::WriteAllText((Join-Path $scope.Root 'occupied.log.exit.json'), '{}')
     Reject { Assert-HybridCLRNewEvidence $scope 'occupied' }
 }
-foreach ($scriptName in @('Freeze-HybridCLRDelivery.ps1','Audit-HybridCLRNative.ps1','Audit-HybridCLRFinalImport.ps1','Relocate-HybridCLRReceiver.ps1','Sync-HybridCLRReceptionHarness.ps1')) {
+foreach ($scriptName in @('Audit-HybridCLRNative.ps1','Audit-HybridCLRFinalImport.ps1','Relocate-HybridCLRReceiver.ps1','Sync-HybridCLRReceptionHarness.ps1')) {
     Case ('legacy-only entry rejects new mode: ' + $scriptName) {
         Reject { & (Join-Path $PSScriptRoot $scriptName) -Root $root -Receiver h6 }
     }

@@ -9,7 +9,7 @@ using YLFramework.Resource;
 
 namespace YLFramework.Editor.Resource
 {
-    /// <summary>只从本构建内核的完整 Workspace 快照生成目录，不读取旧 ResData 或 XFAB 映射。</summary>
+    /// <summary>只从本构建内核的完整 Workspace 快照生成目录，不读取旧 ResData 或外部资源映射。</summary>
     public static class ResourceCatalogBuilder
     {
         /// <summary>锁定并逐文件复验构建结果后创建正式 Catalog 文档，不发布或挂载资源。</summary>

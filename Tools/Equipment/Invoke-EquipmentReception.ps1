@@ -18,6 +18,70 @@ for ($cursor = $Root; $cursor; $cursor = [IO.Path]::GetDirectoryName($cursor)) {
     if ([IO.Path]::Exists($cursor) -and ([IO.File]::GetAttributes($cursor) -band [IO.FileAttributes]::ReparsePoint)) { throw 'Linked paths are not owned receiver paths.' }
 }
 function Hash([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash }
+function Assert-EquipmentOptionalExport([string]$PackagePath, [string]$Repository) {
+    Add-Type -AssemblyName System.Formats.Tar
+    $license = 'Assets/YLFramework/LICENSE.md'
+    $roots = @('Assets/YLFramework/Integrations/Excel/Editor','Assets/YLFramework/Integrations/DomainExcel/Editor', $license)
+    $expected = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    foreach ($sourceRoot in $roots) {
+        $absolute = Join-Path $Repository $sourceRoot
+        $expected.Add($sourceRoot, (Hash ($absolute + '.meta')))
+        if ([IO.Directory]::Exists($absolute)) {
+            foreach ($meta in [IO.Directory]::GetFiles($absolute, '*.meta', [IO.SearchOption]::AllDirectories)) {
+                $relative = [IO.Path]::GetRelativePath($Repository, $meta).Replace('\','/')
+                $expected.Add($relative.Substring(0, $relative.Length - 5), (Hash $meta))
+            }
+        }
+    }
+    $records = @{}
+    $stream = [IO.File]::OpenRead($PackagePath)
+    $gzip = [IO.Compression.GZipStream]::new($stream, [IO.Compression.CompressionMode]::Decompress)
+    $tar = [System.Formats.Tar.TarReader]::new($gzip, $true)
+    try {
+        while ($null -ne ($entry = $tar.GetNextEntry())) {
+            if ($entry.EntryType -eq [System.Formats.Tar.TarEntryType]::Directory) { continue }
+            $name = $entry.Name.TrimStart('./')
+            if ($name -cnotmatch '^([0-9a-f]{32})/(asset|asset\.meta|pathname|preview\.png)$' -or $entry.Length -gt 80MB) { throw 'Unexpected optional archive member.' }
+            $guid = $Matches[1]; $member = $Matches[2]
+            if (-not $records.ContainsKey($guid)) { $records[$guid] = @{} }
+            if ($records[$guid].ContainsKey($member)) { throw 'Duplicate optional archive member.' }
+            $buffer = [IO.MemoryStream]::new()
+            try {
+                if ($entry.DataStream) { $entry.DataStream.CopyTo($buffer) }
+                elseif ($entry.Length -ne 0) { throw 'Optional payload stream is missing.' }
+                $records[$guid][$member] = $buffer.ToArray()
+            } finally { $buffer.Dispose() }
+        }
+    } finally { $tar.Dispose(); $gzip.Dispose(); $stream.Dispose() }
+    $paths = @(foreach ($pair in $records.GetEnumerator()) {
+        $record = $pair.Value
+        if (-not $record.ContainsKey('pathname') -or -not $record.ContainsKey('asset.meta')) { throw 'Optional package identity is missing.' }
+        $path = [Text.Encoding]::UTF8.GetString($record['pathname']).TrimEnd([char]0,"`r","`n")
+        if (-not $expected.ContainsKey($path) -or
+            ($path -cne $license -and $path -cnotmatch '^Assets/YLFramework/Integrations/(Excel|DomainExcel)/Editor(?:/|$)') -or
+            $path -match '/Tests/|EPPlus') { throw 'Unexpected optional export member.' }
+        $meta = [Text.Encoding]::UTF8.GetString($record['asset.meta'])
+        if ($meta -cnotmatch '(?m)^guid:\s*([0-9a-f]{32})\s*\r?$' -or $Matches[1] -cne $pair.Key) { throw "Optional GUID mismatch: $path" }
+        $metaHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$record['asset.meta']))
+        if ($metaHash -cne $expected[$path]) { throw "Optional Meta differs: $path" }
+        $source = Join-Path $Repository $path
+        if ([IO.File]::Exists($source)) {
+            if (-not $record.ContainsKey('asset')) { throw "Optional Payload is missing: $path" }
+            $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$record['asset']))
+            if ($hash -cne (Hash $source)) { throw "Optional Payload differs: $path" }
+        } elseif (-not [IO.Directory]::Exists($source) -or ($record.ContainsKey('asset') -and $record['asset'].Length -ne 0)) {
+            throw "Unexpected optional folder payload: $path"
+        }
+        $null = $expected.Remove($path)
+        $path
+    })
+    if ($expected.Count) { throw 'Optional Editor/product-license export closure is incomplete.' }
+    foreach ($required in @('MiniExcel.dll','MiniExcel-LICENSE.txt','Dependencies.json','DomainExcelCommands.cs')) {
+        if (-not @($paths | Where-Object { $_.EndsWith('/' + $required, [StringComparison]::Ordinal) }).Count) { throw "Optional export missing $required" }
+    }
+    if ($paths -cnotcontains $license) { throw 'Optional export must include the actual product LICENSE.md.' }
+    $paths
+}
 function Json([string]$Path, $Value) {
     if ([IO.File]::Exists($Path)) { throw "Preserve existing evidence: $Path" }
     [IO.File]::WriteAllText($Path, (ConvertTo-Json -InputObject $Value -Depth 40))
@@ -57,8 +121,8 @@ if ($Action -eq 'Audit') {
     $roots = @([regex]::Matches($block,'"(Assets/[^"\r\n]+)"') | ForEach-Object { $_.Groups[1].Value })
     $expectedRoots = @('Assets/YLFramework/Editor', 'Assets/YLFramework/Plugins/BouncyCastle', 'Assets/YLFramework/Prefabs',
         'Assets/YLFramework/Runtime', 'Assets/YLFramework/Samples', 'Assets/YLFramework/Documentation',
-        'Assets/YLFramework/LICENSE.md', 'Assets/YLFramework/AGENTS.md')
-    if ($roots.Count -ne $expectedRoots.Count -or @(Compare-Object -ReferenceObject $expectedRoots -DifferenceObject $roots -CaseSensitive).Count) { throw 'Expected the exact six directories and two files from the formal exporter.' }
+        'Assets/YLFramework/LICENSE.md')
+    if ($roots.Count -ne $expectedRoots.Count -or @(Compare-Object -ReferenceObject $expectedRoots -DifferenceObject $roots -CaseSensitive).Count) { throw 'Expected the exact six directories and one file from the formal exporter.' }
     $expected = @{}
     foreach ($sourceRoot in $roots) {
         $absolute = Join-Path $Repository $sourceRoot; $expected[$sourceRoot] = Hash ($absolute + '.meta')
@@ -85,7 +149,8 @@ if ($Action -eq 'Audit') {
         $record=$pair.Value
         if (-not $record.ContainsKey('pathname') -or -not $record.ContainsKey('asset.meta')) { throw 'Missing package identity.' }
         $relative=[Text.Encoding]::UTF8.GetString($record['pathname']).TrimEnd([char]0,"`r","`n")
-        if (-not $expected.ContainsKey($relative) -or $relative -match '/Tests/|/Integrations/|Editor Enhancers|AcceptanceBuild|^Packages/|/StreamingAssets/|XFAB|XFGameFramework|MiniExcel|\.(pfx|p12|pem|key)$|/(bcrypt|ncrypt|crypt32|Newtonsoft\.Json)\.dll$') { throw "Excluded/unexpected package path: $relative" }
+        if (-not $expected.ContainsKey($relative) -or $relative -match '/Tests/|/Integrations/|Editor Enhancers|AcceptanceBuild|^Packages/|/StreamingAssets/|MiniExcel|\.(pfx|p12|pem|key)$|/(bcrypt|ncrypt|crypt32|Newtonsoft\.Json)\.dll$' -or
+            ($relative -match '(?i)\.(dll|so|bundle)$' -and $relative -cnotin @('Assets/YLFramework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll','Assets/YLFramework/Runtime/Core/Analyzers/YLFramework.Analyzers.dll'))) { throw "Excluded/unexpected package path: $relative" }
         $meta=[Text.Encoding]::UTF8.GetString($record['asset.meta'])
         if ($meta -notmatch '(?m)^guid:\s*([0-9a-f]{32})\s*\r?$' -or $Matches[1] -cne $pair.Key) { throw "GUID mismatch: $relative" }
         $metaHash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$record['asset.meta']))
@@ -136,7 +201,7 @@ if ($Action -eq 'Import') {
     $forbidden=@($lock.dependencies.Keys | Where-Object { -not $_.StartsWith('com.unity.modules.') -and $_ -notin @('com.unity.ugui','com.unity.nuget.newtonsoft-json') })
     Json (Join-Path $Root 'first-import.json') @{ passed=($errors.Count -eq 0 -and $forbidden.Count -eq 0); packageSha256=$audit.sha256; harnessPresent=$false; priorCodeFiles=$code; assemblies=$assemblies; errors=$errors; forbiddenPackages=$forbidden; resolved=$lock }
     if ($errors.Count -or $forbidden.Count) { throw 'Fresh independent product import failed.' }
-    'First import compiled before any harness, XF, MCP or test framework.'
+    'First import compiled with only the declared product packages, before any SDK, harness or test framework.'
     return
 }
 function CopyTree([string]$Source,[string]$Destination) {
@@ -221,26 +286,11 @@ if ($Action -eq 'Bind') {
     if (-not $first.passed -or $first.harnessPresent -or $first.packageSha256 -ne $audit.sha256 -or -not $excelGate.passed -or $excel.PassCount -ne 15 -or $excel.FailCount -ne 0 -or -not $protection.passed) { throw 'First import, optional test or protection gate is not green.' }
     $optional=Join-Path $Root 'YLFramework-Equipment-Excel.unitypackage'
     if (-not [IO.File]::Exists($optional)) { throw 'Complete optional Editor delivery is missing.' }
-    Add-Type -AssemblyName System.Formats.Tar
-    $stream=[IO.File]::OpenRead($optional);$gzip=[IO.Compression.GZipStream]::new($stream,[IO.Compression.CompressionMode]::Decompress);$tar=[System.Formats.Tar.TarReader]::new($gzip,$true)
-    $optionalPaths=[Collections.Generic.List[string]]::new()
-    try {
-        while ($null -ne ($entry=$tar.GetNextEntry())) {
-            if ($entry.EntryType -eq [System.Formats.Tar.TarEntryType]::Directory) { continue }
-            if ($entry.Name.TrimStart('./') -match '^[0-9a-f]{32}/pathname$') {
-                $buffer=[IO.MemoryStream]::new(); try {$entry.DataStream.CopyTo($buffer);$path=[Text.Encoding]::UTF8.GetString($buffer.ToArray()).TrimEnd([char]0,"`r","`n")} finally {$buffer.Dispose()}
-                if ($path -notmatch '^Assets/YLFramework/Integrations/(Excel|DomainExcel)/Editor(?:/|$)' -or $path -match '/Tests/|EPPlus|XFAB') { throw 'Unexpected optional export member.' }
-                $optionalPaths.Add($path)
-            }
-        }
-    } finally {$tar.Dispose();$gzip.Dispose();$stream.Dispose()}
-    foreach ($required in @('MiniExcel.dll','MiniExcel-LICENSE.txt','XF-ExcelSystem-LICENSE.txt','Dependencies.json','DomainExcelCommands.cs')) {
-        if (-not @($optionalPaths | Where-Object { $_.EndsWith('/'+$required) }).Count) { throw "Optional export missing $required" }
-    }
+    $optionalPaths = @(Assert-EquipmentOptionalExport $optional $Repository)
     $tools=Join-Path $Root 'Tools';[IO.Directory]::CreateDirectory($tools) | Out-Null
     foreach ($file in [IO.Directory]::GetFiles($PSScriptRoot)) { [IO.File]::Copy($file,(Join-Path $tools ([IO.Path]::GetFileName($file)))) }
     [IO.File]::Copy((Join-Path $evidence 'final-protection.json'),(Join-Path $Root 'main-protection.json'))
-    Json (Join-Path $Root 'delivery-binding.json') @{ completed=[DateTime]::UtcNow.ToString('o'); repository=$Repository; core=@{path=$package;sha256=(Hash $package);records=$audit.records}; optional=@{path=$optional;sha256=(Hash $optional);paths=$optionalPaths};
+    Json (Join-Path $Root 'delivery-binding.json') @{ completed=[DateTime]::UtcNow.ToString('o'); repository=$Repository; core=@{path=$package;sha256=(Hash $package);records=$audit.records}; optional=@{path=$optional;sha256=(Hash $optional);paths=$optionalPaths;frameworkLicenseSha256=(Hash (Join-Path $Repository 'Assets/YLFramework/LICENSE.md'))};
         firstImport=(Join-Path $Root 'first-import.json'); receiver=$project; players=$players; excel=@{passed=15;failed=0;root=(Join-Path $Root 'Gates/Excel')}; protection=$protection;
         tools=@(Get-ChildItem -LiteralPath $tools -File | ForEach-Object { @{name=$_.Name;sha256=(Hash $_.FullName)} }) }
     'Bound current formal source, optional licenses, first import, all four actual Player verdicts and final protection.'

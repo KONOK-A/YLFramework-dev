@@ -114,7 +114,7 @@ namespace YLFramework.Editor.Audio
                     "省略/null 使用对应类别的内部值默认，不创建配置类。优化仅针对内部 Options 类分配，不承诺整个 Audio 零 GC；初始化、音源创建、集合扩容和 Action 回调闭包等仍可能分配。" +
                     "Unity 2022.3.62f3c1 Editor PlayMode 预热后的 4096 次配置捕获/校验/值存储测得 0 次 GC.Alloc 事件；完整路径前后数据见 Audio 文档，不是字节统计，不能替代 Player/IL2CPP 设备实测。"),
                 HelpBlock.Paragraph("接入", "业务程序集引用 YLFramework.Runtime，代码使用 using YLFramework.Audio。" +
-                    "Audio 与 Action 同属共享 Runtime，直接复用 YL 池、Binding 和 Events；不依赖 QFramework、XF、ResKit 或 Timing 调度。" +
+                    "Audio 与 Action 同属共享 Runtime，直接复用 YL 池、Binding 和 Events；播放调度由 Audio 模块自身管理。" +
                     "直接 Clip 由业务保活；具名素材使用显式 AudioClipAddress/provider 与租约，组配置复用同一加载链，不提供旧 Loader 或 Fluent 播放入口。" +
                     "Mixer 路由、暴露参数与 Snapshot 控制可选；不配置 Mixer 的旧调用保持原功能，不自动绑定 Settings 音量或 Ducking。"),
                 HelpBlock.Notice("只读帮助", "帮助仅反射 Audio 命名空间内的公开类型，不执行示例，不播放音频，也不创建运行时宿主。" +

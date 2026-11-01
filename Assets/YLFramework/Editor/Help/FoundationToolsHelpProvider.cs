@@ -40,7 +40,7 @@ namespace YLFramework.Editor.Help
                     new[] { typeof(global::YLFramework.Utilities.StringTools), typeof(FSM.Fsm<>), typeof(Grids.NormalGrid<>), typeof(global::YLFramework.Utilities.Json.JSONObject),
                         typeof(global::YLFramework.UI.ColorSelector), typeof(global::YLFramework.UI.ColorSelectorWindow) },
                     HelpBlock.Paragraph("选用工具", "StringTools/Extensions、FSM、Grid、Json/JSONObject、Table 位于 YLFramework.Runtime；FSM 由调用方驱动及回收，" +
-                         "不替代可视化XFFSM。ZipTool也归Runtime主体，源码仍BCL-only；Zip/GZip的reader以using管理寿命。" +
+                         "不替代 Systems/StateMachine 的可视化状态机。ZipTool也归Runtime主体，源码仍BCL-only；Zip/GZip的reader以using管理寿命。" +
                          "这些工具不强制依赖 Core Module，也不把 Save/HTTP 改为另一套 JSON 内核。"),
                     HelpBlock.Paragraph("取色便利工具", "ColorSelector 的控件、渲染与窗口统一位于 Utilities/UI/ColorSelector，不是 Foundation 基础机制。" +
                         "窗口通过 Module.LoadPanel/LoadPanelAsync 显式打开，按 Prefab 默认、规则快照和本次覆盖合成；控件读取最近 Panel 的 IsLoaded/IsInputBlocked，无 Panel 时沿默认输入行为。" +
@@ -50,7 +50,7 @@ namespace YLFramework.Editor.Help
                         "Action/Audio 保持各自帮助和成熟工具，不在此复制其 API 文档。"),
                     HelpBlock.Notice("交付边界", "默认导出 Editor、Plugins/BouncyCastle、Prefabs、Runtime、Samples、Documentation 六个目录及框架根级文件。" +
                         "不含 Tests、根 Integrations、SDK 工具项目、NuGet/中间产物、游戏资源或 Assets/YLFrameworkData。" +
-                         "框架仍需 UGUI、Newtonsoft 等既有依赖，主体不引用 XFAB；原游戏仍使用原包资源链。EventListener 使用原生 Inspector，Sirenix 插件已退出，宿主商业插件不分发。"),
+                         "框架仍需 UGUI、Newtonsoft 等既有依赖，主体不依赖外部资源框架。EventListener 使用原生 Inspector，Sirenix 插件已退出，宿主商业插件不分发。"),
                     Document("工具导航与导出说明", "README.md"),
                     Document("取色工具接入", "Modules/UI.md")),
                 Guide("attributes", "Attributes 与显示边界", "Foundation 展示元数据与 Core 编译器诊断是不同机制。",

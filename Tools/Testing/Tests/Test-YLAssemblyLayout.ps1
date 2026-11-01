@@ -41,7 +41,10 @@ if ($Group -in @('Player', 'All')) {
             $failures.Add("Production Player graph compiles test/acceptance source $source in $($assembly.name).")
         }
         if ($assembly.name -eq 'YLFramework.Runtime') {
-            foreach ($reference in $assembly.references + $assembly.precompiled | Where-Object { $_ -match '^XF|^MiniExcel(?:\.dll)?$|YLFramework\.Excel\.Editor|TestRunner|\.Tests(?:\.|$)|Acceptance|UnityEditor|YLFramework\.Editor|Analyzer' }) {
+            foreach ($reference in $assembly.references + $assembly.precompiled | Where-Object {
+                $_ -cnotmatch '^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)(?:\.dll)?$' -or
+                $_ -match 'TestRunner|Tests|Editor|Analyzer'
+            }) {
                 $failures.Add("Production Runtime references forbidden test/Editor assembly $reference.")
             }
         }

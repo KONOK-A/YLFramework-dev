@@ -295,7 +295,7 @@ namespace YLFramework.Tests.ResourceBuild
         {
             var assembly = typeof(ResourceProject).Assembly;
             var projectType = assembly.GetType("YLFramework.Editor.Resource.ResourceProject");
-            Assert.That(projectType, Is.Not.Null, "8.2a requires its own project definition, not SubProject/XFABProject.");
+            Assert.That(projectType, Is.Not.Null, "The resource build map requires its own formal project definition.");
             var project = ScriptableObject.CreateInstance(projectType);
             JsonUtility.FromJsonOverwrite(JsonConvert.SerializeObject(new
             {

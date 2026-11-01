@@ -4,7 +4,7 @@
 
 `https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3`
 
-解析 commit 必须为 `6cadd24d101f4cbd00cd80190106f6621132d24d`。不包含官方包、运行库、dnlib、XF 或 XFAB 副本。下面的定点范围均为 Windows64、IL2CPP、.NET Framework；package 或本地版本文本等于 `9.0.3` 只是必要条件，不能单独证明实际 native 来源或可用性。
+解析 commit 必须为 `6cadd24d101f4cbd00cd80190106f6621132d24d`。不包含官方包、运行库、dnlib 或其他宿主扩展副本。下面的定点范围均为 Windows64、IL2CPP、.NET Framework；package 或本地版本文本等于 `9.0.3` 只是必要条件，不能单独证明实际 native 来源或可用性。
 
 ## Verified Runtime Scope
 
@@ -88,11 +88,11 @@ EditorFast 要求已有 ResourceSystem 与 Core provider 绑定，仅使用 AppD
 
 应用显式持有 `HybridCLRExample`，yield `Run(configuration, projectId, compatibilityId)` 后读取 Result；关闭时 yield `CloseAsync()`。更新实验可先显式 `CloseCode()` 关闭 Module、实例和 manifest 屏障，待原生销毁排空后 Activate，但仍须新进程运行另一版代码。配置可由 ResourceLocalSnapshot.OpenBuiltIn/ArtifactStore 构造。样例不自动启动、找全场景或接管现有游戏。只改 Support 的版本文本可做 v2 补丁实验，但正式证明仍须相同 Player hash 下的新进程原生执行。
 
-`HybridCLRIntegrationExporter.Export(absolutePackagePath, includeSample: true)` 显式导出本叶子的源码、asmdef 和依赖说明。默认不带样例，不递归依赖，不带 Tests、官方包、生成 DLL、基线、StreamingAssets 制品、私钥或仓库验收工具；默认框架仍导出六个目录（Editor、Plugins/BouncyCastle、Prefabs、Runtime、Samples、Documentation）及两个根文件（LICENSE.md、AGENTS.md），代码规范随 Documentation 导出，不含本可选叶子或宿主商业插件。
+`HybridCLRIntegrationExporter.Export(absolutePackagePath, includeSample: true)` 显式导出本叶子的源码、asmdef 和依赖说明。默认不带样例，不递归依赖，不带 Tests、官方包、生成 DLL、基线、StreamingAssets 制品、私钥或仓库验收工具；默认框架仍导出六个目录（Editor、Plugins/BouncyCastle、Prefabs、Runtime、Samples、Documentation）及根文件 LICENSE.md，代码规范随 Documentation 导出，不含本可选叶子或宿主商业插件。
 
 ## 验证与测试边界
 
-框架或相关程序集重编译后，源码仓库的 loader / Module 测试须先以当前程序集执行 `HybridCLRTestFixtures.Prepare()` 生成本机输入，不复用旧 bytes / manifest；准备与执行入口统一见源码仓库根 README 的“可选集成测试”。默认产品包不提供这些仓库工具或夹具。
+框架或相关程序集重编译后，源码仓库的 loader / Module 测试须先以当前程序集执行 `YLFramework.Tests.Integrations.HybridCLR.HybridCLRTestFixtures.Prepare()` 生成本机输入，不复用旧 bytes / manifest；执行方式见源码仓库的[测试工具说明](https://github.com/KONOK-A/YLFramework-dev/blob/main/Tools/Testing/README.md)。默认产品包不提供这些仓库工具或夹具。
 
 原生验证需要对应 Editor / SDK / 后端的真实基座、metadata、热更程序集、Module 与 Prefab 执行链。EditorSimulation / EditorFast 不能代替 Native，最小本地闭环不能代替 HTTPS 更新、版本替换 / 回滚或任意反射泛型覆盖。
 

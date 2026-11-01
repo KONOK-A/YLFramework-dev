@@ -24,7 +24,6 @@ namespace YLFramework.Editor.Distribution
             "Assets/YLFramework/Samples",
             "Assets/YLFramework/Documentation",
             "Assets/YLFramework/LICENSE.md",
-            "Assets/YLFramework/AGENTS.md",
         };
 
         /// <summary>向明确的现有本地父目录导出固定框架根；不保存资产、创建目录或自动覆盖已有交付。</summary>

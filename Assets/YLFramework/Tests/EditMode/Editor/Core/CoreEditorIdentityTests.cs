@@ -10,7 +10,6 @@ using UnityEditor;
 using UnityEditor.Compilation;
 using UnityEngine;
 using UnityEngine.TestTools;
-using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 using YLFramework.Editor.Common;
 using YLFramework.Editor.Core;
 using YLFramework.Editor.Foundation;
@@ -121,22 +120,12 @@ namespace YLFramework.Core.Editor.Tests
         }
 
         [UnityTest]
-        [Category("YL.Integration.LegacyXF")]
-        public IEnumerator MergedRuntimeHasActualUnityPositiveAndNegativeAnalyzerWitnesses()
+        public IEnumerator FormalRuntimeHasActualUnityPositiveAndNegativeAnalyzerWitnesses()
             => CompileAnalyzerWitnesses(AssemblyBuilderFlags.EditorAssembly);
 
         [UnityTest]
-        [Category("YL.Integration.LegacyXF")]
-        public IEnumerator MergedRuntimeHasActualUnityPlayerPositiveAndNegativeAnalyzerWitnesses()
-            => CompileAnalyzerWitnesses(AssemblyBuilderFlags.DevelopmentBuild);
-
-        [UnityTest]
-        public IEnumerator FormalRuntimeHasActualUnityPositiveAndNegativeAnalyzerWitnesses()
-            => CompileAnalyzerWitnesses(AssemblyBuilderFlags.EditorAssembly, false);
-
-        [UnityTest]
         public IEnumerator FormalRuntimeHasActualUnityPlayerPositiveAndNegativeAnalyzerWitnesses()
-            => CompileAnalyzerWitnesses(AssemblyBuilderFlags.DevelopmentBuild, false);
+            => CompileAnalyzerWitnesses(AssemblyBuilderFlags.DevelopmentBuild);
 
         [UnityTest]
         public IEnumerator NewUsageRulesHaveActualUnityPositiveAndNegativeWitnesses()
@@ -204,7 +193,7 @@ namespace YLFramework.Core.Editor.Tests
             }
         }
 
-        private static IEnumerator CompileAnalyzerWitnesses(AssemblyBuilderFlags flags, bool legacy = true)
+        private static IEnumerator CompileAnalyzerWitnesses(AssemblyBuilderFlags flags)
         {
             var editor = (flags & AssemblyBuilderFlags.EditorAssembly) != 0;
             var runtime = CompilationPipeline.GetAssemblies(editor ? AssembliesType.Editor : AssembliesType.Player)
@@ -246,17 +235,14 @@ namespace YLFramework.Core.Editor.Tests
 
                     Assert.That(messages, Is.Not.Null);
                     var errors = messages.Where(message => message.type == CompilerMessageType.Error).ToArray();
-                    // 故意违规同时触发原 XF 全局分析器；保留其 Error，不用关闭它来验收自有 Warning。
-                    Assert.That(errors.Select(message => Regex.Match(message.message, @"\berror ([A-Z0-9_]+):").Groups[1].Value),
-                        Is.EquivalentTo(negative && legacy ? new[] { "MUST_CALL_BASE_ATTRIBUTE", "DISABLE_NEW", "PROTECTED_HIERARCHY_MODIFICATION",
-                            "METHOD_LOCAL_ONLY_TYPE", "RESTRICTED_CALL_ATTRIBUTE" } : Array.Empty<string>()),
+                    Assert.That(errors, Is.Empty,
                         string.Join("\n", errors.Select(message => message.message)));
                     Assert.That(messages.Any(message => message.message.Contains("AD0001")), Is.False);
                     var diagnostics = messages.Where(message => Regex.IsMatch(message.message, @"\bYL000[1-7]\b")).ToArray();
                     Assert.That(diagnostics.All(message => message.type == CompilerMessageType.Warning), Is.True);
                     Assert.That(diagnostics.Select(message => Regex.Match(message.message, @"\bYL000[1-7]\b").Value),
                         Is.EquivalentTo(negative ? Enumerable.Range(1, 7).Select(id => "YL000" + id) : Array.Empty<string>()));
-                    Assert.That(File.Exists(output), Is.EqualTo(!negative || !legacy));
+                    Assert.That(File.Exists(output), Is.True);
                 }
             }
             finally
@@ -281,7 +267,8 @@ namespace YLFramework.Core.Editor.Tests
             var help = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("YLFramework.Editor.Help.HelpWindow"))
                 .Single(type => type != null);
             Assert.That(typeof(CreateModuleCommand).Assembly, Is.SameAs(help.Assembly));
-            Assert.That(Directory.Exists("Assets/YLFramework/Editor/XFMain"), Is.False);
+            Assert.That(Directory.GetDirectories("Assets/YLFramework/Editor").Select(Path.GetFileName),
+                Is.EquivalentTo(new[] { "Foundation", "Core", "Systems", "Utilities", "Common", "Tools", "Help", "Distribution" }));
         }
 
         [Test]
@@ -330,7 +317,7 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(definition.defineConstraints, Does.Contain("UNITY_INCLUDE_TESTS"));
             Assert.That(definition.autoReferenced, Is.False);
             Assert.That(typeof(CoreEditorIdentityTests).Assembly.GetReferencedAssemblies()
-                .Any(a => IsForbiddenReference(a.Name) || a.Name.StartsWith("XFAB", StringComparison.Ordinal)), Is.False);
+                .Any(a => IsForbiddenReference(a.Name)), Is.False);
         }
 
         [Test]
@@ -380,7 +367,7 @@ namespace YLFramework.Core.Editor.Tests
                 string path = NormalizeMenuPath(entry.attribute.menuItem);
                 Assert.That(path.StartsWith("YLFramework/Core/", StringComparison.Ordinal) ||
                     path.StartsWith("Assets/Create/YLFramework/Core/", StringComparison.Ordinal), Is.True, path);
-                // A matching validation item is legal; unrelated original XF duplicates are not this test's scope.
+                // 同路径的验证项合法；其他菜单的重复项不属于本测试的所有权范围。
                 var conflicts = entries.Where(e => NormalizeMenuPath(e.attribute.menuItem) == path &&
                     e.attribute.validate == entry.attribute.validate).ToArray();
                 Assert.That(conflicts.Length, Is.EqualTo(1), path + ": " + string.Join(", ",
@@ -398,13 +385,11 @@ namespace YLFramework.Core.Editor.Tests
         }
 
         [Test]
-        [Category("YL.Integration.LegacyXF")]
-        public void CoreAudioHasRetiredWhileFormalRuntimeAndOriginalPackageKeepSeparateIdentities()
+        public void CoreAudioHasRetiredWhileFormalRuntimeOwnsAudioTypes()
         {
             var assemblies = AppDomain.CurrentDomain.GetAssemblies();
             var core = typeof(Module).Assembly;
             var formal = assemblies.Single(a => a.GetName().Name == "YLFramework.Runtime");
-            var original = assemblies.Single(a => a.GetName().Name == "XFGameFramework");
             foreach (var name in new[] { "AudioData", "AudioController", "AudioPlayer", "AudioPlayerExtension", "AudioPlayerAutoPause",
                 "AudioAssetType", "AudioPlayType", "StopType", "ClipAssetNameInfo", "ClipAssetInfo" })
             {
@@ -417,20 +402,13 @@ namespace YLFramework.Core.Editor.Tests
                 Assert.IsNotNull(formal.GetType("YLFramework.Audio." + name), name);
             }
 
-            Assert.IsNotNull(original.GetType("XFGameFramework.AudioPlayer"));
             CollectionAssert.DoesNotContain(core.GetReferencedAssemblies().Select(a => a.Name).ToArray(), formal.GetName().Name);
             CollectionAssert.DoesNotContain(formal.GetReferencedAssemblies().Select(a => a.Name).ToArray(), core.GetName().Name);
         }
 
         [Test]
-        [Category("YL.Integration.LegacyXF")]
         public void EditorFilesHaveIndependentImportedGuidsAndExcludePackageManagementAndDlls()
         {
-            var package = PackageInfo.GetAllRegisteredPackages().Single(p => p.name == "com.xfkj.xfgameframework");
-            string originalRoot = Path.Combine(package.resolvedPath, "Editor");
-            Assert.That(Directory.Exists(originalRoot), Is.True, originalRoot);
-            var originalGuids = Directory.GetFiles(package.resolvedPath, "*.meta", SearchOption.AllDirectories)
-                .Select(ReadGuid).ToArray();
             var files = Directory.GetFiles(EditorRoot, "*", SearchOption.AllDirectories)
                 .Where(p => !p.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)).ToArray();
             Assert.That(files, Is.Not.Empty);
@@ -443,7 +421,6 @@ namespace YLFramework.Core.Editor.Tests
             var guids = Directory.GetFiles(EditorRoot, "*.meta", SearchOption.AllDirectories)
                 .Concat(new[] { EditorRoot + ".meta" }).Select(ReadGuid).ToArray();
             Assert.That(guids.Distinct().Count(), Is.EqualTo(guids.Length), "Duplicate new asset GUIDs.");
-            Assert.That(guids.Intersect(originalGuids), Is.Empty, "A new asset reused an original GUID.");
             foreach (string file in files)
             {
                 string relative = file.Replace('\\', '/').Substring(EditorRoot.Length + 1);
@@ -456,11 +433,11 @@ namespace YLFramework.Core.Editor.Tests
                 }
 
                 string source = File.ReadAllText(file);
-                Assert.That(source, Does.Not.Contain("XFGameFrameworkCodeAnalyzer"), relative);
+                Assert.That(source, Does.Not.Contain("UnityEditor.PackageManager"), relative);
                 Assert.That(source, Does.Not.Contain("ExpansionWindow"), relative);
                 Assert.That(source, Does.Not.Contain("ExpansionPackageListTree"), relative);
                 Assert.That(source, Does.Not.Contain("ExpansionPackages"), relative);
-                Assert.That(source, Does.Not.Contain("Packages/com.xfkj.xfgameframework/Editor/About"), relative);
+                Assert.That(source, Does.Not.Contain("Packages/"), relative);
             }
         }
 
@@ -509,10 +486,10 @@ namespace YLFramework.Core.Editor.Tests
 
         private static bool IsForbiddenReference(string name)
         {
-            return name.StartsWith("XF", StringComparison.Ordinal) ||
-                name.StartsWith("Project.Game", StringComparison.Ordinal) || name == "Assembly-CSharp" ||
-                name == "Assembly-CSharp-Editor" ||
-                name == "YLFramework.Core.Editor" || name.StartsWith("YLFramework.Editor.", StringComparison.Ordinal);
+            return !new[] { "mscorlib", "netstandard", "System", "System.Core", "System.Xml", "System.Xml.Linq",
+                "Newtonsoft.Json", "YLFramework.Runtime", "YLFramework.Editor", "nunit.framework" }.Contains(name) &&
+                !name.StartsWith("UnityEngine.", StringComparison.Ordinal) &&
+                !name.StartsWith("UnityEditor.", StringComparison.Ordinal);
         }
 
         private static string NormalizeMenuPath(string path)

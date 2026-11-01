@@ -85,7 +85,7 @@ namespace YLFramework.Tests.AudioSession
 
         private void OnState(PlayModeStateChange state)
         {
-            // 仅本轮获授权的验收隔离：保留原生日志输出，避免原 XF Logger 在退场时重建自身。
+            // 连续会话使用测试捕获的原生日志输出，不依赖外部包装器的退出生命周期。
             Debug.unityLogger.logHandler = _nativeHandler;
             if (state != PlayModeStateChange.ExitingPlayMode)
             {

@@ -168,11 +168,11 @@ namespace YLFramework.Core.Editor.Tests
         [TestCase(null)]
         [TestCase("")]
         [TestCase("Assets/Games")]
-        [TestCase("Assets/Resources/XFGameFramework")]
+        [TestCase("Assets/Resources/ExternalUI")]
         [TestCase("Assets/YLFramework/Editor/Help")]
         [TestCase("Assets/YLFramework/Editor/Core/GeneratedAssets/../NotOwned")]
         [TestCase("Assets/YLFramework/Editor/Core/GeneratedAssetsExtra")]
-        [TestCase("Assets/YLFramework/Editor/XFMain/GeneratedAssets")]
+        [TestCase("Assets/YLFramework/Editor/Unrelated/GeneratedAssets")]
         [TestCase("ProjectSettings")]
         public void ScriptableObjectGeneratorRejectsPathsOutsideItsOwnedRoot(string path)
         {

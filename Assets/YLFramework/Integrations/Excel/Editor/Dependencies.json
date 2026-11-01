@@ -18,14 +18,12 @@
         "attributionFile": "Licenses/MiniExcel-ATTRIBUTION.txt"
     },
     "adaptedSource": {
-        "name": "XF ExcelSystem",
         "version": "1.0.7",
         "revision": "725f94f23327de190111573870146af66e9484b6",
-        "upstream": "https://gitee.com/xianfengkeji/xfgame-framework.excel-system.git",
         "file": "Editor/ExcelManager.cs",
         "sha256": "ebe70a2ed0484d4f967af189be17fac8b134da19ea3adcab8b6c265f27a9e496",
         "license": "MIT",
-        "licenseFile": "Licenses/XF-ExcelSystem-LICENSE.txt",
-        "excluded": ["EPPlus.dll", "old XF identity", "installation tooling", "logos", "old metadata"]
+        "licenseFile": "../../../LICENSE.md",
+        "excluded": ["EPPlus.dll", "superseded source identity", "installation tooling", "logos", "old metadata"]
     }
 }

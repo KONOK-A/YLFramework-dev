@@ -14,7 +14,7 @@ using TreeViewItem = UnityEditor.IMGUI.Controls.TreeViewItem<int>;
 namespace YLFramework.Editor.Common
 {
     /// <summary>
-    /// 承接XF平面列表的TreeView构建/重排流程，按索引移动以保留空项和重复引用。
+    /// 构建及重排平面列表的TreeView，按索引移动以保留空项和重复引用。
     /// 窗口停用时须Dispose；getter应返回owner当前的序列化列表，以跟随Undo替换。
     /// </summary>
     /// <typeparam name="T">按引用身份维护的列表元素类型，允许空项和重复引用。</typeparam>

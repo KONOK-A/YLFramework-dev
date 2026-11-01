@@ -126,7 +126,7 @@ namespace YLFramework.Foundation.Tests
                     Assert.That(references.Any(path => Path.GetFileName(path) == "UnityEngine.CoreModule.dll"), Is.True);
                     Assert.That(references.Any(path => Path.GetFileName(path) == "mscorlib.dll" || Path.GetFileName(path) == "netstandard.dll"), Is.True);
                     Assert.That(references.Any(path => Path.GetFileName(path).StartsWith("YLFramework") ||
-                        Path.GetFileName(path).StartsWith("XF") || Path.GetFileName(path) == "Newtonsoft.Json.dll"), Is.False);
+                        Path.GetFileName(path) == "Newtonsoft.Json.dll"), Is.False);
                     TestContext.WriteLine("Compiling {0} complete Foundation sources with {1}, {2}; defines:\n{3}\nReferences:\n{4}",
                         sources.Length, flags, consumer, string.Join("\n", defines), string.Join("\n", references));
                     CompilerMessage[] messages = null;
@@ -227,7 +227,8 @@ namespace YLFramework.Foundation.Tests
             Directory.CreateDirectory(folder);
             try
             {
-                foreach (var name in new[] { "UnityEngine.UI.dll", "UnityEngine.UI.Fake.dll", "System.Fake.dll" })
+                foreach (var name in new[] { "UnityEngine.UI.dll", "UnityEngine.UI.Fake.dll", "System.Fake.dll",
+                    "Unrelated.Library.dll", "External.Resources.dll", "External.StateMachine.dll" })
                 {
                     var fake = Path.Combine(folder, name);
                     File.Copy(ui, fake);
@@ -238,7 +239,7 @@ namespace YLFramework.Foundation.Tests
                 }
                 foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies().Where(a =>
                     a.GetName().Name.StartsWith("YLFramework", StringComparison.Ordinal) ||
-                    new[] { "XFABManager", "XFGameFramework", "XFFSM", "Newtonsoft.Json" }.Contains(a.GetName().Name)))
+                    a.GetName().Name == "Newtonsoft.Json"))
                 {
                     Assert.That(IsAllowedReference(assembly.Location, contents, ui, true), Is.False, assembly.FullName);
                 }

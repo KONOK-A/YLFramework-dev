@@ -24,7 +24,12 @@ namespace YLFramework.Tests.Extensions.Behavior
             foreach (var source in Directory.GetFiles(Runtime, "*.cs", SearchOption.AllDirectories).Select(File.ReadAllText))
             {
                 Assert.That(source.Contains("using UnityEditor"), Is.False);
-                Assert.That(source.Contains("XFGameFramework"), Is.False);
+                Assert.That(source, Does.Contain("namespace YLFramework.Character2D"));
+                foreach (System.Text.RegularExpressions.Match import in System.Text.RegularExpressions.Regex.Matches(source, @"(?m)^using\s+([^;]+);"))
+                {
+                    CollectionAssert.Contains(new[] { "System", "System.Collections", "System.Collections.Generic",
+                        "System.Dynamic", "System.Reflection", "UnityEngine", "UnityEngine.Events", "YLFramework.Extensions" }, import.Groups[1].Value);
+                }
                 Assert.That(source.Contains("static RaycastHit2D[]"), Is.False);
                 Assert.That(source.Contains("static ContactPoint2D[]"), Is.False);
                 Assert.That(source.Contains("Handles."), Is.False);

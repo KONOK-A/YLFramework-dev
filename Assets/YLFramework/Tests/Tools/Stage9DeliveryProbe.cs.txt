@@ -20,6 +20,7 @@ using YLFramework.Binding;
 using YLFramework.Core;
 using YLFramework.Pooling;
 using YLFramework.Events;
+using YLFramework.Logging;
 using YLFramework.Serialization;
 using YLFramework.UI;
 using YLFramework.Samples.Resource;
@@ -28,7 +29,7 @@ using YLFramework.Resource;
 using YLFramework.Save;
 using Timer = YLFramework.Timing.Timer;
 
-// 新接收方的公开API消费者。无测试框架、原游戏、XF、MCP、额外产品程序集或隐藏资源。
+// 新接收方的公开API消费者。无测试框架、原游戏、宿主SDK、MCP、额外产品程序集或隐藏资源。
 public sealed class Stage9DeliveryProbe : MonoBehaviour
 {
     [global::UnityEngine.Serialization.FormerlySerializedAs("FullTemplate")]
@@ -40,8 +41,6 @@ public sealed class Stage9DeliveryProbe : MonoBehaviour
     [global::UnityEngine.Serialization.FormerlySerializedAs("ModalPrefab")]
     public GameObject modalPrefab;
     public Material urpMaterial;
-    [global::UnityEngine.Serialization.FormerlySerializedAs("OptionalLogger")]
-    public bool optionalLogger;
     private JObject _result;
     private JObject _config;
     private string _output;
@@ -82,7 +81,6 @@ public sealed class Stage9DeliveryProbe : MonoBehaviour
             ["Command"] = _command,
             ["Store"] = _store,
             ["BuildGuid"] = Application.buildGUID,
-            ["OptionalLogger"] = optionalLogger,
             ["Steps"] = new JArray(),
             ["RuntimeAssembly"] = typeof(ResourceSystem).Assembly.FullName,
 #if ENABLE_IL2CPP && !UNITY_EDITOR
@@ -203,8 +201,9 @@ public sealed class Stage9DeliveryProbe : MonoBehaviour
             Application.unityVersion == expectedUnity && Application.platform == RuntimePlatform.WindowsPlayer && IntPtr.Size == 8 && !Debug.isDebugBuild,
             "Real Windows64 non-Development Player required.");
         var assemblies = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetName().Name).ToArray();
-        Require(!assemblies.Any(name => name.Contains("MCP") || name.StartsWith("XF", StringComparison.Ordinal) && !(optionalLogger && name == "XFGameFramework.LoggerSystem")),
-            "Only the explicitly declared optional standalone Logger may coexist; no original XF framework or MCP is permitted.");
+        Require(!assemblies.Any(name => !System.Text.RegularExpressions.Regex.IsMatch(name,
+            @"^(?:Assembly-CSharp|YLFramework\.Runtime|YLFramework\.ResourceStartup\.Sample|mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|Mono(?:\.[A-Za-z0-9_]+)*|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity(?:\.[A-Za-z0-9_]+)+|Newtonsoft\.Json|BouncyCastle\.Cryptography)$") || name.Contains("Tests") || name.Contains("TestRunner")),
+            "Only the explicit native Player product, consumer and platform assembly closure may load.");
         _result["LoadedAssemblies"] = new JArray(assemblies);
         if (_command == "urp")
         {
@@ -642,8 +641,14 @@ public sealed class Stage9DeliveryProbe : MonoBehaviour
     }
 };
         Application.logMessageReceived += observer;
-        Debug.Log("STAGE9_NATIVE_LOGGER_WITNESS");
-        Application.logMessageReceived -= observer;
+        try
+        {
+            Debug.Log("STAGE9_NATIVE_LOGGER_WITNESS");
+        }
+        finally
+        {
+            Application.logMessageReceived -= observer;
+        }
         Require(seen && ReferenceEquals(handler, Debug.unityLogger.logHandler), "Native logger observation must not replace the handler.");
         Step("foundation-action-native-logger", new
         {
@@ -652,7 +657,7 @@ public sealed class Stage9DeliveryProbe : MonoBehaviour
             Action = actionDone,
             Timer = timerDone,
             LoggerHandler = handler.GetType().FullName,
-            LoggerScope = optionalLogger ? "Separately audited optional standalone Logger coexistence; not a product dependency" : "Unity native logging only; original XF embedded LoggerSystem is not a YL dependency or part of this package"
+            LoggerScope = "Native logging stays passive until an explicit YL logging session is enabled."
         });
     }
 
@@ -867,10 +872,7 @@ public sealed class Stage9DeliveryProbe : MonoBehaviour
 
         yield return null;
         Require(ModuleManager.AllModules.Count == 0 && ModuleManager.AllBaseModules.Count == 0 && ResourceSystem.Current == null && CoreResourceAccess.Provider == null && !AssetBundle.GetAllLoadedAssetBundles().Any(), "Clean exit must not leave product responsibility.");
-        if (optionalLogger)
-        {
-            yield return LoggerCoexistence();
-        }
+        yield return LoggerCoexistence();
 
         Step("normal-exit-ready", new
         {
@@ -880,88 +882,85 @@ public sealed class Stage9DeliveryProbe : MonoBehaviour
     }
     private IEnumerator LoggerCoexistence()
     {
-        const string ManagerName = "XFGameFramework.LoggerSystem.LoggerManager";
-        const string HandlerName = "XFGameFramework.LoggerSystem.LoggerHandler";
-        var assembly = AppDomain.CurrentDomain.GetAssemblies().Single(a => a.GetName().Name == "XFGameFramework.LoggerSystem");
-        var type = assembly.GetType(ManagerName, true);
-        var manager = FindObjectsOfType<MonoBehaviour>().Single(x => x.GetType() == type);
-        Require(Debug.unityLogger.logHandler.GetType().FullName == HandlerName, "The actual optional Logger must install its own handler.");
-        var property = type.GetProperty("OnLogEvent");
-        var old = (Action<LogType, string>)property.GetValue(null);
-        var observed = 0;
-        Action<LogType, string> witness = (kind, text) =>
-{
-    if (text == "STAGE9_LOGGER_FILE_WITNESS")
-    {
-        observed++;
-    }
-};
-        property.SetValue(null, old + witness);
-        try
-        {
-            Debug.Log("STAGE9_LOGGER_FILE_WITNESS");
-        }
-        finally
-        {
-            property.SetValue(null, old);
-        }
-        Require(observed == 1, "Optional Logger public event dispatch.");
-        var firstPath = (string)type.GetProperty("LogFilePath").GetValue(null);
-        Destroy(manager.gameObject);
-        yield return null;
-        Require(Debug.unityLogger.logHandler.GetType().FullName == "UnityEngine.DebugLogHandler", "Normal Logger owner destruction must return the native handler.");
+        Require(!LoggerManager.IsEnabled && !FindObjectsOfType<LoggerManager>().Any(), "Logging must not create an implicit session or owner.");
         var native = Debug.unityLogger.logHandler;
-        string firstText;
-        using (var file = File.Open(firstPath, FileMode.Open, FileAccess.Read, FileShare.None))
-        using (var reader = new StreamReader(file))
-        {
-            firstText = reader.ReadToEnd();
-        }
-
-        Require(firstText.Contains("STAGE9_LOGGER_FILE_WITNESS"), "Optional Logger writer did not persist or release its file.");
-        File.WriteAllText(Path.Combine(Path.GetDirectoryName(_output), "optional-logger-first.log"), firstText);
-        // 使用公开属性显式重建，验证已释放的static writer不会被下一实例复用。
-        Require(type.GetProperty("FilterLogType").GetValue(null) != null, "Optional Logger explicit reinitialization.");
-        manager = FindObjectsOfType<MonoBehaviour>().Single(x => x.GetType() == type);
-        Require(Debug.unityLogger.logHandler.GetType().FullName == HandlerName, "Reinitialized Logger must install a new handler.");
-        Debug.Log("STAGE9_LOGGER_SECOND_WRITER_WITNESS");
-        var secondPath = (string)type.GetProperty("LogFilePath").GetValue(null);
-        // 非所有者的后续handler接管必须保持，测试只归还自己安装的包装。
+        var previous = new Stage9OwnedLogHandler(native);
         var foreign = new Stage9OwnedLogHandler(native);
-        Debug.unityLogger.logHandler = foreign;
+        var directory = Path.Combine(Path.GetDirectoryName(_output), "yl-logger-files");
+        Require(!Directory.Exists(directory) && !File.Exists(directory), "Logger files must use a new run-owned directory.");
+        LoggerSession first = null;
+        LoggerSession second = null;
+        Debug.unityLogger.logHandler = previous;
         try
         {
-            Destroy(manager.gameObject);
+            first = LoggerManager.Enable(new LoggerOptions { WriteToFile = true, Directory = directory });
+            Require(ReferenceEquals(Debug.unityLogger.logHandler, first) && ReferenceEquals(LoggerManager.Enable(), first), "Explicit logging must own exactly one current session.");
+            var observed = 0;
+            Action<LogType, string> witness = (kind, text) =>
+            {
+                if (kind == LogType.Log && text == "STAGE9_LOGGER_FILE_WITNESS") observed++;
+            };
+            first.OnLogEvent += witness;
+            try
+            {
+                Debug.Log("STAGE9_LOGGER_FILE_WITNESS");
+            }
+            finally
+            {
+                first.OnLogEvent -= witness;
+            }
+            Require(observed == 1 && previous.Witnesses == 1, "YL logging must forward the actual Debug call to its event and actual predecessor exactly once.");
+            var firstPath = first.LogFilePath;
+            LoggerManager.Disable();
             yield return null;
-            Require(ReferenceEquals(Debug.unityLogger.logHandler, foreign), "Logger destruction must not overwrite a later handler owner.");
+            Require(first.IsDisposed && !LoggerManager.IsEnabled && ReferenceEquals(Debug.unityLogger.logHandler, previous), "Normal session close must dispose and return the previous handler.");
+            string firstText;
+            using (var file = File.Open(firstPath, FileMode.Open, FileAccess.Read, FileShare.None))
+            using (var reader = new StreamReader(file))
+            {
+                firstText = reader.ReadToEnd();
+            }
+            Require(firstText.Contains("STAGE9_LOGGER_FILE_WITNESS"), "The first writer must persist and release its file.");
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(_output), "yl-logger-first.log"), firstText);
+
+            second = LoggerManager.Enable(new LoggerOptions { WriteToFile = true, Directory = directory });
+            Require(!ReferenceEquals(first, second) && ReferenceEquals(Debug.unityLogger.logHandler, second), "Reinitialization must not reuse a disposed session.");
+            Debug.Log("STAGE9_LOGGER_SECOND_WRITER_WITNESS");
+            Require(previous.Witnesses == 2, "The new session must still forward to the actual predecessor.");
+            var secondPath = second.LogFilePath;
+            Debug.unityLogger.logHandler = foreign;
+            LoggerManager.Disable();
+            yield return null;
+            Require(second.IsDisposed && !LoggerManager.IsEnabled && ReferenceEquals(Debug.unityLogger.logHandler, foreign), "Session close must not overwrite a later handler owner.");
             Debug.Log("STAGE9_LOGGER_FOREIGN_WITNESS");
             Require(foreign.Witnesses == 1, "Later handler ownership not usable.");
+            string secondText;
+            using (var file = File.Open(secondPath, FileMode.Open, FileAccess.Read, FileShare.None))
+            using (var reader = new StreamReader(file))
+            {
+                secondText = reader.ReadToEnd();
+            }
+            Require(secondText.Contains("STAGE9_LOGGER_SECOND_WRITER_WITNESS"), "The second writer must persist and release its own file.");
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(_output), "yl-logger-second.log"), secondText);
+            Require(!FindObjectsOfType<LoggerManager>().Any(), "Normal logging cleanup must not respawn a host.");
+            Step("yl-logger-owner-writer-coexistence", new
+            {
+                EventWitnesses = observed,
+                PreviousHandlerWitnesses = previous.Witnesses,
+                LaterOwnerWitnesses = foreign.Witnesses,
+                FileExclusiveAfterBothClosures = true,
+                Scope = "Explicit YL sessions, native predecessor forwarding and later-owner preservation."
+            });
         }
         finally
         {
-            if (ReferenceEquals(Debug.unityLogger.logHandler, foreign))
+            if (first != null && ReferenceEquals(LoggerManager.Current, first) || second != null && ReferenceEquals(LoggerManager.Current, second)) LoggerManager.Disable();
+            if (ReferenceEquals(Debug.unityLogger.logHandler, previous) || ReferenceEquals(Debug.unityLogger.logHandler, foreign))
             {
                 Debug.unityLogger.logHandler = native;
             }
         }
-        string secondText;
-        using (var file = File.Open(secondPath, FileMode.Open, FileAccess.Read, FileShare.None))
-        using (var reader = new StreamReader(file))
-        {
-            secondText = reader.ReadToEnd();
-        }
-
-        Require(secondText.Contains("STAGE9_LOGGER_SECOND_WRITER_WITNESS"), "New Logger reused a disposed writer or failed to close it.");
-        File.WriteAllText(Path.Combine(Path.GetDirectoryName(_output), "optional-logger-second.log"), secondText);
-        Require(!FindObjectsOfType<MonoBehaviour>().Any(x => x.GetType() == type), "Optional Logger instance must not respawn during normal cleanup.");
-        Step("optional-logger-owner-writer-coexistence", new
-        {
-            EventWitnesses = observed,
-            LaterOwnerWitnesses = foreign.Witnesses,
-            HandlerReturned = Debug.unityLogger.logHandler.GetType().FullName,
-            FileExclusiveAfterBothDestructions = true,
-            Scope = "Separate MIT LoggerSystem 1.0.1 patched artifact; primary product-only eight-case evidence predates installation"
-        });
+        Require(ReferenceEquals(Debug.unityLogger.logHandler, native), "The consumer must release only its own handler wrappers.");
     }
     private ResourceLocalSnapshot Snapshot(JObject project, int version) => ResourceLocalSnapshot.OpenBuiltIn((string)project["Id"], (string)project["Digests"][version - 1], "StandaloneWindows64", "stage9-app");
     private static string Argument(string name, string fallback)
@@ -1029,7 +1028,7 @@ public sealed class Stage9OwnedLogHandler : ILogHandler
     public void LogException(Exception exception, UnityEngine.Object context) => _next.LogException(exception, context);
     public void LogFormat(LogType type, UnityEngine.Object context, string format, params object[] args)
     {
-        if (string.Format(format, args) == "STAGE9_LOGGER_FOREIGN_WITNESS")
+        if (string.Format(format, args).StartsWith("STAGE9_LOGGER_", StringComparison.Ordinal))
         {
             Witnesses++;
         }

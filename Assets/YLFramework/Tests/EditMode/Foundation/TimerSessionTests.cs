@@ -69,16 +69,6 @@ namespace YLFramework.Foundation.Tests
             _previousOptionsLine = ReadSettingLine(settingsText, OptionsPattern);
             _previousLogHandler = Debug.unityLogger.logHandler;
             _editorLogHandler = _previousLogHandler;
-            if (_previousLogHandler.GetType().FullName == "XFGameFramework.LoggerSystem.LoggerHandler")
-            {
-                // 普通 PlayMode 测试也可能留下这个包装器。只读其先前记录的底层 handler，
-                // 不调用 LoggerManager.Instance、不改原包静态状态，不要求重新编译来隔离 fixture。
-                var loggerType = _previousLogHandler.GetType().Assembly.GetType("XFGameFramework.LoggerSystem.LoggerManager", true);
-                var logger = loggerType.GetField("_instance", StaticPrivate).GetValue(null);
-                Assert.That(logger, Is.Not.Null, "原日志包装器必须仍保留可读取的底层路由。");
-                _editorLogHandler = (ILogHandler)loggerType.GetField("unityLogHandler", InstancePrivate).GetValue(logger);
-                Assert.That(_editorLogHandler, Is.Not.Null, "不以静默日志替代失效的原包日志路由。");
-            }
             // Test Runner 自己的空场景不属于用户场景；原已保存场景在 finally 中恢复。
             _previousScenes = EditorSceneManager.GetSceneManagerSetup().Where(s => !string.IsNullOrEmpty(s.path)).ToArray();
             _scenePath = "Temp/YLTimer.Session." + Guid.NewGuid().ToString("N") + ".unity";
@@ -224,9 +214,8 @@ namespace YLFramework.Foundation.Tests
             Assert.That(_firstScope.Contains("same"), Is.False);
             AssertNoHosts();
 
-            // 原 XF Logger 不恢复静态 handler，第二轮新实例缺少底层路由。
-            // 经用户授权仅恢复 fixture 捕获的 Editor handler；不吞日志，不改 Timer/session/gate。
-            Debug.unityLogger.logHandler = _editorLogHandler;
+            Assert.That(Debug.unityLogger.logHandler, Is.SameAs(_editorLogHandler),
+                "Timer 退出不能替换应用既有的日志 handler。");
             yield return new EnterPlayMode(false);
             Assert.That(SessionIdentity, Is.Not.SameAs(firstSession), "实际 SubsystemRegistration 更换会话身份。");
             Assert.That(SceneManager.GetActiveScene().path, Is.EqualTo(_scenePath));

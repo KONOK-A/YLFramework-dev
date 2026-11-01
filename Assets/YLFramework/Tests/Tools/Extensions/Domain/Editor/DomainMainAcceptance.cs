@@ -647,7 +647,7 @@ namespace YLFramework.Tests.DomainMain
                 var graph = CompilationPipeline.GetAssemblies(AssembliesType.Player);
                 var runtime = graph.Single(a => a.name == "YLFramework.Runtime");
                 var references = runtime.assemblyReferences.Select(a => a.name).Concat(runtime.compiledAssemblyReferences.Select(Path.GetFileNameWithoutExtension)).Distinct().ToArray();
-                Require(!references.Any(n => n.StartsWith("XF", StringComparison.Ordinal) || n.StartsWith("UnityEditor", StringComparison.Ordinal) || n.Contains("MiniExcel") || n.Contains("Excel.Editor")), "Forbidden Runtime Player dependency.");
+                Require(!references.Any(n => !Regex.IsMatch(n, @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$") || n.Contains("Tests") || n.Contains("TestRunner")), "Forbidden Runtime Player dependency.");
                 Write(output + "/source-binding.json", new
                 {
                     head = Git("rev-parse HEAD").Trim(),
@@ -800,8 +800,7 @@ namespace YLFramework.Tests.DomainMain
                 }
                 var runtime = player.Single(a => a.name == "YLFramework.Runtime");
                 var refs = runtime.assemblyReferences.Select(a => a.name).Concat(runtime.compiledAssemblyReferences.Select(Path.GetFileNameWithoutExtension)).Distinct().ToArray();
-                Require(!refs.Any(p => p.StartsWith("XF", StringComparison.Ordinal) || p.StartsWith("UnityEditor", StringComparison.Ordinal) ||
-                    p.Contains("MiniExcel") || p.Contains("Excel.Editor")), "Forbidden Runtime/Player dependency.");
+                Require(!refs.Any(p => !Regex.IsMatch(p, @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$") || p.Contains("Tests") || p.Contains("TestRunner")), "Forbidden Runtime/Player dependency.");
                 Require(!player.Any(a => a.name.Contains("Excel.Editor")), "Optional Excel entered the Player graph.");
                 Require(excel || graph.All(a => !a.name.StartsWith("YLFramework.Domain.Excel.", StringComparison.Ordinal)), "Optional DomainExcel compiled without its define.");
                 const string PluginPath = "Assets/YLFramework/Integrations/Excel/Editor/Plugins/MiniExcel.dll";
@@ -837,13 +836,12 @@ namespace YLFramework.Tests.DomainMain
                     sha256 = Hash(p),
                     guid = Regex.Match(File.ReadAllText(p), "(?m)^guid: ([0-9a-f]{32})\\s*$").Groups[1].Value
                 }).ToArray();
-                var oldGuids = new HashSet<string>(AssetDatabase.GetAllAssetPaths().Where(p => p.StartsWith("Packages/com.xfkj", StringComparison.Ordinal))
-                    .Select(p => AssetDatabase.AssetPathToGUID(p)).Where(g => !string.IsNullOrEmpty(g)));
                 foreach (var meta in identities)
                 {
                     Require(meta.blob == meta.expectedBlob && meta.guid.Length == 32, "Candidate meta changed: " + meta.path);
-                    Require(allGuids[meta.guid].Length == 1 && !oldGuids.Contains(meta.guid), "C identity collision: " + meta.path);
-                    Require(AssetDatabase.AssetPathToGUID(meta.path.Substring(0, meta.path.Length - 5)) == meta.guid, "AssetDatabase identity mismatch: " + meta.path);
+                    Require(allGuids.TryGetValue(meta.guid, out var owners) && owners.Length == 1 && owners[0] == meta.path, "Raw meta identity collision: " + meta.path);
+                    var assetPath = meta.path.Substring(0, meta.path.Length - 5);
+                    Require(AssetDatabase.AssetPathToGUID(assetPath) == meta.guid && AssetDatabase.GUIDToAssetPath(meta.guid) == assetPath, "AssetDatabase identity/owner mismatch: " + meta.path);
                 }
                 string[] assemblies = rows.Select(r => r.assembly).Distinct().ToArray();
                 Directory.CreateDirectory(output + "/assembly-inputs");

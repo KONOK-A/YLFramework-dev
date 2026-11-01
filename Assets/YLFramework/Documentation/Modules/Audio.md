@@ -14,7 +14,7 @@
 - [可选 Mixer](#可选-mixer) · [组件与 Action](#组件与-action) · [宿主、池与诊断](#宿主池与诊断)
 - [目录与依赖](#目录与依赖) · [测试与帮助](#测试与帮助) · [历史提示](#历史提示)
 
-AudioKit 的直接 `AudioClip` 入口借用外部资源；命名入口通过显式 Provider 取得租约。正式资源后端为 `ResourceAudioClipProvider`，不提供 XFAB 兼容入口。播放、控制、Provider 回调与租约归还均在 Unity 主线程执行。
+AudioKit 的直接 `AudioClip` 入口借用外部资源；命名入口通过显式 Provider 取得租约。正式资源后端为 `ResourceAudioClipProvider`，不提供旧资源后端兼容入口。播放、控制、Provider 回调与租约归还均在 Unity 主线程执行。
 
 下文未给出完整类定义的代码均为调用片段：`using` 放在文件顶部，其余语句放入业务方法或标注的协程。Clip、Transform、Slider、Mixer 和 Action 宿主等由调用方提供并按消费期保活。
 
@@ -426,7 +426,7 @@ rain.Dispose();
 - Exclusive 替换本通道原请求；Overlap 每次使用独立 Source/Handle，不使用不可逐次控制的原生 PlayOneShot。命名 Music/Voice 不占缺省槽；命名 Sound（包括借入 Source）仍计入全局/Clip 并发、Priority、帧去重、SoundCount/统计及 StopAllSound。
 - 局部 `Volume` 为 `[0,1]`，初值 1，与分类和请求倍率相乘；`Muted` 初值 false，与分类 Mute 取 OR。它们不会反向修改缺省设置。分类 On/Off 保持旧语义：Music/Voice off 保留请求、on 从头重播；Sound off 终结请求并拒播。输出使用既有 Options.OutputRoute，Inherit 跟随分类路由，ToMixer/Direct 保持独立。
 - `Pause` 保持通道暂停，也应用于后续请求；`Resume` 只解除通道原因，不解除逐请求手动暂停或自动暂停。开始回调抛错只终结失败的原租约；批量 Resume/分类开启继续处理其他原请求后汇总报告异常。
-- 省略 `persistenceId` 完全不读写通道键，不根据 Source 名字、对象哈希或实例 ID 落盘。显式稳定身份使用 `YLFramework.Audio.Channel:{id}:Volume` / `:Mute`，不改六个分类键、不写 XF/Core 旧键；登记只读取，坏音量内存回退 1、不重写。Pause/拓扑/路由不持久化，不自动迁移旧键或每次调用 PlayerPrefs.Save。
+- 省略 `persistenceId` 完全不读写通道键，不根据 Source 名字、对象哈希或实例 ID 落盘。显式稳定身份使用 `YLFramework.Audio.Channel:{id}:Volume` / `:Mute`，不改六个分类键、不写旧宿主或 Core 的历史键；登记只读取，坏音量内存回退 1、不重写。Pause/拓扑/路由不持久化，不自动迁移旧键或每次调用 PlayerPrefs.Save。
 - `VolumeChanged` / `MutedChanged` 仅观察局部实际变化，先更新原请求再通知，同值写入不通知；不自动投递初始值或分类设置变化。所有者负责退订，Dispose/Shutdown 也撤销原订阅。通知中重入同属性或 Dispose 撤销余下的旧值投递；单个监听抛错后继续仍属原代次的监听并聚合抛出，不回滚已应用值。
 - Dispose、Shutdown 或原会话宿主失效后 `IsValid=false`。旧身份的 Stop/Pause/Resume/Dispose 安全 no-op，Play/设置写入明确抛错；不能控制同名新登记或已复用的请求。RequestCount 包含暂停和等待分类启用的请求。
 
@@ -910,4 +910,4 @@ Shutdown -> 阻止新请求 -> 停播/清池/清订阅与静态状态 -> 释放�
 
 ## 历史提示
 
-整合、配置分配测量、Bundle 所有权及原游戏验收的历史记录见 [整合记录](../IntegrationPlan.md)。源码仓库的详细档案为 `.kilo/plans/xf-yl-4-audio.md`；该文件不属于默认导出包依赖。旧记录仅对当时源码、配置和载体有效，不代表当前 Unity 测试、Player 或试听已复验，也不构成零 GC、固定性能或跨平台保证。
+整合、配置分配测量、Bundle 所有权及原游戏验收的历史记录见 [整合记录](../IntegrationPlan.md)。详细档案保留在 Git 历史中，不属于默认导出包依赖。旧记录仅对当时源码、配置和载体有效，不代表当前 Unity 测试、Player 或试听已复验，也不构成零 GC、固定性能或跨平台保证。

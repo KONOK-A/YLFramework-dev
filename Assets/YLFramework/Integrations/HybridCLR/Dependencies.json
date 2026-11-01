@@ -9,9 +9,8 @@
         "bundled": false
     },
     "sourceReference": {
-        "name": "XFGameFramework.HybridCLR",
+        "notice": "../../LICENSE.md",
         "version": "1.1.3",
-        "url": "https://gitee.com/xianfengkeji/xfgame-framework.hybrid-clr.git",
         "commit": "7af0ba2299cfb2f17bb7442aa50b72c29980e0dd",
         "required": false
     },

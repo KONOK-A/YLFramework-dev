@@ -31,12 +31,15 @@ namespace YLFramework.Tests.ResourceBuild
             Assert.That(players.Any(x => x.name == "YLFramework.ResourceStartup.Sample.Editor"), Is.False);
             var runtime = players.Single(x => x.name == "YLFramework.ResourceStartup.Sample");
             Assert.That(runtime.assemblyReferences.Select(x => x.name), Is.EquivalentTo(new[] { "YLFramework.Runtime", "UnityEngine.UI" }));
-            Assert.That(runtime.compiledAssemblyReferences.Any(x => x.IndexOf("xfab", StringComparison.OrdinalIgnoreCase) >= 0), Is.False);
+            var subject = players.Single(x => x.name == "YLFramework.Runtime");
+            var json = subject.compiledAssemblyReferences.Single(x => Path.GetFileName(x) == "Newtonsoft.Json.dll");
+            Assert.That(runtime.compiledAssemblyReferences.All(path => TestDependencyGuard.IsAllowedReference(path,
+                EditorApplication.applicationContentsPath, typeof(UnityEngine.UI.Image).Assembly.Location, false, json)), Is.True);
             Assert.That(typeof(ResourceStartup).Assembly, Is.SameAs(typeof(ResourceSystem).Assembly));
         }
 
         [UnityTest]
-        public IEnumerator CompleteRuntimeAndExampleCompileTogetherInWindowsDevelopmentWithoutEditorOrXfab()
+        public IEnumerator CompleteRuntimeAndExampleCompileTogetherInWindowsDevelopmentWithOnlyApprovedDependencies()
         {
             var folder = Path.Combine(Path.GetTempPath(), "kilo", "C05-PlayerClosure-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(folder);

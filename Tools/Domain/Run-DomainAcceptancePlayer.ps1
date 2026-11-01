@@ -104,7 +104,7 @@ foreach ($line in ($text -split '\r?\n')) {
         $inExpectedStack = $true
         continue
     }
-    if ($inExpectedStack -and $line -match '^\s*(?:at\s+)?(?:UnityEngine|YLFramework[.]Logging|YLFramework[.]Tests[.]DomainAcceptance|XFGameFramework[.]LoggerSystem|System)[.][^\r\n]*[:.][^\r\n]*\([^\r\n]*\)(?:\s*\(at [^\r\n]*\))?\s*$') { continue }
+    if ($inExpectedStack -and $line -match '^\s*(?:at\s+)?(?:UnityEngine|YLFramework[.]Logging|YLFramework[.]Tests[.]DomainAcceptance|System)[.][^\r\n]*[:.][^\r\n]*\([^\r\n]*\)(?:\s*\(at [^\r\n]*\))?\s*$') { continue }
     $inExpectedStack = $false
     $residualLines.Add($line)
 }

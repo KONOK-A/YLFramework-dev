@@ -18,7 +18,7 @@
 | Safe、IOfPool/IPoolType、非公开/动态创建工具、自有 GO 池 | [`Runtime/Foundation/Pool/`](../../Runtime/Foundation/Pool/) | `YLFramework.Runtime` |
 | LoadViewArgs 私有参数池、Core 临时集合消费者 | [`Runtime/Core/MVC/Views/Parameters/`](../../Runtime/Core/MVC/Views/Parameters/)、[`Runtime/Core/`](../../Runtime/Core/) | `YLFramework.Runtime` |
 
-公开 namespace 为 `YLFramework.Pooling`；旧 `YLFramework.Core.Pool` 不保留转发类型，调用方须更新引用。Foundation/Core 共用 Runtime 主体，但池中立源码不消费上层领域或 XF/XFAB；Runtime 仍保留 UGUI/Json.NET，不能视作整个 DLL 零依赖。会话状态不是公共 API。
+公开 namespace 为 `YLFramework.Pooling`；旧 `YLFramework.Core.Pool` 不保留转发类型，调用方须更新引用。Foundation/Core 共用 Runtime 主体，但池中立源码不消费上层领域或外部资源实现；Runtime 仍保留 UGUI/Json.NET，不能视作整个 DLL 零依赖。会话状态不是公共 API。
 
 ## 主要类型
 
@@ -88,7 +88,7 @@ finally
 - Events、Binding、FSM、Resource 经 Safe 复用；Binding readonly 内部事件仅清监听，不独立归池。Audio 私有池永久丢弃负责销毁 Source。
 - LoadViewArgs 仅通过 Core 专用入口接管/归还，保留线程、Claim、读取窗口及终态即时清值。Module/Model 不恢复默认隐式池化；普通事件、MappedProperty、普通计时 run 不因接口名而自动池化；计时存储的显式复用由 ReusableTimer 负责。
 - 自有 GO 池保持 `MonoSingletonPath("YLFramework/Pool/GameObjectPool")`，`Allocate(key,parent)` 空池返回 null，需要显式预热或接纳已有实例，不自动加载/创建 Prefab。
-- 自有 GO 池、正式 Resource 的 InstanceLease/实例缓存与原 XFAB 的所有权不同。Core 命名资源使用正式 Resource，原游戏仍走 XFAB 原链；Foundation 池不接管 Prefab/Bundle 租约、异步取消或物理卸载。通过资源系统创建的实例须归还其原 owner，不能改交普通池释放。
+- 自有 GO 池、正式 Resource 的 InstanceLease/实例缓存与旧资源系统的所有权不同。Core 命名资源使用正式 Resource，历史资源链独立管理自身责任；Foundation 池不接管 Prefab/Bundle 租约、异步取消或物理卸载。通过资源系统创建的实例须归还其原 owner，不能改交普通池释放。
 
 ## GameObject 实例池
 
@@ -141,4 +141,4 @@ GO 池仅共享 Data 的普通缓存和会话支撑，不用 `ObjectPool<GameObj
 
 测试入口为 `Tests/EditMode/Foundation/ObjectPoolTests.cs`、`FoundationBoundaryTests.cs`、`Tests/EditMode/Foundation/Pool/` 下的 `PoolContractTests` / `CollectionPoolTests`；GO 专项为 `Tests/PlayMode/Foundation/Pool/GameObjectPoolPlayModeTests.cs`。Resource、Action、Events、Binding、Audio 与 Core 消费者的回归各归其领域；普通缓存不能自动解决这些模块的清理、取消或失效会话排空。
 
-历史集成和验证范围见 [融合记录](../IntegrationPlan.md)，详细方案为源码仓库 `.kilo/plans/xf-yl-2.1-pool.md`，不是导出包运行依赖。阶段进度不作为使用前提；IL2CPP、其他平台与性能结论需有各自的实际验证。
+历史集成和验证范围见 [融合记录](../IntegrationPlan.md)，详细方案保留在 Git 历史中，不是导出包运行依赖。阶段进度不作为使用前提；IL2CPP、其他平台与性能结论需有各自的实际验证。

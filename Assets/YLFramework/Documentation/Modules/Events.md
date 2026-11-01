@@ -144,6 +144,6 @@ changed.ResetOwner(); // 截断旧 owner 的在途快照；实例仍可重新注
 
 ## 迁移与历史
 
-旧 Core namespace 的局部监听调用应改为 `YLFramework.Events`；保留脚本 GUID 不等于持久 UnityEvent 的类型字符串自动兼容，迁移后需定向检查目标、方法和参数。旧 `XFGameFrameworkEvents` 使用方改为 `YLFramework.Core.CoreEvents`。
+旧 Core namespace 的局部监听调用应改为 `YLFramework.Events`；保留脚本 GUID 不等于持久 UnityEvent 的类型字符串自动兼容，迁移后需定向检查目标、方法和参数。旧 Core 领域事件类型的使用方改为 `YLFramework.Core.CoreEvents`。
 
 历史 Events 与 CommonSystem 的阶段验收、连续 Play 及未覆盖平台见 [集成记录](../IntegrationPlan.md)；旧通过数量只适用于对应产物，不作为当前测试保证。

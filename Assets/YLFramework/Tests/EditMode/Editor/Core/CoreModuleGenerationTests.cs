@@ -72,7 +72,9 @@ namespace YLFramework.Core.Editor.Tests
                 Assert.That(source, Does.Contain("ProjectName => \"quote\\\" slash\\\\\\r\\n\\t\\u0000{BaseModule}{ModuleName}{ProjectName}{DefaultStartUpScene}\";"));
                 Assert.That(source, Does.Contain("DefaultStartUpScene => \"scene\\\"; injected(); //\\\\\\n{ModuleName}{BaseModule}{DefaultStartUpScene}{ProjectName}\";"));
                 Assert.That(source, Does.Contain("IsBaseModule => " + (baseModule ? "true" : "false") + ";"));
-                Assert.That(source, Does.Not.Contain("using XFGameFramework"));
+                Assert.That(System.Text.RegularExpressions.Regex.Matches(source, @"(?m)^using\s+([^;]+);")
+                    .Cast<System.Text.RegularExpressions.Match>().Select(match => match.Groups[1].Value),
+                    Is.EqualTo(new[] { "YLFramework.Core" }));
                 Assert.That(source, Does.Not.Contain("namespace Project.Game"));
                 Assert.That(source, Does.Not.Contain("OnExit"));
                 Assert.That(source, Does.Not.Contain("ClassObjectPoolManager"));

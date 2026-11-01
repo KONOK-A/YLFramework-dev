@@ -2,7 +2,7 @@
 
 > [文档首页](../README.md) · [架构总览](../Architecture.md) · [Audio](Audio.md)
 
-本文介绍正式 `ResourceSystem` 的配置、加载、构建和交付。普通本地 Bundle、远端更新与内容加密的平台限制不同，见 [共存与范围](#共存与范围)；不提供 XFAB 兼容入口或旧资源栈 fallback。
+本文介绍正式 `ResourceSystem` 的配置、加载、构建和交付。普通本地 Bundle、远端更新与内容加密的平台限制不同，见 [共存与范围](#共存与范围)；不提供旧资源后端兼容入口或旧资源栈 fallback。
 
 ## 本页导航
 
@@ -19,8 +19,8 @@
 `YLFramework.Resource.ResourceSystem` 是每个 Play/Player 会话唯一的资源权威，管理 Catalog、共享生产、租约、实例、Scene 和版本事务。读取 `Current`、构造配置或打开工作台都不初始化；资源操作与 Unity 对象访问在主线程执行，只读配置不代表入口线程无关。
 
 - 应用接入：[`ResourceStartup`](../../Runtime/Systems/Resource/Integration/ResourceStartup.cs) 显式启动/关闭并管理自身责任；高级调用方可直接使用 `ResourceSystem.InitializeAsync`，不是第二套内核。
-- [Runtime](../../Runtime/Systems/Resource/) / [Editor](../../Editor/Systems/Resource/) 分属 `YLFramework.Runtime` / `YLFramework.Editor`，namespace 为 `YLFramework.Resource` / `YLFramework.Editor.Resource`；共享程序集沿用 UGUI/Json.NET 等依赖，不依赖 XF/XFAB。
-- 旧 Manager/Loader、ResData/BinaryFormatter 与模拟 HotUpdate 栈已退役，不提供旧表、XFAB 或另一资源权威的自动 fallback。
+- [Runtime](../../Runtime/Systems/Resource/) / [Editor](../../Editor/Systems/Resource/) 分属 `YLFramework.Runtime` / `YLFramework.Editor`，namespace 为 `YLFramework.Resource` / `YLFramework.Editor.Resource`；共享程序集沿用 UGUI/Json.NET 等依赖，不依赖已退休宿主扩展。
+- 旧 Manager/Loader、ResData/BinaryFormatter 与模拟 HotUpdate 栈已退役，不提供旧表、旧资源后端或另一资源权威的自动 fallback。
 
 Editor 源码均属于 `YLFramework.Editor.Resource`，目录不另建 namespace 或程序集：
 
@@ -118,7 +118,7 @@ using (var request = resources.AcquireAsync<TextAsset>(new ResourceAddress("game
 
 ## 可运行最小接入
 
-[`Samples/ResourceStartup/`](../../Samples/ResourceStartup/) 的 Runtime/Editor 分 asmdef，不引用 MainModule、XFAB、测试或机器临时路径；默认框架导出包含样例源码，生成的应用数据不在导出根。
+[`Samples/ResourceStartup/`](../../Samples/ResourceStartup/) 的 Runtime/Editor 分 asmdef，不引用 MainModule、旧资源后端、测试或机器临时路径；默认框架导出包含样例源码，生成的应用数据不在导出根。
 
 1. 无脏场景的 Edit Mode 执行 `YLFramework/Samples/Create Resource Startup Example`，新建唯一 `Assets/YLResourceStartupExample[后缀]/` 的 Text/WAV/Data、Project 与独立 Scene，使用新 GUID；不会替用户保存原脏场景。
 2. Play 中选择组件，保持 Inspector 的 Mode 为 EditorSimulation，点 `Run Selected Mode`。同一 `Run` 读取 `message`/`data` 并按选项接入 Core/Audio；Scene/Inspector 加载不自动启动。
@@ -166,12 +166,12 @@ var scene = request.TakeResult().Scene;
 UnityEngine.Debug.Log(scene.path);
 ```
 
-- 默认项目为owner的`Module.ProjectName`；另有`LoadSceneAsync(projectId, address, mode)`。地址是目录登记的逻辑地址/alias，不自动把XF短名映射为地址；无同步入口、force_loading、隐式已加载复用或内置LoadingPanel。业务UI读取场景请求Progress，不使用Panel资源进度代替。
+- 默认项目为owner的`Module.ProjectName`；另有`LoadSceneAsync(projectId, address, mode)`。地址是目录登记的逻辑地址/alias，不自动把旧资源系统短名映射为地址；无同步入口、force_loading、隐式已加载复用或内置LoadingPanel。业务UI读取场景请求Progress，不使用Panel资源进度代替。
 - 相同Controller的Ordinal `(projectId,address)` 在途键不区分mode，重复抛`CoreResourceException(InProgress)`且不再调用后端；终态后可再次提交，重复Additive会产生新的场景意图。不同Controller/项目/地址互不合并；别名按提交字符串判定，不声称解析到同一资产的不同alias也会合并。
 - 直接返回后端原`CoreResourceRequest<CoreSceneResult>`，状态、进度、错误、Completed与单次TakeResult规则不变；终态后订阅Completed可能同步通知。完成仅摘Controller的tracking，不Dispose或提前领取调用方结果；成功/终态请求由调用方释放。
 - `CancelPendingLoads()`先分离调用时在途快照，再逐项Cancel/Dispose；正常取消回调里新提交的请求属于下一轮。OnExit先拒绝新投递再清理快照；同实例重新注册属于新代次，旧回调不取消/摘除新责任。清理失败会聚合报告，不宣称已全部释放或自动重试；原后端异常保留，交付失败上下文位于Exception.Data的`YLFramework.SceneController.Context`。
 - 关闭Module/Controller仅结束仍在途请求，不卸载已成功Scene、不清其他owner；Single开始后的取消不保证回滚。CoreSceneResult没有卸载权，需要显式卸载时由Resource/应用owner使用SceneRecord/SceneLease调用UnloadSceneAsync，而不是在Core反向引用具体ResourceSystem。
-- Controller经Module正式注册、且仅在注册主线程使用。未绑定provider明确报Unavailable，关闭中的Module或旧Controller拒绝新请求；不因失败回退XFAB或另一配置。原游戏的全局同名SceneController保持不变，消费者按需使用完整YL类型名。
+- Controller经Module正式注册、且仅在注册主线程使用。未绑定provider明确报Unavailable，关闭中的Module或旧Controller拒绝新请求；不因失败回退旧资源后端或另一配置。原游戏的全局同名SceneController保持不变，消费者按需使用完整YL类型名。
 
 ## 图片与图集
 
@@ -678,7 +678,7 @@ using (var stop = startup.StopAsync())
 - 远端length、SHA、Range、ETag描述**同一份固定密文**。续传须有实际partial、强ETag与If-Range，并按确切offset追加；服务器200忽略Range要重置，实体变化要重新获取，错误/损坏不能提交半成品。最终还须通过内容认证和原Prepare/激活，不能把HTTPS或SHA成功当作解密成功。缺/错key不是网络重试理由。
 - `ResourceBuiltInDeployer.Preflight/Deploy/Recover` 复制/验证交付字节，不需内容 key，不改 Catalog/Complete/密文；导入后经 OpenBuiltIn 严格定位到 `payload~`。Runtime 仍须提供 key。只读 Store 查询无需 key、初始化、恢复或解密；预览不允许删除，实际清理复查最新保护状态。
 - **Resource发布快照**使用 `ResourceEditorOperations.ExportRelease(release, destination)`，目标为工程外已有本地父目录下**不存在且等于CatalogDigest的子目录**；精确交付Catalog、Complete和登记文件，不包含raw缓存或内容key。
-- **YLFramework 框架包**使用框架导出菜单，或 `YLFramework.Editor.Distribution.ExportUnityPackage.Export(absolutePackagePath)` 向现有本地父目录导出。API 默认拒绝覆盖、不保存其他资产；菜单可显式保存/确认覆盖。包包含源码、必要 meta、样例和随附 BC DLL，不含 Tests、原游戏、XFAB、临时 runner/缓存/私钥/证书或系统 CNG DLL；安装与依赖见 [文档首页](../README.md)。
+- **YLFramework 框架包**使用框架导出菜单，或 `YLFramework.Editor.Distribution.ExportUnityPackage.Export(absolutePackagePath)` 向现有本地父目录导出。API 默认拒绝覆盖、不保存其他资产；菜单可显式保存/确认覆盖。包包含源码、必要 meta、样例和随附 BC DLL，不含 Tests、原游戏、宿主扩展、临时 runner/缓存/私钥/证书或系统 CNG DLL；安装与依赖见 [文档首页](../README.md)。
 - BC 确切来源、官方 2.7.0 netstandard2.0 二进制 SHA 见 [`Plugins/BouncyCastle/SOURCE.txt`](../../Plugins/BouncyCastle/SOURCE.txt)。UGUI/Json.NET 等依赖和商业插件再分发限制不因导出消失；成功导出不能代替干净工程导入、编译和运行验证。
 
 **已知风险：**Unity Scene native 接手后，延迟 Stream 读取失败可能引发 native 崩溃，不能承诺所有损坏输入都变成受控资源错误。此风险不包含合法输入崩溃、定位/竞争/提前释放或取消/退出/预算缺陷。native 前完整密文 length/SHA、首末认证、读取时逐段认证，以及发布/Prepare/激活/回滚的完整认证仍须保留；不输出完整明文文件或使用整包内存 fallback。
@@ -695,10 +695,10 @@ using (var stop = startup.StopAsync())
 | Android / iOS / WebGL Bundle | 当前 mount/Catalog 不开放，JAR/WebGL 提取未实现，不只是缺设备测试 |
 | Resources / 直接图片 | 不受 Bundle mount 三桌面枚举约束；仍受各自来源、文件系统、Unity API 和目标平台行为限制，不能据此推断上述更新/加密能力可用 |
 
-原游戏、XF/XFAB/XFFSM、MainModule 与历史资产保持独立链，不是框架接入前置；不能混用旧 Manager/Loader 与正式 ResourceSystem 来共享资源权威。Variant/透明晚绑定、archive 与其他平台扩展未由当前 API 提供。
+原游戏、已退休宿主扩展、MainModule 与历史资产保持独立链，不是框架接入前置；不能混用旧 Manager/Loader 与正式 ResourceSystem 来共享资源权威。Variant/透明晚绑定、archive 与其他平台扩展未由当前 API 提供。
 
 ## 历史提示
 
-整合、自动图集、构建/下载成本、内置部署、Mono/IL2CPP 与独立接收工程的历史结果见 [整合记录](../IntegrationPlan.md)。源码仓库的详细档案为 `.kilo/plans/xf-yl-8-resource.md`；它不是默认导出包必需文件。历史记录中的失败、未定位回滚 UpdateFailed、测量能力限制及 Scene native 风险保留原结论，不升级为当前验证结果。
+整合、自动图集、构建/下载成本、内置部署、Mono/IL2CPP 与独立接收工程的历史结果见 [整合记录](../IntegrationPlan.md)。详细方案与冻结证据保留在 Git 历史中，不是默认导出包必需文件。历史记录中的失败、未定位回滚 UpdateFailed、测量能力限制及 Scene native 风险保留原结论，不升级为当前验证结果。
 
 历史通过只针对当时源码、配置和载体，不表示当前工程重新完成了 Unity 测试、干净导入、Player 或默认 CA 链正向联网验证；也不保证其他主机、引擎、高裁剪等级、固定性能或零分配。

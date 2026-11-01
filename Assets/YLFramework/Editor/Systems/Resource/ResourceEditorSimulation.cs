@@ -82,7 +82,7 @@ namespace YLFramework.Editor.Resource
         /// <summary>按当前定义解析规范地址或别名；绑定发布描述时同时检查其是否失效。</summary>
         public ResourceCatalogEntry Resolve(ResourceAddress address) => Snapshot(address.ProjectId).Catalog.Resolve(address);
 
-        /// <summary>调用方显式给出已编译类型；不根据 Catalog 类型字符串反射，也不回退到 XFAB/Resources。</summary>
+        /// <summary>调用方显式给出已编译类型；不根据 Catalog 类型字符串反射，也不回退到其他资源后端。</summary>
         public Object Load(ResourceAddress address, Type type)
         {
             if (type == null || !typeof(Object).IsAssignableFrom(type) || type.ContainsGenericParameters)
@@ -165,7 +165,7 @@ namespace YLFramework.Editor.Resource
             return new ResourceEditorSimulation(projects, versions?.Select(x => x.BuiltIn.Document).ToArray()).CreateConfiguration(images);
         }
 
-        /// <summary>显式装配 Editor borrowed Source。地址/类型身份在每次生产时重验，不根据旧 XF 设置自动启用。</summary>
+        /// <summary>显式装配 Editor borrowed Source。地址/类型身份在每次生产时重验，不根据外部设置自动启用。</summary>
         public ResourceConfiguration CreateConfiguration() => CreateConfiguration(ResourceImageOptions.Default);
 
         /// <summary>模拟与Bundle配置共用同一图片策略；不因使用Editor Source而绕过编码/像素/并发边界。</summary>

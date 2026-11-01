@@ -66,7 +66,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | --- | --- | --- |
 | Reddot | Quick / Daily | 小型逻辑闭包与真实 UGUI 订阅生命周期。切片不能替代完整 Runtime 编译。 |
 | Foundation | Daily / Special | 完整 Runtime / Editor 加基础测试；双次 Play 会话单独执行。 |
-| Core | Daily | 完整 MVC / UI / 资源夹具；不隐式安装旧 XF 或原游戏资产。 |
+| Core | Daily | 完整 MVC / UI / 资源夹具；不隐式安装旧宿主扩展或原游戏资产。 |
 | Domain | Quick / Daily / Special | Skill / Buff / Mission / Reddot / Logging 逻辑、作者及场景生命周期；无 Domain Reload 会话使用独立宿主。 |
 | Behavior | Quick / Daily / Special | 日常Overlap / CharacterMotor / MovingPlatform / 两套FSM；Special在显式自有Desktop宿主执行两个原生窗口事件合同。 |
 | Save | Special | 真实 NUnit 执行 BCL 合同；不会执行需要 Unity JsonUtility 的叶子来伪造 native 验收。 |
@@ -85,7 +85,8 @@ UTF若生成默认Camera/Light场景，只能在测试尚未开始的回调中�
 `session-scenes.json`记录实际双场景与活动空场景前置，CLI合同要求该证据。实际UTF版本写入结果，manifest请求版本不等于Unity最终解析版本。
 Audio宿主显式安装原`AudioAcceptanceEntry.cs`供初始化/中断清理合同使用，不因此执行其中完整DSP流程，也不将它加入生产包。
 
-Core 的旧 XF 对照与跨模块作者合同分别标记为 `YL.Integration.LegacyXF`、`YL.Integration.CrossModuleAuthoring`，原断言保留。
+Core 的默认资源、序列化所有权、日志无副作用与正式 Analyzer 合同属于 Daily，不要求安装已退休宿主扩展或宿主资源。
+跨模块作者合同保留 `YL.Integration.CrossModuleAuthoring` 类别与原断言，不进入 Core 的日常集。
 主 Editor 专属保护用例使用 `YL.Special.MainEditor`，不会进入无人值守日常集。
 真实窗口焦点/输入派发使用 `YL.Special.NativeInput`，通过 `Run -Suite Special -Module Behavior` 执行；宿主使用独立Desktop身份、显式`-ylTestInteractive`和真实`isBatchMode=false`，不接管用户已打开的Editor。需要真实图形桌面并串行执行，不能与其他窗口验收争抢焦点；未提供前置不能当作batch通过。原Mouse/Focus/Delete/Menu/坐标断言保留，不等于物理OS鼠标设备自动化。
 右键合同在真实事件中捕获原菜单动作后清空显示项，避免Unity6的阻塞原生菜单停止测试更新；仍由原动作执行状态与子状态机创建，不直接调用工厂或跳过原生派发。
@@ -101,7 +102,7 @@ Daily 的类别排除必须出现在发现摘要的 `excludedCategories` / `excl
 | Resource native crypto / TLS / 下载矩阵 | 引擎及平台适配必须有对应实际证据；普通逻辑通过不表示所有原生后端受支持，不自动修改信任、证书或网络策略。 |
 | Audio DSP / 原生音频输出 | 原生测量断言保留，需要真实设备；AudioSession与日常集都不能替代DSP/可听输出验收。 |
 | OS / IDE / 插件与物理输入设备 | 真实操作系统或外部宿主为独立前置；两个已声明NativeInput窗口用例不能替代这些专项，不创建替身或控制用户Editor。 |
-| Stage9 / Equipment / 旧主Editor接收模板 | 仅在明确声明和满足前置时安装为测试支持，不在生产默认编译图；历史owner、提交或路径不是当前授权与执行入口。 |
+| 历史独立交付 / Equipment / 旧主Editor接收模板 | 仅在明确声明和满足前置时安装为测试支持，不在生产默认编译图；旧一次性入口不作为当前验收导航，历史owner、提交或路径不是当前授权。 |
 | DomainExcel / DOTween 等可选适配 | 当前源码与宏前置保留，只有存在对应声明和可用依赖时才执行；旧复合归档脚本的历史结果不等于当前可选集成验收。 |
 
 这些边界不是Skip白名单，不能用于把已选择的失败改报通过。
@@ -173,7 +174,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLUnity.p
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLUnitySafety.ps1 -WorkspaceRoot $workspace -Unity $unity
 ```
 
-Git 卫生入口只读 Git 索引：拒绝本机缓存、连接配置、商业 Editor Enhancers、生成工程和 HybridCLR 本机输入被跟踪，检查已跟踪路径不命中忽略规则，并保留两个手维护 Analyzer SDK 项目。它不读取配置值、不清理资产，不把空目录 `.meta` 简单判为孤立文件，也不代表 Unity 编译或测试通过。
+Git 卫生入口只读 Git 索引：拒绝整个 `.kilo/`、本机 AI 指令与工具规则、本机缓存、连接配置、商业 Editor Enhancers、生成工程和 HybridCLR 本机输入被跟踪，检查已跟踪路径不命中忽略规则，并保留两个手维护 Analyzer SDK 项目。它不读取配置值、不清理资产，不把空目录 `.meta` 简单判为孤立文件，也不代表 Unity 编译或测试通过。
 
 安全回归在自有源码夹具中验证真实失败、增加叶子后拒旧选集、取消、进程清理与同宿主恢复。
 还会实际排除整个PlayMode程序集验证正式CLI拒绝“漏一整组模式”；owner、宿主回执/响应与轮换摘要先检查JSON字段类型，再比较身份，不允许布尔强转为合法字符串。

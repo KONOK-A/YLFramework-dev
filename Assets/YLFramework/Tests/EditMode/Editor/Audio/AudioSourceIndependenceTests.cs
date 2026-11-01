@@ -14,13 +14,13 @@ namespace YLFramework.Tests.Audio
     public class AudioSourceIndependenceTests
     {
         [UnityTest]
-        public IEnumerator FormalAudioSourceClosureCompilesWithoutXfOrXfabInEditor()
+        public IEnumerator FormalAudioSourceClosureCompilesWithApprovedDependenciesInEditor()
         {
             return CompileSourceClosure(AssemblyBuilderFlags.EditorAssembly);
         }
 
         [UnityTest]
-        public IEnumerator FormalAudioSourceClosureCompilesWithoutXfOrXfabInWindowsDevelopmentProfile()
+        public IEnumerator FormalAudioSourceClosureCompilesWithApprovedDependenciesInWindowsDevelopmentProfile()
         {
             return CompileSourceClosure(AssemblyBuilderFlags.DevelopmentBuild);
         }
@@ -144,7 +144,7 @@ namespace YLFramework.Tests.Audio
             var ui = typeof(UnityEngine.UI.Image).Assembly.Location;
             foreach (var name in new[] { "YLFramework.Runtime.dll", "YLFramework.Foundation.Runtime.dll",
                 "YLFramework.Core.Runtime.dll", "YLFramework.Utilities.ZipTool.dll", "YLFramework.Actions.DOTween.dll",
-                "XFGameFramework.dll", "XFABManager.dll", "XFFSM.dll", "Assembly-CSharp.dll", "System.Fake.dll", "UnityEngine.Fake.dll" })
+                "Unrelated.Library.dll", "External.Resources.dll", "External.StateMachine.dll", "Assembly-CSharp.dll", "System.Fake.dll", "UnityEngine.Fake.dll" })
             {
                 Assert.That(IsAllowedReference(Path.Combine(project, "Library/ScriptAssemblies", name), contents, ui, true), Is.False, name);
             }

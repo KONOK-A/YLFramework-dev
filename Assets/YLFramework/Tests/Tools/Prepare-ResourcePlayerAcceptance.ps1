@@ -148,7 +148,7 @@ foreach ($leaf in $formalRoots) {
         if (-not $item.PSIsContainer) { $sourcePaths.Add([IO.Path]::GetRelativePath($repo, $item.FullName).Replace('\','/')) }
     }
 }
-foreach ($path in @('Assets/YLFramework.meta','Assets/YLFramework/LICENSE.md','Assets/YLFramework/LICENSE.md.meta','Assets/YLFramework/AGENTS.md','Assets/YLFramework/AGENTS.md.meta')) { $sourcePaths.Add($path) }
+foreach ($path in @('Assets/YLFramework.meta','Assets/YLFramework/LICENSE.md','Assets/YLFramework/LICENSE.md.meta')) { $sourcePaths.Add($path) }
 $identity = [Collections.Generic.List[object]]::new()
 foreach ($relative in ($sourcePaths | Sort-Object -CaseSensitive)) {
     $source = Join-Path $repo $relative

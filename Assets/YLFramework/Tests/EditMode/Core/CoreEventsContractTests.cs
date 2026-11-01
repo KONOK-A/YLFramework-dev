@@ -39,11 +39,8 @@ namespace YLFramework.Core.Tests
             Assert.That(CoreEvents.ViewRemoved, Is.EqualTo("ON_REMOVE_VIEW"),
                 "The persisted event key must not change when the CSharp identifier is renamed.");
             var core = typeof(EventManager).Assembly;
-            Assert.That(core.GetType("YLFramework.Core.XFEvent"), Is.Null);
-            for (var arity = 1; arity <= 7; arity++)
-            {
-                Assert.That(core.GetType("YLFramework.Core.XFEvent`" + arity), Is.Null);
-            }
+            Assert.That(core.GetTypes().Where(type => type.Namespace == "YLFramework.Core" &&
+                typeof(Delegate).IsAssignableFrom(type)), Is.Empty, "Core must reuse typed BCL Action callbacks.");
 
             Assert.That(typeof(EventManager).GetFields(BindingFlags.Static | BindingFlags.Instance |
                 BindingFlags.Public | BindingFlags.NonPublic), Is.Empty);
