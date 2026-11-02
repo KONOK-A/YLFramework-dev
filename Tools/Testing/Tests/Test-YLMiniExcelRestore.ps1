@@ -17,12 +17,12 @@ try {
     foreach ($fault in @('none', 'guid', 'editor', 'manifest')) {
         $cache = New-YLTestDirectory -Workspace $workspace -Kind Cache -Key $fault
         $ownedRepository = Join-Path $cache.path 'Repository'
-        $tool = Join-Path $ownedRepository 'Tools/Extensions/Data/Excel/Restore-MiniExcel.ps1'
+        $tool = Join-Path $ownedRepository 'Tools/Excel/Restore-MiniExcel.ps1'
         $package = Join-Path $ownedRepository 'PackageSources/com.kano.ylframework.excel'
         $meta = Join-Path $package 'Editor/Plugins/MiniExcel.dll.meta'
         $old = Join-Path $ownedRepository 'Assets/YLFramework/UserData.txt'
         foreach ($path in @($tool, $meta, $old)) { $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)) }
-        [IO.File]::Copy((Join-Path $repository 'Tools/Extensions/Data/Excel/Restore-MiniExcel.ps1'), $tool)
+        [IO.File]::Copy((Join-Path $repository 'Tools/Excel/Restore-MiniExcel.ps1'), $tool)
         [IO.File]::WriteAllText($old, 'preserved old local directory')
         [IO.File]::WriteAllText((Join-Path $package 'package.json'), ('{"name":"' + $(if ($fault -ceq 'manifest') { 'com.unrelated.package' } else { 'com.kano.ylframework.excel' }) + '"}'))
         $text = [IO.File]::ReadAllText((Join-Path $repository 'PackageSources/com.kano.ylframework.excel/Editor/Plugins/MiniExcel.dll.meta'))

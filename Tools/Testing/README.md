@@ -4,6 +4,21 @@
 所有模块声明集中在 `TestSuites.json`；唯一日常入口是 `Invoke-YLTests.ps1`。
 测试叶由真实 NUnit / Unity Test Framework 发现，不维护复制的叶子名称或数量表。
 
+## 开发目录
+
+| 位置 | 职责 |
+| --- | --- |
+| `PackageSources/com.kano.ylframework*` | 正式 UPM 产品内容，测试宿主按声明安装。 |
+| `Assets/Editor/YLFrameworkDev` | 仅开发仓库使用的产品资源作者工具。 |
+| `Assets/Tests/YLFramework` | Unity 测试、验收入口、测试执行适配器和序列化夹具；作者支撑统一在 `Fixtures/Authoring`，程序集身份保持不变。 |
+| `Assets/Settings` | 开发宿主的渲染配置，不是框架产品资源。 |
+| `Tools/Testing/Common`、`Profiles`、`Tests` | 测试基础设施、引擎依赖基线及工具自检/专项入口。 |
+| `Tools/Testing/Fixtures` | 不参与 Unity 导入的外部夹具准备脚本。 |
+| `Tools/Excel/Restore-MiniExcel.ps1` | 固定来源的 Excel 依赖恢复，不升级版本或重建插件身份。 |
+| `Tools/HybridCLR` | 当前发行链需要的原生来源准备、补丁身份与校验，不保留旧接收工程控制器。 |
+
+PowerShell、Node 外部控制器不放在 `Assets` 中。固定接收工程、Stage9/B05、IDE 取证及旧 `.unitypackage` carrier 控制器已退役，历史实现由 Git 保留，不作为现阶段入口。正式验收使用本页声明的 UPM、模块与 Player 工具；旧历史结论不自动继承为当前通过。
+
 ## 前置
 
 - Windows、PowerShell 7.6；使用 `pwsh -NoLogo -NoProfile -NonInteractive -File`。
@@ -102,11 +117,11 @@ Daily 的类别排除必须出现在发现摘要的 `excludedCategories` / `excl
 
 | 来源 | 保留边界 |
 | --- | --- |
-| Resource 工作台、发布、Cost/Perf/多目录证据夹具 | 保留原NUnit/辅助源码；固定日期、工作区和证据根不是通用入口，不自动重演或覆盖历史记录。真实受控资产/进程前置须另行核实。 |
+| Resource 工作台、发布、Cost/Perf/多目录证据夹具 | 保留 Unity 夹具和辅助源码；外部准备脚本在 `Tools/Testing/Fixtures/Prepare-ResourceCostEvidence.ps1`。固定日期、工作区和证据根不是通用入口，不自动重演或覆盖历史记录。真实受控资产/进程前置须另行核实。 |
 | Resource native crypto / TLS / 下载矩阵 | 引擎及平台适配必须有对应实际证据；普通逻辑通过不表示所有原生后端受支持，不自动修改信任、证书或网络策略。 |
 | Audio DSP / 原生音频输出 | 原生测量断言保留，需要真实设备；AudioSession与日常集都不能替代DSP/可听输出验收。 |
 | OS / IDE / 插件与物理输入设备 | 真实操作系统或外部宿主为独立前置；两个已声明NativeInput窗口用例不能替代这些专项，不创建替身或控制用户Editor。 |
-| 历史独立交付 / Equipment / 旧主Editor接收模板 | 仅在明确声明和满足前置时安装为测试支持，不在生产默认编译图；旧一次性入口不作为当前验收导航，历史owner、提交或路径不是当前授权。 |
+| Domain / Data / Equipment 作者支撑 | `Assets/Tests/YLFramework/Fixtures/Authoring` 由当前模块显式装入；保留被测试反射使用的类型与程序集，不恢复旧安装脚本或接收工程，不进入生产包。 |
 | DomainExcel / DOTween 等可选适配 | 当前源码与宏前置保留，只有存在对应声明和可用依赖时才执行；旧复合归档脚本的历史结果不等于当前可选集成验收。 |
 
 这些边界不是Skip白名单，不能用于把已选择的失败改报通过。

@@ -32,7 +32,7 @@ foreach ($required in @('Assets/Scenes/YLFrameworkDev.unity', 'Assets/Scenes/YLF
     'ProjectSettings/ProjectSettings.asset', 'ProjectSettings/EditorBuildSettings.asset',
     'ProjectSettings/GraphicsSettings.asset', 'ProjectSettings/QualitySettings.asset',
     'Assets/Settings/UniversalRP.asset', 'Assets/Settings/Renderer2D.asset',
-    'Assets/UniversalRenderPipelineGlobalSettings.asset', 'Packages/manifest.json', 'Packages/packages-lock.json')) {
+    'Assets/Settings/UniversalRenderPipelineGlobalSettings.asset', 'Packages/manifest.json', 'Packages/packages-lock.json')) {
     if ($required -cnotin $inputs) { throw "A real author input is missing: $required" }; $checks++
 }
 if (@($inputs | Where-Object { $_ -match '^(?:Assets/(?:Plugins|Resources|YLFrameworkData|Editor)|Library|UserSettings)/|(?:Mcp|ReflectorNet|\.kilo)' }).Count -ne 0) { throw 'Commercial/MCP/user data must not be staged or read as source payload.' }; $checks++

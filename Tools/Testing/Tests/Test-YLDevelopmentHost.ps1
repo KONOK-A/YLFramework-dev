@@ -37,7 +37,7 @@ function Get-YLDevelopmentHostInputs([string] $Repository) {
         'Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs',
         'Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef',
         'Assets/Scenes/YLFrameworkDev.unity', 'Assets/Settings/UniversalRP.asset', 'Assets/Settings/Renderer2D.asset',
-        'Assets/UniversalRenderPipelineGlobalSettings.asset', 'Assets/DefaultVolumeProfile.asset',
+        'Assets/Settings/UniversalRenderPipelineGlobalSettings.asset', 'Assets/Settings/DefaultVolumeProfile.asset',
         'PackageSources/com.kano.ylframework.dotween/package.json', 'PackageSources/com.kano.ylframework.excel/package.json',
         'PackageSources/com.kano.ylframework.domain-excel/package.json', 'PackageSources/com.kano.ylframework.hybridclr/package.json')) {
         $null = $paths.Add($relative); $null = $paths.Add($relative + '.meta')

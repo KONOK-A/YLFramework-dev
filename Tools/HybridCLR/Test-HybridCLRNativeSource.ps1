@@ -43,57 +43,6 @@ foreach ($spec in @(
     $passed=if ($spec.Reject) { $acceptedRejection } else { $null -eq $failure }
     $cases.Add(@{ Name=$spec.Name; Passed=$passed; ExpectedRejection=$spec.Reject; Failure=$failure })
 }
-$tokens=$null; $errors=$null
-$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Get-HybridCLRReceptionScope.ps1'),[ref]$tokens,[ref]$errors)
-$binding=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Test-HybridCLRNativeOwnerBinding'},$true))
-foreach ($spec in @(
-    @{ Name='legacy-owner-no-native-extension'; Reject=$false; Native=$false; Edit={} },
-    @{ Name='exact-native-owner-extension'; Reject=$false; Native=$true; Edit={} },
-    @{ Name='native-owner-missing-sha'; Reject=$true; Native=$true; Edit={param($o) $o.Remove('nativeSourceManifestSha256')} },
-    @{ Name='native-owner-invalid-sha'; Reject=$true; Native=$true; Edit={param($o) $o.nativeSourceManifestSha256='unknown'} },
-    @{ Name='native-owner-foreign-root'; Reject=$true; Native=$true; Edit={param($o) $o.nativeSourceManifest='G:\Unknown\native-source.json'} },
-    @{ Name='native-owner-frozen-source'; Reject=$true; Native=$true; Edit={param($o) $o.nativeSourceManifest=Join-Path $TempRoot 'h17/Library/native-source.json'} },
-    @{ Name='native-owner-wrong-engine'; Reject=$true; Native=$true; Edit={param($o) $o.expectedUnityVersion='2022.3.62f3c1'} }
-)) {
-    $failure=$null
-    try {
-        if ($binding.Count -ne 1) { throw 'Native owner binding implementation is missing.' }
-        . ([scriptblock]::Create($binding[0].Extent.Text))
-        $owner=@{ expectedUnityVersion='6000.3.27f1' }
-        if ($spec.Native) { $owner.nativeSourceManifest=Join-Path $TempRoot 'B08Native/source1/native-source.json'; $owner.nativeSourceManifestSha256='a'*64 }
-        & $spec.Edit $owner
-        $actual=Test-HybridCLRNativeOwnerBinding $owner $TempRoot
-        if ($actual -ne $spec.Native) { throw 'Native extension policy differs.' }
-    } catch { $failure=$_.Exception.Message }
-    $passed=if ($spec.Reject) { $null -ne $failure -and $failure.StartsWith('Native owner:',[StringComparison]::Ordinal) } else { $null -eq $failure }
-    $cases.Add(@{ Name=$spec.Name; Passed=$passed; ExpectedRejection=$spec.Reject; Failure=$failure })
-}
-$subsetBinding=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Assert-HybridCLRSubsetNativeBinding'},$true))
-foreach ($spec in @(
-    @{ Name='official-subset-owner-remains-compatible'; Reject=$false; Native=$false; Edit={} },
-    @{ Name='maintained-subset-base-and-patch-bind-exact-source'; Reject=$false; Native=$true; Edit={} },
-    @{ Name='subset-cannot-borrow-base-source'; Reject=$true; Native=$true; Edit={param($b,$p) $b.NativeSourceManifestSha256='b'*64} },
-    @{ Name='subset-cannot-borrow-patch-source'; Reject=$true; Native=$true; Edit={param($b,$p) $p.NativeSourceManifestSha256='b'*64} },
-    @{ Name='subset-cannot-use-unmodified-control-base'; Reject=$true; Native=$true; Edit={param($b,$p) $b.NativeVariant='UnmodifiedControl'} },
-    @{ Name='subset-cannot-use-unmodified-control-patch'; Reject=$true; Native=$true; Edit={param($b,$p) $p.NativeVariant='UnmodifiedControl'} },
-    @{ Name='subset-missing-source-field-rejected'; Reject=$true; Native=$true; Edit={param($b,$p) $p.Remove('NativeSourceManifestSha256')} }
-)) {
-    $failure=$null
-    try {
-        if ($subsetBinding.Count -ne 1) { throw 'Subset native binding implementation is missing.' }
-        . ([scriptblock]::Create($subsetBinding[0].Extent.Text))
-        $owner=@{}; $base=@{}; $patch=@{}
-        if ($spec.Native) {
-            $owner.nativeSourceManifestSha256='a'*64
-            $owner.nativeSourceManifest=Join-Path $TempRoot 'B08Native/source1/native-source.json'
-            foreach ($record in @($base,$patch)) { $record.NativeSourceManifestSha256='a'*64; $record.NativeVariant='ParameterOwner' }
-        }
-        & $spec.Edit $base $patch
-        Assert-HybridCLRSubsetNativeBinding $owner $base $patch
-    } catch { $failure=$_.Exception.Message }
-    $passed=if ($spec.Reject) { $null -ne $failure -and $failure.StartsWith('Subset native:',[StringComparison]::Ordinal) } else { $null -eq $failure }
-    $cases.Add(@{ Name=$spec.Name; Passed=$passed; ExpectedRejection=$spec.Reject; Failure=$failure })
-}
 if ($fixtureSourceManifest) {
     $real=[IO.File]::ReadAllText($fixtureSourceManifest) | ConvertFrom-Json -AsHashtable
     $realParent=[IO.Path]::GetDirectoryName($fixtureSourceManifest)
