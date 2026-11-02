@@ -4,7 +4,7 @@
 param(
     [Parameter(Mandatory)][string] $WorkspaceRoot,
     [Parameter(Mandatory)][string] $Unity,
-    [string] $Dotnet = (Get-Command dotnet -CommandType Application -ErrorAction Stop).Source,
+    [string] $Dotnet = (Get-Command dotnet -CommandType Application -TotalCount 1 -ErrorAction Stop).Source,
     [string] $NUnitAssembly = (Join-Path $env:USERPROFILE '.nuget/packages/nunit/3.14.0/lib/net45/nunit.framework.dll')
 )
 

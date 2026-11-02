@@ -324,7 +324,7 @@ try {
         }
     }
     if ($packageOrigin -ceq 'GitFixture') {
-        $git = (Get-Command git -CommandType Application -ErrorAction Stop).Source
+        $git = (Get-Command git -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
         $commands = @(@('init', '--quiet', $stage), @('-C', $stage, 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--path-format=absolute', '--git-path', 'index'),
             @('-C', $stage, '-c', 'core.autocrlf=false', 'add', '--', 'PackageSources'),
             @('-C', $stage, '-c', 'user.name=YL Distribution Fixture', '-c', 'user.email=yl-fixture@invalid.local', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Owned UPM fixture'), @('-C', $stage, 'rev-parse', 'HEAD'))

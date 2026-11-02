@@ -260,6 +260,23 @@ Test-Case 'Owned Git fixtures do not inherit caller worktree, index or configura
     }
 }
 
+Test-Case 'The actual Git resolver chooses one PATH-preferred executable when several applications exist' {
+    $oldPath = $env:PATH
+    $directories = @(1..3 | ForEach-Object {
+        $directory = Join-Path $sandbox ('git-candidate-' + $_)
+        $null = [IO.Directory]::CreateDirectory($directory)
+        [IO.File]::WriteAllBytes((Join-Path $directory 'git.exe'), [byte[]]@(77, 90))
+        $directory
+    })
+    try {
+        $env:PATH = ($directories -join [IO.Path]::PathSeparator) + [IO.Path]::PathSeparator + $oldPath
+        $resolver = $distributionAst.Find({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.Extent.Text -cmatch '^Get-Command git -CommandType Application' }, $true)
+        Assert-That ($null -ne $resolver) 'The maintained controller does not expose its actual executable selection.'
+        $observed = @(& ([scriptblock]::Create($resolver.Extent.Text)))
+        Assert-That ($observed.Count -eq 1 -and $observed[0].Source -ceq (Join-Path $directories[0] 'git.exe')) 'The actual resolver combined multiple executable paths or ignored PATH priority.'
+    } finally { $env:PATH = $oldPath }
+}
+
 foreach ($options in @(
     @{ GitRepository = 'https://example.invalid/yl.git' }, @{ GitRevision = ('a' * 40) },
     @{ GitRepository = 'https://example.invalid/yl.git'; GitRevision = 'main' },

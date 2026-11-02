@@ -9,7 +9,7 @@ param(
     [string] $WorkspaceRoot = $env:YL_TEST_WORKSPACE,
     [string] $Selection,
     [ValidateRange(1, 86400)][int] $TimeoutSeconds = 600,
-    [string] $Dotnet = (Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue).Source,
+    [string] $Dotnet = (Get-Command dotnet -CommandType Application -TotalCount 1 -ErrorAction SilentlyContinue).Source,
     [string] $NUnitAssembly = (Join-Path $env:USERPROFILE '.nuget/packages/nunit/3.14.0/lib/net45/nunit.framework.dll'),
     [switch] $KeepArtifacts,
     [switch] $Apply

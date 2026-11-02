@@ -26,12 +26,14 @@ foreach ($case in @('First', 'Different root with spaces')) {
     $working = [IO.Path]::GetDirectoryName($project)
     $revision = if ($case -ceq 'First') { 'a' * 40 } else { 'b' * 40 }
     foreach ($operation in @('restore', 'build')) {
-        $start = [Diagnostics.ProcessStartInfo]::new((Get-Command dotnet -CommandType Application).Source)
+        $start = [Diagnostics.ProcessStartInfo]::new((Get-Command dotnet -CommandType Application -TotalCount 1 -ErrorAction Stop).Source)
         $start.UseShellExecute = $false; $start.WorkingDirectory = $working
         $start.Environment['DOTNET_CLI_UI_LANGUAGE'] = $(if ($case -ceq 'First') { 'en-US' } else { 'zh-CN' })
         $start.Environment['VSLANG'] = $(if ($case -ceq 'First') { '1033' } else { '2052' })
+        $start.Environment['DOTNET_CLI_USE_MSBUILD_SERVER'] = '0'
+        $start.Environment['MSBUILDDISABLENODEREUSE'] = '1'
         foreach ($arg in @($operation, $project)) { $start.ArgumentList.Add($arg) }
-        $arguments = if ($operation -ceq 'restore') { @('--locked-mode') } else { @('-c', 'Release', '--no-restore', '-p:RepositoryUrl=https://example.invalid/commit-independent.git', ('-p:SourceRevisionId=' + $revision)) }
+        $arguments = if ($operation -ceq 'restore') { @('--locked-mode', '--disable-build-servers') } else { @('-c', 'Release', '--no-restore', '--disable-build-servers', '-nodeReuse:false', '-p:UseSharedCompilation=false', '-p:RepositoryUrl=https://example.invalid/commit-independent.git', ('-p:SourceRevisionId=' + $revision)) }
         foreach ($arg in $arguments) { $start.ArgumentList.Add($arg) }
         $fact = Invoke-YLTestProcess -StartInfo $start -Log (Join-Path $owned.path ($operation + '.log')) -TimeoutMilliseconds 180000
         Assert-YLTestProcessSucceeded $fact
