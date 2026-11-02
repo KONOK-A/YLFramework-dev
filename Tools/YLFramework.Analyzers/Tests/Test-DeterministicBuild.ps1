@@ -28,6 +28,8 @@ foreach ($case in @('First', 'Different root with spaces')) {
     foreach ($operation in @('restore', 'build')) {
         $start = [Diagnostics.ProcessStartInfo]::new((Get-Command dotnet -CommandType Application).Source)
         $start.UseShellExecute = $false; $start.WorkingDirectory = $working
+        $start.Environment['DOTNET_CLI_UI_LANGUAGE'] = $(if ($case -ceq 'First') { 'en-US' } else { 'zh-CN' })
+        $start.Environment['VSLANG'] = $(if ($case -ceq 'First') { '1033' } else { '2052' })
         foreach ($arg in @($operation, $project)) { $start.ArgumentList.Add($arg) }
         $arguments = if ($operation -ceq 'restore') { @('--locked-mode') } else { @('-c', 'Release', '--no-restore', '-p:RepositoryUrl=https://example.invalid/commit-independent.git', ('-p:SourceRevisionId=' + $revision)) }
         foreach ($arg in $arguments) { $start.ArgumentList.Add($arg) }
@@ -42,5 +44,5 @@ $deployedHash = (Get-FileHash -LiteralPath $deployed).Hash
 Write-YLTestJson -Path (Join-Path $result.path 'builds.json') -Value @{ builds = $hashes; deployedHash = $deployedHash }
 if ($hashes[0].sha256 -cne $hashes[1].sha256) { throw 'Identical Analyzer sources produced different DLLs for different roots/revision metadata.' }
 if ($hashes[0].sha256 -cne $deployedHash) { throw 'Deployed Analyzer is not the root/revision-independent compiler output.' }
-"PASS: two actual pinned SDK builds at distinct roots/revision inputs reproduce the deployed Analyzer: $deployedHash"
+"PASS: two actual pinned SDK builds at distinct roots/revisions and English/Chinese UI reproduce the deployed Analyzer: $deployedHash"
 "Evidence: $($result.path)"
