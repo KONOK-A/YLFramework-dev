@@ -64,6 +64,20 @@ jobs:
       - name: Build and test Analyzer on .NET
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/YLFramework.Analyzers/build.ps1 -VerifyDeployment
 
+      - name: Preserve reproducible build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analyzer-build-diagnostics
+          path: |
+            Temp/YLFramework.Analyzers/**/YLFramework.Analyzers.dll
+            Temp/YLFramework.Analyzers/**/YLFramework.Analyzers.pdb
+            Temp/YLFramework.Analyzers/**/YLFramework.Analyzers.AssemblyInfo.cs
+            Temp/YLFramework.Analyzers/**/YLFramework.Analyzers.GeneratedMSBuildEditorConfig.editorconfig
+            Temp/YLFramework.Analyzers/build-info.json
+            PackageSources/com.kano.ylframework/Runtime/Core/Analyzers/YLFramework.Analyzers.dll
+          if-no-files-found: ignore
+
       - name: Test harness contracts, not Unity acceptance
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLTesting.ps1 -TemporaryRoot $env:RUNNER_TEMP
 

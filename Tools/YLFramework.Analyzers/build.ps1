@@ -37,8 +37,10 @@ function Assert-AnalyzerDeployment {
     param([string] $Built, [string] $Destination)
     Assert-AnalyzerMeta -Path ($Destination + '.meta')
     if (-not [IO.File]::Exists($Built) -or -not [IO.File]::Exists($Destination)) { throw 'The verified build or deployed Analyzer DLL is missing.' }
-    if ((Get-FileHash -LiteralPath $Built -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash) {
-        throw 'Deployed Analyzer is stale or changed; run the verified build with -Deploy before source delivery.'
+    $builtHash = (Get-FileHash -LiteralPath $Built -Algorithm SHA256).Hash
+    $deployedHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash
+    if ($builtHash -cne $deployedHash) {
+        throw "Deployed Analyzer is stale or changed; run the verified build with -Deploy before source delivery. Built=$builtHash ($([IO.FileInfo]::new($Built).Length) bytes); deployed=$deployedHash ($([IO.FileInfo]::new($Destination).Length) bytes)."
     }
 }
 
