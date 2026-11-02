@@ -1,0 +1,11 @@
+{
+  "name": "com.kano.ylframework.dotween",
+  "version": "0.1.0-preview.1",
+  "displayName": "YLFramework DOTween Integration",
+  "description": "Optional YLFramework Action adapters for an independently installed DOTween SDK.",
+  "unity": "2022.3",
+  "unityRelease": "62f3",
+  "license": "MIT",
+  "author": { "name": "Kano" },
+  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1" }
+}

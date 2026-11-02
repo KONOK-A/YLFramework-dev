@@ -1,0 +1,28 @@
+{
+  "name": "YLFramework.Core.Editor.Tests",
+  "rootNamespace": "YLFramework.Core.Editor.Tests",
+  "references": [
+    "YLFramework.Editor",
+    "YLFramework.Runtime",
+    "YLFramework.Dev.Editor",
+    "UnityEngine.UI",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner",
+    "YLFramework.Tests.Fixtures"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

@@ -40,7 +40,7 @@ namespace YLFramework.Analyzers.Tests
         public void EverySupportedRuleHasALocalDocumentationAnchor()
         {
             var guide = File.ReadAllText(Path.Combine(AnalyzerFixture.Root,
-                "Assets/YLFramework/Documentation/Modules/Attributes.md"));
+                "PackageSources/com.kano.ylframework/Documentation~/Modules/Attributes.md"));
             foreach (var rule in new CoreUsageAnalyzer().SupportedDiagnostics)
             {
                 Assert.That(guide.Contains("id=\"" + rule.Id.ToLowerInvariant() + "\""), Is.True,

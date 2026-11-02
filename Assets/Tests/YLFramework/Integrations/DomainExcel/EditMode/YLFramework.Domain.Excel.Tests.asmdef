@@ -1,0 +1,27 @@
+{
+  "name": "YLFramework.Domain.Excel.Tests",
+  "references": [
+    "YLFramework.Runtime",
+    "YLFramework.Editor",
+    "YLFramework.Domain.Excel.Editor",
+    "YLFramework.Excel.Editor",
+    "YLFramework.Tests.Fixtures"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS",
+    "YL_DOMAIN_EXCEL_PACKAGE"
+  ],
+  "versionDefines": [
+    {
+      "expression": "0.1.0-preview.1",
+      "name": "com.kano.ylframework.domain-excel",
+      "define": "YL_DOMAIN_EXCEL_PACKAGE"
+    }
+  ]
+}

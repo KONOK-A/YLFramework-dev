@@ -63,8 +63,8 @@ try {
     $inputs = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $definition = @($configuration.modules | Where-Object { $_.name -ceq 'Reddot' })[0]
     foreach ($relative in @($definition.runtimeSources) + @($definition.nativeSources) + @($definition.assemblyMetadata) + @(
-        'Assets/YLFramework/Tests/Infrastructure/Editor/YLTestEntry.cs',
-        'Assets/YLFramework/Tests/Infrastructure/Editor/YLFramework.Tests.Infrastructure.Editor.asmdef')) {
+        'Assets/Tests/YLFramework/Infrastructure/Editor/YLTestEntry.cs',
+        'Assets/Tests/YLFramework/Infrastructure/Editor/YLFramework.Tests.Infrastructure.Editor.asmdef')) {
         $null = $inputs.Add($relative)
         $null = $inputs.Add($relative + '.meta')
     }
@@ -130,7 +130,7 @@ try {
     $baseline = [IO.File]::ReadAllText($discovery.selection) | ConvertFrom-Json -DateKind String
     $saved = Join-Path $run.path 'baseline-selection.json'
     Write-YLTestJson -Path $saved -Value $baseline
-    $playAssembly = Join-Path $source 'Assets/YLFramework/Tests/PlayMode/YLFramework.Tests.PlayMode.asmdef'
+    $playAssembly = Join-Path $source 'Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef'
     $originalAssembly = [IO.File]::ReadAllBytes($playAssembly)
     try {
         $assembly = [Text.Encoding]::UTF8.GetString($originalAssembly) | ConvertFrom-Json -AsHashtable
@@ -141,7 +141,7 @@ try {
         $summary.checks++
         'PASS: excluding the entire PlayMode assembly cannot shrink a declared two-mode discovery into success'
     } finally { [IO.File]::WriteAllBytes($playAssembly, $originalAssembly) }
-    $changedTest = Join-Path $source 'Assets/YLFramework/Tests/EditMode/Systems/Reddot/ReddotTests.cs'
+    $changedTest = Join-Path $source 'Assets/Tests/YLFramework/EditMode/Systems/Reddot/ReddotTests.cs'
     $originalTest = [IO.File]::ReadAllBytes($changedTest)
     $failure = @'
 

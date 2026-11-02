@@ -1,0 +1,16 @@
+{
+    "packageId": "com.kano.ylframework.domain-excel",
+    "version": "0.1.0-preview.1",
+    "requiredPackages": ["com.kano.ylframework", "com.kano.ylframework.excel"],
+    "historicalExcelContractCommit": "6a9e2508a42333e55c82e6f29eea136643af4467",
+    "requiredAssembly": "YLFramework.Excel.Editor",
+    "activation": "Installing this Editor-only package enables it; no global YL_DOMAIN_EXCEL define is required or modified.",
+    "gitInstallation": "Explicitly declare the main, Excel and Domain Excel Git URLs at the same full validated SHA in the consuming project manifest.",
+    "licenseFile": "../LICENSE.md",
+    "backendLicenseFile": "../../com.kano.ylframework.excel/Editor/Licenses/MiniExcel-LICENSE.txt",
+    "backendAttributionFile": "../../com.kano.ylframework.excel/Editor/Licenses/MiniExcel-ATTRIBUTION.txt",
+    "pathBase": "Notice paths are relative to this file in the source repository. In an installed project open the resolved Excel package's Editor/Licenses directory, not a guessed PackageCache sibling path.",
+    "backendCopiedIntoThisIntegration": false,
+    "snapshotValidation": "The historical Excel contract commit records ExcelChange.After as FullTypeName:actual-field-state JSON; Mission conditions are an array, not exported text. It is provenance, not a Git installation revision; reverify on Excel API changes.",
+    "notImplemented": ["Atomic combined Mission entries+parameters workbook transaction", "Global shared Buff Effect library xlsx import"]
+}

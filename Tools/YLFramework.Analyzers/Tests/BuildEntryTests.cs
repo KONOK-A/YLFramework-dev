@@ -63,7 +63,7 @@ namespace YLFramework.Analyzers.Tests
         {
             var root = Path.Combine(AnalyzerFixture.Root, "Temp", "AnalyzerMetaGuard-" + Guid.NewGuid().ToString("N"));
             var tools = Path.Combine(root, "Tools", "YLFramework.Analyzers");
-            var meta = Path.Combine(root, "Assets", "YLFramework", "Runtime", "Core", "Analyzers", "YLFramework.Analyzers.dll.meta");
+            var meta = Path.Combine(root, "PackageSources", "com.kano.ylframework", "Runtime", "Core", "Analyzers", "YLFramework.Analyzers.dll.meta");
             Directory.CreateDirectory(tools);
             Directory.CreateDirectory(Path.Combine(root, "Temp"));
             Directory.CreateDirectory(Path.GetDirectoryName(meta));

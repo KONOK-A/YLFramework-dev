@@ -1,0 +1,8 @@
+{
+    "name": "YLFramework.Dev.Editor",
+    "references": ["YLFramework.Runtime", "YLFramework.Editor", "UnityEngine.UI"],
+    "includePlatforms": ["Editor"],
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": false
+}

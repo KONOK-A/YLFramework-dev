@@ -1,9 +1,0 @@
-{
-    "requiredCommit": "6a9e2508a42333e55c82e6f29eea136643af4467",
-    "requiredAssembly": "YLFramework.Excel.Editor",
-    "define": "YL_DOMAIN_EXCEL",
-    "order": "Integrate B DataAssets + Excel before C DomainExcel",
-    "backendCopiedIntoThisIntegration": false,
-    "snapshotValidation": "B ExcelChange.After at requiredCommit is FullTypeName:actual-field-state JSON; Mission conditions are an array, not exported text; reverify on B API changes",
-    "notImplemented": ["Atomic combined Mission entries+parameters workbook transaction", "Global shared Buff Effect library xlsx import"]
-}

@@ -6,6 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="3.8.0" PrivateAssets="all" />
-    <Compile Include="../../../Assets/YLFramework/Editor/Core/Analyzers/AnalyzerRuleCatalog.cs" Link="AnalyzerRuleCatalog.cs" />
+    <Compile Include="../../../PackageSources/com.kano.ylframework/Editor/Core/Analyzers/AnalyzerRuleCatalog.cs" Link="AnalyzerRuleCatalog.cs" />
   </ItemGroup>
 </Project>

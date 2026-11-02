@@ -50,6 +50,11 @@ jobs:
           global-json-file: Tools/YLFramework.Analyzers/global.json
           architecture: x64
 
+      - name: Materialize approved product package binaries
+        run: |
+          git lfs pull --include="PackageSources/**/*.dll" --exclude=""
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Check Git index hygiene
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLGitHygiene.ps1
 
@@ -57,10 +62,29 @@ jobs:
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/CodeStyle/Format-YL.ps1 -Mode Check
 
       - name: Build and test Analyzer on .NET
-        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/YLFramework.Analyzers/build.ps1
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/YLFramework.Analyzers/build.ps1 -VerifyDeployment
 
       - name: Test harness contracts, not Unity acceptance
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLTesting.ps1 -TemporaryRoot $env:RUNNER_TEMP
+
+      - name: Test UPM manifest and sample ownership contracts
+        run: |
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistributionManifest.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLSampleHost.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesGitNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesEntryNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/YLFramework.Analyzers/Tests/Test-DeploymentContract.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDevelopmentHostNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDevelopmentHostEntryNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify repository inputs were not changed
         run: |

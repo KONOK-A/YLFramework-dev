@@ -1,0 +1,29 @@
+{
+  "name": "com.kano.ylframework",
+  "version": "0.1.0-preview.1",
+  "displayName": "YLFramework",
+  "description": "YLFramework runtime services, authoring tools and production assets.",
+  "unity": "2022.3",
+  "unityRelease": "62f3",
+  "hideInEditor": false,
+  "license": "MIT",
+  "author": { "name": "Kano" },
+  "dependencies": {
+    "com.unity.ugui": "1.0.0",
+    "com.unity.nuget.newtonsoft-json": "3.2.1",
+    "com.unity.modules.animation": "1.0.0",
+    "com.unity.modules.assetbundle": "1.0.0",
+    "com.unity.modules.audio": "1.0.0",
+    "com.unity.modules.imageconversion": "1.0.0",
+    "com.unity.modules.imgui": "1.0.0",
+    "com.unity.modules.jsonserialize": "1.0.0",
+    "com.unity.modules.physics": "1.0.0",
+    "com.unity.modules.physics2d": "1.0.0",
+    "com.unity.modules.ui": "1.0.0",
+    "com.unity.modules.uielements": "1.0.0",
+    "com.unity.modules.unitywebrequest": "1.0.0"
+  },
+  "samples": [
+    { "displayName": "Resource Startup", "description": "Explicit resource and application startup examples.", "path": "Samples~/ResourceStartup" }
+  ]
+}

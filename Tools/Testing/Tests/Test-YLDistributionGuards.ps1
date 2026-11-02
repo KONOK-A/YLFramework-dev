@@ -1,8 +1,14 @@
 #requires -Version 7.6
 [CmdletBinding()]
-param([Parameter(Mandatory)][string] $WorkspaceRoot, [Parameter(Mandatory)][string] $Unity)
+param(
+    [Parameter(Mandatory, ParameterSetName = 'Unity')][string] $WorkspaceRoot,
+    [Parameter(Mandatory, ParameterSetName = 'Unity')][string] $Unity,
+    [Parameter(Mandatory, ParameterSetName = 'NoUnity')][switch] $NoUnity,
+    [Parameter(Mandatory, ParameterSetName = 'NoUnity')][string] $TemporaryRoot
+)
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
+if ($NoUnity) { & (Join-Path $PSScriptRoot 'Test-YLDistributionEntryNoUnity.ps1') -TemporaryRoot $TemporaryRoot; return }
 . (Join-Path $PSScriptRoot '../Common/Process.ps1')
 . (Join-Path $PSScriptRoot '../Common/Results.ps1')
 . (Join-Path $PSScriptRoot '../UnityHost.ps1')
@@ -53,7 +59,7 @@ namespace YLFramework.Testing
             using (var writer = new StreamWriter(stream))
             {
                 writer.Write(JsonConvert.SerializeObject(new { rejected, hostId = (string)host["id"],
-                    resultId = (string)result["id"], isBatchMode = Application.isBatchMode }));
+                    resultId = (string)result["id"], isBatchMode = Application.isBatchMode, pid = System.Diagnostics.Process.GetCurrentProcess().Id }));
             }
             EditorApplication.Exit(rejected ? 0 : 1);
         }
@@ -69,17 +75,28 @@ namespace YLFramework.Testing
     }
     $identity = Get-YLTestInputIdentity -Repository $repository -Paths @('Tools/Testing/DistributionEntry.cs', 'Tools/Testing/Tests/Test-YLDistributionGuards.ps1') -Toolchain @($Unity) -Profile "DistributionGuards-$($version.ProductVersion)"
     Sync-YLUnityHost -HostRecord $hostRecord -Files $files -EditorVersion $editor.version -Identity $identity
-    foreach ($case in @('MissingRequest', 'WrongOwner', 'Interactive')) {
+    foreach ($case in @('MissingRequest', 'WrongOwner', 'Interactive', 'BooleanHostId', 'BooleanResultId', 'BooleanPhase', 'BooleanSchema', 'OldSchema', 'RetiredExport')) {
         $output = Join-Path $run.path $case
         $null = [IO.Directory]::CreateDirectory($output)
         $request = Join-Path $output 'request.json'
-        $value = @{ hostId = $hostRecord.id; resultId = $run.id; resultRoot = $run.path; output = $output; unityVersion = $editor.version; case = $case }
+        $value = @{ schemaVersion = 2; hostId = $hostRecord.id; resultId = $run.id; resultRoot = $run.path; output = $output; unityVersion = $editor.version; case = $case
+            phase = 'Inspect'; backend = 'Mono'; smoke = $false; hybridCLR = $false; packageOrigin = 'File'
+            manifestSha256 = (Get-FileHash -LiteralPath (Join-Path $hostRecord.path 'Packages/manifest.json')).Hash
+            packages = @(@{ name = 'com.kano.ylframework'; version = '0.1.0-preview.1' }) }
         Write-YLTestJson -Path $request -Value $value
         $arguments = @('-projectPath', $hostRecord.path, '-logFile', (Join-Path $output 'unity.log'), '-executeMethod', 'YLFramework.Testing.DistributionGuard.Run', '-ylGuardRequest', $request)
         if ($case -cne 'Interactive') { $arguments += @('-batchmode', '-nographics') }
         else { $arguments += @('-ylDistributionRequest', $request) }
-        if ($case -ceq 'WrongOwner') {
-            $value.hostId = '00000000000000000000000000000000'
+        if ($case -cnotin @('MissingRequest', 'Interactive')) {
+            switch -CaseSensitive ($case) {
+                'WrongOwner' { $value.hostId = '00000000000000000000000000000000' }
+                'BooleanHostId' { $value.hostId = $true }
+                'BooleanResultId' { $value.resultId = $true }
+                'BooleanPhase' { $value.phase = $true }
+                'BooleanSchema' { $value.schemaVersion = $true }
+                'OldSchema' { $value.schemaVersion = 1 }
+                'RetiredExport' { $value.phase = 'Export' }
+            }
             $wrong = Join-Path $output 'wrong.json'
             Write-YLTestJson -Path $wrong -Value $value
             $arguments += @('-ylDistributionRequest', $wrong)
@@ -92,7 +109,8 @@ namespace YLFramework.Testing
         $summary.processes += $fact
         Assert-YLTestProcessSucceeded $fact
         $proof = [IO.File]::ReadAllText((Join-Path $output 'guard.json')) | ConvertFrom-Json -DateKind String
-        if ($proof.rejected -isnot [bool] -or -not $proof.rejected -or $proof.hostId -cne $hostRecord.id -or $proof.resultId -cne $run.id -or $proof.isBatchMode -ne ($case -cne 'Interactive')) { throw 'Guard rejection did not return control to the actual owned caller.' }
+        if ($proof.rejected -isnot [bool] -or -not $proof.rejected -or $proof.hostId -isnot [string] -or $proof.resultId -isnot [string] -or $proof.isBatchMode -isnot [bool] -or
+            $proof.pid -isnot [long] -or $proof.pid -ne $fact.pid -or $proof.hostId -cne $hostRecord.id -or $proof.resultId -cne $run.id -or $proof.isBatchMode -ne ($case -cne 'Interactive')) { throw 'Guard rejection did not return control to the actual owned caller.' }
         $summary.checks++
         "PASS: $case rejection returns without terminating its caller"
     }

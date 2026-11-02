@@ -1,8 +1,0 @@
-{
-    "name": "YLFramework.Domain.Excel.Editor",
-    "rootNamespace": "YLFramework.Integrations.DomainExcel.Editor",
-    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.Excel.Editor"],
-    "includePlatforms": ["Editor"],
-    "defineConstraints": ["YL_DOMAIN_EXCEL"],
-    "autoReferenced": true
-}
