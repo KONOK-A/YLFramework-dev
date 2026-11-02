@@ -19,6 +19,10 @@ foreach ($id in $ids) {
     foreach ($name in @('README.md', 'LICENSE.md')) {
         if (-not [IO.File]::Exists((Join-Path $root $name))) { throw "Missing $name in $id" }
     }
+    $attributes = Join-Path $root '.gitattributes'
+    if (-not [IO.File]::Exists($attributes) -or [IO.File]::ReadAllText($attributes) -cnotmatch '(?m)^\*\.dll filter=lfs diff=lfs merge=lfs -text\s*$') {
+        throw "UPM subdirectory checkout must carry its own binary LFS rules: $id"
+    }
     foreach ($name in @('Assets', 'Packages', 'ProjectSettings', 'Tools', 'Tests', 'Library', 'Temp', '.kilo', '.kilocode', 'Integrations')) {
         if ([IO.Directory]::Exists((Join-Path $root $name))) { throw "Development input in package: $id/$name" }
     }
