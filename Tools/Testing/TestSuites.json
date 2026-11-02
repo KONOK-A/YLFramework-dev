@@ -1,15 +1,49 @@
 {
   "schemaVersion": 1,
   "suites": [
-    { "name": "Quick", "executor": "Offline", "description": "Real NUnit logic tests under Unity Mono; no Unity native calls." },
-    { "name": "Daily", "executor": "Unity", "description": "Selected module EditMode and PlayMode tests in an owned reusable host." },
-    { "name": "Integration", "executor": "Explicit", "description": "Distribution and optional integration contracts with explicit prerequisites." },
-    { "name": "Special", "executor": "Explicit", "description": "Native, DSP, OS input and IDE checks are not part of unattended Daily." }
+    {
+      "name": "Quick",
+      "executor": "Offline",
+      "description": "Real NUnit logic tests under Unity Mono; no Unity native calls."
+    },
+    {
+      "name": "Daily",
+      "executor": "Unity",
+      "description": "Selected module EditMode and PlayMode tests in an owned reusable host."
+    },
+    {
+      "name": "Integration",
+      "executor": "Explicit",
+      "description": "Distribution and optional integration contracts with explicit prerequisites."
+    },
+    {
+      "name": "Special",
+      "executor": "Explicit",
+      "description": "Native, DSP, OS input and IDE checks are not part of unattended Daily."
+    }
   ],
   "editors": [
-    { "fileVersion": "2022.3.62", "productVersion": "2022.3.62f3c1_1623fc0bbb97", "version": "2022.3.62f3c1", "testFramework": "1.3.9", "ugui": "1.0.0" },
-    { "fileVersion": "2022.3.62", "productVersion": "2022.3.62f3_96770f904ca7", "version": "2022.3.62f3", "testFramework": "1.3.9", "ugui": "1.0.0" },
-    { "fileVersion": "6000.3.27", "productVersion": "6000.3.27f1_672d562a42a7", "version": "6000.3.27f1", "testFramework": "1.6.0", "ugui": "2.0.0" }
+    {
+      "fileVersion": "2022.3.62",
+      "productVersion": "2022.3.62f3c1_1623fc0bbb97",
+      "version": "2022.3.62f3c1",
+      "testFramework": "1.3.9",
+      "ugui": "1.0.0"
+    },
+    {
+      "fileVersion": "2022.3.62",
+      "productVersion": "2022.3.62f3_96770f904ca7",
+      "version": "2022.3.62f3",
+      "testFramework": "1.3.9",
+      "ugui": "1.0.0"
+    },
+    {
+      "fileVersion": "6000.3.27",
+      "productVersion": "6000.3.27f1_672d562a42a7",
+      "version": "6000.3.27f1",
+      "testFramework": "1.6.0",
+      "ugui": "2.0.0"
+    }
   ],
   "modules": [
     {
@@ -17,318 +51,463 @@
       "sortingLayer": "",
       "category": "YL.Module.Reddot",
       "assemblies": [],
-      "nativeLayout": "Slice",
+      "nativeLayout": "Framework",
       "graphics": false,
       "excludedCategories": [],
       "description": "Whole path segments, independent sources, rollback notifications and real UGUI subscription lifetime.",
-      "suites": ["Quick", "Daily"],
-      "runtimeSources": [
-        "Assets/YLFramework/Runtime/Systems/Reddot/ReddotManager.cs",
-        "Assets/YLFramework/Runtime/Foundation/Singleton/Internal/SingletonSessionState.cs",
-        "Assets/YLFramework/Runtime/Foundation/Events/Subscriptions/EventChannel.cs",
-        "Assets/YLFramework/Runtime/Foundation/Events/Subscriptions/EventChannelBase.cs",
-        "Assets/YLFramework/Runtime/Foundation/Events/Subscriptions/EventRegistrations.cs",
-        "Assets/YLFramework/Runtime/Foundation/Events/Subscriptions/IEventSource.cs",
-        "Assets/YLFramework/Runtime/Foundation/Events/Subscriptions/IUnregister.cs",
-        "Assets/YLFramework/Runtime/Foundation/Events/Subscriptions/CallbackUnregister.cs",
-        "Assets/YLFramework/Runtime/Foundation/Events/Subscriptions/SubscriptionCleanup.cs"
+      "suites": [
+        "Quick",
+        "Daily"
       ],
-      "nativeSources": ["Assets/YLFramework/Runtime/Systems/Reddot/Reddot.cs"],
-      "editTests": ["Assets/YLFramework/Tests/EditMode/Systems/Reddot"],
-      "playTests": ["Assets/YLFramework/Tests/PlayMode/Systems/Reddot"],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime/Systems/Reddot/ReddotManager.cs",
+        "PackageSources/com.kano.ylframework/Runtime/Foundation/Singleton/Internal/SingletonSessionState.cs",
+        "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/EventChannel.cs",
+        "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/EventChannelBase.cs",
+        "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/EventRegistrations.cs",
+        "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/IEventSource.cs",
+        "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/IUnregister.cs",
+        "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/CallbackUnregister.cs",
+        "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/SubscriptionCleanup.cs"
+      ],
+      "nativeSources": [
+        "Assets/Editor/YLFrameworkDev"
+      ],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Systems/Reddot"
+      ],
+      "playTests": [
+        "Assets/Tests/YLFramework/PlayMode/Systems/Reddot"
+      ],
       "assemblyMetadata": [
-        "Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef",
-        "Assets/YLFramework/Tests/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/PlayMode/YLFramework.Tests.PlayMode.asmdef"
-      ]
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework"
+      ],
+      "sampleInputs": []
     },
     {
       "name": "Foundation",
       "sortingLayer": "",
       "category": "",
-      "assemblies": ["YLFramework.Foundation.Tests.EditMode", "YLFramework.Tests.EditMode", "YLFramework.Core.Editor.Tests", "YLFramework.Foundation.Tests.PlayMode", "YLFramework.Core.Tests.PlayMode"],
+      "assemblies": [
+        "YLFramework.Foundation.Tests.EditMode",
+        "YLFramework.Tests.EditMode",
+        "YLFramework.Core.Editor.Tests",
+        "YLFramework.Foundation.Tests.PlayMode",
+        "YLFramework.Core.Tests.PlayMode"
+      ],
       "nativeLayout": "Framework",
       "graphics": true,
-      "excludedCategories": ["YL.Special.Session"],
+      "excludedCategories": [
+        "YL.Special.Session"
+      ],
       "specialCategory": "YL.Special.Session",
       "description": "Real Foundation and editor serialization/attribute tests with the complete Runtime and Editor source, not the Reddot slice.",
-      "suites": ["Daily", "Special"],
-      "runtimeSources": ["Assets/YLFramework/Runtime"],
-      "nativeSources": [
-        "Assets/YLFramework/Editor",
-        "Assets/YLFramework/Plugins/BouncyCastle",
-        "Assets/YLFramework/Samples/ResourceStartup",
-        "Assets/YLFramework/Tests/Fixtures/Shared",
-        "Assets/YLFramework/Tests/Fixtures/NamespaceMigration",
-        "Assets/YLFramework/Tests/Fixtures/CommonSystem"
+      "suites": [
+        "Daily",
+        "Special"
       ],
-      "editTests": ["Assets/YLFramework/Tests/EditMode/Foundation", "Assets/YLFramework/Tests/EditMode/Editor/Foundation"],
-      "playTests": ["Assets/YLFramework/Tests/PlayMode/Foundation"],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
+        "Assets/Tests/YLFramework/Fixtures/CommonSystem",
+        "Assets/Editor/YLFrameworkDev"
+      ],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Foundation",
+        "Assets/Tests/YLFramework/EditMode/Editor/Foundation"
+      ],
+      "playTests": [
+        "Assets/Tests/YLFramework/PlayMode/Foundation"
+      ],
       "assemblyMetadata": [
-        "Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef",
-        "Assets/YLFramework/Editor/YLFramework.Editor.asmdef",
-        "Assets/YLFramework/Tests/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/EditMode/Editor/Core/YLFramework.Core.Editor.Tests.asmdef",
-        "Assets/YLFramework/Tests/PlayMode/YLFramework.Tests.PlayMode.asmdef",
-        "Assets/YLFramework/Tests/PlayMode/Core/YLFramework.Core.Tests.PlayMode.asmdef"
-      ]
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Editor/Core/YLFramework.Core.Editor.Tests.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/Core/YLFramework.Core.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework"
+      ],
+      "sampleInputs": []
     },
     {
       "name": "Core",
       "sortingLayer": "YL.Testing.Core",
       "category": "",
-      "assemblies": ["YLFramework.Core.Tests.EditMode", "YLFramework.Core.Editor.Tests", "YLFramework.Core.Tests.PlayMode", "YLFramework.Tests.EditMode"],
+      "assemblies": [
+        "YLFramework.Core.Tests.EditMode",
+        "YLFramework.Core.Editor.Tests",
+        "YLFramework.Core.Tests.PlayMode",
+        "YLFramework.Tests.EditMode"
+      ],
       "nativeLayout": "Framework",
       "graphics": true,
-      "excludedCategories": ["YL.Integration.CrossModuleAuthoring"],
-      "description": "Actual Core model/controller/view/UI lifecycle, authoring and resource fixtures using the complete framework source.",
-      "suites": ["Daily"],
-      "runtimeSources": ["Assets/YLFramework/Runtime"],
-      "nativeSources": [
-        "Assets/YLFramework/LICENSE.md",
-        "Assets/YLFramework/Integrations/Excel/Editor/Licenses/MiniExcel-LICENSE.txt",
-        "Assets/YLFramework/Editor",
-        "Assets/YLFramework/Plugins/BouncyCastle",
-        "Assets/YLFramework/Prefabs",
-        "Assets/YLFramework/Samples/ResourceStartup",
-        "Assets/YLFramework/Tests/Fixtures/Shared",
-        "Assets/YLFramework/Tests/Fixtures/Core",
-        "Assets/YLFramework/Tests/Fixtures/NamespaceMigration"
+      "excludedCategories": [
+        "YL.Integration.CrossModuleAuthoring",
+        "YL.NativeClipboard"
       ],
-      "editTests": ["Assets/YLFramework/Tests/EditMode/Core", "Assets/YLFramework/Tests/EditMode/Editor/Core"],
-      "playTests": ["Assets/YLFramework/Tests/PlayMode/Core"],
+      "description": "Actual Core lifecycle, authoring and resource fixtures through the complete UPM package. Real OS clipboard acceptance is the separately executed CoreClipboard desktop profile.",
+      "suites": [
+        "Daily"
+      ],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/Core",
+        "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
+        "Assets/Editor/YLFrameworkDev"
+      ],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Core",
+        "Assets/Tests/YLFramework/EditMode/Editor/Core"
+      ],
+      "playTests": [
+        "Assets/Tests/YLFramework/PlayMode/Core"
+      ],
       "assemblyMetadata": [
-        "Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef",
-        "Assets/YLFramework/Editor/YLFramework.Editor.asmdef",
-        "Assets/YLFramework/Tests/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/PlayMode/YLFramework.Tests.PlayMode.asmdef"
-      ]
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework",
+        "com.kano.ylframework.excel"
+      ],
+      "sampleInputs": []
     },
     {
       "name": "Domain",
       "category": "YL.Module.Domain",
       "assemblies": [],
-      "nativeAssemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "nativeAssemblies": [
+        "YLFramework.Tests.EditMode",
+        "YLFramework.Tests.PlayMode"
+      ],
       "nativeLayout": "Framework",
       "graphics": true,
       "sortingLayer": "",
-      "excludedCategories": ["YL.Special.Session", "YL.Special.MainEditor"],
+      "excludedCategories": [
+        "YL.Special.Session",
+        "YL.Special.MainEditor"
+      ],
       "specialCategory": "YL.Special.Session",
       "disableDomainReload": true,
       "description": "Real Skill/Buff/Mission/Reddot/Logging pure contracts; Mono execution is not Unity lifecycle acceptance.",
-      "suites": ["Quick", "Daily", "Special"],
-      "runtimeSources": ["Assets/YLFramework/Runtime"],
+      "suites": [
+        "Quick",
+        "Daily",
+        "Special"
+      ],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
       "nativeSources": [
-        "Assets/YLFramework/Editor",
-        "Assets/YLFramework/Plugins/BouncyCastle",
-        "Assets/YLFramework/Samples/ResourceStartup",
-        "Assets/YLFramework/Tests/Fixtures/Shared",
-        "Assets/YLFramework/Tests/Fixtures/NamespaceMigration",
-        "Assets/YLFramework/Tests/Fixtures/Extensions/Domain",
-        "Assets/YLFramework/Tests/Tools",
-        "Assets/YLFramework/Tests/EditMode/Editor/Domain",
-        "Assets/YLFramework/Tests/EditMode/Editor/Utilities/TreeViews/E0ReorderableTestWindow.cs"
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
+        "Assets/Tests/YLFramework/Fixtures/Extensions/Domain",
+        "Assets/Tests/YLFramework/Tools",
+        "Assets/Tests/YLFramework/EditMode/Editor/Domain",
+        "Assets/Tests/YLFramework/EditMode/Editor/Utilities/TreeViews/E0ReorderableTestWindow.cs",
+        "Assets/Editor/YLFrameworkDev"
       ],
       "offlineReferences": [
         "Library/ScriptAssemblies/UnityEngine.UI.dll",
         "Library/PackageCache/com.unity.nuget.newtonsoft-json@3.2.1/Runtime/Newtonsoft.Json.dll",
-        "Assets/YLFramework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
+        "PackageSources/com.kano.ylframework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
       ],
       "editTests": [
-        "Assets/YLFramework/Tests/EditMode/Systems/Skill",
-        "Assets/YLFramework/Tests/EditMode/Systems/Buff",
-        "Assets/YLFramework/Tests/EditMode/Systems/Mission",
-        "Assets/YLFramework/Tests/EditMode/Systems/Reddot",
-        "Assets/YLFramework/Tests/EditMode/Systems/Logging"
+        "Assets/Tests/YLFramework/EditMode/Systems/Skill",
+        "Assets/Tests/YLFramework/EditMode/Systems/Buff",
+        "Assets/Tests/YLFramework/EditMode/Systems/Mission",
+        "Assets/Tests/YLFramework/EditMode/Systems/Reddot",
+        "Assets/Tests/YLFramework/EditMode/Systems/Logging"
       ],
       "playTests": [
-        "Assets/YLFramework/Tests/PlayMode/Systems/Skill",
-        "Assets/YLFramework/Tests/PlayMode/Systems/Buff",
-        "Assets/YLFramework/Tests/PlayMode/Systems/Mission",
-        "Assets/YLFramework/Tests/PlayMode/Systems/Reddot",
-        "Assets/YLFramework/Tests/PlayMode/Systems/Logging",
-        "Assets/YLFramework/Tests/PlayMode/Systems/Domain"
+        "Assets/Tests/YLFramework/PlayMode/Systems/Skill",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Buff",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Mission",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Reddot",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Logging",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain"
       ],
       "assemblyMetadata": [
-        "Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef",
-        "Assets/YLFramework/Tests/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/PlayMode/YLFramework.Tests.PlayMode.asmdef"
-      ]
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework",
+        "com.kano.ylframework.excel"
+      ],
+      "sampleInputs": []
     },
     {
       "name": "Behavior",
       "category": "YL.Module.Behavior",
       "assemblies": [],
-      "nativeAssemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "nativeAssemblies": [
+        "YLFramework.Tests.EditMode",
+        "YLFramework.Tests.PlayMode"
+      ],
       "nativeLayout": "Framework",
       "graphics": true,
       "sortingLayer": "",
-      "excludedCategories": ["YL.Special.MainEditor", "YL.Special.NativeInput"],
+      "excludedCategories": [
+        "YL.Special.MainEditor",
+        "YL.Special.NativeInput"
+      ],
       "specialCategory": "YL.Special.NativeInput",
       "interactiveDesktop": true,
       "description": "Overlap, character motor, moveable platform and both FSMs. Special isolates the two real native window dispatch/focus contracts in a full-graphics owned host; it does not emulate OS input devices.",
-      "suites": ["Quick", "Daily", "Special"],
-      "runtimeSources": ["Assets/YLFramework/Runtime"],
-      "sourceEnvironment": ["YL_BEHAVIOR_ROOT"],
-      "testSupport": ["Assets/YLFramework/Editor/Systems/StateMachine/Creator/FsmStateFileWriter.cs"],
+      "suites": [
+        "Quick",
+        "Daily",
+        "Special"
+      ],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
+      "sourceEnvironment": [
+        "YL_BEHAVIOR_ROOT"
+      ],
+      "testSupport": [
+        "PackageSources/com.kano.ylframework/Editor/Systems/StateMachine/Creator/FsmStateFileWriter.cs"
+      ],
       "offlineReferences": [
         "Library/ScriptAssemblies/UnityEngine.UI.dll",
         "Library/PackageCache/com.unity.nuget.newtonsoft-json@3.2.1/Runtime/Newtonsoft.Json.dll",
-        "Assets/YLFramework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
+        "PackageSources/com.kano.ylframework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
       ],
       "nativeSources": [
-        "Assets/YLFramework/Editor",
-        "Assets/YLFramework/Plugins/BouncyCastle",
-        "Assets/YLFramework/Samples/ResourceStartup",
-        "Assets/YLFramework/Tests/Fixtures/Shared",
-        "Assets/YLFramework/Tests/Fixtures/NamespaceMigration",
-        "Assets/YLFramework/Tests/Fixtures/Extensions/Behavior",
-        "Assets/YLFramework/Tests/EditMode/Utilities/Overlap",
-        "Assets/YLFramework/Tests/EditMode/Utilities/CharacterController2D",
-        "Assets/YLFramework/Tests/EditMode/Utilities/MoveablePlatform",
-        "Assets/YLFramework/Tests/EditMode/Editor/Behavior"
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
+        "Assets/Tests/YLFramework/Fixtures/Extensions/Behavior",
+        "Assets/Tests/YLFramework/EditMode/Utilities/Overlap",
+        "Assets/Tests/YLFramework/EditMode/Utilities/CharacterController2D",
+        "Assets/Tests/YLFramework/EditMode/Utilities/MoveablePlatform",
+        "Assets/Tests/YLFramework/EditMode/Editor/Behavior",
+        "Assets/Editor/YLFrameworkDev"
       ],
       "editTests": [
-        "Assets/YLFramework/Tests/EditMode/Utilities/Overlap/OverlapOfflineTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Utilities/CharacterController2D/CharacterMotorOfflineTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Utilities/MoveablePlatform/MovingPlatformOfflineTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Editor/StateMachine/AssetFsmOfflineTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Systems/Behavior/DualFsmLegacyTests.cs"
+        "Assets/Tests/YLFramework/EditMode/Utilities/Overlap/OverlapOfflineTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Utilities/CharacterController2D/CharacterMotorOfflineTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Utilities/MoveablePlatform/MovingPlatformOfflineTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/StateMachine/AssetFsmOfflineTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Behavior/DualFsmLegacyTests.cs"
       ],
       "playTests": [
-        "Assets/YLFramework/Tests/PlayMode/Systems/StateMachine",
-        "Assets/YLFramework/Tests/PlayMode/Utilities/Overlap",
-        "Assets/YLFramework/Tests/PlayMode/Utilities/CharacterController2D",
-        "Assets/YLFramework/Tests/PlayMode/Utilities/MoveablePlatform"
+        "Assets/Tests/YLFramework/PlayMode/Systems/StateMachine",
+        "Assets/Tests/YLFramework/PlayMode/Utilities/Overlap",
+        "Assets/Tests/YLFramework/PlayMode/Utilities/CharacterController2D",
+        "Assets/Tests/YLFramework/PlayMode/Utilities/MoveablePlatform"
       ],
       "assemblyMetadata": [
-        "Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef",
-        "Assets/YLFramework/Tests/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/PlayMode/YLFramework.Tests.PlayMode.asmdef"
-      ]
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework"
+      ],
+      "sampleInputs": []
     },
     {
       "name": "Save",
       "category": "YL.Module.SaveBcl",
       "description": "Real NUnit lifecycle for the existing .NET 10 Save BCL profile; Unity JSON/native cases remain native tests.",
-      "suites": ["Special"],
-      "offlineRuntime": { "kind": "DotNet", "sdk": "10.0.102", "version": "10.0.2" },
-      "outputEnvironment": ["YL_SAVE_TEST_OUTPUT"],
-      "runtimeSources": ["Assets/YLFramework/Runtime"],
+      "suites": [
+        "Special"
+      ],
+      "offlineRuntime": {
+        "kind": "DotNet",
+        "sdk": "10.0.102",
+        "version": "10.0.2"
+      },
+      "outputEnvironment": [
+        "YL_SAVE_TEST_OUTPUT"
+      ],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
       "offlineReferences": [
         "Library/ScriptAssemblies/UnityEngine.UI.dll",
         "Library/PackageCache/com.unity.nuget.newtonsoft-json@3.2.1/Runtime/Newtonsoft.Json.dll",
-        "Assets/YLFramework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
+        "PackageSources/com.kano.ylframework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
       ],
-      "testSupport": ["Assets/YLFramework/Tests/EditMode/Foundation/SerializedDictionaryTestAsset.cs"],
+      "testSupport": [
+        "Assets/Tests/YLFramework/EditMode/Foundation/SerializedDictionaryTestAsset.cs"
+      ],
       "editTests": [
-        "Assets/YLFramework/Tests/EditMode/Systems/Save/SaveStoreSafetyTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Systems/Save/SaveManagerFacadeTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Foundation/Serialization/SerializedDictionaryJsonTests.cs"
+        "Assets/Tests/YLFramework/EditMode/Systems/Save/SaveStoreSafetyTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Save/SaveManagerFacadeTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Foundation/Serialization/SerializedDictionaryJsonTests.cs"
       ],
       "playTests": [],
       "nativeSources": [],
-      "assemblyMetadata": ["Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef"]
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework"
+      ],
+      "sampleInputs": []
     },
     {
       "name": "Data",
       "category": "",
-      "assemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "assemblies": [
+        "YLFramework.Tests.EditMode",
+        "YLFramework.Tests.PlayMode"
+      ],
       "nativeLayout": "Framework",
       "graphics": true,
       "sortingLayer": "",
-      "excludedCategories": ["YL.Special.Session", "YL.Special.MainEditor"],
+      "excludedCategories": [
+        "YL.Special.Session",
+        "YL.Special.MainEditor"
+      ],
       "specialCategory": "YL.Special.Session",
       "disableDomainReload": true,
       "description": "Real Save, localization and data-asset authoring/lifecycle; no original game assets or fixed main-editor profile.",
-      "suites": ["Daily", "Special"],
-      "outputEnvironment": ["YL_SAVE_TEST_OUTPUT", "YL_DATA_UNITY_OUTPUT"],
-      "runtimeSources": ["Assets/YLFramework/Runtime"],
+      "suites": [
+        "Daily",
+        "Special"
+      ],
+      "outputEnvironment": [
+        "YL_SAVE_TEST_OUTPUT",
+        "YL_DATA_UNITY_OUTPUT"
+      ],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
       "nativeSources": [
-        "Assets/YLFramework/Editor",
-        "Assets/YLFramework/Plugins/BouncyCastle",
-        "Assets/YLFramework/Samples/ResourceStartup",
-        "Assets/YLFramework/Tests/Fixtures/Shared",
-        "Assets/YLFramework/Tests/Fixtures/NamespaceMigration",
-        "Assets/YLFramework/Tests/Fixtures/Extensions/Domain",
-        "Assets/YLFramework/Tests/Tools"
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
+        "Assets/Tests/YLFramework/Fixtures/Extensions/Domain",
+        "Assets/Tests/YLFramework/Tools",
+        "Assets/Editor/YLFrameworkDev"
       ],
       "editTests": [
-        "Assets/YLFramework/Tests/EditMode/Systems/Save",
-        "Assets/YLFramework/Tests/EditMode/Systems/Localization",
-        "Assets/YLFramework/Tests/EditMode/Systems/DataAssets",
-        "Assets/YLFramework/Tests/EditMode/Editor/Data",
-        "Assets/YLFramework/Tests/EditMode/Editor/Localization",
-        "Assets/YLFramework/Tests/EditMode/Editor/DataAssets"
+        "Assets/Tests/YLFramework/EditMode/Systems/Save",
+        "Assets/Tests/YLFramework/EditMode/Systems/Localization",
+        "Assets/Tests/YLFramework/EditMode/Systems/DataAssets",
+        "Assets/Tests/YLFramework/EditMode/Editor/Data",
+        "Assets/Tests/YLFramework/EditMode/Editor/Localization",
+        "Assets/Tests/YLFramework/EditMode/Editor/DataAssets"
       ],
-      "playTests": ["Assets/YLFramework/Tests/PlayMode/Systems/Localization", "Assets/YLFramework/Tests/PlayMode/Systems/DataAssets"],
+      "playTests": [
+        "Assets/Tests/YLFramework/PlayMode/Systems/Localization",
+        "Assets/Tests/YLFramework/PlayMode/Systems/DataAssets"
+      ],
       "assemblyMetadata": [
-        "Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef",
-        "Assets/YLFramework/Tests/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/PlayMode/YLFramework.Tests.PlayMode.asmdef"
-      ]
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework"
+      ],
+      "sampleInputs": []
     },
     {
       "name": "Excel",
       "category": "YL.Module.Excel",
       "assemblies": [],
-      "modes": ["EditMode"],
+      "modes": [
+        "EditMode"
+      ],
       "nativeLayout": "Framework",
       "graphics": true,
       "sortingLayer": "",
       "excludedCategories": [],
       "description": "Installed optional Excel adapter: real XLSX, ScriptableObject, AssetDatabase, preview and bound data-root contracts.",
-      "suites": ["Daily"],
-      "outputEnvironment": ["YL_EXCEL_TEST_OUTPUT"],
-      "runtimeSources": ["Assets/YLFramework/Runtime"],
-      "nativeSources": [
-        "Assets/YLFramework/Editor",
-        "Assets/YLFramework/Plugins/BouncyCastle",
-        "Assets/YLFramework/Integrations/Excel",
-        "Assets/YLFramework/Samples/ResourceStartup",
-        "Assets/YLFramework/Tests/Fixtures/Shared",
-        "Assets/YLFramework/Tests/Fixtures/NamespaceMigration",
-        "Assets/YLFramework/Tests/EditMode/Systems/DataAssets"
+      "suites": [
+        "Daily"
       ],
-      "editTests": ["Assets/YLFramework/Tests/EditMode/Editor/Excel"],
+      "outputEnvironment": [
+        "YL_EXCEL_TEST_OUTPUT"
+      ],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
+        "Assets/Tests/YLFramework/EditMode/Systems/DataAssets",
+        "Assets/Editor/YLFrameworkDev"
+      ],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Editor/Excel"
+      ],
       "playTests": [],
       "assemblyMetadata": [
-        "Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef",
-        "Assets/YLFramework/Tests/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef"
-      ]
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework",
+        "com.kano.ylframework.excel"
+      ],
+      "sampleInputs": []
     },
     {
       "name": "Action",
       "category": "",
-      "assemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "assemblies": [
+        "YLFramework.Tests.EditMode",
+        "YLFramework.Tests.PlayMode"
+      ],
       "nativeLayout": "Framework",
       "graphics": true,
       "sortingLayer": "",
       "excludedCategories": [],
       "description": "Actual Action/Observable execution, cancellation, disposal, pooled reuse, scene shutdown and screen transition lifecycle.",
-      "suites": ["Daily"],
-      "runtimeSources": ["Assets/YLFramework/Runtime"],
-      "nativeSources": [
-        "Assets/YLFramework/Editor",
-        "Assets/YLFramework/Plugins/BouncyCastle",
-        "Assets/YLFramework/Samples/ResourceStartup",
-        "Assets/YLFramework/Tests/Fixtures/Shared",
-        "Assets/YLFramework/Tests/Fixtures/NamespaceMigration",
-        "Assets/YLFramework/Tests/EditMode/Editor/Distribution/TestDependencyGuard.cs"
+      "suites": [
+        "Daily"
       ],
-      "editTests": ["Assets/YLFramework/Tests/EditMode/Systems/Action"],
-      "playTests": ["Assets/YLFramework/Tests/PlayMode/Systems/Action"],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
+        "Assets/Tests/YLFramework/EditMode/Editor/Distribution/TestDependencyGuard.cs",
+        "Assets/Editor/YLFrameworkDev"
+      ],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Systems/Action"
+      ],
+      "playTests": [
+        "Assets/Tests/YLFramework/PlayMode/Systems/Action"
+      ],
       "assemblyMetadata": [
-        "Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef",
-        "Assets/YLFramework/Tests/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/PlayMode/YLFramework.Tests.PlayMode.asmdef"
-      ]
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework"
+      ],
+      "sampleInputs": []
     },
     {
       "name": "Audio",
@@ -336,39 +515,58 @@
       "prepareSessionScene": true,
       "shortHostKey": true,
       "category": "",
-      "assemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "assemblies": [
+        "YLFramework.Tests.EditMode",
+        "YLFramework.Tests.PlayMode"
+      ],
       "nativeLayout": "Framework",
       "graphics": true,
       "sortingLayer": "",
-      "excludedCategories": ["YL.Module.Resource", "YL.Special.AudioNative", "YL.Special.AudioSession"],
+      "excludedCategories": [
+        "YL.Module.Resource",
+        "YL.Special.AudioNative",
+        "YL.Special.AudioSession"
+      ],
       "specialCategory": "YL.Special.AudioSession",
       "description": "Actual AudioKit/owner/source/resource lifecycle plus explicit continuous-Play and Resource session integration. Audible output/DSP remains separate; no system volume changes.",
-      "suites": ["Daily", "Special"],
-      "runtimeSources": ["Assets/YLFramework/Runtime"],
-      "nativeSources": [
-        "Assets/YLFramework/Editor",
-        "Assets/YLFramework/Plugins/BouncyCastle",
-        "Assets/YLFramework/Samples/ResourceStartup",
-        "Assets/YLFramework/Tests/Fixtures/Shared",
-        "Assets/YLFramework/Tests/Fixtures/NamespaceMigration",
-        "Assets/YLFramework/Tests/Fixtures/Audio",
-        "Assets/YLFramework/Tests/Acceptance/Core/AudioAcceptanceEntry.cs",
-        "Assets/YLFramework/Tests/PlayMode/Systems/Resource/Resources/YLResource81/Message.txt",
-        "Assets/YLFramework/Tests/EditMode/Editor/Distribution/TestDependencyGuard.cs",
-        "Assets/YLFramework/Tests/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Systems/Resource/ResourceSessionTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Editor/Utilities/TreeViews/E0ReorderableTestWindow.cs",
-        "Assets/YLFramework/Tests/PlayMode/Systems/Action/ActionFixtureSession.cs"
+      "suites": [
+        "Daily",
+        "Special"
       ],
-      "editTests": ["Assets/YLFramework/Tests/EditMode/Systems/Audio", "Assets/YLFramework/Tests/EditMode/Editor/Audio"],
-      "playTests": ["Assets/YLFramework/Tests/PlayMode/Systems/Audio"],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
+        "Assets/Tests/YLFramework/Fixtures/Audio",
+        "Assets/Tests/YLFramework/Acceptance/Core/AudioAcceptanceEntry.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Resource/Resources/YLResource81/Message.txt",
+        "Assets/Tests/YLFramework/EditMode/Editor/Distribution/TestDependencyGuard.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Utilities/TreeViews/E0ReorderableTestWindow.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Action/ActionFixtureSession.cs",
+        "Assets/Editor/YLFrameworkDev"
+      ],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Systems/Audio",
+        "Assets/Tests/YLFramework/EditMode/Editor/Audio"
+      ],
+      "playTests": [
+        "Assets/Tests/YLFramework/PlayMode/Systems/Audio"
+      ],
       "assemblyMetadata": [
-        "Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef",
-        "Assets/YLFramework/Tests/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/PlayMode/YLFramework.Tests.PlayMode.asmdef"
-      ]
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework"
+      ],
+      "sampleInputs": []
     },
     {
       "name": "Resource",
@@ -377,35 +575,129 @@
       "shortHostKey": true,
       "category": "YL.Module.Resource",
       "assemblies": [],
+      "modes": [
+        "EditMode"
+      ],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "sortingLayer": "",
+      "excludedCategories": [
+        "YL.Special.ResourceSession"
+      ],
+      "specialCategory": "YL.Special.ResourceSession",
+      "description": "Bounded real catalog/codec/native bundle build with an explicit Resource session profile; no Workbench/Cost/TLS/download evidence replay.",
+      "suites": [
+        "Daily",
+        "Special"
+      ],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Resource/Resources/YLResource81/Message.txt",
+        "Assets/Editor/YLFrameworkDev"
+      ],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs"
+      ],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework"
+      ],
+      "sampleInputs": []
+    },
+    {
+      "name": "CoreClipboard",
+      "category": "YL.NativeClipboard",
+      "specialCategory": "YL.NativeClipboard",
+      "assemblies": [],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "interactiveDesktop": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Real OS/native Unity clipboard acceptance in a tool-owned interactive Editor, never a headless pass.",
+      "suites": ["Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Editor/YLFrameworkDev", "Assets/Tests/YLFramework/Fixtures/Core", "Assets/Tests/YLFramework/Fixtures/NamespaceMigration"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Core"],
+      "playTests": [],
+      "assemblyMetadata": [],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "UPM",
+      "category": "YL.UPM",
+      "assemblies": [],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Installed package identity, read-only product layout and Resources contracts without samples or SDKs.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Editor/YLFrameworkDev", "Assets/Tests/YLFramework/Fixtures/Core", "Assets/Tests/YLFramework/Fixtures/NamespaceMigration"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Core"],
+      "playTests": [],
+      "assemblyMetadata": [],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "Generators",
+      "shortHostKey": true,
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "category": "YL.UPM.Generators",
+      "assemblies": [],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Real consumer compilation, independent generator outputs, legacy identity and filesystem ownership acceptance.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Editor/YLFrameworkDev", "Assets/Tests/YLFramework/Fixtures/Core", "Assets/Tests/YLFramework/Fixtures/NamespaceMigration"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Resource", "Assets/Tests/YLFramework/EditMode/Editor/Resource", "Assets/Tests/YLFramework/EditMode/Editor/Distribution/TestDependencyGuard.cs", "Assets/Tests/YLFramework/EditMode/Editor/Core"],
+      "playTests": [],
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/EditMode/Editor/Core/YLFramework.Core.Editor.Tests.asmdef"],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourceSamples",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "category": "",
+      "assemblies": ["YLFramework.ResourceStartup.Sample.Tests.EditMode"],
       "modes": ["EditMode"],
       "nativeLayout": "Framework",
       "graphics": true,
       "sortingLayer": "",
-      "excludedCategories": ["YL.Special.ResourceSession"],
-      "specialCategory": "YL.Special.ResourceSession",
-      "description": "Bounded real catalog/codec/native bundle build with an explicit Resource session profile; no Workbench/Cost/TLS/download evidence replay.",
-      "suites": ["Daily", "Special"],
-      "runtimeSources": ["Assets/YLFramework/Runtime"],
-      "nativeSources": [
-        "Assets/YLFramework/Editor",
-        "Assets/YLFramework/Plugins/BouncyCastle",
-        "Assets/YLFramework/Samples/ResourceStartup",
-        "Assets/YLFramework/Tests/Fixtures/Shared",
-        "Assets/YLFramework/Tests/Fixtures/NamespaceMigration",
-        "Assets/YLFramework/Tests/PlayMode/Systems/Resource/Resources/YLResource81/Message.txt"
-      ],
-      "editTests": [
-        "Assets/YLFramework/Tests/EditMode/Systems/Resource/ResourceCatalogTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs",
-        "Assets/YLFramework/Tests/EditMode/Systems/Resource/ResourceSessionTests.cs"
-      ],
+      "excludedCategories": [],
+      "description": "Explicitly imported Resource Startup sample behavior, serialization and compilation acceptance.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Editor/YLFrameworkDev", "Assets/Tests/YLFramework/Fixtures/NamespaceMigration", "Assets/Tests/YLFramework/EditMode/AssemblyInfo.cs"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Resource", "Assets/Tests/YLFramework/EditMode/Editor/Resource", "Assets/Tests/YLFramework/EditMode/Editor/Distribution/TestDependencyGuard.cs", "Assets/Tests/YLFramework/EditMode/Samples/ResourceStartup"],
       "playTests": [],
-      "assemblyMetadata": [
-        "Assets/YLFramework/Runtime/YLFramework.Runtime.asmdef",
-        "Assets/YLFramework/Tests/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/YLFramework/Tests/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef"
-      ]
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef"],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": [{ "package": "com.kano.ylframework", "name": "Resource Startup" }]
     }
   ]
 }

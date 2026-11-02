@@ -20,10 +20,13 @@ $localOnly = @(
     '^\.kilo/'
     '^(AGENTS\.md|kilocodeignore)$'
     '^Assets/YLFramework/AGENTS\.md(?:\.meta)?$'
+    '^Assets/YLFramework(?:/|\.meta$)'
+    '^PackageSources/[^/]+/(?:Assets|Packages|ProjectSettings|Tests|Tools|Library|Temp|\.kilo|\.kilocode)(?:/|$)'
+    '^PackageSources/(?:.*/)?AGENTS\.md(?:\.meta)?$'
     '^(\.mcp\.json|opencode\.json|\.vscode/mcp\.json)$'
     '^Assets/Plugins/Editor Enhancers Bundle(?:/|\.meta$)'
     '^Assets/Plugins/NuGet(?:/|\.meta$)'
-    '^Assets/YLFramework/Tests/Integrations/HybridCLR/PlayMode/Resources/YLHybridCLRTests/(?!\.gitkeep$)'
+    '^Assets/Tests/YLFramework/Integrations/HybridCLR/PlayMode/Resources/YLHybridCLRTests/(?!\.gitkeep$)'
 )
 $forbidden = @(
     foreach ($path in $tracked) {

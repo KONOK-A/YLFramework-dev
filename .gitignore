@@ -73,8 +73,12 @@ Desktop.ini
 /Assets/Plugins/Editor Enhancers Bundle.meta
 
 # ---------- 当前程序集生成的 HybridCLR 测试输入 ----------
-/Assets/YLFramework/Tests/Integrations/HybridCLR/PlayMode/Resources/YLHybridCLRTests/*
-!/Assets/YLFramework/Tests/Integrations/HybridCLR/PlayMode/Resources/YLHybridCLRTests/.gitkeep
+/Assets/Tests/YLFramework/Integrations/HybridCLR/PlayMode/Resources/YLHybridCLRTests/*
+!/Assets/Tests/YLFramework/Integrations/HybridCLR/PlayMode/Resources/YLHybridCLRTests/.gitkeep
+
+# ---------- 已迁出的本机旧框架目录（保全 AGENTS 和历史生成数据，不再发行） ----------
+/Assets/YLFramework/
+/Assets/YLFramework.meta
 
 # ---------- 本机 AI 工具、指令与连接配置 ----------
 .agents/

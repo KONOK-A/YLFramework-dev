@@ -1,0 +1,29 @@
+{
+  "name": "YLFramework.Tests.Tools.Editor",
+  "rootNamespace": "YLFramework.Tests",
+  "references": [
+    "YLFramework.Runtime",
+    "YLFramework.Editor",
+    "YLFramework.Tests.Data.Probes",
+    "YLFramework.Tests.Domain.Probes",
+    "UnityEngine.UI",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner",
+    "YLFramework.Tests.Fixtures"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "Newtonsoft.Json.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

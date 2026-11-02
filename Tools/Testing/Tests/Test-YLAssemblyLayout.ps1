@@ -30,14 +30,14 @@ if ($Group -in @('EditMode', 'All')) {
 }
 if ($Group -in @('Defaults', 'All')) {
     foreach ($assembly in $graph.editor | Where-Object { $_.name -in @('Assembly-CSharp', 'Assembly-CSharp-Editor') }) {
-        foreach ($source in $assembly.sources | Where-Object { $_.Replace('\', '/').Contains('Assets/YLFramework/Tests/') }) {
+        foreach ($source in $assembly.sources | Where-Object { $_.Replace('\', '/').Contains('Assets/Tests/YLFramework/') }) {
             $failures.Add("Default assembly $($assembly.name) compiles test/acceptance source $source.")
         }
     }
 }
 if ($Group -in @('Player', 'All')) {
     foreach ($assembly in $graph.player) {
-        foreach ($source in $assembly.sources | Where-Object { $_.Replace('\', '/').Contains('Assets/YLFramework/Tests/') }) {
+        foreach ($source in $assembly.sources | Where-Object { $_.Replace('\', '/').Contains('Assets/Tests/YLFramework/') }) {
             $failures.Add("Production Player graph compiles test/acceptance source $source in $($assembly.name).")
         }
         if ($assembly.name -eq 'YLFramework.Runtime') {

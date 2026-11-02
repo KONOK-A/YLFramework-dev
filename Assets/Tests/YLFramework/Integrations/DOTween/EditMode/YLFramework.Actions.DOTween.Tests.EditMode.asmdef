@@ -1,0 +1,35 @@
+{
+  "name": "YLFramework.Actions.DOTween.Tests.EditMode",
+  "rootNamespace": "YLFramework.Tests.Actions.DOTween",
+  "references": [
+    "YLFramework.Runtime",
+    "YLFramework.Actions.DOTween",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner",
+    "YLFramework.Tests.Fixtures"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "DOTween.dll",
+    "nunit.framework.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "DOTWEEN",
+    "UNITY_INCLUDE_TESTS",
+    "YL_DOTWEEN_PACKAGE"
+  ],
+  "versionDefines": [
+    {
+      "expression": "0.1.0-preview.1",
+      "name": "com.kano.ylframework.dotween",
+      "define": "YL_DOTWEEN_PACKAGE"
+    }
+  ],
+  "noEngineReferences": false
+}

@@ -24,27 +24,32 @@ $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $rootPrefix = $root.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 $sdkDirectory = Join-Path $root 'Tools/YLFramework.Analyzers'
 $comparison = [StringComparison]::OrdinalIgnoreCase
-$allowedRoots = @(
-    'Assets/YLFramework/Runtime',
-    'Assets/YLFramework/Editor',
-    'Assets/YLFramework/Integrations',
-    'Assets/YLFramework/Samples',
-    'Assets/YLFramework/Tests',
+$packageRoots = @(
+    'PackageSources/com.kano.ylframework',
+    'PackageSources/com.kano.ylframework.dotween',
+    'PackageSources/com.kano.ylframework.excel',
+    'PackageSources/com.kano.ylframework.domain-excel',
+    'PackageSources/com.kano.ylframework.hybridclr'
+)
+$allowedRoots = @($packageRoots | ForEach-Object { "$_/Runtime"; "$_/Editor"; "$_/Samples~" }) + @(
+    'Assets/Tests/YLFramework',
+    'Assets/Editor/YLFrameworkDev',
     'Tools/YLFramework.Analyzers/Analyzer',
     'Tools/YLFramework.Analyzers/Tests'
 )
 $allowedFiles = @('Tools/Testing/NUnitHost.cs', 'Tools/Testing/DistributionEntry.cs', 'Tools/Testing/PlayerSmoke.cs',
-    'Tools/Testing/HybridCLREntry.cs', 'Tools/Testing/HybridCLRSmoke.cs')
+    'Tools/Testing/HybridCLREntry.cs', 'Tools/Testing/HybridCLRSmoke.cs', 'Tools/Testing/IntegrationEntry.cs', 'Tools/Testing/DevelopmentHostEntry.cs')
 $files = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 
 function Test-AllowedPath {
     param([string] $RelativePath)
     if ($RelativePath -match '(^|/)(Plugins|Generated|obj|bin)(/|$)|\.(g|generated)\.cs$' -or
-        $RelativePath -match '^Assets/YLFramework/Runtime/Utilities/(Json|ZipTool/ICSharpCode\.SharpZipLib)(/|$)' -or
-        $RelativePath -match '^Assets/YLFramework/Tests/Integrations/HybridCLR/PlayMode/Resources(/|$)') {
+        $RelativePath -match '^PackageSources/com.kano.ylframework/Runtime/Utilities/(Json|ZipTool/ICSharpCode\.SharpZipLib)(/|$)' -or
+        $RelativePath -match '^Assets/Tests/YLFramework/Integrations/HybridCLR/PlayMode/Resources(/|$)') {
         return $false
     }
-    if ($RelativePath -in @('Assets/YLFramework', 'Tools/YLFramework.Analyzers') -or $RelativePath -in $allowedFiles) {
+    if ($RelativePath -in @('PackageSources', 'Tools/YLFramework.Analyzers') -or
+        $RelativePath -in $packageRoots -or $RelativePath -in $allowedFiles) {
         return $true
     }
     foreach ($prefix in $allowedRoots) {
@@ -147,8 +152,15 @@ if ($sdk.Code -ne 0 -or $sdk.Output.Trim() -ne '9.0.312') {
 "Mode=$Mode Files=$($files.Count) SDK=9.0.312"
 $exitCode = 0
 $groups = $files | Sort-Object | Group-Object {
-    if ($_.StartsWith((Join-Path $root 'Assets/YLFramework/'), $comparison)) {
-        Join-Path $root 'Assets/YLFramework'
+    $relative = [IO.Path]::GetRelativePath($root, $_).Replace('\', '/')
+    if ($relative.StartsWith('PackageSources/', $comparison)) {
+        Join-Path $root (($relative -split '/', 3)[0..1] -join '/')
+    }
+    elseif ($relative.StartsWith('Assets/Tests/YLFramework/', $comparison)) {
+        Join-Path $root 'Assets/Tests/YLFramework'
+    }
+    elseif ($relative.StartsWith('Assets/Editor/YLFrameworkDev/', $comparison)) {
+        Join-Path $root 'Assets/Editor/YLFrameworkDev'
     }
     elseif ($_.StartsWith($sdkDirectory + [IO.Path]::DirectorySeparatorChar, $comparison)) {
         $sdkDirectory

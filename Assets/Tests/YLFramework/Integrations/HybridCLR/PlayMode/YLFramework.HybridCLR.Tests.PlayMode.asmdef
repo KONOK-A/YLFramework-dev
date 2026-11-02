@@ -1,0 +1,37 @@
+{
+  "name": "YLFramework.HybridCLR.Tests.PlayMode",
+  "rootNamespace": "YLFramework.Tests.Integrations.HybridCLR",
+  "references": [
+    "YLFramework.Runtime",
+    "YLFramework.HybridCLR",
+    "UnityEngine.TestRunner",
+    "YLFramework.Tests.Fixtures"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll",
+    "Newtonsoft.Json.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "YL_HYBRIDCLR_9_0_3",
+    "UNITY_INCLUDE_TESTS",
+    "YL_HYBRIDCLR_PACKAGE"
+  ],
+  "versionDefines": [
+    {
+      "name": "com.code-philosophy.hybridclr",
+      "expression": "[9.0.3,9.0.4)",
+      "define": "YL_HYBRIDCLR_9_0_3"
+    },
+    {
+      "expression": "0.1.0-preview.1",
+      "name": "com.kano.ylframework.hybridclr",
+      "define": "YL_HYBRIDCLR_PACKAGE"
+    }
+  ],
+  "noEngineReferences": false
+}

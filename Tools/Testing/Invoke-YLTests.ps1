@@ -9,7 +9,7 @@ param(
     [string] $WorkspaceRoot = $env:YL_TEST_WORKSPACE,
     [string] $Selection,
     [ValidateRange(1, 86400)][int] $TimeoutSeconds = 600,
-    [string] $Dotnet = (Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue).Source,
+    [string] $Dotnet = (Get-Command dotnet -CommandType Application -TotalCount 1 -ErrorAction SilentlyContinue).Source,
     [string] $NUnitAssembly = (Join-Path $env:USERPROFILE '.nuget/packages/nunit/3.14.0/lib/net45/nunit.framework.dll'),
     [switch] $KeepArtifacts,
     [switch] $Apply
@@ -19,6 +19,7 @@ Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common/Process.ps1')
 . (Join-Path $PSScriptRoot 'Common/Results.ps1')
+. (Join-Path $PSScriptRoot 'Common/Packages.ps1')
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $summary = [ordered]@{
     schemaVersion = 1; action = $Action; suite = $Suite; module = $Module; profile = $null
@@ -78,9 +79,17 @@ function Get-SelectedSources([switch] $Native, [object] $EditorProfile) {
         $assetSources += @($definition.testSupport)
         foreach ($relative in $definition.testSupport) { $tests.Add($relative) }
     }
+    if (-not $Native) {
+        $pathSupport = 'Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs';
+        $assetSources += $pathSupport
+        $tests.Add($pathSupport)
+    }
     if ($Native) {
-        $assetSources += @('Assets/YLFramework/Tests/Infrastructure/Editor/YLTestEntry.cs',
-            'Assets/YLFramework/Tests/Infrastructure/Editor/YLFramework.Tests.Infrastructure.Editor.asmdef')
+        $ids = if ('packageInputs' -cin $definition.PSObject.Properties.Name) { @($definition.packageInputs) } else { @('com.kano.ylframework') }
+        $assetSources += @(Get-YLUpmPackages -Repository $repository -Ids $ids | ForEach-Object relative)
+        $assetSources += @('Assets/Tests/YLFramework/Infrastructure/Editor/YLTestEntry.cs',
+            'Assets/Tests/YLFramework/Infrastructure/Editor/YLFramework.Tests.Infrastructure.Editor.asmdef',
+            'Assets/Tests/YLFramework/Fixtures/Shared')
     }
     foreach ($relative in $assetSources) {
         $path = Get-YLTestPath (Join-Path $repository $relative)
@@ -94,11 +103,11 @@ function Get-SelectedSources([switch] $Native, [object] $EditorProfile) {
             }
         } else { $null = $inputs.Add($relative) }
         $meta = $relative + '.meta'
-        if (-not [IO.File]::Exists((Join-Path $repository $meta))) { throw "Missing participating asset metadata: $meta" }
-        $null = $inputs.Add($meta)
+        if ([IO.File]::Exists((Join-Path $repository $meta))) { $null = $inputs.Add($meta) }
+        elseif (-not $relative.StartsWith('PackageSources/', [StringComparison]::Ordinal)) { throw "Missing participating asset metadata: $meta" }
     }
     foreach ($relative in @('Tools/Testing/TestSuites.json', 'Tools/Testing/Invoke-YLTests.ps1',
-        'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1')) { $null = $inputs.Add($relative) }
+        'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/Common/Packages.ps1')) { $null = $inputs.Add($relative) }
     if ($Native) {
         $null = $inputs.Add('Tools/Testing/UnityHost.ps1')
         if ($definition.nativeLayout -ceq 'Framework') {

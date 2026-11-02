@@ -1,7 +1,0 @@
-{
-    "name": "YLFramework.Domain.Excel.Tests",
-    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.Domain.Excel.Editor", "YLFramework.Excel.Editor"],
-    "includePlatforms": ["Editor"],
-    "optionalUnityReferences": ["TestAssemblies"],
-    "defineConstraints": ["YL_DOMAIN_EXCEL", "UNITY_INCLUDE_TESTS"]
-}

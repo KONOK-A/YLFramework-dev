@@ -1,0 +1,26 @@
+{
+    "optional": true,
+    "includedInMainPackage": false,
+    "packageId": "com.kano.ylframework.dotween",
+    "version": "0.1.0-preview.1",
+    "requiredPackages": ["com.kano.ylframework"],
+    "gitInstallation": "Explicitly declare the main and adapter Git URLs at the same full validated SHA in the consuming project manifest.",
+    "define": "DOTWEEN",
+    "requiredAssembly": "DOTween",
+    "vendor": {
+        "name": "DOTween Standard",
+        "version": "1.2.825",
+        "url": "https://dotween.demigiant.com/downloads/DOTween_1_2_825.zip",
+        "archiveSha256": "689d42944f7076038eb6b87ed4c85ae6951c4aec8eaae4e068524ce55b422c8c",
+        "assemblySha256": "d74bfc3f37cd97d90f7f08a9a73e204c5eae66e77be24b12378a4e99f1690843",
+        "licenseUrl": "https://dotween.demigiant.com/license.php",
+        "bundled": false,
+        "redistributionAuthorized": false,
+        "redistributionAuthorizationScope": "YLFramework packaging decision: the SDK is not bundled. This is not a claim that the vendor forbids unchanged Standard redistribution.",
+        "vendorRedistributionTerms": "Verbatim Standard source may be redistributed with original copyright notices, disclaimers and readme.txt; compiled form may accompany it. Modified versions and DOTween Pro follow their separate restrictions.",
+        "installation": "Obtain the unchanged official Standard archive separately, including its Runtime Modules and original readme. Do not use DOTween Pro as a substitute."
+    },
+    "wrapperLicense": "MIT; retain this package's LICENSE.md and its source attributions",
+    "wrapperLicenseFile": "LICENSE.md",
+    "nativeOrPlayerAcceptance": false
+}

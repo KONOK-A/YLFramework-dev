@@ -1,5 +1,6 @@
 #requires -Version 7.6
 #requires -PSEdition Core
+. (Join-Path $PSScriptRoot 'Common/Packages.ps1')
 
 function Get-YLUnityPackageInputs([object] $EditorProfile) {
     if ($null -eq $EditorProfile -or $null -eq $EditorProfile.PSObject.Properties['productVersion'] -or
@@ -25,12 +26,18 @@ function Get-YLHostManagedPath([object] $HostRecord, [string] $Relative) {
 
 function Assert-YLUnityResponseIdentity {
     param([object] $Response, [object] $Request, [string] $UnityVersion)
+    $expectedStatus = switch -CaseSensitive ($Request.action) {
+        'Discover' { 'Completed' }
+        'Run' { 'Passed' }
+        'PrepareSamples' { 'Prepared' }
+        default { throw 'Unknown native request action.' }
+    }
     foreach ($field in @('hostId', 'inputHash', 'status', 'unityVersion')) {
         if ($Response.$field -isnot [string]) { throw 'Host response identity fields must be strings.' }
     }
     if ($Response.schemaVersion -isnot [long] -or $Response.schemaVersion -ne 1 -or
         $Response.hostId -cne $Request.hostId -or $Response.inputHash -cne $Request.inputHash -or
-        $Response.status -cnotin @('Completed', 'Passed') -or $Response.unityVersion -cne $UnityVersion) {
+        $Response.status -cne $expectedStatus -or $Response.unityVersion -cne $UnityVersion) {
         throw 'Host response identity mismatch.'
     }
 }
@@ -76,12 +83,36 @@ function Sync-YLUnityHost([object] $HostRecord, [Collections.IDictionary] $Files
             $previous.Add($item.path, $item.sha256)
         }
     }
+    $importedSamples = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+    $sampleReceiptPath = Get-YLHostManagedPath $HostRecord '.yl-samples.json'
+    if ([IO.File]::Exists($sampleReceiptPath)) {
+        $samples = [IO.File]::ReadAllText($sampleReceiptPath) | ConvertFrom-Json -AsHashtable -DateKind String
+        if ($samples['schemaVersion'] -isnot [long] -or $samples['schemaVersion'] -ne 1 -or
+            $samples['purpose'] -isnot [string] -or $samples['purpose'] -cne 'YLTesting.Samples' -or
+            $samples['hostId'] -isnot [string] -or $samples['hostId'] -cne $HostRecord.id -or
+            $samples['inputHash'] -isnot [string] -or $samples['inputHash'] -cne $Identity.sha256 -or
+            $samples['files'] -isnot [Collections.IList] -or $samples['files'].Count -eq 0) { throw 'Imported sample ownership does not match this exact host input.' }
+        foreach ($sample in $samples['files']) {
+            if ($sample -isnot [Collections.IDictionary] -or $sample['path'] -isnot [string] -or
+                -not $sample['path'].StartsWith('Assets/Samples/', [StringComparison]::Ordinal) -or
+                $sample['path'] -match '(?:^|/)\.\.?(?:/|$)' -or
+                $sample['sha256'] -isnot [string] -or $sample['sha256'] -cnotmatch '^[0-9a-fA-F]{64}$') { throw 'Invalid imported sample file identity.' }
+            $samplePath = Get-YLHostManagedPath $HostRecord $sample['path']
+            if (-not [IO.File]::Exists($samplePath) -or
+                -not [string]::Equals((Get-FileHash -LiteralPath $samplePath -Algorithm SHA256).Hash, $sample['sha256'], [StringComparison]::OrdinalIgnoreCase)) { throw "Imported sample was changed or removed; preserve it instead of overwriting: $($sample['path'])" }
+            $importedSamples.Add($sample['path'], $sample['sha256'])
+        }
+    }
     $assetRoot = Get-YLHostManagedPath $HostRecord 'Assets'
     if ([IO.Directory]::Exists($assetRoot)) {
         foreach ($path in @(Get-YLTestTreeFiles $assetRoot)) {
             $relative = [IO.Path]::GetRelativePath($HostRecord.path, $path).Replace('\', '/')
+            if ($relative.StartsWith('Assets/Samples/', [StringComparison]::Ordinal) -and
+                -not $previous.ContainsKey($relative) -and -not $Files.Contains($relative) -and -not $importedSamples.ContainsKey($relative)) {
+                throw "Unowned sample content must not be adopted or overwritten: $relative"
+            }
             if ([IO.Path]::GetExtension($path) -cin @('.cs', '.asmdef', '.asmref', '.dll', '.rsp') -and
-                -not $previous.ContainsKey($relative) -and -not $Files.Contains($relative)) {
+                -not $previous.ContainsKey($relative) -and -not $Files.Contains($relative) -and -not $importedSamples.ContainsKey($relative)) {
                 throw "Unmanaged source input is present in the reusable host: $relative"
             }
         }
@@ -128,7 +159,7 @@ function Invoke-YLUnitySuite {
         [int] $TimeoutSeconds, [string] $Selection, [bool] $KeepArtifacts, [Collections.IDictionary] $Summary
     )
     $sources = Get-SelectedSources -Native -EditorProfile $EditorProfile
-    $sessionScene = $Suite -ceq 'Special' -and 'prepareSessionScene' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSessionScene
+    $sessionScene = 'prepareSessionScene' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSessionScene
     $desktop = $Suite -ceq 'Special' -and 'interactiveDesktop' -cin $Definition.PSObject.Properties.Name -and $Definition.interactiveDesktop
     $profile = "Unity-$($EditorProfile.version)-UTF$($EditorProfile.testFramework)-UGUI$($EditorProfile.ugui)-$Suite-$($Definition.nativeLayout)-Graphics$($Definition.graphics)-IsolatedModes"
     if ($sessionScene) { $profile += '-SessionScenes' }
@@ -137,10 +168,12 @@ function Invoke-YLUnitySuite {
     $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $Repository
     $repositoryKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Repository.ToLowerInvariant()))).Substring(0, 12)
     $hostKey = "Unity-$($EditorProfile.version)-$Suite-$Module-$repositoryKey"
+    $hasSamples = 'sampleInputs' -cin $Definition.PSObject.Properties.Name -and @($Definition.sampleInputs).Count -gt 0
+    if ($hasSamples) { $hostKey += '-Samples-' + $identity.sha256 }
     if ($sessionScene) { $hostKey += '-SessionScenes' }
     if ($desktop) { $hostKey += '-Desktop' }
     $fullHostKey = $hostKey
-    $shortHost = 'shortHostKey' -cin $Definition.PSObject.Properties.Name -and $Definition.shortHostKey
+    $shortHost = $hasSamples -or ('shortHostKey' -cin $Definition.PSObject.Properties.Name -and $Definition.shortHostKey)
     if ($shortHost) {
         $keyHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($hostKey)))
         $hostKey = 'R' + $keyHash.Substring(0, 6)
@@ -167,7 +200,8 @@ function Invoke-YLUnitySuite {
         Assert-YLUnityHostIdle $hostRecord
         $files = [ordered]@{}
         foreach ($relative in $sources.inputs) {
-            if (-not $relative.StartsWith('Assets/', [StringComparison]::Ordinal) -or
+            if ((-not $relative.StartsWith('Assets/', [StringComparison]::Ordinal) -and
+                -not $relative.StartsWith('PackageSources/', [StringComparison]::Ordinal)) -or
                 ($Definition.nativeLayout -ceq 'Slice' -and $relative -cin $Definition.assemblyMetadata)) { continue }
             $files[$relative] = [IO.File]::ReadAllBytes((Join-Path $Repository $relative))
         }
@@ -201,7 +235,13 @@ function Invoke-YLUnitySuite {
             $projectLock = [IO.File]::ReadAllText((Join-Path $Repository $packageInputs[1])) | ConvertFrom-Json -DateKind String
             $dependencies['com.unity.nuget.newtonsoft-json'] = $projectLock.dependencies.'com.unity.nuget.newtonsoft-json'.version
         }
-        $files['Packages/manifest.json'] = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Json -InputObject @{ dependencies = $dependencies } -Depth 5))
+        $ids = if ('packageInputs' -cin $Definition.PSObject.Properties.Name) { @($Definition.packageInputs) } else { @('com.kano.ylframework') }
+        $productPackages = @(Get-YLUpmPackages -Repository $Repository -Ids $ids)
+        $manifest = @{ dependencies = $dependencies }
+        foreach ($package in $productPackages) {
+            $manifest.dependencies[$package.id] = 'file:../' + $package.relative
+        }
+        $files['Packages/manifest.json'] = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Json -InputObject $manifest -Depth 8))
         Sync-YLUnityHost -HostRecord $hostRecord -Files $files -Identity $identity -EditorVersion $EditorProfile.version
         $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key "$Action-$Suite-$Module-$($EditorProfile.version)"
         $runLease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
@@ -217,10 +257,11 @@ function Invoke-YLUnitySuite {
                 schemaVersion = 1; hostId = $hostRecord.id; workspaceId = $workspace.id; resultId = $run.id
                 expectedUnityVersion = $EditorProfile.version; inputHash = $identity.sha256
                 action = $Operation; category = $Definition.category; assemblies = @($Definition.assemblies)
+                samples = @(if ('sampleInputs' -cin $Definition.PSObject.Properties.Name) { $Definition.sampleInputs })
                 excludedCategories = @($Definition.excludedCategories); sortingLayer = $Definition.sortingLayer; output = $output; tests = $Tests
                 disableDomainReload = ($Suite -ceq 'Special' -and 'disableDomainReload' -cin $Definition.PSObject.Properties.Name -and $Definition.disableDomainReload)
                 prepareSceneTemplates = ('prepareSceneTemplates' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSceneTemplates)
-                prepareSessionScene = $sessionScene
+                prepareSessionScene = ($sessionScene -and $Mode -cne 'PlayMode')
                 interactiveDesktop = $desktop
             }
             $requestPath = Join-Path $output 'request.json'
@@ -252,6 +293,29 @@ function Invoke-YLUnitySuite {
             }
         }
 
+        if ('sampleInputs' -cin $Definition.PSObject.Properties.Name -and @($Definition.sampleInputs).Count -gt 0) {
+            $prepared = Invoke-NativeOperation -Operation PrepareSamples
+            if ($prepared.response.status -cne 'Prepared') { throw 'The declared package samples were not prepared.' }
+            $sampleRoot = Get-YLHostManagedPath $hostRecord 'Assets/Samples'
+            $sampleFiles = @(Get-YLTestTreeFiles $sampleRoot | ForEach-Object {
+                @{ path = [IO.Path]::GetRelativePath($hostRecord.path, $_).Replace('\', '/'); sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash }
+            })
+            if ($sampleFiles.Count -eq 0) { throw 'No files were imported for the declared samples.' }
+            $sampleReceiptPath = Join-Path $hostRecord.path '.yl-samples.json'
+            if ([IO.File]::Exists($sampleReceiptPath)) {
+                $recorded = [IO.File]::ReadAllText($sampleReceiptPath) | ConvertFrom-Json -AsHashtable -DateKind String
+                $recordedFiles = @{}
+                foreach ($item in $recorded['files']) { $recordedFiles.Add($item['path'], $item['sha256']) }
+                if ($recordedFiles.Count -ne $sampleFiles.Count) { throw 'A reused sample import changed its owned file set.' }
+                foreach ($item in $sampleFiles) {
+                    if (-not $recordedFiles.ContainsKey($item.path) -or $recordedFiles[$item.path] -cne $item.sha256) { throw 'A reused sample import changed its owned content.' }
+                }
+            } else {
+                Write-YLTestJson -Path $sampleReceiptPath -Value @{
+                    schemaVersion = 1; purpose = 'YLTesting.Samples'; hostId = $hostRecord.id; inputHash = $identity.sha256; files = $sampleFiles
+                }
+            }
+        }
         $discovered = Invoke-NativeOperation -Operation Discover
         $fresh = Get-SelectedSources -Native -EditorProfile $EditorProfile
         $sourceRecheck = Get-YLTestInputIdentity -Repository $Repository -Paths $fresh.inputs -Toolchain @($Unity) -Profile $profile

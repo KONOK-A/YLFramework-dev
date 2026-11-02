@@ -1,8 +1,9 @@
 [CmdletBinding()]
-param([switch] $Deploy)
+param([switch] $Deploy, [switch] $VerifyDeployment)
 
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
+if ($Deploy -and $VerifyDeployment) { throw 'Choose deployment or read-only deployment verification, not both.' }
 
 function Invoke-DotNet {
     param([string[]] $Arguments)
@@ -32,11 +33,22 @@ function Assert-AnalyzerMeta {
     }
 }
 
+function Assert-AnalyzerDeployment {
+    param([string] $Built, [string] $Destination)
+    Assert-AnalyzerMeta -Path ($Destination + '.meta')
+    if (-not [IO.File]::Exists($Built) -or -not [IO.File]::Exists($Destination)) { throw 'The verified build or deployed Analyzer DLL is missing.' }
+    $builtHash = (Get-FileHash -LiteralPath $Built -Algorithm SHA256).Hash
+    $deployedHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash
+    if ($builtHash -cne $deployedHash) {
+        throw "Deployed Analyzer is stale or changed; run the verified build with -Deploy before source delivery. Built=$builtHash ($([IO.FileInfo]::new($Built).Length) bytes); deployed=$deployedHash ($([IO.FileInfo]::new($Destination).Length) bytes)."
+    }
+}
+
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $tests = Join-Path $PSScriptRoot 'Tests/YLFramework.Analyzers.Tests.csproj'
 $output = Join-Path $root 'Temp/YLFramework.Analyzers'
 $dll = Join-Path $output 'YLFramework.Analyzers/bin/Release/netstandard2.0/YLFramework.Analyzers.dll'
-$destination = Join-Path $root 'Assets/YLFramework/Runtime/Core/Analyzers/YLFramework.Analyzers.dll'
+$destination = Join-Path $root 'PackageSources/com.kano.ylframework/Runtime/Core/Analyzers/YLFramework.Analyzers.dll'
 if (-not (Test-Path -LiteralPath (Join-Path $root 'Temp'))) { throw 'Repository Temp parent is missing.' }
 [IO.Directory]::CreateDirectory($output) | Out-Null
 try { $entryLock = [IO.File]::Open((Join-Path $output 'entry.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
@@ -45,7 +57,7 @@ $before = if (Test-Path -LiteralPath $destination) { (Get-FileHash -LiteralPath 
 
 Push-Location -LiteralPath $PSScriptRoot
 try {
-    if ($Deploy) { Assert-AnalyzerMeta -Path ($destination + '.meta') }
+    if ($Deploy -or $VerifyDeployment) { Assert-AnalyzerMeta -Path ($destination + '.meta') }
     $sdk = & dotnet --version
     if ($LASTEXITCODE -ne 0 -or $sdk -ne '9.0.312') { throw "Expected SDK 9.0.312; actual: $sdk" }
     "PowerShell=$($PSVersionTable.PSVersion) SDK=$sdk"
@@ -54,7 +66,7 @@ try {
     Invoke-DotNet -Arguments @('test', $tests, '-c', 'Release', '--no-build', '--no-restore', '--results-directory', (Join-Path $output 'TestResults'), '--logger', 'trx;LogFileName=analyzers.trx', '--logger', 'console;verbosity=minimal')
 
     $inputs = @('global.json', 'Directory.Build.props', 'build.ps1', 'Analyzer/YLFramework.Analyzers.csproj', 'Analyzer/packages.lock.json',
-        '../../Assets/YLFramework/Editor/Core/Analyzers/AnalyzerRuleCatalog.cs')
+        '../../PackageSources/com.kano.ylframework/Editor/Core/Analyzers/AnalyzerRuleCatalog.cs')
     $inputs += @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'Analyzer') -Filter '*.cs' -File -Recurse |
         ForEach-Object { $_.FullName.Substring($PSScriptRoot.Length + 1).Replace('\', '/') })
     $files = @($inputs | Sort-Object | ForEach-Object {
@@ -87,6 +99,10 @@ try {
             finally { if ([IO.File]::Exists($stage)) { [IO.File]::Delete($stage) } }
         }
         "Deployed=$destination"
+    }
+    if ($VerifyDeployment) {
+        Assert-AnalyzerDeployment -Built $dll -Destination $destination
+        'PASS: deployed Analyzer exactly matches this verified deterministic source build; no package files were written.'
     }
     "DLL=$dll"
     "SHA256=$((Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash)"

@@ -52,12 +52,12 @@ namespace YLFramework.Analyzers.Tests
 
         internal static CSharpCompilation CoreCompilation(string replacement = null, bool includeInject = true)
         {
-            var sources = Directory.GetFiles(Path.Combine(Root, "Assets/YLFramework/Runtime/Core/Attributes"), "*.cs")
+            var sources = Directory.GetFiles(Path.Combine(Root, "PackageSources/com.kano.ylframework/Runtime/Core/Attributes"), "*.cs")
                 .OrderBy(p => p, StringComparer.Ordinal).Select(File.ReadAllText).ToList();
             if (includeInject)
             {
                 sources.Add(File.ReadAllText(Path.Combine(Root,
-                    "Assets/YLFramework/Runtime/Foundation/IOC/Attributes/InjectAttribute.cs")));
+                    "PackageSources/com.kano.ylframework/Runtime/Foundation/IOC/Attributes/InjectAttribute.cs")));
             }
             sources.Add("namespace UnityEngine {}");
             sources.Add("namespace UnityEngine { public class Transform {} public class GameObject {} public class WaitUntil { public WaitUntil(System.Func<bool> predicate) {} } }");

@@ -79,6 +79,53 @@
       },
       "url": "https://package.openupm.com"
     },
+    "com.kano.ylframework": {
+      "version": "file:../PackageSources/com.kano.ylframework",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.unity.ugui": "1.0.0",
+        "com.unity.nuget.newtonsoft-json": "3.2.1",
+        "com.unity.modules.animation": "1.0.0",
+        "com.unity.modules.assetbundle": "1.0.0",
+        "com.unity.modules.audio": "1.0.0",
+        "com.unity.modules.imageconversion": "1.0.0",
+        "com.unity.modules.imgui": "1.0.0",
+        "com.unity.modules.jsonserialize": "1.0.0",
+        "com.unity.modules.physics": "1.0.0",
+        "com.unity.modules.physics2d": "1.0.0",
+        "com.unity.modules.ui": "1.0.0",
+        "com.unity.modules.uielements": "1.0.0",
+        "com.unity.modules.unitywebrequest": "1.0.0"
+      }
+    },
+    "com.kano.ylframework.dotween": {
+      "version": "file:../PackageSources/com.kano.ylframework.dotween",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.kano.ylframework": "0.1.0-preview.1"
+      }
+    },
+    "com.kano.ylframework.excel": {
+      "version": "file:../PackageSources/com.kano.ylframework.excel",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.kano.ylframework": "0.1.0-preview.1",
+        "com.unity.nuget.newtonsoft-json": "3.2.1"
+      }
+    },
+    "com.kano.ylframework.hybridclr": {
+      "version": "file:../PackageSources/com.kano.ylframework.hybridclr",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.kano.ylframework": "0.1.0-preview.1",
+        "com.code-philosophy.hybridclr": "9.0.3",
+        "com.unity.nuget.newtonsoft-json": "3.2.1"
+      }
+    },
     "com.unity.2d.animation": {
       "version": "13.0.6",
       "depth": 1,

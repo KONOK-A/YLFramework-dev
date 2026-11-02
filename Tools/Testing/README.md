@@ -186,7 +186,7 @@ Git 卫生入口只读 Git 索引：拒绝整个 `.kilo/`、本机 AI 指令与�
 `Test-YLAssemblyLayout.ps1` 消费实际 Unity 编译图；静态图通过不是功能或 Player 构建通过。
 其输入图必须标明来源工程、实际 Editor、采集时间和编译状态，不能用手写理想图冒充。
 
-Formatter 与 Analyzer 保留独立入口，不并入 UTF，也不改变默认部署行为。格式与工具边界见 [CodingStyle](../../Assets/YLFramework/Documentation/CodingStyle.md#格式工具)，诊断重建与验证见 [Attributes](../../Assets/YLFramework/Documentation/Modules/Attributes.md#重建与验证)。
+Formatter 与 Analyzer 保留独立入口，不并入 UTF，也不改变默认部署行为。格式与工具边界见 [CodingStyle](../../PackageSources/com.kano.ylframework/Documentation~/CodingStyle.md#格式工具)，诊断重建与验证见 [Attributes](../../PackageSources/com.kano.ylframework/Documentation~/Modules/Attributes.md#重建与验证)。
 
 旧 Verify/Offline/接收工具的辅助编译结果不能替代上述测试合同。
 正式使用说明只记当前入口和前置；阶段计数、一次性失败、迁移取舍与未验收范围记在原任务 Plan。
@@ -242,6 +242,12 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistrib
 - 这是一条Windows64、Release/Low stripping、固定SDK与已验证原生源的最小闭环，不覆盖热更V2替换/回滚、任意AOT泛型、全部裁剪级别、NativeInput、DSP、移动平台或未声明SDK。原生源许可证随本轮`NativeInput`保存；本地产物是验收证据，不是正式游戏发布包。
 
 ## CI 分层
+
+UPM 安装验收区分 `File`、工具拥有的 `GitFixture` 和真实远端 `GitRemote`，不能互相替代。普通负载文件保持逐字节摘要；只有 `package.json` 按 JSON 属性语义规范化，因为 UPM 会重排格式并在 Git 安装中增加 `_fingerprint`。该注解仅允许格式正确的实际 Git 安装，源包和 File 输入不接受它；版本、依赖和其他属性仍完整纳入摘要。包内 `.gitattributes` 约束子目录检出，避免调用者 `autocrlf` 改写已批准负载。
+
+`Test-YLDistributionManifest.ps1`、`Test-YLSampleHost.ps1` 与 `Test-YLIntegrationPackagesNoUnity.ps1` 分别验证 manifest 语义、示例副本所有权和 SDK 前置。这些是 NoUnity 合同，不代表实际安装或运行通过。`ResourceSamples` 会显式导入所声明示例，并记录绑定宿主、完整源输入和文件哈希的收据；修改过或未知的副本拒绝覆盖，旧包输入不能静默复用示例。
+
+Core 的两项真实系统剪贴板断言在 `Special/CoreClipboard` 的工具拥有交互 Editor 中执行，批处理 `Daily/Core` 会明确报告对应排除项。桌面专项沿用同一断言，不用清空缓存、模拟剪贴板或无图形结果替代。资源构建与原生验收必须选足够短的独立工作根，保留 Windows Mono 路径预算检查，不使用链接或路径别名绕过所有权校验。
 
 `.github/workflows/dotnet.yml` 在 Windows runner 运行 Git 索引卫生、格式、Analyzer 的 .NET 构建测试及测试工具合同自检。此工具层不安装 Unity、不需要 Unity 许可证，也不等同于主体 Unity 编译、UTF 或 Player 验收。
 
