@@ -104,6 +104,30 @@ function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minut
 
 try {
     if ($Group -in @('All', 'Workspace')) {
+        Test-Case 'Unity test assets do not import external tool scripts' {
+            $sourceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $external = @(Get-YLTestTreeFiles (Join-Path $sourceRoot 'Assets/Tests/YLFramework') | Where-Object {
+                $_.EndsWith('.ps1', [StringComparison]::OrdinalIgnoreCase) -or
+                $_.EndsWith('.cjs', [StringComparison]::OrdinalIgnoreCase)
+            })
+            Assert-That ($external.Count -eq 0) "External tools belong under Tools, not Assets: $($external.Count) files; $(if ($external.Count) { $external[0] })"
+        }
+        Test-Case 'Every declared module source still resolves after repository reorganization' {
+            $sourceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = [IO.File]::ReadAllText((Join-Path $sourceRoot 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
+            foreach ($module in $configuration.modules) {
+                foreach ($field in @('runtimeSources', 'editTests', 'playTests', 'nativeSources', 'assemblyMetadata', 'testSupport')) {
+                    if ($field -cnotin $module.PSObject.Properties.Name) { continue }
+                    foreach ($relative in $module.$field) {
+                        $path = Get-YLTestPath (Join-Path $sourceRoot $relative)
+                        Assert-That ([IO.Path]::Exists($path)) "Missing $($module.Name).${field}: $relative"
+                        if ($relative.StartsWith('Assets/', [StringComparison]::Ordinal)) {
+                            Assert-That ([IO.File]::Exists($path + '.meta')) "Missing participating metadata: $relative.meta"
+                        }
+                    }
+                }
+            }
+        }
         Test-Case 'Editor selection binds exact product version and revision rather than the shared file prefix' {
             $editors = @(
                 [pscustomobject]@{ fileVersion = '2022.3.62'; productVersion = '2022.3.62f3c1_1623fc0bbb97'; version = '2022.3.62f3c1' },
@@ -587,64 +611,6 @@ try {
                 $violations = @(& { param($graph, $body) $failures = [Collections.Generic.List[string]]::new(); . $body; $failures.ToArray() } $graph $body)
                 Assert-That (($violations.Count -eq 0) -eq ($extra -ceq '')) "Runtime graph dependency admission is wrong for '$extra'."
             }
-        }
-
-        Test-Case 'Stage9 native collection rejects unbound reports, stale owners and template drift' {
-            $controller = Join-Path $PSScriptRoot '../../../Assets/Tests/YLFramework/Tools/Invoke-Stage9Delivery.ps1'
-            foreach ($operation in @('InstallLogger', 'UpdateLogger')) {
-                Assert-Rejected { & $controller -DeliveryRoot $sandbox -Operation $operation } 'ValidateSet|validate argument|belong to the set'
-            }
-            $tokens = $null; $errors = $null
-            $ast = [Management.Automation.Language.Parser]::ParseFile($controller, [ref]$tokens, [ref]$errors)
-            Assert-That ($errors.Count -eq 0) 'Stage9 controller must parse.'
-            foreach ($name in @('Hash', 'Assert-Stage9BuildBinding')) {
-                $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
-                Assert-That ($null -ne $definition) "Native build validator is missing: $name"
-                . ([scriptblock]::Create($definition.Extent.Text))
-            }
-            $root = Join-Path $sandbox 'Stage9Binding'
-            $project = Join-Path $root 'Receiver'
-            $templateRoot = Join-Path $root 'Sources'
-            $Package = 'Product.unitypackage'
-            $null = [IO.Directory]::CreateDirectory((Join-Path $project 'Assets/Stage9/Editor'))
-            $null = [IO.Directory]::CreateDirectory($templateRoot)
-            $owner = Join-Path $project 'stage9-owner.json'
-            [IO.File]::WriteAllText($owner, 'owned fixture identity')
-            [IO.File]::WriteAllText((Join-Path $root $Package), 'fixture package bytes')
-            $hashes = @{}; $inputs = @($owner, (Join-Path $root $Package))
-            foreach ($name in @('Stage9DeliveryEditor','Stage9DeliveryProbe','Stage9DeliveryPanel')) {
-                $source = Join-Path $templateRoot ($name + '.cs.txt')
-                $installed = Join-Path $project ('Assets/Stage9/' + $(if ($name.EndsWith('Editor')) { 'Editor/' } else { '' }) + $name + '.cs')
-                [IO.File]::WriteAllText($source, "fixture $name")
-                [IO.File]::Copy($source, $installed)
-                $hashes[$name] = Hash $source
-                $inputs += @($source, $installed)
-            }
-            $report = [pscustomobject]@{ Schema = 'Stage9NativeBuild-v2'; Project = $project; OwnerSha256 = (Hash $owner); PackageSha256 = (Hash (Join-Path $root $Package)); TemplateSha256 = [pscustomobject]$hashes }
-            Assert-Stage9BuildBinding $report $project $templateRoot
-            $old = $report | Select-Object -Property * -ExcludeProperty Schema
-            Assert-Rejected { Assert-Stage9BuildBinding $old $project $templateRoot } 'Build binding'
-            $report.Schema = 'Stage9NativeBuild-v1'
-            Assert-Rejected { Assert-Stage9BuildBinding $report $project $templateRoot } 'Build binding'
-            $report.Schema = 'Stage9NativeBuild-v2'
-            foreach ($field in @('Schema','Project','OwnerSha256','PackageSha256','TemplateSha256')) {
-                $invalid = $report | Select-Object -Property *
-                $invalid.$field = $true
-                Assert-Rejected { Assert-Stage9BuildBinding $invalid $project $templateRoot } 'Build binding'
-            }
-            foreach ($name in $hashes.Keys) {
-                $invalid = $report | Select-Object -Property *
-                $invalid.TemplateSha256 = $report.TemplateSha256 | Select-Object -Property *
-                $invalid.TemplateSha256.$name = $true
-                Assert-Rejected { Assert-Stage9BuildBinding $invalid $project $templateRoot } 'Build binding'
-            }
-            foreach ($path in $inputs) {
-                $original = [IO.File]::ReadAllText($path)
-                [IO.File]::WriteAllText($path, $original + ' drift')
-                Assert-Rejected { Assert-Stage9BuildBinding $report $project $templateRoot } 'Build binding'
-                [IO.File]::WriteAllText($path, $original)
-            }
-            Assert-Stage9BuildBinding $report $project $templateRoot
         }
 
         Test-Case 'Unity response identity rejects boolean and noninteger wire fields' {

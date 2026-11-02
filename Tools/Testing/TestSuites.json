@@ -219,7 +219,7 @@
         "Assets/Tests/YLFramework/Fixtures/Shared",
         "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
         "Assets/Tests/YLFramework/Fixtures/Extensions/Domain",
-        "Assets/Tests/YLFramework/Tools",
+        "Assets/Tests/YLFramework/Fixtures/Authoring",
         "Assets/Tests/YLFramework/EditMode/Editor/Domain",
         "Assets/Tests/YLFramework/EditMode/Editor/Utilities/TreeViews/E0ReorderableTestWindow.cs",
         "Assets/Editor/YLFrameworkDev"
@@ -400,7 +400,7 @@
         "Assets/Tests/YLFramework/Fixtures/Shared",
         "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
         "Assets/Tests/YLFramework/Fixtures/Extensions/Domain",
-        "Assets/Tests/YLFramework/Tools",
+        "Assets/Tests/YLFramework/Fixtures/Authoring",
         "Assets/Editor/YLFrameworkDev"
       ],
       "editTests": [

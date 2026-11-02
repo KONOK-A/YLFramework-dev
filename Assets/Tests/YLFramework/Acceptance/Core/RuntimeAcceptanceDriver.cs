@@ -73,7 +73,7 @@ namespace YLFramework.Core.Tests
                     throw new InvalidOperationException("Temporary acceptance scene creation failed.");
                 }
 
-                File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(_log), "BEGIN domain=" + AppDomain.CurrentDomain.Id + " options=" +
+                File.WriteAllText(_log, "BEGIN domain=" + AppDomain.CurrentDomain.Id + " options=" +
                     EditorSettings.enterPlayModeOptions + Environment.NewLine);
                 RuntimeAcceptanceEntry.Result = null;
                 EditorApplication.playModeStateChanged += State;
@@ -232,7 +232,7 @@ namespace YLFramework.Core.Tests
         {
             try
             {
-                File.AppendAllText(global::YLFramework.Testing.PackageTestPaths.Physical(_log), message);
+                File.AppendAllText(_log, message);
             }
             catch (Exception error)
             {

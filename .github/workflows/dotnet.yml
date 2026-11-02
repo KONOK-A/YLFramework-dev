@@ -101,6 +101,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDevelopmentHostEntryNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/HybridCLR/Test-HybridCLRNativeSource.ps1 -TempRoot (Join-Path $env:RUNNER_TEMP ('yl-native-' + [Guid]::NewGuid().ToString('N')))
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify repository inputs were not changed
         run: |
