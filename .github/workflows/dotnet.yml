@@ -81,6 +81,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/YLFramework.Analyzers/Tests/Test-DeploymentContract.ps1 -TemporaryRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/YLFramework.Analyzers/Tests/Test-DeterministicBuild.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDevelopmentHostNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDevelopmentHostEntryNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
