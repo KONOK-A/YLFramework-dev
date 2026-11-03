@@ -9,6 +9,8 @@
 - Declare sibling Git package closures explicitly; let UPM resolve registry dependencies.
 - Write Module code and ScriptableObject helper output under project-owned `Assets/YLFrameworkData` roots.
 - Enable Domain Excel on package installation without requiring a global `YL_DOMAIN_EXCEL` define.
+- Define five-package OpenUPM release assets with explicit publish whitelists and frozen payload receipts.
+- Keep Registry single-entry dependency resolution separate from explicit Git closures and LocalTarball preflight.
 
 This entry describes the preview package changes, not a completed installation,
 runtime acceptance or public release. The acceptance handoff supplies the actual

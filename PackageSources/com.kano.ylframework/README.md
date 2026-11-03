@@ -8,7 +8,32 @@ It includes Runtime and Editor assemblies, production prefabs, BouncyCastle with
 its license, documentation and opt-in samples. Tests, MCP, development settings
 and optional integration SDKs are not included.
 
-The Git URL format for installation through Package Manager is:
+## Registry Installation
+
+The intended release channel is OpenUPM. This preview is still unreleased until
+the five package versions, frozen Release assets and their acceptance receipt are
+available; the configuration below is not a claim that publication has occurred.
+After that handoff, use this minimal `Packages/manifest.json` for the main package:
+
+```json
+{
+  "scopedRegistries": [
+    { "name": "OpenUPM", "url": "https://package.openupm.com", "scopes": ["com.kano.ylframework"] }
+  ],
+  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1" }
+}
+```
+
+For an optional package, declare just its package ID at the same version. UPM
+then resolves the main package and, for Domain Excel, the Excel package. Do not
+copy development-host dependencies or route `com.unity` through OpenUPM.
+HybridCLR additionally needs the narrow `com.code-philosophy.hybridclr` scope so
+UPM can resolve the separately distributed official SDK `9.0.3`; DOTween still
+requires a separately installed approved SDK and its `DOTWEEN` define.
+
+## Git Fallback
+
+The fallback Git URL format for installation through Package Manager is:
 
 ```text
 https://github.com/KONOK-A/YLFramework-dev.git?path=/PackageSources/com.kano.ylframework#<full-commit-sha>
@@ -24,7 +49,8 @@ UGUI and Newtonsoft.Json registry dependencies are resolved by UPM from the
 package manifest. Git-based YL packages must each be explicitly listed in the
 consuming project's `Packages/manifest.json`; package-level SemVer dependencies
 do not fetch their sibling Git packages. See the installation guide for the
-closure table. DOTween and HybridCLR SDKs are installed separately.
+closure table. The Registry single-entry rule must not be applied to Git URLs.
+DOTween and HybridCLR SDKs are distributed separately from the YL packages.
 
 See [installation and navigation](Documentation~/README.md) and the
 [UPM migration guide](Documentation~/Migration-UPM.md). Import Resource Startup

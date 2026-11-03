@@ -206,9 +206,71 @@ Formatter 与 Analyzer 保留独立入口，不并入 UTF，也不改变默认�
 旧 Verify/Offline/接收工具的辅助编译结果不能替代上述测试合同。
 正式使用说明只记当前入口和前置；阶段计数、一次性失败、迁移取舍与未验收范围记在原任务 Plan。
 
+## Registry 与冻结产物
+
+`Test-YLDistribution.ps1` 与 `Test-YLIntegrationPackages.ps1` 共用既有 owner、lease、process 和结果合同，不采用 npm publish 或开发宿主依赖作为发行证明。自有包的五份登记模板位于 `Tools/Packaging/OpenUPM/`，使用 OpenUPM `trackingMode: githubRelease`、Git Tag 字面过滤前缀 `upm/` 和各自的稳定资产匹配前缀 `<包ID>-`，不是仓库根目录 Git tracking。该匹配字段不展开 `{version}`；实际预览 Tag 仍为 `upm/v0.1.0-preview.1`，实际资产仍为 `<包ID>-0.1.0-preview.1.tgz`。这些模板本身不代表已在 OpenUPM 登记或发布。
+
+### 打包与回执
+
+固定工具链为 Node `22.23.3`、其随附 npm `10.9.9` 和 Windows PowerShell Core `7.6.x`。使用 CI 或工具拥有的便携环境；不要升级全局 Node、修改用户 npmrc、携带令牌，或把本地工具版本不符当作允许更换包版本的理由。
+
+```powershell
+$commit = (git rev-parse --verify HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'A real full source commit is required.' }
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Packaging/Build-YLRegistryPackages.ps1 `
+  -Repository $repository -SourceCommit $commit -OutputRoot $packageWorkspace
+```
+
+`$repository` 必须是实际 Git 仓库根，`$packageWorkspace` 是其外部的明确绝对工作根；未知已有目录不领养。入口从独立 checkout 检出完整 40hex 提交、物化 LFS，再以隔离 npm 配置/cache 执行两次 `npm pack --ignore-scripts --offline`。当前未提交的 README、manifest 或代码不会被复制进固定提交候选。五包发布白名单分别按真实目录检查，不把源码 `.gitattributes` 当 tarball 必需内容。
+
+结果 `artifacts/` 保存五个 `<包ID>-0.1.0-preview.1.tgz` 和 `release-manifest.json`。回执包含源提交、固定工具链、Local 或 CI producer、包依赖、tarball SHA-256 / SHA-512 integrity、完整逐文件原字节摘要及语义内容摘要。只有 `package.json` 做严格 JSON 的递归 ordinal 规范化；非 manifest 文件原字节不可变化。tar 在提取前审计 `package/` 根、路径、重复项、大小写、链接、条目类型、数量、大小和完整性，不信任请求提供的逐文件列表来替代真实负载。
+
+### 两种新来源
+
+| 来源 | 必需参数 | 自有包直接声明 | 证据边界 |
+| --- | --- | --- | --- |
+| `LocalTarball` | `-ReleaseManifest` | 从回执同目录取五个固定文件名；所选自有闭包全部使用真实 `file:<绝对tgz>` locator | `ArtifactPreflight`，不是 Registry 或自动间接依赖证明 |
+| `Registry` | `-RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest` | 只声明所选唯一入口；主包、Excel、官方依赖与 SDK 均由 UPM 解析 | 联合核验 Registry metadata、下载字节、冻结 Release、PackageInfo 和 generated lock |
+
+`File` / `Git` 拒绝以上 Registry 参数；新来源拒绝 Git 参数。`LocalTarball` 不接受 Registry URL/version 来混淆身份。Registry scope 仅覆盖 `com.kano.ylframework`；HybridCLR 额外覆盖 `com.code-philosophy.hybridclr`，不将 `com.unity` 路由到 OpenUPM。
+
+使用从已批准 CI 候选原样下载的真实回执，不能手写 sourceCommit 或以同版本自行重打包替换：
+
+```powershell
+$releaseManifest = (Resolve-Path -LiteralPath $env:YL_RELEASE_MANIFEST).Path
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistribution.ps1 `
+  -Unity $unity -WorkspaceRoot $workspace -PackageSource LocalTarball -ReleaseManifest $releaseManifest -RunPlayer
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistribution.ps1 `
+  -Unity $unity -WorkspaceRoot $workspace -PackageSource Registry -RegistryUrl https://package.openupm.com `
+  -RegistryVersion 0.1.0-preview.1 -ReleaseManifest $releaseManifest -RunPlayer
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackages.ps1 `
+  -Unity $unity -WorkspaceRoot $workspace -Integration DomainExcel -PackageSource Registry `
+  -RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest $releaseManifest
+```
+
+分别指定标准版 `2022.3.62f3` 与 `6000.3.27f1`，各执行主包、Excel、DomainExcel、DOTween、HybridCLR 五个入口；China `2022.3.62f3c1` 是独立 profile，不能按同样 FileVersion 前缀冒用。`-Integration` 可选 `Excel`、`DomainExcel`、`DOTween`、`HybridCLR`。主包还须真实 Windows64 Mono 构建与运行，默认资源、GUID、Prefab 和现有行为断言不减少。
+
+每次正向首次安装使用新 host/cache；先记录空 cache，再比对实际 Editor 进程的三项 UPM cache 环境。独立 Registry metadata / tarball 检查下载在结果目录中，不预热 UPM cache。重开、卸载、暖缓存重复解析和阴性重试均不计为另一轮冷安装。报告联合检查 name/version/source/packageId/resolvedPath/isDirectDependency/registryUrl/dependencies、完整锁图及合法受管 `_fingerprint`，不从包版本字符串推断来源。
+
+DOTween 默认 `-DOTweenSdkMode Required`，必须取得并核对批准的 Standard archive、实际程序集、路径、摘要、Modules 和 `DOTWEEN`。指定 `-DOTweenSdkMode Absent` 时拒绝 archive、不下载或投放 SDK、不设置宏，并要求包装程序集在 Editor/Player 图均缺席，结果为 `NegativeNoSdk`，不计正向集成。无法取得必需 SDK 是前置不足，不是 Required 通过。
+
+HybridCLR 的新来源以官方 Registry SDK `9.0.3` 为间接依赖；先核对独立 metadata 的仓库和 revision、tarball integrity、许可与实际安装内容。`repository.revision` 只是 metadata 来源声明，不冒充 Git checkout SHA。该阶段不配置或运行 native Installer、IL2CPP 基座或热更 Player；旧 File/Git native 专项仍是独立显式流程。
+
+默认图继续拒绝 Tests、MCP、未导入 Sample 和未授权 Assets 源。正向样例/作者工具阶段在另一个自有安装宿主显式 Import，并记录真实生成数据和元数据；卸载使用独立中立探针与宿主，不引用框架/Json.NET/SDK，也不靠删除用户代码或数据来通过。相同版本暖重开不叫跨版本升级。
+
+### 公开批准点
+
+GitHub `Repository Tooling (No Unity)` 对新合同和固定提交打包运行工具门禁；只有成功的 `main` push run 才保存五包和回执的只读候选 artifact。PR / workflow_dispatch / 本地 producer 不等于已批准候选，工具门禁也不是 Unity 安装或 Player 通过。
+
+1. 先完成获准的代码 PR / main CI，固定主线源 SHA、workflow / run / attempt、artifact 和六个文件的字节身份；用同一批字节执行两版 LocalTarball 预检。任何必需案例失败或前置不足，均不是 `ReadyForPublish`。
+2. 重新检查五个包 ID、目标版本、OpenUPM 定义、Tag 和 Release。与同一来源/字节匹配的登记可以复用；只有内容更正或真实不兼容占用才考虑五包同步递增预览版本，不能因临时服务故障 bump。已发布同版本内容不覆盖。
+3. 在对外写入前，独立批准精确源提交、预览 Tag、五包、回执摘要和全部候选资产摘要。批准前不创建公开 Tag / Release、不提交 OpenUPM 登记、不直接 npm publish。Code commit、push、PR、Tag、Release 与 OpenUPM 写入是不同授权。
+4. 获准发布时使用普通 annotated Tag，并核对 peeled commit；annotated Tag object SHA 不等于其目标提交。Release 附件必须与已批准 CI artifact 字节相同，缺失或不符即停止，不就地重包或替换已公开附件。
+5. 五个版本在 Registry 都就绪后再执行两版真实最小安装、正负 SDK、样例、暖重开、中立卸载和 Player 矩阵。未就绪保留公开阶段前置阻塞，不用抽取源码、Git 或 LocalTarball 结果替代。
+
 ## Player 运行冒烟
 
-沿用正式包分发验证入口，默认检查导出、裸导入与普通Windows64 Mono构建。`-Backend`可选`Mono`或`IL2CPP`；显式`-RunPlayer`才安装运行探针并增加两次真实启动：
+沿用正式 UPM 分发入口，默认检查安装来源、内容与编译图，再做普通 Windows64 Mono 构建。`-Backend` 可选 `Mono` 或 `IL2CPP`；显式 `-RunPlayer` 才安装运行探针并增加两次真实启动：
 
 ```powershell
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistribution.ps1 `
@@ -218,24 +280,15 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistrib
   -Unity $unity -WorkspaceRoot $workspace -Backend IL2CPP -RunPlayer -TimeoutSeconds 2400
 ```
 
-- 先完成真实官方导出及无Tests/UTF的裸导入，随后仅向自有接收宿主的产品根外安装`Tools/Testing/PlayerSmoke.cs`、独立asmdef及Resources文本，不修改正式包或主工程场景。
+- 先完成真实 UPM 安装及无 Tests/UTF 的图验证，仅向自有接收宿主的产品根外安装 `Tools/Testing/PlayerSmoke.cs`、独立 asmdef 及 Resources 文本，不修改正式包或主工程场景。旧 unitypackage 导出/导入已退役。
 - 使用`BuildOptions.None`构建小型专用场景，实际验证初始化、Resources加载、红点通知/释放、live Lease的Busy保护、归还后零计数及资源服务关闭。IL2CPP还核实真实GameAssembly、global-metadata.dat及实际ManagedStripped的生产程序集边界。
 - 同一产物启动两次，分别写`PlayerRun`/`PlayerRepeat`。要求普通exit0、Job后代清零、版本/run/host/实际PID与编译宏后端匹配、完整有序阶段、无运行错误且产物SHA256未变，不能只凭日志PASS或旧报告接受。JSON字段类型严格校验，不允许布尔或数字通过PowerShell字符串强制转换冒充身份或阶段。
 - 构建与运行分别记录在`Build/report.json`、`PlayerRun/result.json`和`PlayerRepeat/result.json`；超时、缺报告、残余租约、错误身份及非普通退出均不是通过。
 - 普通冒烟采用`-batchmode -nographics`，证明对应Mono/IL2CPP后端的本场景逻辑与Resources运行链，不证明渲染、真实音频输出、任意反射类型保留或其他平台。默认分发构建仍不包含探针；HybridCLR需要下面独立显式模式。
 
-### 跨版本分发
+### 两版定点
 
-`-Unity` 指定导出 Editor，可选 `-ImportUnity` 指定接收、检查、构建与运行的 Editor；省略时保持同版本行为。两者均须匹配 `TestSuites.json` 的完整 ProductVersion。下面从 Unity 6.3 导出一份正式包，再将同一份包交给 Unity 2022.3 接收，示例变量必须指向本机实际安装：
-
-```powershell
-$unity6 = $env:YL_TEST_UNITY6
-$unity2022 = $env:YL_TEST_UNITY2022
-pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistribution.ps1 `
-  -Unity $unity6 -ImportUnity $unity2022 -WorkspaceRoot $workspace -RunPlayer
-```
-
-本轮 `summary.json` 分别保存 `sourceUnity`、`targetUnity` 和 `package.sha256` / `package.importSha256`。包只导出一次，导入前后及验收收尾均核实相同 SHA256；实际包内路径、payload、metadata、GUID 和 Prefab 检查不省略。通过后仍只证明本轮源码、两个定点 Editor 和所选后端，不外推所有补丁版本或平台。跨版本 HybridCLR 明确拒绝，应在各自匹配的 Editor/native/基座上独立验收。
+每次调用只接受一个精确 `-Unity`，分别运行标准 `2022.3.62f3` 和 `6000.3.27f1`；旧 `-ImportUnity` 参数被拒绝，不再通过一个 Editor 导出 unitypackage 后交给另一个导入。Registry/LocalTarball 两版使用同一冻结回执及资产字节，每轮保存各自 host/cache/process 和实际依赖身份。定点结果不外推其它补丁版本或平台，HybridCLR native 仍须匹配自身 Editor / runtime / 基座。
 
 ### HybridCLR 原生闭环
 
@@ -248,7 +301,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistrib
   -NativeSource $nativeSource -TimeoutSeconds 2400 -PlayerTimeoutSeconds 180
 ```
 
-- 普通包必须先通过原导出及无Tests/UTF的裸导入，然后才向自有接收宿主安装可选HybridCLR叶子、当前声明的精确SDK及产品根外的`HybridCLREntry.cs`/`HybridCLRSmoke.cs`。默认Mono/普通IL2CPP模式不安装该可选叶子。
+- File/Git native 模式显式安装主包、HybridCLR 叶子及当前声明的精确 SDK，先完成无 Tests/UTF 的 UPM 图验证，再在自有宿主执行产品根外的 `HybridCLREntry.cs` / `HybridCLRSmoke.cs`。默认 Mono / 普通 IL2CPP 不安装该选装包；Registry/LocalTarball native 模式被明确拒绝。
 - 原生源只读验证后，由官方`InstallFromLocal`在新宿主内复制已安装Editor的本地基座，不下载新原生源、不修改Editor/PackageCache/主工程Library。2022验证固定双Git提交、实际已合并文件及许可证；Unity6.3额外要求`-NativeSourceManifest`且与`-NativeSource`匹配，通过现有Verify核实`ParameterOwner`维护变体。不能把该变体成功外推为未修改官方6.3源成功。
 - 不恢复旧接收工程或复用旧热更DLL/Player。调用正式`HybridCLRExampleAssets.Create`和`HybridCLRBuildPipeline.BuildBasePlayer`，登记Entry/Support样例，实际经过编译、Strip AOT、完整桥接、资源发布、部署、原生Player及不可变baseline冻结。阶段证据在`HybridBuild/stages.json`，最终回执在`HybridBuild/report.json`。
 - 原生Bundle与发布快照有Windows Mono路径预算。使用足够短的工作根；短宿主标签已存在即拒绝，完整run/host身份仍独立绑定。baseline、运行缓存与Player分别在独立owner/lease的短Cache子目录，Player实际路径以回执`executable`为准，不排除Cpp备份、跳过长文件或缩短完整指纹制造通过。

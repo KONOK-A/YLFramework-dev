@@ -5,6 +5,14 @@ Editor-only package `com.kano.ylframework.domain-excel`, version
 backend is copied here. Git consumers must explicitly declare the main, Excel
 and Domain Excel packages at the same validated revision.
 
+For the intended OpenUPM release channel, declare only
+`"com.kano.ylframework.domain-excel": "0.1.0-preview.1"` with the
+`com.kano.ylframework` scope at `https://package.openupm.com`. The main and Excel
+packages are automatic dependencies. See the [Registry configuration](../com.kano.ylframework/README.md#registry-installation);
+use it only after the frozen Release and acceptance handoff confirm availability.
+This preview is not claimed published. The three explicit Git entries below
+remain necessary for the fallback Git route.
+
 Domain Excel URL format (`<full-commit-sha>` is notation, not a usable revision):
 
 ```text

@@ -2,6 +2,23 @@
 
 本目录是独立选装 UPM 包 `com.kano.ylframework.hybridclr`，首版 `0.1.0-preview.1`，维护者 Kano，原版权署名保留。主包不包含本适配。Git 消费方必须在工程 manifest 同时显式声明主包、本适配和官方 HybridCLR SDK 的 Git 来源；主包的 UGUI / Newtonsoft.Json Registry 依赖由 UPM 自动解析。
 
+## Registry 安装
+
+计划发行渠道为 OpenUPM，但本页仍不宣称首版已发布。取得冻结 Release 资产及实际验收回执、确认版本可用后，消费工程只需如下入口；主包和官方 SDK `9.0.3` 由 UPM 间接解析，不预先声明 SDK，也不将 SDK 内容镜像进适配包：
+
+```json
+{
+  "scopedRegistries": [
+    { "name": "OpenUPM", "url": "https://package.openupm.com", "scopes": ["com.kano.ylframework", "com.code-philosophy.hybridclr"] }
+  ],
+  "dependencies": { "com.kano.ylframework.hybridclr": "0.1.0-preview.1" }
+}
+```
+
+官方 Registry 元数据的 `repository.revision` 为 `6cadd24d101f4cbd00cd80190106f6621132d24d`；这是元数据的来源声明，不是 Registry 安装产生的 Git checkout hash。需同时核对精确版本、来源、Registry URL、tarball integrity 与实际依赖闭包。Registry 编译、样例和卸载检查都不代表 native、IL2CPP 热更 Player 或历史基座重新通过。
+
+## Git 回退
+
 适配包 URL 格式如下，`?path=` 在 `#` 前；`<full-commit-sha>` 仅为格式记号，不是可用修订。使用本次验收交付清单提供的真实完整 SHA 及闭包 manifest，不推断 tag 已发布，不在文档提交中填写其自身 SHA：
 
 ```text

@@ -4,6 +4,14 @@ Editor-only package `com.kano.ylframework.excel`, version `0.1.0-preview.1`.
 Declare the main package and this package explicitly when installing from Git.
 UPM resolves the declared Newtonsoft.Json registry dependency.
 
+For the intended OpenUPM release channel, declare only
+`"com.kano.ylframework.excel": "0.1.0-preview.1"` under the narrow
+`com.kano.ylframework` scope at `https://package.openupm.com`. UPM resolves the
+main package automatically. Use the [Registry installation configuration](../com.kano.ylframework/README.md#registry-installation)
+only after the frozen Release and acceptance handoff confirm version availability;
+this preview is not claimed published by this README. The explicit main-plus-Excel
+closure below applies to the Git fallback, not Registry installation.
+
 Excel URL format (`<full-commit-sha>` is notation, not a usable revision):
 
 ```text
@@ -14,7 +22,7 @@ Use the actual full SHA and main-plus-Excel manifest entries supplied by the
 acceptance handoff. Package-level SemVer dependencies do not fetch sibling Git
 packages. See the [installation guide](../com.kano.ylframework/Documentation~/README.md#git-url-与依赖闭包).
 
-MiniExcel 1.31.2 is bundled in `Editor/Plugins/MiniExcel` under Apache-2.0;
+MiniExcel 1.31.2 is bundled in `Editor/Plugins/MiniExcel.dll` under Apache-2.0;
 retain its LICENSE and ATTRIBUTION. It is not a developer download cache and is
 not included in Player builds. No NuGet downloader runs on package installation.
 The [license](Editor/Licenses/MiniExcel-LICENSE.txt),

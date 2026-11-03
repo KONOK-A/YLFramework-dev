@@ -4,6 +4,16 @@ Install `com.kano.ylframework` and `com.kano.ylframework.dotween` at the same
 validated `0.1.0-preview.1` revision. For Git installs, declare both Git URLs
 explicitly in the project manifest.
 
+For the intended OpenUPM release channel, declare only
+`"com.kano.ylframework.dotween": "0.1.0-preview.1"` with the narrow
+`com.kano.ylframework` scope at `https://package.openupm.com`; UPM resolves the
+main package. See the [Registry configuration](../com.kano.ylframework/README.md#registry-installation).
+This preview is not claimed published until the frozen Release and acceptance
+handoff confirm availability. Without a separately installed SDK and `DOTWEEN`,
+the adapter assembly stays excluded. That negative compilation check is not a
+successful DOTween integration. The explicit two-package closure below is the
+Git fallback contract.
+
 Adapter URL format (`<full-commit-sha>` is notation, not a usable revision):
 
 ```text

@@ -50,6 +50,19 @@ jobs:
           global-json-file: Tools/YLFramework.Analyzers/global.json
           architecture: x64
 
+      - name: Install pinned registry packaging Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.23.3
+
+      - name: Verify bundled npm identity
+        run: |
+          $node = (Get-Command node.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
+          $npm = Join-Path ([IO.Path]::GetDirectoryName($node)) 'node_modules/npm/bin/npm-cli.js'
+          $version = & $node $npm --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($version -cne '10.9.9') { throw "Expected bundled npm 10.9.9; found $version" }
+
       - name: Materialize approved product package binaries
         run: |
           git lfs pull --include="PackageSources/**/*.dll" --exclude=""
@@ -85,6 +98,8 @@ jobs:
         run: |
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistributionManifest.ps1 -TemporaryRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistributionEntryNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLSampleHost.ps1 -TemporaryRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
@@ -103,6 +118,37 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/HybridCLR/Test-HybridCLRNativeSource.ps1 -TempRoot (Join-Path $env:RUNNER_TEMP ('yl-native-' + [Guid]::NewGuid().ToString('N')))
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test Registry packaging and installation contracts, not Unity acceptance
+        run: |
+          $nodeRoot = [IO.Path]::GetDirectoryName((Get-Command node.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source)
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryPackagesNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP -NodeRoot $nodeRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryInstallationNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistrySdkNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryLifecycleNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryAuthoringNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and audit fixed-commit package artifacts
+        id: registry-packages
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP ('yl-registry-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          $built = & ./Tools/Packaging/Build-YLRegistryPackages.ps1 -Repository $env:GITHUB_WORKSPACE -SourceCommit $env:GITHUB_SHA -OutputRoot $output
+          if ($built.packageCount -ne 5 -or $built.sourceCommit -cne $env:GITHUB_SHA) { throw 'Incomplete fixed-commit package build.' }
+          "artifactPath=$($built.artifacts)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+
+      - name: Preserve readonly main-push release candidate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: yl-registry-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.registry-packages.outputs.artifactPath }}/*
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Verify repository inputs were not changed
         run: |
