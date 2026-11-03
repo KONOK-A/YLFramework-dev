@@ -177,7 +177,7 @@ function Get-YLRegistryRequestFields {
     if ($Source['packageOrigin'] -cnotin @('Registry', 'LocalTarball') -or
         $EntryPackage -cnotin @('com.kano.ylframework', 'com.kano.ylframework.excel', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.dotween', 'com.kano.ylframework.hybridclr')) { throw 'Invalid artifact request source/entry.' }
     $registry = $Source['packageOrigin'] -ceq 'Registry'
-    return @{ entryPackage = $EntryPackage; releaseManifestSha256 = $Source.release.sha256
+    return @{ entryPackage = $EntryPackage; releaseManifestSha256 = $Source.release.sha256; gitRepository = $null; gitRevision = $null
         registryUrl = $(if ($registry) { $Source.registryUrl } else { $null }); registryVersion = $(if ($registry) { $Source.registryVersion } else { $null }) }
 }
 

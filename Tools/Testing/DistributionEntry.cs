@@ -468,7 +468,7 @@ namespace YLFramework.Testing
             return token is JArray array ? new JArray(array.Select(CanonicalToken)) : token.DeepClone();
         }
 
-        private static string ContentHash(string root, bool allowManagedFingerprint, JObject expected = null)
+        private static string ContentHash(string root, bool allowManagedFingerprint, JObject expected = null, bool localTarball = false)
         {
             if (!File.Exists(Path.Combine(root, "LICENSE.md")) || new FileInfo(Path.Combine(root, "LICENSE.md")).Length == 0)
             {
@@ -509,7 +509,7 @@ namespace YLFramework.Testing
                     if (fingerprint != null)
                     {
                         if (!allowManagedFingerprint || fingerprint.Value.Type != JTokenType.String ||
-                            !Regex.IsMatch((string)fingerprint.Value, @"\A[0-9a-fA-F]{40}\z"))
+                            !Regex.IsMatch((string)fingerprint.Value, localTarball ? @"\A[0-9a-fA-F]{32}\z" : @"\A[0-9a-fA-F]{40}\z"))
                         {
                             throw new InvalidOperationException("Untrusted package-manager fingerprint metadata.");
                         }
@@ -650,7 +650,8 @@ namespace YLFramework.Testing
                 {
                     if ((!new[] { PackageSource.Git, PackageSource.Registry, PackageSource.LocalTarball }.Contains(package.source) &&
                             !(package.source == PackageSource.BuiltIn && package.name?.StartsWith("com.unity.", StringComparison.Ordinal) == true)) ||
-                        value.Value.Type != JTokenType.String || !Regex.IsMatch((string)value.Value, @"\A[0-9a-fA-F]{40}\z"))
+                        value.Value.Type != JTokenType.String || !Regex.IsMatch((string)value.Value,
+                            package.source == PackageSource.LocalTarball ? @"\A[0-9a-fA-F]{32}\z" : @"\A[0-9a-fA-F]{40}\z"))
                     {
                         throw new InvalidOperationException("Untrusted package-manager fingerprint metadata.");
                     }
@@ -795,7 +796,7 @@ namespace YLFramework.Testing
                 {
                     throw new InvalidOperationException("Frozen/package/API/lock dependency declarations disagree: " + name);
                 }
-                string digest = ContentHash(root, true, expected);
+                string digest = ContentHash(root, true, expected, !registry);
                 if (!string.Equals(digest, Text(expected, "contentSha256"), StringComparison.OrdinalIgnoreCase)) { throw new InvalidOperationException("Installed artifact complete semantic digest mismatch."); }
                 var row = PackageRow(package); row["resolvedPath"] = root; row["contentSha256"] = digest; row["verifiedFiles"] = ((JArray)expected["files"]).Count; result.Add(row);
             }

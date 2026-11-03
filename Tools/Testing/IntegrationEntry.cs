@@ -360,7 +360,7 @@ namespace YLFramework.Testing
             return token is JArray array ? new JArray(array.Select(CanonicalToken)) : token.DeepClone();
         }
 
-        private static string PackageFileHash(string path, string relative, string name, bool git)
+        private static string PackageFileHash(string path, string relative, string name, bool git, bool localTarball = false)
         {
             if (Regex.IsMatch(relative, @"^(?:Assets|Packages|ProjectSettings|Library|Temp|Tests|Tools|\.git|\.kilo|\.kilocode|\.opencode|obj|bin)(?:/|$)|(?:^|/)(?:AGENTS\.md|\.yl-[^/]+|[^/]+\.(?:csproj|sln|slnx))$|IvanMurzak|UnityMcp|ReflectorNet", RegexOptions.IgnoreCase))
             {
@@ -386,7 +386,8 @@ namespace YLFramework.Testing
             var fingerprint = manifest.Property("_fingerprint");
             if (fingerprint != null)
             {
-                if (!git || fingerprint.Value.Type != JTokenType.String || !Regex.IsMatch((string)fingerprint.Value, @"\A[0-9a-fA-F]{40}\z"))
+                if (!git || fingerprint.Value.Type != JTokenType.String || !Regex.IsMatch((string)fingerprint.Value,
+                    localTarball ? @"\A[0-9a-fA-F]{32}\z" : @"\A[0-9a-fA-F]{40}\z"))
                 {
                     throw new InvalidOperationException("Untrusted package-manager fingerprint metadata.");
                 }
@@ -503,7 +504,8 @@ namespace YLFramework.Testing
                 {
                     if ((!new[] { PackageSource.Git, PackageSource.Registry, PackageSource.LocalTarball }.Contains(package.source) &&
                             !(package.source == PackageSource.BuiltIn && package.name?.StartsWith("com.unity.", StringComparison.Ordinal) == true)) ||
-                        value.Value.Type != JTokenType.String || !Regex.IsMatch((string)value.Value, @"\A[0-9a-fA-F]{40}\z"))
+                        value.Value.Type != JTokenType.String || !Regex.IsMatch((string)value.Value,
+                            package.source == PackageSource.LocalTarball ? @"\A[0-9a-fA-F]{32}\z" : @"\A[0-9a-fA-F]{40}\z"))
                     {
                         throw new InvalidOperationException("Untrusted package-manager fingerprint metadata.");
                     }
@@ -663,7 +665,7 @@ namespace YLFramework.Testing
                     {
                         throw new InvalidOperationException("An external SDK was bundled in an owned artifact.");
                     }
-                    string digest = PackageFileHash(Path.Combine(root, relative), relative, name, true);
+                    string digest = PackageFileHash(Path.Combine(root, relative), relative, name, true, !registry);
                     if (!string.Equals(digest, Text(file, "sha256"), StringComparison.OrdinalIgnoreCase)) { throw new InvalidOperationException("Installed artifact semantic file digest mismatch."); }
                     content.Append(relative).Append('\0').Append(digest).Append('\n');
                 }

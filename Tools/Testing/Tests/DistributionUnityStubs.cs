@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 namespace UnityEngine
 {
@@ -104,13 +105,43 @@ namespace YLFramework.Testing.NoUnity
     public static class FixtureAssemblies
     {
         private static AssemblyLoadContext context;
+        private static WeakReference unloading;
+        private static object retained;
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void Retain(bool type)
+        {
+            var assembly = context.Assemblies.Single(item => item.GetName().Name == "YLFramework.Editor");
+            retained = type ? (object)assembly.GetTypes().Single() : assembly;
+        }
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void Release() { retained = null; }
+        [MethodImpl(MethodImplOptions.NoInlining)]
         public static void Load(string[] paths)
         {
-            if (context != null) { throw new InvalidOperationException("Unload the previous NoUnity fixture first."); }
+            if (context != null || unloading?.IsAlive == true) { throw new InvalidOperationException("Unload the previous NoUnity fixture first."); }
             context = new AssemblyLoadContext("Distribution NoUnity " + Guid.NewGuid(), isCollectible: true);
             foreach (var path in paths) { context.LoadFromAssemblyPath(Path.GetFullPath(path)); }
         }
-        public static void Unload() { var previous = context; context = null; previous?.Unload(); }
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static WeakReference Unload()
+        {
+            var previous = context;
+            context = null;
+            if (previous == null) { return unloading; }
+            unloading = new WeakReference(previous, trackResurrection: true);
+            previous.Unload();
+            return unloading;
+        }
+        public static bool WaitForUnload(WeakReference reference)
+        {
+            // Unload only initiates collection; never replace a DLL until its context is gone.
+            for (int i = 0; reference?.IsAlive == true && i < 10; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+            return reference?.IsAlive != true;
+        }
     }
 }
 namespace UnityEditor.PackageManager

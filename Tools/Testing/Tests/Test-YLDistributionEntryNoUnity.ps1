@@ -377,9 +377,13 @@ try {
         }
         $r = $valid.Clone(); $r.phase = 'HybridConfigure'; $r.hybridCLR = $true; $r.smoke = $true; $r.backend = 'IL2CPP'
         Reject { Invoke-Validation $r } "$origin must not enter the unrelated native HybridCLR installation workflow"
-        $path = Join-Path $publishedApis[0].resolvedPath 'package.json'; $j = [IO.File]::ReadAllText($path) | ConvertFrom-Json -AsHashtable; $j._fingerprint = 'b' * 40; Save $path $j
+        $fingerprintLength = if ($origin -ceq 'LocalTarball') { 32 } else { 40 }
+        $path = Join-Path $publishedApis[0].resolvedPath 'package.json'; $j = [IO.File]::ReadAllText($path) | ConvertFrom-Json -AsHashtable; $j._fingerprint = 'b' * $fingerprintLength; Save $path $j
         $rows = Invoke-Capture
-        if ([string]$rows[0]['fingerprint'] -cne ('b' * 40) -or [string]$rows[0]['contentSha256'] -cne $valid.packages[0].contentSha256) { throw 'Managed fingerprint was not observed independently of semantic content.' }; $checks++
+        if ([string]$rows[0]['fingerprint'] -cne ('b' * $fingerprintLength) -or [string]$rows[0]['contentSha256'] -cne $valid.packages[0].contentSha256) { throw 'Managed fingerprint was not observed independently of semantic content.' }; $checks++
+        $j._fingerprint = 'b' * $(if ($origin -ceq 'LocalTarball') { 40 } else { 32 }); Save $path $j
+        Reject { Invoke-Capture } "$origin must not inherit the other source fingerprint format"
+        $j._fingerprint = 'b' * $fingerprintLength; Save $path $j
         $reportPath = Join-Path $output 'report.json'; [IO.File]::Delete($reportPath)
         $oldEnvironment = @{}
         try {
@@ -464,9 +468,27 @@ try {
     Compile-Fixture 'YLFramework.Editor' @([IO.File]::ReadAllText((Join-Path $packageRoot 'Editor/Demo.cs'))) $editorBackup
     Compile-Fixture 'YLFramework.Editor' @("#if NEVER_ENABLED_NO_UNITY_FIXTURE`npublic class ExcludedEditorFixture {}`n#endif") $emptyEditorDll
     $runtimeElsewhere = Join-Path $fixtureBuild 'YLFramework.Runtime.dll'; [IO.File]::Copy($runtimeDll, $runtimeElsewhere)
+    foreach ($retainType in @($false, $true)) {
+        [IO.File]::Copy($editorBackup, $editorDll, $true)
+        [YLFramework.Testing.NoUnity.FixtureAssemblies]::Load(@($runtimeDll, $editorDll))
+        [YLFramework.Testing.NoUnity.FixtureAssemblies]::Retain($retainType)
+        try {
+            $unloaded = [YLFramework.Testing.NoUnity.FixtureAssemblies]::Unload()
+            [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect()
+            $blocked = $false
+            try { [IO.File]::Copy($emptyEditorDll, $editorDll, $true) }
+            catch { if ($_.Exception.GetBaseException() -isnot [IO.IOException]) { throw }; $blocked = $true }
+            if (-not $blocked) { throw "A retained fixture reference (Type=$retainType) did not keep its DLL locked." }; $checks++
+            Write-Verbose "Retained fixture reference (Type=$retainType) prevents DLL replacement after Unload and GC." -Verbose
+            if ($unloaded -isnot [WeakReference]) { throw 'Fixture Unload must return weak evidence, not imply immediate DLL release.' }
+            if ([YLFramework.Testing.NoUnity.FixtureAssemblies]::WaitForUnload($unloaded)) { throw 'A retained fixture reference was incorrectly reported as unloaded.' }; $checks++
+        } finally { [YLFramework.Testing.NoUnity.FixtureAssemblies]::Release() }
+        if (-not [YLFramework.Testing.NoUnity.FixtureAssemblies]::WaitForUnload($unloaded)) { throw 'Released fixture references still prevent context unload.' }; $checks++
+        [IO.File]::Copy($emptyEditorDll, $editorDll, $true); $checks++
+    }
     function Set-LoadedFixtures([string] $Mode = 'Both') {
-        [YLFramework.Testing.NoUnity.FixtureAssemblies]::Unload()
-        [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect()
+        $unloaded = [YLFramework.Testing.NoUnity.FixtureAssemblies]::Unload()
+        if (-not [YLFramework.Testing.NoUnity.FixtureAssemblies]::WaitForUnload($unloaded)) { throw 'The previous NoUnity fixture context is still alive; its DLLs cannot be replaced.' }
         [IO.File]::Copy($(if ($Mode -ceq 'EmptyEditor') { $emptyEditorDll } else { $editorBackup }), $editorDll, $true)
         [string[]]$dlls = switch ($Mode) {
             'RuntimeOnly' { @($runtimeDll) }
@@ -604,7 +626,9 @@ try {
     "DistributionEntry NoUnity guards: $checks passed. NOT Unity compilation or execution."
 } finally {
     if ($null -ne ('YLFramework.Testing.NoUnity.FixtureAssemblies' -as [type])) {
-        [YLFramework.Testing.NoUnity.FixtureAssemblies]::Unload(); [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect()
+        [YLFramework.Testing.NoUnity.FixtureAssemblies]::Release()
+        $unloaded = [YLFramework.Testing.NoUnity.FixtureAssemblies]::Unload()
+        if (-not [YLFramework.Testing.NoUnity.FixtureAssemblies]::WaitForUnload($unloaded)) { throw 'The final NoUnity fixture context is still alive; its host cannot be deleted.' }
     }
     [IO.Directory]::Delete($sandbox, $true)
 }

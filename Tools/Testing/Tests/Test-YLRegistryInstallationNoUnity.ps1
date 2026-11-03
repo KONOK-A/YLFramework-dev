@@ -41,6 +41,8 @@ try {
     Check ($controllerSource.packageOrigin -ceq 'Registry') 'The maintained integration controller did not bind Registry arguments.'
     $requestFields = Get-YLRegistryRequestFields -Source $controllerSource -EntryPackage 'com.kano.ylframework'
     Check ($requestFields.registryUrl -ceq $url -and $requestFields.registryVersion -ceq $version) 'Registry entry request lost its explicit URL/version.'
+    Check ($requestFields.Contains('gitRepository') -and $requestFields.Contains('gitRevision') -and
+        $null -eq $requestFields.gitRepository -and $null -eq $requestFields.gitRevision) 'Artifact requests require JSON null Git fields, not PowerShell typed empty strings.'
     $localProducer = Copy-Value $receipt; $localProducer.producer = @{ kind = 'Local' }; Save $path $localProducer
     Reject { Get-YLRegistrySource -PackageSource Registry -Arguments @{ ReleaseManifest = $path; RegistryUrl = $url; RegistryVersion = $version } } 'CI|producer|candidate'
     Save $path $receipt
@@ -141,6 +143,15 @@ try {
     Check ($beforeManaged.sha256 -ceq $afterManaged.sha256) 'A legal uppercase 40hex managed fingerprint must preserve the semantic payload.'
     $afterDistributionManaged = Get-DistributionPackageContent -Root $installedRoot -AllowManagedFingerprint
     Check ($beforeDistributionManaged.sha256 -ceq $afterDistributionManaged.sha256) 'Distribution must use the same legal uppercase/lowercase 40hex rule as its C# verifier.'
+    $installedManifest['_fingerprint'] = '2bdab7139776f7ea3e50932a86582fbf'; Save $installedJson $installedManifest
+    $tarContent = Get-YLIntegrationPackageContent -Root $installedRoot -PackageId 'com.kano.ylframework' -NormalizeManifest -AllowManagedFingerprint -FingerprintSource LocalTarball
+    $tarDistribution = Get-DistributionPackageContent -Root $installedRoot -AllowManagedFingerprint -FingerprintSource LocalTarball
+    Check ($tarContent.sha256 -ceq $beforeManaged.sha256 -and $tarDistribution.sha256 -ceq $beforeDistributionManaged.sha256) 'Observed Unity 6 LocalTarball 32hex metadata must preserve the frozen payload.'
+    Reject { Get-YLIntegrationPackageContent -Root $installedRoot -PackageId 'com.kano.ylframework' -NormalizeManifest -AllowManagedFingerprint } 'fingerprint'
+    Reject { Get-DistributionPackageContent -Root $installedRoot -AllowManagedFingerprint } 'fingerprint'
+    $installedManifest['_fingerprint'] = 'b' * 40; Save $installedJson $installedManifest
+    Reject { Get-YLIntegrationPackageContent -Root $installedRoot -PackageId 'com.kano.ylframework' -NormalizeManifest -AllowManagedFingerprint -FingerprintSource LocalTarball } 'fingerprint'
+    Reject { Get-DistributionPackageContent -Root $installedRoot -AllowManagedFingerprint -FingerprintSource LocalTarball } 'fingerprint'
 
     $entry = 'com.kano.ylframework.domain-excel'
     $manifest = New-YLRegistryHostManifest -PackageSource Registry -Release $release -EntryPackage $entry -RegistryUrl $url

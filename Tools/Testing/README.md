@@ -254,6 +254,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegra
 
 DOTween 默认 `-DOTweenSdkMode Required`，必须取得并核对批准的 Standard archive、实际程序集、路径、摘要、Modules 和 `DOTWEEN`。指定 `-DOTweenSdkMode Absent` 时拒绝 archive、不下载或投放 SDK、不设置宏，并要求包装程序集在 Editor/Player 图均缺席，结果为 `NegativeNoSdk`，不计正向集成。无法取得必需 SDK 是前置不足，不是 Required 通过。
 
+受管 `_fingerprint` 按实际来源格式验证：Unity 6 的 LocalTarball 安装写入 32hex，Git / Registry 及官方 BuiltIn 缓存观测使用 40hex；Unity 2022 的 LocalTarball 可以没有该字段。只在对应已验证安装来源中规范化这个已知字段，不向 File 或源 tarball 开放，也不忽略未知 `_` 字段。字段不是包内容身份，冻结负载摘要及完整文件集合仍须匹配。
+
 HybridCLR 的新来源以官方 Registry SDK `9.0.3` 为间接依赖；先核对独立 metadata 的仓库和 revision、tarball integrity、许可与实际安装内容。`repository.revision` 只是 metadata 来源声明，不冒充 Git checkout SHA。该阶段不配置或运行 native Installer、IL2CPP 基座或热更 Player；旧 File/Git native 专项仍是独立显式流程。
 
 默认图继续拒绝 Tests、MCP、未导入 Sample 和未授权 Assets 源。正向样例/作者工具阶段在另一个自有安装宿主显式 Import，并记录真实生成数据和元数据；卸载使用独立中立探针与宿主，不引用框架/Json.NET/SDK，也不靠删除用户代码或数据来通过。相同版本暖重开不叫跨版本升级。

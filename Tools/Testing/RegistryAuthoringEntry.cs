@@ -316,7 +316,7 @@ namespace YLFramework.Testing
                         foreach (var file in frozen)
                         {
                             var relative = Text(file, "path"); var actual = Child(root, relative);
-                            if (ContentHash(actual, relative) != Text(file, "contentSha256")) throw new InvalidOperationException("Installed package/Sample content differs from the frozen artifact: " + relative);
+                            if (ContentHash(actual, relative, !registry) != Text(file, "contentSha256")) throw new InvalidOperationException("Installed package/Sample content differs from the frozen artifact: " + relative);
                         }
                         if (!Same(deps, Object(own, "dependencies"))) throw new InvalidOperationException("Frozen package dependencies differ from the actual package.");
                     }
@@ -556,11 +556,11 @@ namespace YLFramework.Testing
             if (!File.Exists(Safe(Path.Combine(path, ".lease")))) throw new InvalidOperationException("Missing existing owner lease.");
         }
 
-        private static string ContentHash(string path, string relative)
+        private static string ContentHash(string path, string relative, bool localTarball)
         {
             if (relative != "package.json") return Hash(path);
             var manifest = Read(path); var fingerprint = manifest.Property("_fingerprint");
-            if (fingerprint != null) { Pattern(Text(manifest, "_fingerprint"), "^[0-9a-fA-F]{40}$"); fingerprint.Remove(); }
+            if (fingerprint != null) { Pattern(Text(manifest, "_fingerprint"), localTarball ? "^[0-9a-fA-F]{32}$" : "^[0-9a-fA-F]{40}$"); fingerprint.Remove(); }
             if (manifest.Properties().Any(p => p.Name.StartsWith("_", StringComparison.Ordinal))) throw new InvalidOperationException("Unknown package-manager metadata.");
             using (var sha = SHA256.Create()) return Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(Canonical(manifest).ToString(Formatting.None))));
         }

@@ -144,7 +144,8 @@ function Invoke-YLRegistryAuthoring {
         }
         foreach ($folder in @('Assets/RegistryAuthoring', 'Assets/RegistryAuthoring/Editor')) { $files[$folder + '.meta'] = [Text.Encoding]::UTF8.GetBytes("fileFormatVersion: 2`nguid: $([Guid]::NewGuid().ToString('N'))`nfolderAsset: yes`nDefaultImporter:`n  externalObjects: {}`n  userData: `n  assetBundleName: `n  assetBundleVariant: `n") }
         $files['Packages/manifest.json'] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $original -Depth 10) + "`n")
-        $files['ProjectSettings/ProjectVersion.txt'] = [Text.Encoding]::UTF8.GetBytes("m_EditorVersion: $($Editor.version)`n")
+        $revision = $Editor.productVersion.Split('_')[-1]
+        $files['ProjectSettings/ProjectVersion.txt'] = [Text.Encoding]::UTF8.GetBytes("m_EditorVersion: $($Editor.version)`nm_EditorVersionWithRevision: $($Editor.version) ($revision)`n")
         Sync-YLUnityHost -HostRecord $hostRecord -Files $files -Identity $identity -EditorVersion $Editor.version
         $outcome.producerInputs = Read-YLPackageEvidenceJson (Join-Path $hostRecord.path '.yl-inputs.json')
         $before = Join-Path $outputRoot 'manifest.before.json'; [IO.File]::Copy((Join-Path $hostRecord.path 'Packages/manifest.json'), $before)

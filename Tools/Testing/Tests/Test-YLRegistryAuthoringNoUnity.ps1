@@ -144,6 +144,8 @@ try {
         if ($request.packageOrigin -ceq 'LocalTarball') { Check ($null -eq $request.registryUrl -and $null -eq $request.registryVersion -and $request.resolutionRegistryUrl -ceq $url) 'LocalTarball source identity reused the Registry routing constant as own package provenance.' }
         $script:starts.Add(@{ host = $StartInfo.WorkingDirectory; cache = $StartInfo.Environment['UPM_CACHE_ROOT']; phase = $request.phase })
         $hostRoot = $StartInfo.WorkingDirectory
+        $projectVersion = "m_EditorVersion: $($editor.version)`nm_EditorVersionWithRevision: $($editor.version) ($($editor.productVersion.Split('_')[-1]))`n"
+        Check ([IO.File]::ReadAllText((Join-Path $hostRoot 'ProjectSettings/ProjectVersion.txt')) -ceq $projectVersion) 'The frozen producer must supply the complete Editor version/revision bytes instead of adopting a first-launch rewrite.'
         [UnityEngine.Application]::dataPath = (Join-Path $hostRoot 'Assets').Replace('\', '/'); [UnityEngine.Application]::isBatchMode = $true
         [UnityEditor.EditorApplication]::applicationPath = $StartInfo.FileName.Replace('\', '/'); [UnityEditor.EditorApplication]::Reset()
         [UnityEditor.EditorUtility]::scriptCompilationFailed = $script:fault -ceq 'compile'
@@ -165,6 +167,12 @@ try {
                         foreach ($file in $payload[0].files) { $target = Join-Path $api.resolvedPath $file.path; $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target)); [IO.File]::Copy((Join-Path $payload[0].root $file.path), $target) }
                     } else { [IO.File]::WriteAllText((Join-Path $api.resolvedPath 'package.json'), '{"dependencies":{},"name":"com.code-philosophy.hybridclr","version":"9.0.3"}') }
                     if ($request.packageOrigin -ceq 'LocalTarball' -and $id -cne 'com.code-philosophy.hybridclr') { $api.source = [UnityEditor.PackageManager.PackageSource]::LocalTarball; $m = Read-YLPackageEvidenceJson (Join-Path $hostRoot 'Packages/manifest.json'); $api.packageId = $id + '@' + $m.dependencies[$id]; $api.isDirectDependency = $true }
+                    if ($payload.Count -eq 1) {
+                        $manifestPath = Join-Path $api.resolvedPath 'package.json'; $managed = Read-YLPackageEvidenceJson $manifestPath
+                        $length = if ($api.source.ToString() -ceq 'LocalTarball') { 32 } else { 40 }
+                        if ($script:fault -ceq 'wrong-source-fingerprint') { $length = if ($length -eq 32) { 40 } else { 32 } }
+                        $managed['_fingerprint'] = 'A' * $length; Save $manifestPath $managed
+                    }
                     $api.dependencies = @($deps.GetEnumerator() | ForEach-Object { $d = [UnityEditor.PackageManager.DependencyInfo]::new(); $d.name = $_.Key; $d.version = $_.Value; $d })
                     $api
                 })
@@ -244,6 +252,12 @@ try {
         $artifact = Invoke-YLRegistryAuthoring @invoke -Source $tar -EntryPackage $entryPackage
         Check ($artifact.status -ceq 'Completed' -and $artifact.scopeSource -ceq 'ArtifactPreflight') ("LocalTarball $entryPackage authoring must remain ArtifactPreflight, not Registry proof: " + $artifact.error)
     }
+    $script:fault = 'wrong-source-fingerprint'
+    foreach ($wrongSource in @($source, $tar)) {
+        $failed = Invoke-YLRegistryAuthoring @invoke -Source $wrongSource
+        Check ($failed.status -ceq 'Failed' -and $failed.phases.Count -eq 1) 'Authoring accepted metadata from the other package source format.'
+    }
+    $script:fault = ''
     foreach ($reloadCase in @('reload-observed', 'reload-unobserved')) {
         $script:fault = $reloadCase; $beforeImports = [UnityEditor.PackageManager.UI.Sample]::ImportCalls
         $reloaded = Invoke-YLRegistryAuthoring @invoke

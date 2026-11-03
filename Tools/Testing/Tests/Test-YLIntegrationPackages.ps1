@@ -57,7 +57,8 @@ function Read-YLIntegrationJson([string] $Path) {
     } finally { $reader.Dispose() }
 }
 
-function Get-YLIntegrationPackageContent([string] $Root, [string] $PackageId, [switch] $NormalizeManifest, [switch] $AllowManagedFingerprint) {
+function Get-YLIntegrationPackageContent([string] $Root, [string] $PackageId, [switch] $NormalizeManifest, [switch] $AllowManagedFingerprint,
+    [ValidateSet('Git', 'Registry', 'LocalTarball')][string] $FingerprintSource = 'Git') {
     function Convert-CanonicalToken([Newtonsoft.Json.Linq.JToken] $Token) {
         if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
             $result = [Newtonsoft.Json.Linq.JObject]::new()
@@ -82,7 +83,7 @@ function Get-YLIntegrationPackageContent([string] $Root, [string] $PackageId, [s
             $fingerprint = $manifest.Property('_fingerprint')
             if ($null -ne $fingerprint) {
                 if (-not $NormalizeManifest -or -not $AllowManagedFingerprint -or $fingerprint.Value.Type -ne [Newtonsoft.Json.Linq.JTokenType]::String -or
-                    [string]$fingerprint.Value -cnotmatch '\A[0-9a-fA-F]{40}\z') { throw 'Untrusted package-manager fingerprint metadata.' }
+                    [string]$fingerprint.Value -cnotmatch $(if ($FingerprintSource -ceq 'LocalTarball') { '\A[0-9a-fA-F]{32}\z' } else { '\A[0-9a-fA-F]{40}\z' })) { throw 'Untrusted package-manager fingerprint metadata.' }
                 $fingerprint.Remove()
             }
             if ($NormalizeManifest) {
@@ -106,7 +107,7 @@ function Assert-YLIntegrationInstalledPackage([Collections.IDictionary] $Request
         if ($Row.name -cne $Expected.name -or $Row.version -cne $Expected.version -or $Row.source -cne $Request.packageOrigin -or
             $Row.assetPath -cne ('Packages/' + $Expected.name) -or $Row.contentSha256 -cne $Expected.contentSha256 -or
             ($Row.verifiedFiles -isnot [int] -and $Row.verifiedFiles -isnot [long]) -or $Row.verifiedFiles -ne $Expected.files.Count) { throw 'Actual Registry/tarball package identity/content is incorrect.' }
-        $actual = Get-YLIntegrationPackageContent -Root $Row.resolvedPath -PackageId $Expected.name -NormalizeManifest -AllowManagedFingerprint
+        $actual = Get-YLIntegrationPackageContent -Root $Row.resolvedPath -PackageId $Expected.name -NormalizeManifest -AllowManagedFingerprint -FingerprintSource $Request.packageOrigin
         if ($actual.sha256 -cne $Expected.contentSha256) { throw 'Actual installed artifact differs from the frozen release payload.' }
         return
     }
@@ -289,7 +290,11 @@ $configuration = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../TestSuites.
 $editor = Get-YLTestEditorProfile -Editors $configuration.editors -VersionInfo ([Diagnostics.FileVersionInfo]::GetVersionInfo($Unity))
 $definition = Get-YLIntegrationDefinition $Integration
 if ($Integration -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent') { $definition.assemblies = @($definition.assemblies | Where-Object { $_.name -cne 'YLFramework.Actions.DOTween' }) }
-$profile = "IntegrationPackages-v1-$($editor.productVersion)-$Integration-" + (ConvertTo-Json -InputObject $source -Compress)
+$sourceIdentity = if ($source.packageOrigin -cin @('Registry', 'LocalTarball')) {
+    @{ packageOrigin = $source.packageOrigin; sourceCommit = $source.release.sourceCommit; releaseManifestSha256 = $source.release.sha256
+        registryUrl = $source.registryUrl; registryVersion = $source.registryVersion }
+} else { $source }
+$profile = "IntegrationPackages-v1-$($editor.productVersion)-$Integration-" + (ConvertTo-Json -InputObject $sourceIdentity -Depth 5 -Compress)
 $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $repository
 $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key "Integration-$Integration-$($editor.productVersion)"
 $lease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path

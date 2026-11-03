@@ -297,9 +297,12 @@ try {
         foreach ($field in @('entryPackage', 'releaseManifestSha256', 'registryUrl', 'registryVersion')) {
             $r = Request; $r[$field] = [Newtonsoft.Json.Linq.JValue]::new($true); Reject { Call ValidateInvocation $r } "$origin typed $field"
         }
-        $path = Join-Path $publishedApis[0].resolvedPath 'package.json'; $j = [IO.File]::ReadAllText($path) | ConvertFrom-Json -AsHashtable; $j._fingerprint = 'B' * 40; Save $path $j
+        $fingerprintLength = if ($origin -ceq 'LocalTarball') { 32 } else { 40 }
+        $path = Join-Path $publishedApis[0].resolvedPath 'package.json'; $j = [IO.File]::ReadAllText($path) | ConvertFrom-Json -AsHashtable; $j._fingerprint = 'B' * $fingerprintLength; Save $path $j
         $rows = Call CapturePackages (Request)
-        Check ([string]$rows[0]['fingerprint'] -ceq ('B' * 40) -and [string]$rows[0]['contentSha256'] -ceq $valid.packages[0].contentSha256) "$origin fingerprint observation/normalization failed."
+        Check ([string]$rows[0]['fingerprint'] -ceq ('B' * $fingerprintLength) -and [string]$rows[0]['contentSha256'] -ceq $valid.packages[0].contentSha256) "$origin fingerprint observation/normalization failed."
+        $j._fingerprint = 'B' * $(if ($origin -ceq 'LocalTarball') { 40 } else { 32 }); Save $path $j
+        Reject { Call CapturePackages (Request) } "$origin must not inherit the other source fingerprint format"
     }
     foreach ($origin in @('Registry', 'LocalTarball')) {
         New-PublishedFixture $origin HybridCLR

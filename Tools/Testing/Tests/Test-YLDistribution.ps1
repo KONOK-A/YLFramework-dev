@@ -51,7 +51,8 @@ if ($HybridCLR -and ($Backend -cne 'IL2CPP' -or -not $RunPlayer -or -not $Native
 }
 if ($artifact -and $HybridCLR) { throw 'Registry/LocalTarball distribution covers the ordinary main package. Use Integration HybridCLR for SDK compilation; native acceptance remains a separate File/Git workflow.' }
 
-function Get-DistributionPackageContent([string] $Root, [switch] $AllowManagedFingerprint) {
+function Get-DistributionPackageContent([string] $Root, [switch] $AllowManagedFingerprint,
+    [ValidateSet('Git', 'Registry', 'LocalTarball')][string] $FingerprintSource = 'Git') {
     function Convert-CanonicalToken([Newtonsoft.Json.Linq.JToken] $Token) {
         if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
             $result = [Newtonsoft.Json.Linq.JObject]::new()
@@ -94,7 +95,8 @@ function Get-DistributionPackageContent([string] $Root, [switch] $AllowManagedFi
             } finally { $reader.Dispose() }
             $fingerprint = $manifest.Property('_fingerprint')
             if ($null -ne $fingerprint) {
-                if (-not $AllowManagedFingerprint -or $fingerprint.Value.Type -ne [Newtonsoft.Json.Linq.JTokenType]::String -or [string]$fingerprint.Value -cnotmatch '^[0-9a-fA-F]{40}$') { throw 'Untrusted package-manager fingerprint metadata.' }
+                if (-not $AllowManagedFingerprint -or $fingerprint.Value.Type -ne [Newtonsoft.Json.Linq.JTokenType]::String -or
+                    [string]$fingerprint.Value -cnotmatch $(if ($FingerprintSource -ceq 'LocalTarball') { '\A[0-9a-fA-F]{32}\z' } else { '\A[0-9a-fA-F]{40}\z' })) { throw 'Untrusted package-manager fingerprint metadata.' }
                 $fingerprint.Remove()
             }
             $canonical = (Convert-CanonicalToken $manifest).ToString([Newtonsoft.Json.Formatting]::None)
@@ -165,7 +167,7 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
     $request = Join-Path $output 'request.json'
     $artifactFields = if ($artifact) { Get-YLRegistryRequestFields -Source $registrySource -EntryPackage 'com.kano.ylframework' } else { $null }
     Write-YLTestJson -Path $request -Value @{ schemaVersion = 2; hostId = $HostRecord.id; resultId = $run.id; resultRoot = $run.path; unityVersion = $editor.version; phase = $Phase; output = $output
-        packageOrigin = $packageOrigin; packages = @($expectedPackages); gitRepository = $GitRepository; gitRevision = $GitRevision; manifestSha256 = $manifestHash
+        packageOrigin = $packageOrigin; packages = @($expectedPackages); gitRepository = $(if ($artifact) { $artifactFields.gitRepository } else { $GitRepository }); gitRevision = $(if ($artifact) { $artifactFields.gitRevision } else { $GitRevision }); manifestSha256 = $manifestHash
         smoke = [bool]$RunPlayer; backend = $Backend; hybridCLR = [bool]$HybridCLR; nativeSource = $NativeSource; nativeVariant = $nativeVariant
         baseline = $baselineRoot; runtimeCache = $runtimeCache; cacheOwnerId = $cacheOwnerId; playerRoot = $nativePlayerRoot; playerOwnerId = $playerOwnerId
         cacheRoot = $cache.path; registryUrl = $(if ($artifact) { $artifactFields.registryUrl } else { $null }); registryVersion = $(if ($artifact) { $artifactFields.registryVersion } else { $null })
@@ -216,7 +218,7 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
         if ($artifact) {
             if ($expected.Count -ne 1 -or -not $seen.Add($row['name']) -or $row['version'] -cne $expected[0].version -or
                 $row['assetPath'] -cne ('Packages/' + $row['name']) -or $row['source'] -cne $PackageSource) { throw 'Distribution artifact package identity/source does not match.' }
-            $actual = Get-DistributionPackageContent -Root $row['resolvedPath'] -AllowManagedFingerprint
+            $actual = Get-DistributionPackageContent -Root $row['resolvedPath'] -AllowManagedFingerprint -FingerprintSource $PackageSource
             if ($actual.sha256 -cne $expected[0].contentSha256 -or $row['contentSha256'] -cne $actual.sha256) { throw 'Distribution artifact package differs from the frozen release payload.' }
             if ($packageEvidence.ContainsKey($row['name']) -and $packageEvidence[$row['name']] -cne $actual.sha256) { throw 'Distribution installed artifact inputs changed.' }
             $packageEvidence[$row['name']] = $actual.sha256
@@ -496,7 +498,10 @@ try {
     $current = Get-YLTestInputIdentity -Repository $repository -Paths @($paths) -Toolchain $toolchain.ToArray() -Profile $profile
     if ($current.sha256 -cne $identity.sha256) { throw 'Distribution source inputs changed during verification.' }
     foreach ($package in $products) { if ((Get-DistributionPackageContent -Root $package.root).sha256 -cne $inventories[$package.id].sha256) { throw 'Distribution source package inputs changed.' } }
-    foreach ($package in $summary.packages) { if ((Get-DistributionPackageContent -Root $package['resolvedPath'] -AllowManagedFingerprint:($package['source'] -cin @('Git', 'Registry', 'LocalTarball'))).sha256 -cne $package['contentSha256']) { throw 'Distribution installed package inputs changed.' } }
+    foreach ($package in $summary.packages) {
+        $fingerprintSource = if ($package['source'] -ceq 'LocalTarball') { 'LocalTarball' } elseif ($package['source'] -ceq 'Registry') { 'Registry' } else { 'Git' }
+        if ((Get-DistributionPackageContent -Root $package['resolvedPath'] -AllowManagedFingerprint:($package['source'] -cin @('Git', 'Registry', 'LocalTarball')) -FingerprintSource $fingerprintSource).sha256 -cne $package['contentSha256']) { throw 'Distribution installed package inputs changed.' }
+    }
     if ($artifact -and (Read-YLRegistryRelease -Path $registrySource.release.path -VerifyTarballs:($PackageSource -ceq 'LocalTarball')).sha256 -cne $registrySource.release.sha256) { throw 'Frozen release manifest inputs changed.' }
     $summary.status = if ($summary.player -ceq 'Passed') { 'Passed' } else { 'PrerequisiteNotMet' }
 } catch {
