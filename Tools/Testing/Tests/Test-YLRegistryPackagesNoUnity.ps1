@@ -145,6 +145,16 @@ try {
         Check ($observed -ceq $expected) 'The checkout copied uncommitted package metadata.'
         $bytes = [IO.File]::ReadAllBytes((Join-Path $checkout 'PackageSources/com.kano.ylframework.excel/Editor/Plugins/MiniExcel.dll'))
         Check ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant() -ceq '0a49b66224bef9fdcec12800e4660267a993b1ece87727d9fe15c7dabf58ba1e') 'Independent checkout did not materialize the genuine LFS DLL.'
+        $readOnlyPack = Join-Path $checkout '.git/objects/pack/owned-cleanup-fixture.idx'
+        Save $readOnlyPack 'Test-only Git object attribute fixture, not a valid pack index.'
+        [IO.File]::SetAttributes($readOnlyPack, [IO.FileAttributes]::ReadOnly)
+        # This clone uses --no-hardlinks; change only its private Git metadata before removal.
+        foreach ($file in @(Get-YLTestTreeFiles (Join-Path $checkout '.git'))) {
+            $attributes = [IO.File]::GetAttributes($file)
+            if ($attributes -band [IO.FileAttributes]::ReadOnly) { [IO.File]::SetAttributes($file, ($attributes -band (-bnot [IO.FileAttributes]::ReadOnly))) }
+        }
+        [IO.Directory]::Delete($checkout, $true)
+        Check (-not [IO.Directory]::Exists($checkout)) 'The independent fixture checkout was not actually removed.'
     }
     Case 'Missing package is rejected' {
         $path = Join-Path $sources 'com.kano.ylframework.dotween/package.json'
