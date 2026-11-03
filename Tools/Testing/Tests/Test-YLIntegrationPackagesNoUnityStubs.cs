@@ -28,13 +28,15 @@ namespace UnityEditor.Compilation
 }
 namespace UnityEditor.PackageManager
 {
-    public enum PackageSource { Local, Git, Registry, BuiltIn, Embedded, Unknown }
+    public enum PackageSource { Local, LocalTarball, Git, Registry, BuiltIn, Embedded, Unknown }
     public class GitInfo { public string hash; public string revision; }
+    public class RegistryInfo { public string url; }
     public class Error { public string message; }
     public class DependencyInfo { public string name; public string version; }
     public class PackageInfo
     {
         public string name; public string version; public string assetPath; public string resolvedPath; public string packageId; public PackageSource source; public GitInfo git;
+        public RegistryInfo registry; public bool isDirectDependency;
         public Error[] errors = Array.Empty<Error>(); public DependencyInfo[] dependencies = Array.Empty<DependencyInfo>();
         public static PackageInfo[] Registered = Array.Empty<PackageInfo>();
         public static PackageInfo[] GetAllRegisteredPackages() => Registered;

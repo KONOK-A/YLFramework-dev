@@ -12,14 +12,17 @@ Players remain separate application deliverables.
 2. Remove only the old framework-owned copy. Do not let its asmdef or scripts
    compile alongside the UPM package. Do not delete an unknown directory merely
    because it has the old framework name.
-3. Obtain the actual full SHA and ready-to-use manifest closure from the
-   acceptance handoff, using the [Git URL format](README.md#git-url-与依赖闭包).
-   No placeholder SHA or unverified tag is installable release evidence.
-   Add the validated Git URLs to `Packages/manifest.json`. All selected YL
-   packages need explicit Git entries. Domain Excel requires the main, Excel
-   and Domain Excel entries. UPM resolves UGUI / Newtonsoft.Json registry
-   dependencies automatically. SDKs such as DOTween and HybridCLR remain
-   separate; HybridCLR requires SDK `9.0.3` and the documented native gates.
+3. After the frozen Release and Registry acceptance handoff confirm version
+   availability, prefer the [Registry single-entry configuration](README.md#registry-与自动依赖).
+   Only the selected leaf is direct; Domain Excel resolves the main and Excel
+   packages, and HybridCLR also resolves the separately distributed official
+   SDK `9.0.3` through its additional narrow scope. Do not copy development-host
+   dependencies. For the [Git fallback](README.md#git-url-与依赖闭包), obtain the
+   actual full SHA and explicit manifest closure from the acceptance handoff.
+   All sibling Git packages and the pinned HybridCLR SDK need direct entries.
+   No placeholder SHA, unverified tag or LocalTarball preflight is evidence of
+   public Registry readiness. DOTween remains a separately installed SDK for
+   either route; SDK/native and platform gates are unchanged.
 4. If existing scenes or code reference Resource Startup or HybridCLR samples,
    explicitly import the matching sample before restoring those references.
    Do not save a scene with missing scripts during the transition.

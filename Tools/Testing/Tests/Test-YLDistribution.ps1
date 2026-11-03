@@ -11,9 +11,12 @@ param(
     [switch] $HybridCLR,
     [string] $NativeSource,
     [string] $NativeSourceManifest,
-    [ValidateSet('File', 'Git')][string] $PackageSource = 'Git',
+    [ValidateSet('File', 'Git', 'LocalTarball', 'Registry')][string] $PackageSource = 'Git',
     [ValidateNotNullOrEmpty()][string] $GitRepository,
-    [ValidateNotNullOrEmpty()][string] $GitRevision
+    [ValidateNotNullOrEmpty()][string] $GitRevision,
+    [string] $RegistryUrl,
+    [string] $RegistryVersion,
+    [string] $ReleaseManifest
 )
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
@@ -22,6 +25,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../UnityHost.ps1')
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $configuration = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../TestSuites.json')) | ConvertFrom-Json -DateKind String
+$registrySource = Get-YLRegistrySource -PackageSource $PackageSource -Arguments $PSBoundParameters
+$artifact = $null -ne $registrySource
 $hasRepository = $PSBoundParameters.ContainsKey('GitRepository')
 $hasRevision = $PSBoundParameters.ContainsKey('GitRevision')
 if ($PackageSource -ceq 'File' -and ($hasRepository -or $hasRevision)) { throw 'File package source refuses Git parameters.' }
@@ -36,16 +41,18 @@ if ($hasRepository) {
     }
     $GitRevision = $GitRevision.ToLowerInvariant()
 }
-$packageOrigin = if ($PackageSource -ceq 'File') { 'File' } elseif ($hasRepository) { 'GitRemote' } else { 'GitFixture' }
+$packageOrigin = if ($artifact) { $registrySource.packageOrigin } elseif ($PackageSource -ceq 'File') { 'File' } elseif ($hasRepository) { 'GitRemote' } else { 'GitFixture' }
 $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($Unity)
 $editor = Get-YLTestEditorProfile -Editors $configuration.editors -VersionInfo $version
-$packageInputs = @(Get-YLUnityPackageInputs -EditorProfile $editor)
+$packageInputs = if ($artifact) { @() } else { @(Get-YLUnityPackageInputs -EditorProfile $editor) }
 foreach ($relative in $packageInputs) { $null = [IO.File]::ReadAllBytes((Join-Path $repository $relative)) }
 if ($HybridCLR -and ($Backend -cne 'IL2CPP' -or -not $RunPlayer -or -not $NativeSource)) {
     throw 'HybridCLR acceptance requires explicit IL2CPP, RunPlayer and an existing native source.'
 }
+if ($artifact -and $HybridCLR) { throw 'Registry/LocalTarball distribution covers the ordinary main package. Use Integration HybridCLR for SDK compilation; native acceptance remains a separate File/Git workflow.' }
 
-function Get-DistributionPackageContent([string] $Root, [switch] $AllowManagedFingerprint) {
+function Get-DistributionPackageContent([string] $Root, [switch] $AllowManagedFingerprint,
+    [ValidateSet('Git', 'Registry', 'LocalTarball')][string] $FingerprintSource = 'Git') {
     function Convert-CanonicalToken([Newtonsoft.Json.Linq.JToken] $Token) {
         if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
             $result = [Newtonsoft.Json.Linq.JObject]::new()
@@ -88,7 +95,8 @@ function Get-DistributionPackageContent([string] $Root, [switch] $AllowManagedFi
             } finally { $reader.Dispose() }
             $fingerprint = $manifest.Property('_fingerprint')
             if ($null -ne $fingerprint) {
-                if (-not $AllowManagedFingerprint -or $fingerprint.Value.Type -ne [Newtonsoft.Json.Linq.JTokenType]::String -or [string]$fingerprint.Value -cnotmatch '^[0-9a-f]{40}$') { throw 'Untrusted package-manager fingerprint metadata.' }
+                if (-not $AllowManagedFingerprint -or $fingerprint.Value.Type -ne [Newtonsoft.Json.Linq.JTokenType]::String -or
+                    [string]$fingerprint.Value -cnotmatch $(if ($FingerprintSource -ceq 'LocalTarball') { '\A[0-9a-fA-F]{32}\z' } else { '\A[0-9a-fA-F]{40}\z' })) { throw 'Untrusted package-manager fingerprint metadata.' }
                 $fingerprint.Remove()
             }
             $canonical = (Convert-CanonicalToken $manifest).ToString([Newtonsoft.Json.Formatting]::None)
@@ -141,6 +149,10 @@ $lease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
 $summary = [ordered]@{ schemaVersion = 1; distributionSchemaVersion = 2; ownerId = $run.id; action = 'Run'; suite = 'Tooling'; module = 'Distribution'; profile = $version.ProductVersion
     status = 'Failed'; reason = $null; endUtc = $null; processes = @(); checks = 0; player = 'NotRun'; playerRun = @{ status = 'NotRun' }; playerRuns = @(); backend = $Backend
     unity = @{ executable = $Unity; version = $editor.version; productVersion = $version.ProductVersion }; packageOrigin = $packageOrigin; packages = @(); resolvedDependencies = @() }
+if ($artifact) {
+    $summary['acceptanceKind'] = if ($PackageSource -ceq 'LocalTarball') { 'ArtifactPreflight' } else { 'RegistryInstallation' }
+    $summary['release'] = @{ sourceCommit = $registrySource.release.sourceCommit; manifestSha256 = $registrySource.release.sha256; producer = $registrySource.release.producer }
+}
 $hostLeases = [Collections.Generic.List[IDisposable]]::new()
 $nativeVariant = $null; $baselineRoot = $null; $runtimeCache = $null; $cacheOwnerId = $null; $nativePlayerRoot = $null; $playerOwnerId = $null
 $packageEvidence = @{}
@@ -153,10 +165,13 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
     $output = Join-Path $run.path $Phase
     $null = [IO.Directory]::CreateDirectory($output)
     $request = Join-Path $output 'request.json'
+    $artifactFields = if ($artifact) { Get-YLRegistryRequestFields -Source $registrySource -EntryPackage 'com.kano.ylframework' } else { $null }
     Write-YLTestJson -Path $request -Value @{ schemaVersion = 2; hostId = $HostRecord.id; resultId = $run.id; resultRoot = $run.path; unityVersion = $editor.version; phase = $Phase; output = $output
-        packageOrigin = $packageOrigin; packages = @($expectedPackages); gitRepository = $GitRepository; gitRevision = $GitRevision; manifestSha256 = $manifestHash
+        packageOrigin = $packageOrigin; packages = @($expectedPackages); gitRepository = $(if ($artifact) { $artifactFields.gitRepository } else { $GitRepository }); gitRevision = $(if ($artifact) { $artifactFields.gitRevision } else { $GitRevision }); manifestSha256 = $manifestHash
         smoke = [bool]$RunPlayer; backend = $Backend; hybridCLR = [bool]$HybridCLR; nativeSource = $NativeSource; nativeVariant = $nativeVariant
-        baseline = $baselineRoot; runtimeCache = $runtimeCache; cacheOwnerId = $cacheOwnerId; playerRoot = $nativePlayerRoot; playerOwnerId = $playerOwnerId }
+        baseline = $baselineRoot; runtimeCache = $runtimeCache; cacheOwnerId = $cacheOwnerId; playerRoot = $nativePlayerRoot; playerOwnerId = $playerOwnerId
+        cacheRoot = $cache.path; registryUrl = $(if ($artifact) { $artifactFields.registryUrl } else { $null }); registryVersion = $(if ($artifact) { $artifactFields.registryVersion } else { $null })
+        entryPackage = $(if ($artifact) { $artifactFields.entryPackage } else { $null }); releaseManifestSha256 = $(if ($artifact) { $artifactFields.releaseManifestSha256 } else { $null }) }
     $start = [Diagnostics.ProcessStartInfo]::new($Unity)
     $start.UseShellExecute = $false; $start.WorkingDirectory = $HostRecord.path
     foreach ($key in @($start.Environment.Keys | Where-Object { $_.StartsWith('GIT_', [StringComparison]::OrdinalIgnoreCase) })) { $null = $start.Environment.Remove($key) }
@@ -166,6 +181,7 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
     $start.Environment['UPM_GIT_LFS_CACHE_PATH'] = Join-Path $cache.path 'Lfs'
     $start.Environment['UPM_ENABLE_GIT_LFS_CACHE'] = '1'
     $start.Environment.Remove('GIT_LFS_SKIP_SMUDGE') | Out-Null
+    if ($artifact -and $Phase -ceq 'Inspect') { $summary['coldCache'] = Assert-YLRegistryColdCache -StartInfo $start -CacheRoot $cache.path }
     $arguments = @('-batchmode', '-projectPath', $HostRecord.path, '-logFile', (Join-Path $output 'unity.log'))
     if (-not $Phase.StartsWith('Hybrid', [StringComparison]::Ordinal)) { $arguments += '-nographics' }
     $arguments += @('-executeMethod', 'YLFramework.Testing.DistributionEntry.Execute', '-ylDistributionRequest', $request)
@@ -190,10 +206,24 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
         $report['result']['status'] -isnot [string] -or $report['result']['status'] -cne $(if ($prerequisite) { 'PrerequisiteNotMet' } elseif ($Phase -ceq 'HybridConfigure') { 'Completed' } else { 'Passed' })) { throw 'Distribution evidence identity/status does not match.' }
     if ($report['packages'] -isnot [array] -or $report['packages'].Count -ne $expectedPackages.Count -or $report['resolvedDependencies'] -isnot [array]) { throw 'Distribution package graph is incomplete.' }
     $lock = [IO.File]::ReadAllText((Join-Path $HostRecord.path 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable -DateKind String
+    if ($artifact) {
+        Assert-YLRegistryCacheObservation -Actual $report['cacheEnvironment'] -CacheRoot $cache.path
+        $summary['resolvedGraph'] = Assert-YLRegistryResolvedGraph -Manifest (Read-YLPackageEvidenceJson (Join-Path $HostRecord.path 'Packages/manifest.json')) -Lock $lock -Rows $report['resolvedDependencies'] -Release $registrySource.release -EntryPackage 'com.kano.ylframework' -PackageSource $PackageSource -RegistryUrl $registrySource.registryUrl -EditorVersion $editor.version -HostRoot $HostRecord.path -CacheRoot $cache.path
+        if ($Phase -ceq 'Inspect') { $summary['cacheUse'] = Get-YLRegistryCacheUse -CacheRoot $cache.path -PackageSource $PackageSource }
+    }
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($row in $report['packages']) {
         foreach ($field in @('name', 'version', 'source', 'assetPath', 'resolvedPath', 'contentSha256', 'packageId')) { if ($row[$field] -isnot [string]) { throw 'Distribution package fields must be strings.' } }
         $expected = @($expectedPackages | Where-Object { $_.name -ceq $row['name'] })
+        if ($artifact) {
+            if ($expected.Count -ne 1 -or -not $seen.Add($row['name']) -or $row['version'] -cne $expected[0].version -or
+                $row['assetPath'] -cne ('Packages/' + $row['name']) -or $row['source'] -cne $PackageSource) { throw 'Distribution artifact package identity/source does not match.' }
+            $actual = Get-DistributionPackageContent -Root $row['resolvedPath'] -AllowManagedFingerprint -FingerprintSource $PackageSource
+            if ($actual.sha256 -cne $expected[0].contentSha256 -or $row['contentSha256'] -cne $actual.sha256) { throw 'Distribution artifact package differs from the frozen release payload.' }
+            if ($packageEvidence.ContainsKey($row['name']) -and $packageEvidence[$row['name']] -cne $actual.sha256) { throw 'Distribution installed artifact inputs changed.' }
+            $packageEvidence[$row['name']] = $actual.sha256
+            continue
+        }
         if ($expected.Count -ne 1 -or -not $seen.Add($row['name']) -or $row['version'] -cne $expected[0].version -or
             $row['assetPath'] -cne ('Packages/' + $row['name']) -or $row['source'] -cne $(if ($PackageSource -ceq 'File') { 'Local' } else { 'Git' })) { throw 'Distribution package identity/source does not match.' }
         $resolved = Get-YLTestPath $row['resolvedPath']
@@ -225,6 +255,7 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
         if ($packageEvidence.ContainsKey($row['name']) -and $packageEvidence[$row['name']] -cne $actual.sha256) { throw 'Distribution installed package inputs changed.' }
         $packageEvidence[$row['name']] = $actual.sha256
     }
+    if (-not $artifact) {
     $resolvedById = @{}
     foreach ($dependency in $report['resolvedDependencies']) {
         foreach ($field in @('name', 'version', 'source')) { if ($dependency[$field] -isnot [string]) { throw 'Distribution resolved dependency fields must be strings.' } }
@@ -242,6 +273,7 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
         if ($actual['version'] -cne $expectedVersion) { throw 'Distribution resolved dependency version does not match.' }
         if ($entry.Key -ceq 'com.code-philosophy.hybridclr' -and ($actual['source'] -cne 'Git' -or $lock['dependencies'][$entry.Key]['hash'] -cne $sdk.revision)) { throw 'HybridCLR SDK actual Git revision does not match.' }
     }
+    }
     if ((Get-FileHash -LiteralPath (Join-Path $HostRecord.path 'Packages/manifest.json')).Hash -cne $manifestHash) { throw 'Distribution host package manifest inputs changed.' }
     $summary.packages = @($report['packages']); $summary.resolvedDependencies = @($report['resolvedDependencies'])
     return [pscustomobject]@{ result = [pscustomobject]$report['result'] }
@@ -249,7 +281,7 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
 
 try {
     $toolchain = [Collections.Generic.List[string]]::new(); $toolchain.Add($Unity)
-    $hostPackages = Get-DistributionHostPackages -Repository $repository -EditorProfile $editor -HybridCLR ([bool]$HybridCLR)
+    $hostPackages = if ($artifact) { @{ inputs = @(); dependencies = [ordered]@{}; sdk = $null } } else { Get-DistributionHostPackages -Repository $repository -EditorProfile $editor -HybridCLR ([bool]$HybridCLR) }
     $sdk = $hostPackages.sdk
     if ($HybridCLR) {
         $NativeSource = Get-YLTestPath $NativeSource
@@ -299,7 +331,15 @@ try {
     }
     $ids = @('com.kano.ylframework'); if ($HybridCLR) { $ids += 'com.kano.ylframework.hybridclr' }
     $products = @(); $inventories = @{}
-    if ($packageOrigin -cne 'GitRemote') {
+    if ($artifact) {
+        $artifactInputs = Initialize-YLRegistryExpectedInputs -Source $registrySource -Output (Join-Path $run.path 'ExpectedArtifacts')
+        $summary['registryArtifacts'] = @($artifactInputs.packages | ForEach-Object { @{ id = $_.id; sha256 = $_.sha256; integrity = $_.integrity; payloadSha256 = $_.payloadSha256; registry = $_.registryEvidence } })
+        $products = @($artifactInputs.packages | Where-Object id -CEQ 'com.kano.ylframework')
+        foreach ($package in $products) { $inventories[$package.id] = Get-DistributionPackageContent -Root $package.root }
+        $toolchain.Add($registrySource.release.path)
+        $summary['release'] = @{ sourceCommit = $registrySource.release.sourceCommit; manifestSha256 = $registrySource.release.sha256; producer = $registrySource.release.producer }
+        $summary['acceptanceKind'] = if ($PackageSource -ceq 'LocalTarball') { 'ArtifactPreflight' } else { 'RegistryInstallation' }
+    } elseif ($packageOrigin -cne 'GitRemote') {
         $products = @(Get-YLUpmPackages -Repository $repository -Ids $ids)
         foreach ($package in $products) {
             if ($package.version -cne '0.1.0-preview.1') { throw 'Distribution requires the exact preview package version.' }
@@ -309,12 +349,16 @@ try {
     $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($relative in @('Tools/Testing/DistributionEntry.cs', 'Tools/Testing/Tests/Test-YLDistribution.ps1', 'Tools/Testing/Common/Workspace.ps1',
         'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/Common/Packages.ps1', 'Tools/Testing/UnityHost.ps1', 'Tools/Testing/TestSuites.json') + $hostPackages.inputs) { $null = $paths.Add($relative) }
-    foreach ($package in $products) { foreach ($file in $inventories[$package.id].files) { $null = $paths.Add($package.relative + '/' + $file.path) } }
+    if ($artifact) { $null = $paths.Add('Tools/Packaging/Build-YLRegistryPackages.ps1') }
+    if ($artifact) { foreach ($relative in @('Tools/Testing/RegistryAuthoringEntry.cs', 'Tools/Testing/Common/RegistryAuthoring.ps1')) { $null = $paths.Add($relative) } }
+    if ($PackageSource -ceq 'Registry') { foreach ($relative in @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1')) { $null = $paths.Add($relative) } }
+    if (-not $artifact) { foreach ($package in $products) { foreach ($file in $inventories[$package.id].files) { $null = $paths.Add($package.relative + '/' + $file.path) } } }
     if ($RunPlayer) { $null = $paths.Add($(if ($HybridCLR) { 'Tools/Testing/HybridCLRSmoke.cs' } else { 'Tools/Testing/PlayerSmoke.cs' })) }
     if ($HybridCLR) { foreach ($path in @('Tools/Testing/HybridCLREntry.cs', 'Packages/manifest.json', 'Packages/packages-lock.json')) { $null = $paths.Add($path) } }
     $cache = New-YLTestDirectory -Workspace $workspace -Kind Cache -Key ("D-$($run.id)")
     $hostLeases.Add((Lock-YLTestDirectory -Workspace $workspace -Path $cache.path))
     $stage = Join-Path $cache.path 'Source.git'
+    if (-not $artifact) {
     $null = [IO.Directory]::CreateDirectory($stage)
     foreach ($package in $products) {
         foreach ($file in $inventories[$package.id].files) {
@@ -322,6 +366,7 @@ try {
             $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
             [IO.File]::Copy((Join-Path $package.root $file.path), $destination, $false)
         }
+    }
     }
     if ($packageOrigin -ceq 'GitFixture') {
         $git = (Get-Command git -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
@@ -354,13 +399,23 @@ try {
     $identity = Get-YLTestInputIdentity -Repository $repository -Paths @($paths) -Toolchain $toolchain.ToArray() -Profile $profile
     $summary['inputIdentity'] = $identity
     $dependencies = $hostPackages.dependencies
+    if ($artifact) {
+        $manifestObject = New-YLRegistryHostManifest -PackageSource $PackageSource -Release $registrySource.release -EntryPackage 'com.kano.ylframework' -RegistryUrl $registrySource.registryUrl
+        $dependencies = $manifestObject.dependencies
+        $expectedPackages = @(foreach ($package in $products) {
+            @{ name = $package.id; version = $package.version; root = $null; files = $inventories[$package.id].files; contentSha256 = $inventories[$package.id].sha256
+                locator = $(if ($PackageSource -ceq 'Registry') { $package.version } else { $dependencies[$package.id] }); dependencies = $package.dependencies }
+        })
+    } else {
     $expectedPackages = @(foreach ($id in $ids) {
         $root = Join-Path $stage "PackageSources/$id"
         $dependencies[$id] = if ($PackageSource -ceq 'File') { 'file:' + $root.Replace('\', '/') } else { "$GitRepository`?path=/PackageSources/$id#$GitRevision" }
         @{ name = $id; version = '0.1.0-preview.1'; root = $(if ($packageOrigin -ceq 'File') { $root } else { $null }); contentSha256 = $(if ($inventories.ContainsKey($id)) { $inventories[$id].sha256 } else { $null }) }
     })
+    $manifestObject = @{ dependencies = $dependencies }
+    }
     $bootstrap = [ordered]@{ 'Assets/YLTestingDistribution/Editor/DistributionEntry.cs' = [IO.File]::ReadAllBytes((Join-Path $repository 'Tools/Testing/DistributionEntry.cs')) }
-    $bootstrap['Packages/manifest.json'] = [Text.Encoding]::UTF8.GetBytes((@{ dependencies = $dependencies } | ConvertTo-Json -Depth 8) + "`n")
+    $bootstrap['Packages/manifest.json'] = [Text.Encoding]::UTF8.GetBytes(($manifestObject | ConvertTo-Json -Depth 8) + "`n")
     $manifestHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$bootstrap['Packages/manifest.json']))
     $hostKey = if ($HybridCLR) { "H$($run.id.Substring(0, 7))" } else { "D-$($editor.version)-$($run.id.Substring(0, 8))" }
     if ([IO.Path]::Exists((Join-Path $workspace.root "Hosts/$hostKey"))) { throw 'Do not adopt an existing distribution host.' }
@@ -423,17 +478,37 @@ try {
             $summary.playerRuns += $summary.playerRun
             $playerLog = [IO.File]::ReadAllText((Join-Path $output 'player.log'))
             if (-not $playerLog.Contains('[YLPlayerSmoke] PASS ' + $run.id) -or $playerLog -match '(?m)^.*(?:Exception:|Assertion failed|\[YLPlayerSmoke\] FAIL)') { throw 'Player log does not close the matching successful smoke run.' }
-            foreach ($artifact in @($artifacts) + @($baseline)) { if ((Get-FileHash -LiteralPath $artifact.path -Algorithm SHA256).Hash -cne $artifact.sha256) { throw 'Player artifacts or frozen baseline changed during execution.' } }
+            foreach ($playerArtifact in @($artifacts) + @($baseline)) { if ((Get-FileHash -LiteralPath $playerArtifact.path -Algorithm SHA256).Hash -cne $playerArtifact.sha256) { throw 'Player artifacts or frozen baseline changed during execution.' } }
             $summary.checks++; 'PASS: actual Player resource/workflow/release evidence and normal process exit close'
         }
         foreach ($inputFile in $summary.probeInputs) { if ((Get-FileHash -LiteralPath $inputFile.path -Algorithm SHA256).Hash -cne $inputFile.sha256) { throw 'Smoke inputs changed during build/execution.' } }
     }
+    if ($artifact) {
+        . (Join-Path $PSScriptRoot '../Common/RegistryAuthoring.ps1')
+        $summary['authoring'] = Invoke-YLRegistryAuthoring -Workspace $workspace -Source $registrySource -Unity $Unity -Editor $editor -EntryPackage 'com.kano.ylframework' -Result $run -TimeoutSeconds $TimeoutSeconds
+        $summary.processes = @($summary.processes) + @($summary.authoring.processes)
+        Assert-YLRegistryStageCompleted -Outcome $summary.authoring -Stage Authoring
+    }
+    if ($PackageSource -ceq 'Registry') {
+        . (Join-Path $PSScriptRoot '../Common/RegistryLifecycle.ps1')
+        $summary['lifecycle'] = Invoke-YLRegistryLifecycle -Workspace $workspace -Source $registrySource -Unity $Unity -Editor $editor -EntryPackage 'com.kano.ylframework' -Result $run -TimeoutSeconds $TimeoutSeconds
+        $summary.processes = @($summary.processes) + @($summary.lifecycle.processes)
+        Assert-YLRegistryStageCompleted -Outcome $summary.lifecycle -Stage Lifecycle
+    }
     $current = Get-YLTestInputIdentity -Repository $repository -Paths @($paths) -Toolchain $toolchain.ToArray() -Profile $profile
     if ($current.sha256 -cne $identity.sha256) { throw 'Distribution source inputs changed during verification.' }
     foreach ($package in $products) { if ((Get-DistributionPackageContent -Root $package.root).sha256 -cne $inventories[$package.id].sha256) { throw 'Distribution source package inputs changed.' } }
-    foreach ($package in $summary.packages) { if ((Get-DistributionPackageContent -Root $package['resolvedPath'] -AllowManagedFingerprint:($package['source'] -ceq 'Git')).sha256 -cne $package['contentSha256']) { throw 'Distribution installed package inputs changed.' } }
+    foreach ($package in $summary.packages) {
+        $fingerprintSource = if ($package['source'] -ceq 'LocalTarball') { 'LocalTarball' } elseif ($package['source'] -ceq 'Registry') { 'Registry' } else { 'Git' }
+        if ((Get-DistributionPackageContent -Root $package['resolvedPath'] -AllowManagedFingerprint:($package['source'] -cin @('Git', 'Registry', 'LocalTarball')) -FingerprintSource $fingerprintSource).sha256 -cne $package['contentSha256']) { throw 'Distribution installed package inputs changed.' }
+    }
+    if ($artifact -and (Read-YLRegistryRelease -Path $registrySource.release.path -VerifyTarballs:($PackageSource -ceq 'LocalTarball')).sha256 -cne $registrySource.release.sha256) { throw 'Frozen release manifest inputs changed.' }
     $summary.status = if ($summary.player -ceq 'Passed') { 'Passed' } else { 'PrerequisiteNotMet' }
-} catch { $summary.reason = $_.Exception.Message; throw }
+} catch {
+    $summary.reason = $_.Exception.Message
+    if ($summary.reason.StartsWith('PrerequisiteNotMet:', [StringComparison]::Ordinal)) { $summary.status = 'PrerequisiteNotMet' }
+    else { throw }
+}
 finally {
     $summary.endUtc = [DateTime]::UtcNow.ToString('o')
     try { Write-YLTestJson -Path (Join-Path $run.path 'summary.json') -Value $summary }

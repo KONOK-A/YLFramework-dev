@@ -43,6 +43,9 @@ namespace YLFramework.Testing
                     schemaVersion = 1, purpose = "YLTesting.IntegrationPackages", integration = Text(request, "integration"),
                     hostId = Text(request, "hostId"), resultId = Text(request, "resultId"), inputHash = Text(request, "inputHash"),
                     packageOrigin = Text(request, "packageOrigin"), expectedTemplateHash = Text(request, "expectedTemplateHash"),
+                    entryPackage = (string)request["entryPackage"], registryUrl = (string)request["registryUrl"],
+                    registryVersion = (string)request["registryVersion"], releaseManifestSha256 = (string)request["releaseManifestSha256"],
+                    cacheEnvironment = Artifact(request) ? CacheEnvironment() : null,
                     unityVersion = Application.unityVersion, pid = System.Diagnostics.Process.GetCurrentProcess().Id,
                     isBatchMode = Application.isBatchMode, scriptCompilationFailed = EditorUtility.scriptCompilationFailed,
                     capturedUtc = DateTime.UtcNow.ToString("o"), status = "Failed", packages = new object[0], assemblies = new object[0],
@@ -66,34 +69,12 @@ namespace YLFramework.Testing
                 string integration = Text(request, "integration");
                 var manifest = ReadJson(Path.Combine(Project(), "Packages/manifest.json"));
                 report["resolvedDependencies"] = JArray.FromObject(installed.OrderBy(package => package.name, StringComparer.Ordinal)
-                    .Select(package => new { package.name, package.version, source = package.source.ToString(), package.resolvedPath, revision = package.git?.hash }));
+                    .Select(PackageRow));
                 var editor = CompilationPipeline.GetAssemblies(AssembliesType.Editor);
                 var player = CompilationPipeline.GetAssemblies(AssembliesType.PlayerWithoutTestAssemblies);
                 report["editorGraph"] = JArray.FromObject(editor.Select(Graph));
                 report["playerGraph"] = JArray.FromObject(player.Select(Graph));
-                foreach (var assembly in editor.Concat(player))
-                {
-                    if (Regex.IsMatch(assembly.name, "TestRunner|Tests|Acceptance|Mcp|ReflectorNet", RegexOptions.IgnoreCase) ||
-                        References(assembly).Any(reference => Regex.IsMatch(reference, "TestRunner|nunit|Mcp|ReflectorNet", RegexOptions.IgnoreCase)) ||
-                        assembly.sourceFiles.Any(source => source.Replace('\\', '/').Contains("/Samples~/") || source.Replace('\\', '/').StartsWith("Assets/Samples/", StringComparison.Ordinal)))
-                    {
-                        throw new InvalidOperationException("Tests, MCP or default-imported Samples entered the consumer compilation graph.");
-                    }
-                    foreach (string source in assembly.sourceFiles.Where(source => source.Replace('\\', '/').StartsWith("Assets/", StringComparison.Ordinal)))
-                    {
-                        string path = source.Replace('\\', '/');
-                        if (path != "Assets/YLTestingIntegration/Editor/IntegrationEntry.cs" &&
-                            !(integration == "DOTween" && path.StartsWith("Assets/Plugins/Demigiant/DOTween/", StringComparison.Ordinal)))
-                        {
-                            throw new InvalidOperationException("A product source was copied into Assets or an unknown source entered the host: " + source);
-                        }
-                    }
-                }
-                if (player.Any(assembly => Regex.IsMatch(assembly.name, "Excel|MiniExcel", RegexOptions.IgnoreCase) ||
-                    References(assembly).Any(reference => Regex.IsMatch(reference, "Excel|MiniExcel", RegexOptions.IgnoreCase))))
-                {
-                    throw new InvalidOperationException("Excel or MiniExcel leaked into the actual Player assembly graph.");
-                }
+                ValidateGraph(request, editor, player);
                 var required = new JArray();
                 foreach (var expected in ((JArray)request["assemblies"]).Cast<JObject>())
                 {
@@ -135,23 +116,8 @@ namespace YLFramework.Testing
                 }
                 if (integration == "DOTween")
                 {
-                    var adapter = editor.Single(assembly => assembly.name == "YLFramework.Actions.DOTween");
-                    string dll = adapter.compiledAssemblyReferences.Single(path => Path.GetFileName(path) == "DOTween.dll");
-                    if (!global.Contains("DOTWEEN") || !adapter.defines.Contains("DOTWEEN") ||
-                        !string.Equals(Path.GetFullPath(dll), Path.GetFullPath(Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween/DOTween.dll")), StringComparison.OrdinalIgnoreCase) ||
-                        !string.Equals(Hash(dll), Text((JObject)request["sdk"], "assemblySha256"), StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new InvalidOperationException("DOTween must compile against the approved consumer SDK and the owned DOTWEEN setting.");
-                    }
-                    string modules = Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween/Modules");
-                    var sdkSources = Files(modules).Where(path => path.EndsWith(".cs", StringComparison.Ordinal)).Select(Path.GetFullPath).ToArray();
-                    var compiled = new HashSet<string>(editor.SelectMany(assembly => assembly.sourceFiles).Select(source => Physical(source, selected)), StringComparer.OrdinalIgnoreCase);
-                    if (sdkSources.Length == 0 || sdkSources.Any(path => !compiled.Contains(path)))
-                    {
-                        throw new InvalidOperationException("The complete SDK Modules did not enter actual compilation: " +
-                            string.Join(",", sdkSources.Where(path => !compiled.Contains(path))));
-                    }
-                    report["sdk"] = JObject.FromObject(new { version = Text((JObject)request["sdk"], "version"), dll, sha256 = Hash(dll), modules = sdkSources });
+                    report["sdk"] = ValidateDotween(request, editor, player, selected, global);
+                    report["dotweenSdkMode"] = (string)request["dotweenSdkMode"] ?? "Required";
                 }
                 if (integration == "Excel" || integration == "DomainExcel")
                 {
@@ -175,12 +141,17 @@ namespace YLFramework.Testing
                 if (integration == "HybridCLR")
                 {
                     var sdk = installed.Single(package => package.name == "com.code-philosophy.hybridclr");
-                    var expected = (JObject)request["sdk"];
-                    string revision = GitRevision(sdk, Text(expected, "declaration"), Text(expected, "revision"), "v9.0.3");
-                    if (sdk.version != "9.0.3" ||
-                        Text((JObject)manifest["dependencies"], sdk.name) != Text(expected, "declaration"))
+                    JObject sdkReport;
+                    if (Artifact(request)) { sdkReport = CaptureRegistrySdk(request); }
+                    else
                     {
-                        throw new InvalidOperationException("The actual official HybridCLR SDK source/version/commit is incorrect.");
+                        var expected = (JObject)request["sdk"];
+                        string revision = GitRevision(sdk, Text(expected, "declaration"), Text(expected, "revision"), "v9.0.3");
+                        if (sdk.version != "9.0.3" || Text((JObject)manifest["dependencies"], sdk.name) != Text(expected, "declaration"))
+                        {
+                            throw new InvalidOperationException("The actual official HybridCLR SDK source/version/commit is incorrect.");
+                        }
+                        sdkReport = PackageRow(sdk); sdkReport["revision"] = revision;
                     }
                     foreach (string name in new[] { "YLFramework.HybridCLR", "YLFramework.HybridCLR.Editor" })
                     {
@@ -196,10 +167,10 @@ namespace YLFramework.Testing
                     {
                         throw new InvalidOperationException("HybridCLR/dnlib references must come from the separately installed official SDK.");
                     }
-                    report["sdk"] = JObject.FromObject(new { sdk.name, sdk.version, source = sdk.source.ToString(), sdk.resolvedPath,
-                        revision, apiRevision = sdk.git?.revision, apiHash = sdk.git?.hash, dnlib, dnlibSha256 = Hash(dnlib) });
+                    sdkReport["dnlib"] = dnlib; sdkReport["dnlibSha256"] = Hash(dnlib); report["sdk"] = sdkReport;
                 }
                 report["status"] = "Completed";
+                if (integration == "DOTween" && (string)request["dotweenSdkMode"] == "Absent") { report["status"] = "NegativeNoSdk"; }
                 WriteReport(request, report);
                 EditorApplication.Exit(0);
             }
@@ -215,10 +186,135 @@ namespace YLFramework.Testing
 
         private static JObject ReadJson(string path)
         {
-            using var reader = new JsonTextReader(new StringReader(File.ReadAllText(path))) { DateParseHandling = DateParseHandling.None };
+            string text = File.ReadAllText(path);
+            // Json.NET accepts non-JSON syntax that must not disappear during semantic hashing.
+            const string tokens = @"""(?:[^""\\\x00-\x1f]|\\(?:[""\\/bfnrt]|u[0-9a-fA-F]{4}))*""|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null|[{}\[\]:,]|[ \t\r\n]+";
+            int offset = 0; string previous = ""; bool previousAtom = false;
+            foreach (Match match in Regex.Matches(text, tokens))
+            {
+                if (match.Index != offset) { throw new InvalidOperationException("Non-JSON manifest syntax is refused."); }
+                offset += match.Length;
+                string token = match.Value;
+                if (string.IsNullOrWhiteSpace(token)) { continue; }
+                bool atom = token[0] == '"' || token[0] == '-' || char.IsDigit(token[0]) || token == "true" || token == "false" || token == "null";
+                if (((token == "}" || token == "]") && previous == ",") || (token == ":" && !previous.StartsWith("\"", StringComparison.Ordinal)) || (atom && previousAtom))
+                {
+                    throw new InvalidOperationException("Non-JSON manifest separators are refused.");
+                }
+                previous = token; previousAtom = atom;
+            }
+            if (offset != text.Length) { throw new InvalidOperationException("Non-JSON manifest syntax is refused."); }
+            using var reader = new JsonTextReader(new StringReader(text)) { DateParseHandling = DateParseHandling.None };
             var value = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
             if (reader.Read()) { throw new InvalidOperationException("Unexpected trailing integration JSON content."); }
             return value;
+        }
+
+        private static JObject CacheEnvironment() => JObject.FromObject(new
+        {
+            UPM_CACHE_ROOT = Environment.GetEnvironmentVariable("UPM_CACHE_ROOT"),
+            UPM_CACHE_PATH = Environment.GetEnvironmentVariable("UPM_CACHE_PATH"),
+            UPM_NPM_CACHE_PATH = Environment.GetEnvironmentVariable("UPM_NPM_CACHE_PATH")
+        });
+
+        private static JObject ValidateDotween(JObject request, CompiledAssembly[] editor, CompiledAssembly[] player, JObject[] selected, string[] global)
+        {
+            if ((string)request["dotweenSdkMode"] == "Absent")
+            {
+                if (global.Contains("DOTWEEN") || editor.Concat(player).Any(assembly => assembly.name == "YLFramework.Actions.DOTween" ||
+                        References(assembly).Any(reference => Regex.IsMatch(reference, @"^DOTween(?:\.|$)", RegexOptions.IgnoreCase))) ||
+                    Directory.Exists(Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween")) ||
+                    Files(Application.dataPath).Any(path => Regex.IsMatch(Path.GetFileName(path), @"^DOTween.*\.(?:dll|cs|asmdef)$", RegexOptions.IgnoreCase)))
+                {
+                    throw new InvalidOperationException("DOTween Absent refuses the wrapper, global DOTWEEN and any deployed SDK.");
+                }
+                return JObject.FromObject(new { mode = "Absent", status = "NegativeNoSdk", sdkDeployed = false, wrapperCompiled = false });
+            }
+            var adapter = editor.Single(assembly => assembly.name == "YLFramework.Actions.DOTween");
+            string dll = adapter.compiledAssemblyReferences.Single(path => Path.GetFileName(path) == "DOTween.dll");
+            if (!global.Contains("DOTWEEN") || !adapter.defines.Contains("DOTWEEN") ||
+                !string.Equals(Path.GetFullPath(dll), Path.GetFullPath(Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween/DOTween.dll")), StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(Hash(dll), Text((JObject)request["sdk"], "assemblySha256"), StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("DOTween must compile against the approved consumer SDK and the owned DOTWEEN setting.");
+            }
+            string modules = Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween/Modules");
+            var sdkSources = Files(modules).Where(path => path.EndsWith(".cs", StringComparison.Ordinal)).Select(Path.GetFullPath).ToArray();
+            var compiled = new HashSet<string>(editor.SelectMany(assembly => assembly.sourceFiles).Select(source => Physical(source, selected)), StringComparer.OrdinalIgnoreCase);
+            if (sdkSources.Length == 0 || sdkSources.Any(path => !compiled.Contains(path)))
+            {
+                throw new InvalidOperationException("The complete SDK Modules did not enter actual compilation: " + string.Join(",", sdkSources.Where(path => !compiled.Contains(path))));
+            }
+            return JObject.FromObject(new { mode = "Required", version = Text((JObject)request["sdk"], "version"), dll, sha256 = Hash(dll), modules = sdkSources });
+        }
+
+        private static void ValidateGraph(JObject request, CompiledAssembly[] editor, CompiledAssembly[] player)
+        {
+            var installed = PackageInfo.GetAllRegisteredPackages();
+            foreach (var assembly in editor.Concat(player))
+            {
+                var compiledSources = new List<string>();
+                if (Regex.IsMatch(assembly.name, "TestRunner|Tests|Acceptance|Mcp|ReflectorNet", RegexOptions.IgnoreCase) ||
+                    References(assembly).Any(reference => Regex.IsMatch(reference, "TestRunner|nunit|Mcp|ReflectorNet", RegexOptions.IgnoreCase)))
+                {
+                    throw new InvalidOperationException("Tests or MCP entered the consumer compilation graph.");
+                }
+                foreach (string source in assembly.sourceFiles)
+                {
+                    string normalized = source.Replace('\\', '/');
+                    if (Regex.IsMatch(normalized, @"(?:^|/)(?:Samples~|Samples|Tests)(?:/|$)|(?:^|/)\.\.?(?:/|$)", RegexOptions.IgnoreCase))
+                    {
+                        throw new InvalidOperationException("Default Samples, Tests or traversal entered the compilation graph: " + source);
+                    }
+                    string path;
+                    if (normalized.StartsWith("Packages/", StringComparison.Ordinal))
+                    {
+                        var package = installed.SingleOrDefault(item => normalized.StartsWith("Packages/" + item.name + "/", StringComparison.Ordinal));
+                        if (package == null) { throw new InvalidOperationException("A source has no registered package owner: " + source); }
+                        path = Path.GetFullPath(Path.Combine(package.resolvedPath, normalized.Substring(("Packages/" + package.name + "/").Length)));
+                        if (!Inside(path, Path.GetFullPath(package.resolvedPath))) { throw new InvalidOperationException("A source escaped its registered package."); }
+                    }
+                    else
+                    {
+                        path = Path.GetFullPath(Path.IsPathRooted(source) ? source : Path.Combine(Project(), source));
+                        if (Inside(path, Application.dataPath))
+                        {
+                            if (!string.Equals(path, Path.GetFullPath(Path.Combine(Project(), "Assets/YLTestingIntegration/Editor/IntegrationEntry.cs")), StringComparison.OrdinalIgnoreCase) &&
+                                !(Text(request, "integration") == "DOTween" && (string)request["dotweenSdkMode"] != "Absent" &&
+                                    Inside(path, Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween"))))
+                            {
+                                throw new InvalidOperationException("A product source was copied into Assets or an unknown source entered the host: " + source);
+                            }
+                        }
+                        else if (!installed.Any(package => !string.IsNullOrEmpty(package.resolvedPath) && Inside(path, Path.GetFullPath(package.resolvedPath))))
+                        {
+                            throw new InvalidOperationException("A source compiled outside every actual registered package: " + source);
+                        }
+                    }
+                    if (!File.Exists(path)) { throw new InvalidOperationException("A compiled source is missing from its actual owner: " + source); }
+                    RejectLinks(path);
+                    compiledSources.Add(path);
+                }
+                var required = ((JArray)request["assemblies"]).Cast<JObject>().SingleOrDefault(item => Text(item, "name") == assembly.name);
+                if (required != null)
+                {
+                    var expected = ((JArray)request["packages"]).Cast<JObject>().Single(item => Text(item, "name") == Text(required, "package"));
+                    var package = installed.Single(item => item.name == Text(required, "package"));
+                    string prefix = Text(required, "directory") + "/";
+                    var sources = ((JArray)expected["files"]).Cast<JObject>().Select(file => Text(file, "path"))
+                        .Where(path => path.StartsWith(prefix, StringComparison.Ordinal) && path.EndsWith(".cs", StringComparison.Ordinal))
+                        .Select(path => Path.GetFullPath(Path.Combine(package.resolvedPath, path))).ToArray();
+                    if (sources.Length == 0 || sources.Length != compiledSources.Count || !new HashSet<string>(sources, StringComparer.OrdinalIgnoreCase).SetEquals(compiledSources))
+                    {
+                        throw new InvalidOperationException("An Editor/Player assembly lost, duplicated or changed its exact installed source closure: " + assembly.name);
+                    }
+                }
+            }
+            if (player.Any(assembly => Regex.IsMatch(assembly.name, "Excel|MiniExcel", RegexOptions.IgnoreCase) ||
+                References(assembly).Any(reference => Regex.IsMatch(reference, "Excel|MiniExcel", RegexOptions.IgnoreCase))))
+            {
+                throw new InvalidOperationException("Excel or MiniExcel leaked into the actual Player assembly graph.");
+            }
         }
 
         private static void ValidateGitSource(JObject request)
@@ -264,7 +360,7 @@ namespace YLFramework.Testing
             return token is JArray array ? new JArray(array.Select(CanonicalToken)) : token.DeepClone();
         }
 
-        private static string PackageFileHash(string path, string relative, string name, bool git)
+        private static string PackageFileHash(string path, string relative, string name, bool git, bool localTarball = false)
         {
             if (Regex.IsMatch(relative, @"^(?:Assets|Packages|ProjectSettings|Library|Temp|Tests|Tools|\.git|\.kilo|\.kilocode|\.opencode|obj|bin)(?:/|$)|(?:^|/)(?:AGENTS\.md|\.yl-[^/]+|[^/]+\.(?:csproj|sln|slnx))$|IvanMurzak|UnityMcp|ReflectorNet", RegexOptions.IgnoreCase))
             {
@@ -283,10 +379,15 @@ namespace YLFramework.Testing
             }
             if (relative != "package.json") { return Hash(path); }
             var manifest = ReadJson(path);
+            if (manifest.Properties().Any(property => property.Name.StartsWith("_", StringComparison.Ordinal) && property.Name != "_fingerprint"))
+            {
+                throw new InvalidOperationException("Unknown package-manager manifest metadata.");
+            }
             var fingerprint = manifest.Property("_fingerprint");
             if (fingerprint != null)
             {
-                if (!git || fingerprint.Value.Type != JTokenType.String || !Regex.IsMatch((string)fingerprint.Value, @"\A[0-9a-fA-F]{40}\z"))
+                if (!git || fingerprint.Value.Type != JTokenType.String || !Regex.IsMatch((string)fingerprint.Value,
+                    localTarball ? @"\A[0-9a-fA-F]{32}\z" : @"\A[0-9a-fA-F]{40}\z"))
                 {
                     throw new InvalidOperationException("Untrusted package-manager fingerprint metadata.");
                 }
@@ -299,6 +400,7 @@ namespace YLFramework.Testing
 
         private static JArray CapturePackages(JObject request)
         {
+            if (Artifact(request)) { return CaptureArtifactPackages(request); }
             bool git = Text(request, "packageOrigin") == "GitRemote";
             string samples = Path.Combine(Project(), "Assets", "Samples");
             if (Directory.Exists(samples) && Files(samples).Any()) { throw new InvalidOperationException("The consumer must not default-import Samples, including non-script assets."); }
@@ -369,10 +471,253 @@ namespace YLFramework.Testing
                 using var hash = SHA256.Create();
                 string contentSha256 = string.Concat(hash.ComputeHash(Encoding.UTF8.GetBytes(content.ToString())).Select(value => value.ToString("x2")));
                 if (contentSha256 != Text(expected, "contentSha256")) { throw new InvalidOperationException("The complete installed content identity differs from the expected template."); }
-                result.Add(JObject.FromObject(new { name, package.version, source = package.source.ToString(), package.assetPath, package.packageId,
-                    resolvedPath = root, revision, apiHash = package.git?.hash, apiRevision = package.git?.revision, contentSha256, verifiedFiles = files.Length }));
+                var row = PackageRow(package);
+                row["resolvedPath"] = root; row["revision"] = revision; row["contentSha256"] = contentSha256; row["verifiedFiles"] = files.Length;
+                result.Add(row);
             }
             return result;
+        }
+
+        private static bool Artifact(JObject request) => (string)request["packageOrigin"] == "Registry" || (string)request["packageOrigin"] == "LocalTarball";
+
+        private static JObject Dependencies(PackageInfo package)
+        {
+            var result = new JObject();
+            foreach (var dependency in package.dependencies.OrderBy(item => item.name, StringComparer.Ordinal))
+            {
+                if (string.IsNullOrWhiteSpace(dependency.name) || string.IsNullOrWhiteSpace(dependency.version) || result.Property(dependency.name) != null)
+                {
+                    throw new InvalidOperationException("Invalid or duplicate PackageInfo dependency: " + package.name);
+                }
+                result.Add(dependency.name, dependency.version);
+            }
+            return result;
+        }
+
+        private static JObject PackageRow(PackageInfo package)
+        {
+            string fingerprint = null;
+            if (!string.IsNullOrEmpty(package.resolvedPath) && File.Exists(Path.Combine(package.resolvedPath, "package.json")))
+            {
+                var value = ReadJson(Path.Combine(package.resolvedPath, "package.json")).Property("_fingerprint");
+                if (value != null)
+                {
+                    if ((!new[] { PackageSource.Git, PackageSource.Registry, PackageSource.LocalTarball }.Contains(package.source) &&
+                            !(package.source == PackageSource.BuiltIn && package.name?.StartsWith("com.unity.", StringComparison.Ordinal) == true)) ||
+                        value.Value.Type != JTokenType.String || !Regex.IsMatch((string)value.Value,
+                            package.source == PackageSource.LocalTarball ? @"\A[0-9a-fA-F]{32}\z" : @"\A[0-9a-fA-F]{40}\z"))
+                    {
+                        throw new InvalidOperationException("Untrusted package-manager fingerprint metadata.");
+                    }
+                    fingerprint = (string)value.Value;
+                }
+            }
+            return JObject.FromObject(new { package.name, package.version, source = package.source.ToString(), package.assetPath, package.packageId,
+                package.resolvedPath, package.isDirectDependency, registryUrl = package.registry?.url, dependencies = Dependencies(package), fingerprint,
+                revision = package.source == PackageSource.Git ? package.git?.hash : null, apiHash = package.git?.hash, apiRevision = package.git?.revision });
+        }
+
+        private static Dictionary<string, int> ArtifactDepths(JObject request)
+        {
+            var selected = ((JArray)request["packages"]).Cast<JObject>().ToDictionary(package => Text(package, "name"), StringComparer.Ordinal);
+            string entry = Text(request, "entryPackage");
+            if (!selected.ContainsKey(entry)) { throw new InvalidOperationException("The artifact entry is not in the expected closure."); }
+            var depths = new Dictionary<string, int>(StringComparer.Ordinal) { [entry] = 0 };
+            var pending = new Queue<string>(); pending.Enqueue(entry);
+            while (pending.Count != 0)
+            {
+                string name = pending.Dequeue();
+                foreach (var dependency in ((JObject)selected[name]["dependencies"]).Properties())
+                {
+                    if (!dependency.Name.StartsWith("com.kano.", StringComparison.Ordinal)) { continue; }
+                    if (!selected.ContainsKey(dependency.Name) || Text(selected[dependency.Name], "version") != (string)dependency.Value)
+                    {
+                        throw new InvalidOperationException("The frozen own-package closure is incomplete.");
+                    }
+                    if (!depths.ContainsKey(dependency.Name)) { depths.Add(dependency.Name, depths[name] + 1); pending.Enqueue(dependency.Name); }
+                }
+            }
+            if (depths.Count != selected.Count) { throw new InvalidOperationException("The expected artifacts include packages outside the entry closure."); }
+            return depths;
+        }
+
+        private static void ValidateArtifactRequest(JObject request)
+        {
+            bool registry = Text(request, "packageOrigin") == "Registry";
+            if (!Regex.IsMatch(Text(request, "releaseManifestSha256"), @"\A[0-9a-fA-F]{64}\z") ||
+                new[] { "gitRepository", "gitRevision" }.Any(field => request[field] != null && request[field].Type != JTokenType.Null))
+            {
+                throw new InvalidOperationException("Artifact requests require a release identity and refuse Git parameters.");
+            }
+            if (registry)
+            {
+                string url = Text(request, "registryUrl");
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || !uri.IsWellFormedOriginalString() || uri.Scheme != "https" ||
+                    !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment) || Regex.IsMatch(url, @"[\s\\]") ||
+                    !Regex.IsMatch(Text(request, "registryVersion"), @"\A\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\z"))
+                {
+                    throw new InvalidOperationException("Registry requires an exact version and HTTPS registry URL.");
+                }
+            }
+            else if (new[] { "registryUrl", "registryVersion" }.Any(field => request[field] != null && request[field].Type != JTokenType.Null))
+            {
+                throw new InvalidOperationException("LocalTarball refuses Registry request parameters.");
+            }
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var token in (JArray)request["packages"])
+            {
+                if (token is not JObject package || !names.Add(Text(package, "name")) ||
+                    !new[] { "com.kano.ylframework", "com.kano.ylframework.excel", "com.kano.ylframework.domain-excel", "com.kano.ylframework.dotween", "com.kano.ylframework.hybridclr" }.Contains(Text(package, "name")) ||
+                    package["root"]?.Type != JTokenType.Null || !Regex.IsMatch(Text(package, "contentSha256"), @"\A[0-9a-fA-F]{64}\z") ||
+                    package["dependencies"] is not JObject dependencies || dependencies.Properties().Any(property => property.Value.Type != JTokenType.String || string.IsNullOrWhiteSpace((string)property.Value)) ||
+                    package["files"] is not JArray files || files.Count == 0 || (registry && Text(package, "version") != Text(request, "registryVersion")))
+                {
+                    throw new InvalidOperationException("Invalid artifact expected package identity.");
+                }
+                string locator = Text(package, "locator");
+                if (registry ? locator != Text(package, "version") :
+                    !locator.StartsWith("file:", StringComparison.Ordinal) || !Path.IsPathFullyQualified(locator.Substring(5)) ||
+                    !locator.EndsWith(".tgz", StringComparison.Ordinal) || locator.Contains('\\') || !File.Exists(locator.Substring(5)))
+                {
+                    throw new InvalidOperationException("Invalid exact Registry/absolute tarball locator.");
+                }
+                var paths = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var fileToken in files)
+                {
+                    if (fileToken is not JObject file || !Regex.IsMatch(Text(file, "sha256"), @"\A[0-9a-fA-F]{64}\z") ||
+                        Path.IsPathRooted(Text(file, "path")) || Regex.IsMatch(Text(file, "path"), @"(?:^|/)\.\.?(?:/|$)|[\\:*?<>|""]") || !paths.Add(Text(file, "path")))
+                    {
+                        throw new InvalidOperationException("Invalid or duplicate artifact expected file identity.");
+                    }
+                }
+            }
+            ArtifactDepths(request);
+        }
+
+        private static JArray CaptureArtifactPackages(JObject request)
+        {
+            ValidateArtifactRequest(request);
+            bool registry = Text(request, "packageOrigin") == "Registry";
+            string samples = Path.Combine(Project(), "Assets", "Samples");
+            if (Directory.Exists(Path.Combine(Project(), "PackageSources")) || Directory.Exists(Path.Combine(Project(), "Source")) ||
+                (Directory.Exists(samples) && Files(samples).Any())) { throw new InvalidOperationException("Artifact hosts refuse copied sources and default-imported Samples."); }
+            var installed = PackageInfo.GetAllRegisteredPackages();
+            var selected = ((JArray)request["packages"]).Cast<JObject>().ToArray();
+            var names = selected.Select(package => Text(package, "name")).ToArray();
+            bool hybrid = names.Contains("com.kano.ylframework.hybridclr");
+            if (installed.Select(package => package.name).Distinct(StringComparer.Ordinal).Count() != installed.Length ||
+                installed.Any(package => package.errors.Length != 0 || (!names.Contains(package.name) &&
+                    !(hybrid && package.name == "com.code-philosophy.hybridclr") && !package.name.StartsWith("com.unity.", StringComparison.Ordinal)) ||
+                    (package.name.StartsWith("com.unity.", StringComparison.Ordinal) && package.source != PackageSource.Registry && package.source != PackageSource.BuiltIn)))
+            {
+                throw new InvalidOperationException("The artifact consumer has an unauthorized or invalid registered package graph.");
+            }
+            var manifest = ReadJson(Path.Combine(Project(), "Packages/manifest.json"));
+            var declared = manifest["dependencies"] as JObject;
+            var direct = selected.Where(package => !registry || Text(package, "name") == Text(request, "entryPackage")).ToArray();
+            if (declared == null || declared.Count != direct.Length || direct.Any(package => (string)declared[Text(package, "name")] != Text(package, "locator")))
+            {
+                throw new InvalidOperationException("The host manifest prefilled or omitted dependencies outside the exact artifact entry declarations.");
+            }
+            var locked = ReadJson(Path.Combine(Project(), "Packages/packages-lock.json"));
+            var depths = ArtifactDepths(request);
+            var result = new JArray();
+            foreach (var expected in selected)
+            {
+                string name = Text(expected, "name");
+                var package = installed.SingleOrDefault(item => item.name == name);
+                if (package == null) { throw new InvalidOperationException("Missing registered artifact: " + name); }
+                string root = Path.GetFullPath(package.resolvedPath).TrimEnd('\\', '/');
+                string locator = Text(expected, "locator");
+                int depth = registry ? depths[name] : 0;
+                var entry = locked["dependencies"]?[name] as JObject;
+                if (package.source != (registry ? PackageSource.Registry : PackageSource.LocalTarball) || package.version != Text(expected, "version") ||
+                    package.assetPath != "Packages/" + name || (registry ? package.packageId : package.packageId?.Replace('\\', '/')) != name + "@" + locator || package.isDirectDependency != (depth == 0) ||
+                    (registry && package.registry?.url != Text(request, "registryUrl")) ||
+                    (!Inside(root, Path.Combine(Project(), "Library", "PackageCache")) && !Inside(root, Path.GetFullPath(Text(request, "cacheRoot")))) ||
+                    entry == null || Text(entry, "source") != (registry ? "registry" : "local-tarball") || Text(entry, "version") != locator ||
+                    entry["depth"]?.Type != JTokenType.Integer || (long)entry["depth"] != depth || (registry && Text(entry, "url") != Text(request, "registryUrl")))
+                {
+                    throw new InvalidOperationException("Artifact PackageInfo/source/directness/cache/generated lock identity mismatch: " + name);
+                }
+                RejectLinks(root);
+                var payload = ReadJson(Path.Combine(root, "package.json"));
+                var dependencies = (JObject)expected["dependencies"];
+                if (Text(payload, "name") != name || Text(payload, "version") != package.version || payload["dependencies"] is not JObject || entry["dependencies"] is not JObject ||
+                    !JToken.DeepEquals(CanonicalToken(dependencies), CanonicalToken(payload["dependencies"])) ||
+                    !JToken.DeepEquals(CanonicalToken(dependencies), CanonicalToken(entry["dependencies"])) ||
+                    !JToken.DeepEquals(CanonicalToken(dependencies), CanonicalToken(Dependencies(package))))
+                {
+                    throw new InvalidOperationException("Frozen/package/API/lock dependency declarations disagree: " + name);
+                }
+                var files = ((JArray)expected["files"]).Cast<JObject>().ToArray();
+                var actual = Files(root).Select(path => Relative(root, path)).ToArray();
+                if (files.Length != actual.Length || !new HashSet<string>(files.Select(file => Text(file, "path")), StringComparer.Ordinal).SetEquals(actual) ||
+                    !File.Exists(Path.Combine(root, "LICENSE.md")) || new FileInfo(Path.Combine(root, "LICENSE.md")).Length == 0)
+                {
+                    throw new InvalidOperationException("The installed artifact file set/license differs from the frozen release.");
+                }
+                var content = new StringBuilder();
+                foreach (var file in files.OrderBy(file => Text(file, "path"), StringComparer.Ordinal))
+                {
+                    string relative = Text(file, "path");
+                    if (Regex.IsMatch(relative, @"(?:^|/)(?:DOTween[^/]*\.dll|HybridCLR[^/]*\.dll|dnlib\.dll|Demigiant)(?:/|$)", RegexOptions.IgnoreCase))
+                    {
+                        throw new InvalidOperationException("An external SDK was bundled in an owned artifact.");
+                    }
+                    string digest = PackageFileHash(Path.Combine(root, relative), relative, name, true, !registry);
+                    if (!string.Equals(digest, Text(file, "sha256"), StringComparison.OrdinalIgnoreCase)) { throw new InvalidOperationException("Installed artifact semantic file digest mismatch."); }
+                    content.Append(relative).Append('\0').Append(digest).Append('\n');
+                }
+                using var hash = SHA256.Create();
+                string digestAll = string.Concat(hash.ComputeHash(Encoding.UTF8.GetBytes(content.ToString())).Select(value => value.ToString("x2")));
+                if (!string.Equals(digestAll, Text(expected, "contentSha256"), StringComparison.OrdinalIgnoreCase)) { throw new InvalidOperationException("Installed artifact complete semantic digest mismatch."); }
+                var row = PackageRow(package); row["resolvedPath"] = root; row["contentSha256"] = digestAll; row["verifiedFiles"] = files.Length; result.Add(row);
+            }
+            foreach (var package in installed)
+            {
+                foreach (var dependency in package.dependencies)
+                {
+                    var target = installed.SingleOrDefault(item => item.name == dependency.name);
+                    if (target == null || (!dependency.name.StartsWith("com.unity.", StringComparison.Ordinal) && target.version != dependency.version))
+                    {
+                        throw new InvalidOperationException("The observed PackageInfo graph has a missing or mismatched dependency.");
+                    }
+                }
+            }
+            if (hybrid) { CaptureRegistrySdk(request); }
+            return result;
+        }
+
+        private static JObject CaptureRegistrySdk(JObject request)
+        {
+            var expected = request["sdk"] as JObject;
+            if (Text(expected, "source") != "Registry" || Text(expected, "version") != "9.0.3" || Text(expected, "registryUrl") != "https://package.openupm.com" ||
+                Text(expected, "repositoryRevision") != "6cadd24d101f4cbd00cd80190106f6621132d24d")
+            {
+                throw new InvalidOperationException("HybridCLR requires the approved Registry SDK metadata, not an actual Git revision assertion.");
+            }
+            var sdk = PackageInfo.GetAllRegisteredPackages().SingleOrDefault(package => package.name == "com.code-philosophy.hybridclr");
+            var locked = ReadJson(Path.Combine(Project(), "Packages/packages-lock.json"))["dependencies"]?["com.code-philosophy.hybridclr"] as JObject;
+            if (sdk == null || sdk.source != PackageSource.Registry || sdk.version != "9.0.3" || sdk.packageId != sdk.name + "@9.0.3" || sdk.isDirectDependency ||
+                sdk.registry?.url != Text(expected, "registryUrl") || sdk.assetPath != "Packages/" + sdk.name ||
+                (!Inside(Path.GetFullPath(sdk.resolvedPath), Path.Combine(Project(), "Library", "PackageCache")) && !Inside(Path.GetFullPath(sdk.resolvedPath), Path.GetFullPath(Text(request, "cacheRoot")))) ||
+                ReadJson(Path.Combine(Project(), "Packages/manifest.json"))["dependencies"]?[sdk.name] != null ||
+                locked == null || Text(locked, "source") != "registry" || Text(locked, "version") != sdk.version || Text(locked, "url") != Text(expected, "registryUrl") ||
+                locked["depth"]?.Type != JTokenType.Integer || (long)locked["depth"] != (Text(request, "packageOrigin") == "Registry" ? ArtifactDepths(request)["com.kano.ylframework.hybridclr"] + 1 : 1))
+            {
+                throw new InvalidOperationException("The actual HybridCLR SDK is not the approved indirect Registry installation.");
+            }
+            RejectLinks(sdk.resolvedPath);
+            var payload = ReadJson(Path.Combine(sdk.resolvedPath, "package.json"));
+            var dependencies = payload["dependencies"] == null ? new JObject() : payload["dependencies"] as JObject;
+            if (Text(payload, "name") != sdk.name || Text(payload, "version") != sdk.version || dependencies == null || locked["dependencies"] is not JObject ||
+                payload.Properties().Any(property => property.Name.StartsWith("_", StringComparison.Ordinal) && property.Name != "_fingerprint") ||
+                !JToken.DeepEquals(CanonicalToken(dependencies), CanonicalToken(Dependencies(sdk))) || !JToken.DeepEquals(CanonicalToken(dependencies), CanonicalToken(locked["dependencies"])))
+            {
+                throw new InvalidOperationException("The actual HybridCLR SDK manifest/API/lock dependency content differs.");
+            }
+            var row = PackageRow(sdk); row["repositoryRevision"] = Text(expected, "repositoryRevision"); return row;
         }
 
         private static string Text(JObject value, string field)
@@ -385,7 +730,7 @@ namespace YLFramework.Testing
         }
 
         private static string Project() => Path.GetFullPath(Path.GetDirectoryName(Application.dataPath));
-        private static bool Inside(string path, string root) => path.StartsWith(root.TrimEnd('\\', '/') + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        private static bool Inside(string path, string root) => Path.GetFullPath(path).StartsWith(Path.GetFullPath(root).TrimEnd('\\', '/') + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
         private static string Relative(string root, string path) => path.Substring(root.Length + 1).Replace('\\', '/');
         private static string[] References(CompiledAssembly assembly) => assembly.assemblyReferences.Select(reference => reference.name)
             .Concat(assembly.compiledAssemblyReferences.Select(Path.GetFileNameWithoutExtension)).Distinct(StringComparer.Ordinal).ToArray();
@@ -440,12 +785,19 @@ namespace YLFramework.Testing
             if (request["schemaVersion"]?.Type != JTokenType.Integer || (long)request["schemaVersion"] != 1 ||
                 Text(request, "purpose") != "YLTesting.IntegrationPackages" || !Application.isBatchMode ||
                 !new[] { "DOTween", "Excel", "DomainExcel", "HybridCLR" }.Contains(Text(request, "integration")) ||
-                !new[] { "File", "GitRemote" }.Contains(Text(request, "packageOrigin")) ||
-                request["packages"] is not JArray packages || packages.Count == 0 || request["assemblies"] is not JArray assemblies || assemblies.Count < 3)
+                !new[] { "File", "GitRemote", "Registry", "LocalTarball" }.Contains(Text(request, "packageOrigin")) ||
+                request["packages"] is not JArray packages || packages.Count == 0 || request["assemblies"] is not JArray assemblies || assemblies.Count < 2)
             {
                 throw new InvalidOperationException("An explicit typed integration compilation request in a batch host is required.");
             }
             bool git = Text(request, "packageOrigin") == "GitRemote";
+            if (Artifact(request)) { ValidateArtifactRequest(request); }
+            if ((request["dotweenSdkMode"] != null && request["dotweenSdkMode"].Type != JTokenType.Null &&
+                    !new[] { "Required", "Absent" }.Contains(Text(request, "dotweenSdkMode"))) ||
+                ((string)request["dotweenSdkMode"] == "Absent" && Text(request, "integration") != "DOTween"))
+            {
+                throw new InvalidOperationException("Invalid explicit DOTween SDK mode.");
+            }
             if (git) { ValidateGitSource(request); }
             else if (new[] { "gitRepository", "gitRevision" }.Any(field => request[field] != null && request[field].Type != JTokenType.Null))
             {
@@ -500,7 +852,7 @@ namespace YLFramework.Testing
             foreach (var package in packages.Cast<JObject>())
             {
                 if (Text(package, "version") != "0.1.0-preview.1" || !Regex.IsMatch(Text(package, "contentSha256"), @"\A[0-9a-f]{64}\z") ||
-                    (!git && Text(package, "root") != Path.Combine(project, "PackageSources", Text(package, "name"))) ||
+                    (!git && !Artifact(request) && Text(package, "root") != Path.Combine(project, "PackageSources", Text(package, "name"))) ||
                     (git && package["root"] != null && package["root"].Type != JTokenType.Null) ||
                     package["files"] is not JArray files || files.Count == 0) { throw new InvalidOperationException("Integration expected template/staging identity is invalid."); }
                 var paths = new HashSet<string>(StringComparer.Ordinal);
@@ -514,7 +866,7 @@ namespace YLFramework.Testing
             var required = new HashSet<string>(new[] { "YLFramework.Runtime", "YLFramework.Editor" }, StringComparer.Ordinal);
             switch (Text(request, "integration"))
             {
-                case "DOTween": required.Add("YLFramework.Actions.DOTween"); break;
+                case "DOTween": if ((string)request["dotweenSdkMode"] != "Absent") { required.Add("YLFramework.Actions.DOTween"); } break;
                 case "Excel": required.Add("YLFramework.Excel.Editor"); break;
                 case "DomainExcel": required.Add("YLFramework.Excel.Editor"); required.Add("YLFramework.Domain.Excel.Editor"); break;
                 case "HybridCLR": required.Add("YLFramework.HybridCLR"); required.Add("YLFramework.HybridCLR.Editor"); break;

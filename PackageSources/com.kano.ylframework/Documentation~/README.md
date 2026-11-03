@@ -22,8 +22,8 @@ YLFramework 是 Unity C# 游戏框架，提供基础机制、Module / MVC / UI�
 
 Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎门禁，定点为 `2022.3.62f3c1` / `6000.3.27f1`；详见 [平台与范围](Modules/Resource.md#共存与范围)。本地 Bundle、远端更新、加密与整个框架的支持范围不能混为一谈。
 
-1. 从本次验收交付清单取得真实的完整 Git SHA 和所选包的 manifest 条目；未交付时不要使用占位值或假设同名 tag 已发布。
-2. 在 Package Manager 使用 Git URL 安装主包，或在消费工程 `Packages/manifest.json` 中显式声明所选 Git 闭包，等待 UPM 完成解析。不要复制源宿主的 Packages、ProjectSettings 或整个外部 Plugins / Resources 目录。
+1. 首选取得冻结 Release 资产及对应 Registry 验收回执；首版仍是 Unreleased，以下配置不表示五个版本已经公开可用。Git 回退则需要本次验收提供的真实完整 SHA，不能安装占位值或假设同名 tag 已发布。
+2. Registry 版本就绪后，按下节在消费工程 `Packages/manifest.json` 只声明所选能力的唯一入口，等待 UPM 自动解析闭包。使用 Git 回退时则显式声明全部 Git 闭包。不要复制源宿主的 Packages、ProjectSettings 或整个外部 Plugins / Resources 目录。
 3. 消费方 asmdef 显式引用 `YLFramework.Runtime`；仅 Editor 扩展引用 `YLFramework.Editor`。检查真实 Unity 编译，而不是只看 IDE。
 4. 按能力完成显式装配。基础工具可直接使用；UI、Resource、命名 Audio 和领域配置遵守各自初始化与所有权，不因放入 Root Prefab 就自动全部启用。
 5. 在目标工程验证实际场景与 Player；配置、反射类型、资源闭包和可选 SDK 的平台前置由应用一并准备。
@@ -35,6 +35,33 @@ Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎�
 | `BouncyCastle.Cryptography 2.7.0` | netstandard2.0 DLL 与许可已随框架携带，用于 HKDF-SHA256；不要再导入冲突副本 |
 
 主包还显式声明所用 Unity 内置模块。默认产品不包含或要求可选宿主扩展、Odin、MCP、DOTween、MiniExcel 或 HybridCLR。可选依赖只在实际安装相应集成时需要，四个适配包不混入主包。
+
+### Registry 与自动依赖
+
+计划的主发行渠道为 `https://package.openupm.com`，采用 GitHub Release asset tracking，不跟踪开发仓库根目录。五包同步版本为 `0.1.0-preview.1`。完成发布及实际 Registry 验收后，主包的最小工程 manifest 为：
+
+```json
+{
+  "scopedRegistries": [
+    { "name": "OpenUPM", "url": "https://package.openupm.com", "scopes": ["com.kano.ylframework"] }
+  ],
+  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1" }
+}
+```
+
+只把 `dependencies` 中的入口替换为下表所需包，不预填主包、Excel、UGUI、Newtonsoft.Json 或全部 Unity 内置模块来制造“自动依赖成功”。各包依赖里的版本号、实际解析版本及 Editor 自带基线是不同证据；Unity 6 的内置 UGUI 可以是 `2.0.0`，不把它机械改成包声明的 `1.0.0`。
+
+| 唯一直接入口 | 自有间接闭包 | 额外前置 |
+| --- | --- | --- |
+| `com.kano.ylframework` | 无选装包 | 官方依赖由 UPM 解析 |
+| `com.kano.ylframework.excel` | 主包 | MiniExcel 与许可随 Excel 包携带 |
+| `com.kano.ylframework.domain-excel` | 主包、Excel | 不需要全局 `YL_DOMAIN_EXCEL` |
+| `com.kano.ylframework.dotween` | 主包 | SDK 独立准备；无 SDK 的门控检查不是正向集成 |
+| `com.kano.ylframework.hybridclr` | 主包 | 额外添加窄 scope `com.code-philosophy.hybridclr`，官方 SDK `9.0.3` 间接解析，不随适配包捆绑 |
+
+不要把 `com.unity`、`com` 等宽 scope 指向 OpenUPM。HybridCLR 完整 manifest 见[适配包说明](../../com.kano.ylframework.hybridclr/README.md#registry-安装)。Registry 验收目标是标准版 `2022.3.62f3` 与 `6000.3.27f1`，与 China `2022.3.62f3c1` 和历史 native 专项分开。实际支持范围仍以对应源码、发布字节和回执为准。
+
+五份 `.tgz` 与 `release-manifest.json` 是发行身份记录。真实 UPM LocalTarball 安装只作 ArtifactPreflight，不能替代 Registry 元数据、下载字节、实际来源和间接依赖验收。相同版本重开或重新解析也不能声称完成了跨版本升级。
 
 ### Git URL 与依赖闭包
 

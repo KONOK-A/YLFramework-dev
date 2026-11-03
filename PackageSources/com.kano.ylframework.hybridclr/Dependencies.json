@@ -5,12 +5,20 @@
     "version": "0.1.0-preview.1",
     "requiredPackages": ["com.kano.ylframework", "com.code-philosophy.hybridclr"],
     "gitInstallation": "Explicitly declare the main and adapter Git URLs at the same full validated SHA, plus the separately pinned official SDK Git dependency, in the consuming project manifest.",
+    "registryInstallation": "After the frozen Release and Registry acceptance handoff, declare only this adapter at 0.1.0-preview.1. Narrow OpenUPM scopes cover com.kano.ylframework and com.code-philosophy.hybridclr. UPM resolves main and official SDK 9.0.3 indirectly. Registry compilation is not native or hot-update Player acceptance.",
     "package": {
         "name": "com.code-philosophy.hybridclr",
         "version": "9.0.3",
         "url": "https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3",
         "commit": "6cadd24d101f4cbd00cd80190106f6621132d24d",
-        "bundled": false
+        "bundled": false,
+        "registry": {
+            "url": "https://package.openupm.com",
+            "metadataUrl": "https://package.openupm.com/com.code-philosophy.hybridclr/9.0.3",
+            "repositoryUrl": "git+https://github.com/focus-creative-games/hybridclr_unity.git",
+            "repositoryRevision": "6cadd24d101f4cbd00cd80190106f6621132d24d",
+            "nativeValidated": false
+        }
     },
     "sourceReference": {
         "notice": "LICENSE.md",
