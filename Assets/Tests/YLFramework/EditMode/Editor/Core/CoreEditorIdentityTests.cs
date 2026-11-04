@@ -117,7 +117,8 @@ namespace YLFramework.Core.Editor.Tests
             {
                 string path = Physical(file.path);
                 Assert.That(new FileInfo(path).Length, Is.EqualTo(file.length), file.path);
-                using var input = File.OpenRead(path); using var hash = SHA256.Create();
+                using var input = File.OpenRead(path);
+                using var hash = SHA256.Create();
                 Assert.That(string.Concat(hash.ComputeHash(input).Select(value => value.ToString("x2"))), Is.EqualTo(file.sha256), file.path);
             }
             foreach (var expected in captured.assets)
@@ -126,7 +127,8 @@ namespace YLFramework.Core.Editor.Tests
                 Assert.That(asset, Is.Not.Null, expected.path);
                 Assert.That(asset.GetType().FullName, Is.EqualTo(expected.typeFullName));
                 Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string guid, out long localId), Is.True);
-                Assert.That(guid, Is.EqualTo(expected.guid)); Assert.That(localId, Is.EqualTo(expected.localId));
+                Assert.That(guid, Is.EqualTo(expected.guid));
+                Assert.That(localId, Is.EqualTo(expected.localId));
                 if (asset is ScriptableObject data)
                 {
                     Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(data))), Is.EqualTo(expected.scriptGuid));

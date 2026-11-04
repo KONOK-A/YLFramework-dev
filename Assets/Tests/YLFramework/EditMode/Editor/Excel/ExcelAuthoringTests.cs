@@ -100,12 +100,15 @@ namespace YLFramework.Tests.Extensions.Data
             Call("ListToExcel", typeof(ExplicitColumnRow), new[] { new ExplicitColumnRow { id = 7, renamed = "stable", plain = "plain" } }, workbook, "Sheet1");
             using (var plan = (IDisposable)Call("PreviewJson", null, workbook, json, "", null))
             {
-                Assert.That(Errors(plan), Is.Empty); Assert.That(Commit(plan, true), Is.EqualTo("Applied"));
+                Assert.That(Errors(plan), Is.Empty);
+                Assert.That(Commit(plan, true), Is.EqualTo("Applied"));
             }
             var row = JArray.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(json))).Single();
             Assert.That((string)row["old_custom_column"], Is.EqualTo("stable"));
             Assert.That((string)row["plain"], Is.EqualTo("plain"));
-            Assert.That(row["renamed"], Is.Null); Assert.That(row["unity_alias_only"], Is.Null); Assert.That(row["not_a_workbook_column"], Is.Null);
+            Assert.That(row["renamed"], Is.Null);
+            Assert.That(row["unity_alias_only"], Is.Null);
+            Assert.That(row["not_a_workbook_column"], Is.Null);
         }
 
         [Test]
@@ -120,7 +123,10 @@ namespace YLFramework.Tests.Extensions.Data
             foreach (var field in owners.SelectMany(type => type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)))
             {
                 var aliases = field.GetCustomAttributes<UnityEngine.Serialization.FormerlySerializedAsAttribute>().ToArray();
-                if (aliases.Length == 0 || field.GetCustomAttribute<ExcelIgnore>() != null) { continue; }
+                if (aliases.Length == 0 || field.GetCustomAttribute<ExcelIgnore>() != null)
+                {
+                    continue;
+                }
                 count++;
                 Assert.That(field.GetCustomAttribute<ExcelColumnNameAttribute>()?.Name, Is.EqualTo(aliases.Single().oldName), field.DeclaringType.FullName + "." + field.Name);
             }
@@ -142,20 +148,29 @@ namespace YLFramework.Tests.Extensions.Data
             var frozenJson = FilePath("frozen-" + file + ".json");
             using (var plan = (IDisposable)Call("PreviewJson", null, global::YLFramework.Testing.PackageTestPaths.Physical(Root + "Excel/" + file), frozenJson, "", (string)workbook["sheet"]))
             {
-                Assert.That(Errors(plan), Is.Empty); Assert.That(Commit(plan, true), Is.EqualTo("Applied"));
+                Assert.That(Errors(plan), Is.Empty);
+                Assert.That(Commit(plan, true), Is.EqualTo("Applied"));
             }
             var frozen = JArray.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(frozenJson))).Cast<JObject>().Single();
             Assert.That(frozen.Properties().Select(property => property.Name), Is.EqualTo(headers), "The actual captured workbook, not synthesized JSON, is the old input.");
             object value = typeof(UnityEngine.ScriptableObject).IsAssignableFrom(type) ? UnityEngine.ScriptableObject.CreateInstance(type) : Activator.CreateInstance(type);
             try
             {
-                var rows = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(type)); rows.Add(value);
+                var rows = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(type));
+                rows.Add(value);
                 string currentWorkbook = FilePath("current-" + file), currentJson = FilePath("current-" + file + ".json");
-                if (value is UnityEngine.ScriptableObject) { Call("ScriptableObjectToExcel", type, rows, currentWorkbook, (string)workbook["sheet"], type); }
-                else { Call("ListToExcel", type, rows, currentWorkbook, (string)workbook["sheet"]); }
+                if (value is UnityEngine.ScriptableObject)
+                {
+                    Call("ScriptableObjectToExcel", type, rows, currentWorkbook, (string)workbook["sheet"], type);
+                }
+                else
+                {
+                    Call("ListToExcel", type, rows, currentWorkbook, (string)workbook["sheet"]);
+                }
                 using (var plan = (IDisposable)Call("PreviewJson", null, currentWorkbook, currentJson, "", (string)workbook["sheet"]))
                 {
-                    Assert.That(Errors(plan), Is.Empty); Assert.That(Commit(plan, true), Is.EqualTo("Applied"));
+                    Assert.That(Errors(plan), Is.Empty);
+                    Assert.That(Commit(plan, true), Is.EqualTo("Applied"));
                 }
                 var current = JArray.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(currentJson))).Cast<JObject>().Single();
                 Assert.That(current.Properties().Select(property => property.Name), Is.EqualTo(headers), "New CLR/assembly ownership must not rename an existing worksheet column.");

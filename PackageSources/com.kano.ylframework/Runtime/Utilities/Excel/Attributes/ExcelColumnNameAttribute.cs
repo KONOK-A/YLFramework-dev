@@ -7,7 +7,10 @@ namespace YLFramework.Excel
     public sealed class ExcelColumnNameAttribute : Attribute
     {
         /// <summary>The exact column name used by the Excel authoring backend.</summary>
-        public string Name { get; }
+        public string Name
+        {
+            get;
+        }
 
         /// <summary>Creates a lightweight field contract without depending on an Excel parser.</summary>
         public ExcelColumnNameAttribute(string name)

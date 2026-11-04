@@ -24,7 +24,8 @@ namespace YLFramework.Tests.Extensions.Domain
         private static readonly List<bool> LoggerDuringCallbacks = new();
         private static void RecordShutdown(string domain)
         {
-            ShutdownCallbacks.Add(domain); LoggerDuringCallbacks.Add(LoggerManager.IsEnabled);
+            ShutdownCallbacks.Add(domain);
+            LoggerDuringCallbacks.Add(LoggerManager.IsEnabled);
             LoggerManager.Current?.LogFormat(LogType.Log, null, "domain-shutdown-callback {0}", domain);
         }
         public sealed class SessionSkill : SkillBase
@@ -45,12 +46,24 @@ namespace YLFramework.Tests.Extensions.Domain
         }
         public sealed class SessionEquipment : IEquipment
         {
-            public IEquippable Equipper { get; set; }
-            public EquipmentConfigData EquipmentData { get; set; }
-            public void OnLoaded() { }
+            public IEquippable Equipper
+            {
+                get; set;
+            }
+            public EquipmentConfigData EquipmentData
+            {
+                get; set;
+            }
+            public void OnLoaded()
+            {
+            }
             public void OnUnloaded() => RecordShutdown("Equipment");
-            public void OnEquip() { }
-            public void OnUnequip() { }
+            public void OnEquip()
+            {
+            }
+            public void OnUnequip()
+            {
+            }
         }
         private string _directory;
         private System.IDisposable _oldPath;
@@ -125,7 +138,8 @@ namespace YLFramework.Tests.Extensions.Domain
             for (int round = 1; round <= 2; round++)
             {
                 yield return new EnterPlayMode(false);
-                ShutdownCallbacks.Clear(); LoggerDuringCallbacks.Clear();
+                ShutdownCallbacks.Clear();
+                LoggerDuringCallbacks.Clear();
                 Assert.That(SkillManager.ConfigCount + BuffManager.ConfigCount + MissionManager.ConfigCount, Is.Zero, "Each entry starts a new domain session.");
                 Assert.That(EquipmentManager.GetConfig("TwoPlay.Equipments"), Is.Null);
                 Assert.That(SkillManager.HostCount + BuffManager.HostCount + BuffManager.EffectOwnerCount, Is.Zero);
@@ -153,8 +167,11 @@ namespace YLFramework.Tests.Extensions.Domain
                 missions.missions.Add(missionData);
                 var equipments = ScriptableObject.CreateInstance<EquipmentsConfig>();
                 equipments.name = "TwoPlay.Equipments";
-                var equipmentData = ScriptableObject.CreateInstance<EquipmentConfigData>(); equipmentData.id = 100; equipmentData.parent = equipments;
-                equipmentData.equipmentType = EquipmentType.Script; equipmentData.equipmentClassFullName = typeof(SessionEquipment).FullName;
+                var equipmentData = ScriptableObject.CreateInstance<EquipmentConfigData>();
+                equipmentData.id = 100;
+                equipmentData.parent = equipments;
+                equipmentData.equipmentType = EquipmentType.Script;
+                equipmentData.equipmentClassFullName = typeof(SessionEquipment).FullName;
                 equipments.Equipments.Add(equipmentData);
                 var source = new SessionSource();
                 source.Assets.Add("skills", skills);
@@ -187,13 +204,19 @@ namespace YLFramework.Tests.Extensions.Domain
                 var logger = LoggerManager.Enable(new LoggerOptions { WriteToFile = true, Directory = _directory });
                 logger.LogFormat(LogType.Log, null, "domain-shutdown-start");
                 string logPath = logger.LogFilePath;
-                if (round == 2) { LogAssert.Expect(LogType.Exception, new Regex("domain-shutdown-order-marker")); }
+                if (round == 2)
+                {
+                    LogAssert.Expect(LogType.Exception, new Regex("domain-shutdown-order-marker"));
+                }
                 var exitTrace = new List<string>();
                 System.Action<PlayModeStateChange> observe = state => exitTrace.Add(state + ":logger=" + LoggerManager.IsEnabled + ",configs=" +
                     (SkillManager.ConfigCount + BuffManager.ConfigCount + MissionManager.ConfigCount) + ",releases=" + source.Releases);
                 EditorApplication.playModeStateChanged += observe;
                 // 故意不手动Shutdown/Clear static；以下断言只接受真实退出钩子的清理结果。
-                try { yield return new ExitPlayMode(); }
+                try
+                {
+                    yield return new ExitPlayMode();
+                }
                 finally { EditorApplication.playModeStateChanged -= observe; }
                 Assert.That(SkillManager.ConfigCount + BuffManager.ConfigCount + MissionManager.ConfigCount, Is.Zero, "Every exit returns all configurations.");
                 Assert.That(EquipmentManager.GetConfig("TwoPlay.Equipments"), Is.Null);
@@ -206,7 +229,8 @@ namespace YLFramework.Tests.Extensions.Domain
                 Assert.That(ShutdownCallbacks, Is.EquivalentTo(new[] { "Skill", "Buff", "Equipment" }));
                 Assert.That(ShutdownCallbacks.IndexOf("Skill"), Is.LessThan(ShutdownCallbacks.IndexOf("Buff")), "Keep the established Skill/Buff ordering.");
                 Assert.That(LoggerDuringCallbacks, Is.All.True, "Domain callbacks, not later Resource source eviction, must precede logger shutdown. " + string.Join(";", exitTrace));
-                Assert.That(logger.IsDisposed, Is.True); Assert.That(LoggerManager.IsEnabled, Is.False);
+                Assert.That(logger.IsDisposed, Is.True);
+                Assert.That(LoggerManager.IsEnabled, Is.False);
                 Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(logPath)), Does.Contain("domain-shutdown-callback Equipment"));
                 Assert.That(ResourceSystem.Current, Is.Null);
                 Debug.Log("DOMAIN_SHUTDOWN_ORDER_PASS round=" + round + "; releases=" + source.Releases);
@@ -217,7 +241,8 @@ namespace YLFramework.Tests.Extensions.Domain
                         UnityEngine.Object.DestroyImmediate(asset);
                     }
                 }
-                Directory.Delete(_directory, true); _directory = null;
+                Directory.Delete(_directory, true);
+                _directory = null;
             }
         }
 

@@ -22,12 +22,21 @@ namespace YLFramework.Tests.LoggingOnly
         [UnityTearDown]
         public IEnumerator Cleanup()
         {
-            if (!_configured) { yield break; }
-            if (EditorApplication.isPlaying) { yield return new ExitPlayMode(); }
+            if (!_configured)
+            {
+                yield break;
+            }
+            if (EditorApplication.isPlaying)
+            {
+                yield return new ExitPlayMode();
+            }
             LoggerManager.Disable();
             EditorSettings.enterPlayModeOptions = _options;
             EditorSettings.enterPlayModeOptionsEnabled = _enabled;
-            if (_directory != null && Directory.Exists(_directory)) { Directory.Delete(_directory, true); }
+            if (_directory != null && Directory.Exists(_directory))
+            {
+                Directory.Delete(_directory, true);
+            }
         }
 
         [UnityTest]
@@ -38,8 +47,11 @@ namespace YLFramework.Tests.LoggingOnly
             Assert.That(CompilationPipeline.GetAssemblies(AssembliesType.Editor).Any(assembly => assembly.name == "YLFramework.Editor" || assembly.name == "YLFramework.Gameplay.Editor"), Is.False);
             Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType("YLFramework.Editor.Domain.DomainSessionLifecycle") != null), Is.False,
                 "This source-slice fixture must not contain the domain exit coordinator.");
-            _enabled = EditorSettings.enterPlayModeOptionsEnabled; _options = EditorSettings.enterPlayModeOptions; _configured = true;
-            EditorSettings.enterPlayModeOptionsEnabled = true; EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
+            _enabled = EditorSettings.enterPlayModeOptionsEnabled;
+            _options = EditorSettings.enterPlayModeOptions;
+            _configured = true;
+            EditorSettings.enterPlayModeOptionsEnabled = true;
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
             _directory = Path.Combine(Application.temporaryCachePath, "YL.LoggingOnly." + Guid.NewGuid().ToString("N"));
             string firstFile = null;
             for (int round = 1; round <= 2; round++)
@@ -53,8 +65,14 @@ namespace YLFramework.Tests.LoggingOnly
                 yield return new ExitPlayMode();
                 Assert.That(LoggerManager.IsEnabled, Is.False, "Only the real Logger host lifecycle may close this session.");
                 Assert.That(session.IsDisposed, Is.True);
-                using (var stream = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { Assert.That(stream.Length, Is.GreaterThan(0)); }
-                if (round == 1) { firstFile = file; }
+                using (var stream = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                {
+                    Assert.That(stream.Length, Is.GreaterThan(0));
+                }
+                if (round == 1)
+                {
+                    firstFile = file;
+                }
                 else
                 {
                     Assert.That(file, Is.Not.EqualTo(firstFile));
