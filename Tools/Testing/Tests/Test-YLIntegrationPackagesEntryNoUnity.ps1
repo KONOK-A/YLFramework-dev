@@ -5,6 +5,7 @@ param([Parameter(Mandatory)][string] $TemporaryRoot)
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Test-YLIntegrationPackages.ps1') -WorkspaceRoot $TemporaryRoot -Unity 'C:\unused\Unity.exe' -Integration Excel
+. (Join-Path $PSScriptRoot 'PackageCatalogFixtures.ps1')
 $sandbox = Join-Path (Get-YLTestPath $TemporaryRoot) ('yl-integration-entry-' + [Guid]::NewGuid().ToString('N'))
 $repository = Join-Path $sandbox 'Repository'; $null = [IO.Directory]::CreateDirectory($repository)
 $workspace = Initialize-YLTestWorkspace -WorkspaceRoot (Join-Path $sandbox 'Workspace') -Repository $repository
@@ -36,18 +37,30 @@ function Reject([scriptblock] $Action, [string] $Reason) {
     }
     throw "Entry accepted: $Reason"
 }
+function FixtureGraph([string] $Side) {
+    $mode = $null
+    if ($valid.integration -ceq 'DOTween') { $mode = if ($valid.Contains('dotweenSdkMode')) { $valid.dotweenSdkMode } else { 'Required' } }
+    $plan = @(Get-YLPackageAssemblyPlan -Catalog $fixtureCatalog -Packages $valid.packages -Profile $valid.integration -DOTweenSdkMode $mode)
+    foreach ($row in $plan | Where-Object { $_.enabled -and ($Side -ceq 'Editor' -or $_.player) }) {
+        $assembly = [UnityEditor.Compilation.Assembly]::new(); $assembly.name = $row.name
+        $assembly.sourceFiles = @($row.sources | ForEach-Object { "Packages/$($row.package)/$_" })
+        $assembly
+    }
+}
 try {
     $references = @([IO.Directory]::EnumerateFiles((Join-Path $PSHOME 'ref'), '*.dll')) + @([Newtonsoft.Json.Linq.JObject].Assembly.Location)
-    Add-Type -Path @((Join-Path $PSScriptRoot '../IntegrationEntry.cs'), (Join-Path $PSScriptRoot 'Test-YLIntegrationPackagesNoUnityStubs.cs')) -ReferencedAssemblies $references -CompilerOptions @('/define:UNITY_EDITOR', '/langversion:9.0', '/nowarn:1701')
+    Add-Type -Path @((Join-Path $PSScriptRoot '../IntegrationEntry.cs'), (Join-Path $PSScriptRoot '../PackageCatalogContract.cs'), (Join-Path $PSScriptRoot 'Test-YLIntegrationPackagesNoUnityStubs.cs')) -ReferencedAssemblies $references -CompilerOptions @('/define:UNITY_EDITOR', '/langversion:9.0', '/nowarn:1701')
     [UnityEngine.Application]::dataPath = (Join-Path $hostRecord.path 'Assets').Replace('\', '/'); $null = [IO.Directory]::CreateDirectory([UnityEngine.Application]::dataPath)
     $output = Join-Path $result.path 'Compile'; $null = [IO.Directory]::CreateDirectory($output)
     $sha = '0123456789abcdef0123456789abcdef01234567'; $repo = 'https://example.invalid/product.git'
+    $fixtureCatalog = Get-YLFixturePackageCatalog
     $packages = @(); $registered = @(); $dependencies = @{}; $locked = @{}
     foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.excel')) {
         $p = Join-Path $hostRecord.path "Library/PackageCache/$id"
         $deps = @{}; if ($id -ceq 'com.kano.ylframework.excel') { $deps['com.kano.ylframework'] = '0.1.0-preview.1' }
         Save (Join-Path $p 'package.json') @{ name = $id; version = '0.1.0-preview.1'; dependencies = $deps; extra = @{ date = '2026-01-01T00:00:00Z' } }
         [IO.File]::WriteAllText((Join-Path $p 'LICENSE.md'), 'fixture license')
+        Add-YLFixtureAssemblyPayload -Catalog $fixtureCatalog -PackageId $id -Root $p -Sources
         $content = Get-YLIntegrationPackageContent -Root $p -PackageId $id -NormalizeManifest
         $packages += @{ name = $id; version = '0.1.0-preview.1'; files = $content.files; contentSha256 = $content.sha256 }
         $locator = $repo + '?path=/PackageSources/' + $id + '#' + $sha
@@ -61,9 +74,20 @@ try {
         resultRoot = $result.path; output = $output; unityVersion = '2022.3.62f3'; inputHash = ('a' * 64); manifestSha256 = (Get-FileHash -LiteralPath $manifest).Hash
         packageOrigin = 'GitRemote'; gitRepository = $repo; gitRevision = $sha; cacheRoot = $cache.path; cacheId = $cache.id; expectedTemplateHash = ('a' * 64); packages = $packages; assemblies = (Get-YLIntegrationDefinition Excel).assemblies }
     Save (Join-Path $hostRecord.path '.yl-inputs.json') @{ schemaVersion = 1; purpose = 'YLTesting.HostInputs'; hostId = $hostRecord.id; inputHash = ('a' * 64) }
+    $valid.entryPackage = 'com.kano.ylframework.excel'
+    $valid.catalogSha256 = Set-YLFixtureCatalogInput -HostRecord $hostRecord -Catalog $fixtureCatalog -InputHash ('a' * 64)
     [UnityEditor.PackageManager.PackageInfo]::Registered = $registered
     function Request { return ,([Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -Depth 30 -InputObject $valid))) }
     $null = Call ValidateInvocation (Request); $checks++
+    foreach ($field in @('catalogSha256', 'entryPackage')) {
+        $r = Request; $null = $r.Remove($field); Reject { Call ValidateInvocation $r } "missing mandatory catalog/entry $field"
+    }
+    $r = Request; $r['catalogSha256'] = [Newtonsoft.Json.Linq.JValue]::new(('d' * 64)); Reject { Call ValidateInvocation $r } 'catalog digest mismatch'
+    foreach ($relative in @('Runtime/DOTween.dll', 'Runtime/HybridCLR.Runtime.dll', 'Runtime/SDK/Hidden.cs')) {
+        $path = Join-Path $hostRecord.path ('VendorShapeFixture/' + $relative)
+        $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)); [IO.File]::WriteAllText($path, 'MZ NoUnity vendor-shaped input, not a real SDK')
+        Reject { Boundary PackageFileHash @([string]$path, [string]$relative, 'com.kano.ylframework', $false, $false) } "SDK inputs remain forbidden after adapters move into main: $relative"
+    }
     $rows = Call CapturePackages (Request)
     Check ([string]$rows[0]['revision'] -ceq $sha -and [string]$rows[0]['packageId'] -ceq $registered[0].packageId) 'Null PackageInfo.git did not use actual lock/source/locator evidence.'
     $ugui = [UnityEditor.PackageManager.PackageInfo]::new(); $ugui.name = 'com.unity.ugui'; $ugui.version = '2.0.0'; $ugui.source = [UnityEditor.PackageManager.PackageSource]::BuiltIn
@@ -177,6 +201,7 @@ try {
         $id = $package.name; $root = Join-Path $hostRecord.path "PackageSources/$id"; $null = [IO.Directory]::CreateDirectory($root)
         $json = [IO.File]::ReadAllText((Join-Path $package.resolvedPath 'package.json')) | ConvertFrom-Json -AsHashtable -DateKind String; $json.Remove('_fingerprint')
         Save (Join-Path $root 'package.json') $json; [IO.File]::WriteAllText((Join-Path $root 'LICENSE.md'), 'fixture license')
+        Add-YLFixtureAssemblyPayload -Catalog $fixtureCatalog -PackageId $id -Root $root -Sources
         $content = Get-YLIntegrationPackageContent -Root $root -PackageId $id
         $filePackages += @{ name = $id; version = $package.version; root = $root; files = $content.files; contentSha256 = $content.sha256 }
         $fileDependencies[$id] = 'file:../PackageSources/' + $id
@@ -193,10 +218,10 @@ try {
     $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($entryPath))
     [IO.File]::Copy((Join-Path $PSScriptRoot '../IntegrationEntry.cs'), $entryPath)
     $entryAssembly = [UnityEditor.Compilation.Assembly]::new(); $entryAssembly.name = 'Assembly-CSharp-Editor'; $entryAssembly.sourceFiles = @($entryRelative)
-    $null = Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@($entryAssembly), [UnityEditor.Compilation.Assembly[]]@()); $checks++
+    $null = Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly)), [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)); $checks++
     foreach ($entrySource in @($entryPath, $entryPath.Replace('\', '/'))) {
         $entryAssembly.sourceFiles = @($entrySource)
-        $null = Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@($entryAssembly), [UnityEditor.Compilation.Assembly[]]@()); $checks++
+        $null = Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly)), [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)); $checks++
     }
     $entryAssembly.sourceFiles = @($entryRelative)
     $path = Join-Path $fileRegistered[0].resolvedPath 'package.json'; $json = [IO.File]::ReadAllText($path) | ConvertFrom-Json -AsHashtable; $json['_fingerprint'] = $sha; Save $path $json
@@ -224,8 +249,8 @@ try {
             $root = Join-Path $hostRecord.path "Library/PackageCache/$Origin-$id"; $null = [IO.Directory]::CreateDirectory($root)
             [IO.File]::WriteAllText((Join-Path $root 'package.json'), $canonical)
             [IO.File]::WriteAllText((Join-Path $root 'LICENSE.md'), 'fixture license')
-            $files = @(@{ path = 'LICENSE.md'; sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes('fixture license'))).ToLowerInvariant() },
-                @{ path = 'package.json'; sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant() })
+            Add-YLFixtureAssemblyPayload -Catalog $fixtureCatalog -PackageId $id -Root $root -Sources
+            $files = (Get-YLIntegrationPackageContent -Root $root -PackageId $id -NormalizeManifest).files
             $lines = ($files | ForEach-Object { $_.path + "`0" + $_.sha256 + "`n" }) -join ''
             $locator = if ($Origin -ceq 'Registry') { '0.1.0-preview.1' } else { 'file:' + (Join-Path $sandbox ($id + '.tgz')).Replace('\', '/') }
             if ($Origin -ceq 'LocalTarball') { [IO.File]::WriteAllText($locator.Substring(5), 'locator fixture, not a verified tarball') }
@@ -352,6 +377,10 @@ try {
     $selected = [Newtonsoft.Json.Linq.JObject[]]@()
     $negative = Boundary ValidateDotween @((Request), $empty, $empty, $selected, [string[]]@())
     Check ([string]$negative['status'] -ceq 'NegativeNoSdk' -and [string]$negative['mode'] -ceq 'Absent') 'DOTween Absent must not be reported as a positive SDK integration.'
+    $borrowedAdapter = [UnityEditor.Compilation.Assembly]::new(); $borrowedAdapter.name = 'Ordinary'
+    $borrowedAdapter.sourceFiles = @('Packages/com.kano.ylframework.dotween/Runtime/Product.cs')
+    Reject { Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly)),
+        [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Player) + @($borrowedAdapter))) } 'a non-product assembly cannot borrow disabled adapter sources'
     $wrapper = [UnityEditor.Compilation.Assembly]::new(); $wrapper.name = 'YLFramework.Actions.DOTween'
     Reject { Boundary ValidateDotween @((Request), [UnityEditor.Compilation.Assembly[]]@($wrapper), $empty, $selected, [string[]]@()) } 'Absent Editor wrapper'
     Reject { Boundary ValidateDotween @((Request), $empty, [UnityEditor.Compilation.Assembly[]]@($wrapper), $selected, [string[]]@()) } 'Absent Player wrapper'
@@ -373,7 +402,24 @@ try {
     $sdkEditor = [UnityEditor.Compilation.Assembly[]]@($wrapper, $modules)
     $sdkReport = Boundary ValidateDotween @((Request), $sdkEditor, [UnityEditor.Compilation.Assembly[]]@($wrapper), $selected, [string[]]@('DOTWEEN'))
     Check ([string]$sdkReport['mode'] -ceq 'Required' -and [string]$sdkReport['sha256'] -ceq $valid.sdk.assemblySha256) 'Required mode lost the approved SDK binary identity checks.'
-    $null = Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@($modules, $entryAssembly), $empty); $checks++
+    $null = Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($modules, $entryAssembly)), [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)); $checks++
+    $engineEditor = [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($modules, $entryAssembly))
+    $enginePlayer = [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)
+    @($engineEditor | Where-Object name -CEQ 'YLFramework.Runtime')[0].compiledAssemblyReferences = @('Unity.Android.Types.dll', 'Unity.Android.Gradle.dll', 'Unity.Android.GradleProject.dll')
+    $null = Boundary ValidateGraph @((Request), $engineEditor, $enginePlayer); $checks++
+    @($enginePlayer | Where-Object name -CEQ 'YLFramework.Runtime')[0].compiledAssemblyReferences = @('Unity.Android.Types.dll')
+    Reject { Boundary ValidateGraph @((Request), $engineEditor, $enginePlayer) } 'Editor platform tooling must remain absent from Player Runtime'
+    foreach ($side in @('Editor', 'Player')) {
+        $requiredEditor = [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($modules, $entryAssembly))
+        $requiredPlayer = [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)
+        foreach ($wrapperGraph in @($requiredEditor) + @($requiredPlayer) | Where-Object name -CEQ 'YLFramework.Actions.DOTween') {
+            $wrapperGraph.compiledAssemblyReferences = @($sdkPath); $wrapperGraph.defines = @('DOTWEEN')
+        }
+        $runtime = if ($side -ceq 'Editor') { @($requiredEditor | Where-Object name -CEQ 'YLFramework.Runtime')[0] }
+            else { @($requiredPlayer | Where-Object name -CEQ 'YLFramework.Runtime')[0] }
+        $runtime.compiledAssemblyReferences = @($sdkPath)
+        Reject { Boundary ValidateGraph @((Request), $requiredEditor, $requiredPlayer) } "Required SDK must not become a main Runtime dependency in $side"
+    }
     foreach ($fault in @('global-define', 'wrapper-define', 'binary-path', 'binary-hash', 'uncompiled-modules', 'missing-modules')) {
         $r = Request; $global = [string[]]@('DOTWEEN')
         try {
@@ -396,10 +442,12 @@ try {
     New-PublishedFixture Registry
     $source = Join-Path $publishedApis[0].resolvedPath 'Runtime/Example.cs'; $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($source)); [IO.File]::WriteAllText($source, '// source fixture')
     $valid.packages[0].files += @{ path = 'Runtime/Example.cs'; sha256 = (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() }
-    $assembly = [UnityEditor.Compilation.Assembly]::new(); $assembly.name = 'YLFramework.Runtime'; $assembly.sourceFiles = @('Packages/com.kano.ylframework/Runtime/Example.cs')
-    $editor = [UnityEditor.Compilation.Assembly[]]@($assembly, $entryAssembly)
-    $null = Boundary ValidateGraph @((Request), $editor, $empty); $checks++
-    foreach ($fault in @('Tests', 'Mcp', 'sample', 'player-excel', 'player-miniexcel-reference', 'asset-copy', 'cache-source-escape', 'package-source-escape', 'unknown-package', 'missing-source', 'player-source-drift', 'player-duplicate-source')) {
+    $editor = [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly))
+    $player = [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)
+    $assembly = @($editor | Where-Object name -CEQ 'YLFramework.Runtime')[0]
+    $null = Boundary ValidateGraph @((Request), $editor, $player); $checks++
+    Reject { Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@($editor | Where-Object name -CNE 'YLFramework.Excel.Editor'), $player) } 'a declared product Editor assembly cannot disappear'
+    foreach ($fault in @('Tests', 'Mcp', 'sample', 'player-excel', 'player-miniexcel-reference', 'asset-copy', 'cache-source-escape', 'package-source-escape', 'unknown-package', 'missing-source', 'player-source-drift', 'player-duplicate-source', 'undeclared-product-assembly', 'ordinary-borrowed-runtime', 'ordinary-editor-source-in-player')) {
         $bad = [UnityEditor.Compilation.Assembly]::new(); $bad.name = 'Ordinary'; $bad.sourceFiles = @($assembly.sourceFiles)
         switch ($fault) {
             'Tests' { $bad.name = 'YLFramework.Tests' }
@@ -414,8 +462,12 @@ try {
             'missing-source' { $bad.sourceFiles = @('Packages/com.kano.ylframework/Runtime/Missing.cs') }
             'player-source-drift' { $bad.name = 'YLFramework.Runtime'; $bad.sourceFiles = @() }
             'player-duplicate-source' { $bad.name = 'YLFramework.Runtime'; $bad.sourceFiles = @($assembly.sourceFiles[0], $assembly.sourceFiles[0]) }
+            'undeclared-product-assembly' { $bad.name = 'YLFramework.Unlisted.Adapter' }
+            'ordinary-borrowed-runtime' { $bad.sourceFiles = @($assembly.sourceFiles) }
+            'ordinary-editor-source-in-player' { $bad.sourceFiles = @($editor | Where-Object name -CEQ 'YLFramework.Excel.Editor')[0].sourceFiles }
         }
-        Reject { Boundary ValidateGraph @((Request), $editor, [UnityEditor.Compilation.Assembly[]]@($bad)) } "per-source graph closure $fault"
+        $badPlayer = if ($bad.name -ceq 'YLFramework.Runtime') { @($player | Where-Object name -CNE 'YLFramework.Runtime') + @($bad) } else { @($player) + @($bad) }
+        Reject { Boundary ValidateGraph @((Request), $editor, [UnityEditor.Compilation.Assembly[]]$badPlayer) } "per-source graph closure $fault"
     }
     $oldEnvironment = @{}
     try {

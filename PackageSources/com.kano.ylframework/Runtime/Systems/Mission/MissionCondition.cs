@@ -58,7 +58,7 @@ namespace YLFramework.Mission
         /// 参数名称
         /// </summary>
         [Tooltip("参数名称")]
-        [FormerlySerializedAs("param_name"), JsonProperty("param_name")] public string paramName;
+        [FormerlySerializedAs("param_name"), JsonProperty("param_name"), global::YLFramework.Excel.ExcelColumnName("param_name")] public string paramName;
         /// <summary>
         /// 比较方式
         /// </summary>

@@ -88,8 +88,9 @@ function Get-SelectedSources([switch] $Native, [object] $EditorProfile) {
         $ids = if ('packageInputs' -cin $definition.PSObject.Properties.Name) { @($definition.packageInputs) } else { @('com.kano.ylframework') }
         $assetSources += @(Get-YLUpmPackages -Repository $repository -Ids $ids | ForEach-Object relative)
         $assetSources += @('Assets/Tests/YLFramework/Infrastructure/Editor/YLTestEntry.cs',
-            'Assets/Tests/YLFramework/Infrastructure/Editor/YLFramework.Tests.Infrastructure.Editor.asmdef',
-            'Assets/Tests/YLFramework/Fixtures/Shared')
+            'Assets/Tests/YLFramework/Infrastructure/Editor/YLFramework.Tests.Infrastructure.Editor.asmdef')
+        $assetSources += if ('nativeFixtureInputs' -cin $definition.PSObject.Properties.Name) { @($definition.nativeFixtureInputs) }
+            else { @('Assets/Tests/YLFramework/Fixtures/Shared') }
     }
     foreach ($relative in $assetSources) {
         $path = Get-YLTestPath (Join-Path $repository $relative)

@@ -1,0 +1,61 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1027be4bfe81d3a4cad08aeae3a63e1d, type: 3}
+  m_Name: StateMachine
+  m_EditorClassIdentifier: 
+  viewPosition: {x: 100, y: 100, z: 0}
+  viewScale: {x: 0.8, y: 0.8, z: 0.8}
+  layers:
+  - BeforeAssembly
+  originGuid: cd3615951dbef52499e7210128346786
+  states:
+  - rect:
+      serializedVersion: 2
+      x: 0
+      y: 0
+      width: 200
+      height: 40
+    isDefaultState: 1
+    name: Idle
+    stateScripts: []
+    parents: []
+    isSubStateMachine: 0
+    isBuiltInState: 0
+    builtInStateName: 
+  - rect:
+      serializedVersion: 2
+      x: 240
+      y: 0
+      width: 200
+      height: 40
+    isDefaultState: 0
+    name: Run
+    stateScripts: []
+    parents: []
+    isSubStateMachine: 0
+    isBuiltInState: 0
+    builtInStateName: 
+  parameters:
+  - name: Go
+    value: 0
+    parameterType: 2
+    nameHash: 0
+  transitions:
+  - fromStateName: Idle
+    toStateName: Run
+    conditions: []
+    groupConditions:
+    - conditions:
+      - targetValue: 1
+        parameterName: Go
+        compareType: 0
+    autoSwitch: 1

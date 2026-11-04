@@ -6,6 +6,7 @@ Assert-That ($distributionErrors.Count -eq 0) 'Distribution must parse before ex
 $contentFunction = $distributionAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-DistributionPackageContent' }, $true)
 Assert-That ($null -ne $contentFunction) 'Distribution package content audit must be available.'
 . ([scriptblock]::Create($contentFunction.Extent.Text))
+. (Join-Path $PSScriptRoot 'PackageCatalogFixtures.ps1')
 
 function Invoke-UpmDistributionFixture {
     param([string] $Fault = '', [string] $Backend = 'Mono', [string] $PackageSource = 'File',
@@ -13,7 +14,7 @@ function Invoke-UpmDistributionFixture {
     $root = Join-Path $sandbox ('Distribution-' + [Guid]::NewGuid().ToString('N'))
     $fixtureRepository = Join-Path $root 'Repository'
     $null = [IO.Directory]::CreateDirectory($fixtureRepository)
-    foreach ($relative in @('DistributionEntry.cs', 'PlayerSmoke.cs', 'HybridCLREntry.cs', 'HybridCLRSmoke.cs', 'UnityHost.ps1', 'TestSuites.json',
+    foreach ($relative in @('DistributionEntry.cs', 'PackageCatalogContract.cs', 'PlayerSmoke.cs', 'HybridCLREntry.cs', 'HybridCLRSmoke.cs', 'UnityHost.ps1', 'TestSuites.json',
         'Common/Workspace.ps1', 'Common/Process.ps1', 'Common/Results.ps1', 'Common/Packages.ps1', 'Tests/Test-YLDistribution.ps1')) {
         $target = Join-Path $fixtureRepository "Tools/Testing/$relative"
         $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
@@ -42,6 +43,9 @@ function Invoke-UpmDistributionFixture {
         $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
         [IO.File]::WriteAllText($target, $entry.Value, [Text.UTF8Encoding]::new($false))
     }
+    $catalogTarget = Join-Path $fixtureRepository 'Tools/Packaging/PackageCatalog.json'
+    $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($catalogTarget))
+    [IO.File]::WriteAllText($catalogTarget, (ConvertTo-Json -InputObject (Get-YLFixturePackageCatalog) -Depth 30), [Text.UTF8Encoding]::new($false))
     switch -CaseSensitive ($Fault) {
         'lfs' { [IO.File]::WriteAllText((Join-Path $fixtureRepository 'PackageSources/com.kano.ylframework/Runtime/Product.cs'), "version https://git-lfs.github.com/spec/v1`noid sha256:$('a' * 64)`nsize 999`n") }
         'missing-license' { [IO.File]::Delete((Join-Path $fixtureRepository 'PackageSources/com.kano.ylframework/LICENSE.md')) }
@@ -136,7 +140,8 @@ function Invoke-UpmDistributionFixture {
             }
         }
         $report = @{ schemaVersion = 2; hostId = $request.hostId; resultId = $request.resultId; unityVersion = $EditorVersion; phase = $phase; pid = 42
-            packageOrigin = $request.packageOrigin; packages = $packages; resolvedDependencies = $resolved; result = $result }
+            packageOrigin = $request.packageOrigin; entryPackage = $request.entryPackage; inputHash = $request.inputHash; catalogSha256 = $request.catalogSha256
+            packages = $packages; resolvedDependencies = $resolved; result = $result }
         if ($phase -ceq 'Inspect') {
             switch -CaseSensitive ($Fault) {
                 'source-version' { $report.unityVersion = 'wrong-editor' }
@@ -160,9 +165,10 @@ function Invoke-UpmDistributionFixture {
                 'source-manifest-drift' { [IO.File]::AppendAllText((Join-Path $fixtureRepository 'Packages/manifest.json'), ' ') }
                 'target-manifest-drift' { [IO.File]::AppendAllText((Join-Path $fixtureRepository 'Tools/Testing/Profiles/Unity2022/manifest.json'), ' ') }
                 'source-content-drift' { [IO.File]::AppendAllText((Join-Path $fixtureRepository 'PackageSources/com.kano.ylframework/LICENSE.md'), 'changed') }
+                'catalog-drift' { [IO.File]::AppendAllText($catalogTarget, "`n") }
                 'owner-drift' { $ownerPath = Join-Path $project '.yl-owner.json'; $owner = [IO.File]::ReadAllText($ownerPath) | ConvertFrom-Json -AsHashtable; $owner.id = $true; [IO.File]::WriteAllText($ownerPath, (ConvertTo-Json $owner)) }
             }
-            foreach ($field in @('schemaVersion', 'hostId', 'resultId', 'unityVersion', 'phase', 'pid', 'packageOrigin')) { if ($Fault -ceq "boolean-$field") { $report[$field] = $true } }
+            foreach ($field in @('schemaVersion', 'hostId', 'resultId', 'unityVersion', 'phase', 'pid', 'packageOrigin', 'entryPackage', 'inputHash', 'catalogSha256')) { if ($Fault -ceq "boolean-$field") { $report[$field] = $true } }
             foreach ($field in @('name', 'version', 'source', 'assetPath', 'resolvedPath', 'contentSha256', 'revision', 'packageId')) { if ($Fault -ceq "boolean-package-$field") { $packages[0][$field] = $true } }
             foreach ($field in @('name', 'version', 'source')) { if ($Fault -ceq "boolean-dependency-$field") { $resolved[0][$field] = $true } }
             if ($Fault -ceq 'boolean-status') { $result.status = $true }
@@ -292,10 +298,10 @@ Test-Case 'UPM File refuses Git arguments instead of ignoring them' {
     Assert-Rejected { Invoke-UpmDistributionFixture -Options @{ GitRepository = 'https://example.invalid/yl.git'; GitRevision = ('a' * 40) } } 'File|Git'
 }
 
-foreach ($fault in @('source-version', 'boolean-schemaVersion', 'boolean-hostId', 'boolean-resultId', 'boolean-unityVersion', 'boolean-phase', 'boolean-status', 'boolean-pid', 'boolean-packageOrigin',
+foreach ($fault in @('source-version', 'boolean-schemaVersion', 'boolean-hostId', 'boolean-resultId', 'boolean-unityVersion', 'boolean-phase', 'boolean-status', 'boolean-pid', 'boolean-packageOrigin', 'boolean-entryPackage', 'boolean-inputHash', 'boolean-catalogSha256',
     'boolean-package-name', 'boolean-package-version', 'boolean-package-source', 'boolean-package-assetPath', 'boolean-package-resolvedPath', 'boolean-package-contentSha256', 'boolean-package-packageId',
     'boolean-dependency-name', 'boolean-dependency-version', 'boolean-dependency-source', 'wrong-name', 'wrong-version', 'wrong-source', 'wrong-hash', 'escape-path', 'missing-package', 'duplicate-package',
-    'missing-dependency', 'wrong-dependency-source', 'old-report', 'stale-report', 'wrong-pid', 'missing-report', 'owner-drift', 'timeout', 'compile-failed', 'package-build', 'target-toolchain', 'source-content-drift',
+    'missing-dependency', 'wrong-dependency-source', 'old-report', 'stale-report', 'wrong-pid', 'missing-report', 'owner-drift', 'timeout', 'compile-failed', 'package-build', 'target-toolchain', 'source-content-drift', 'catalog-drift',
     'prerequisite-source-version', 'prerequisite-timeout', 'prerequisite-cancelled', 'prerequisite-observer', 'prerequisite-cleanup', 'prerequisite-streams', 'target-manifest-drift')) {
     Test-Case "UPM Distribution rejects $fault through the real controller" {
         Assert-Rejected { Invoke-UpmDistributionFixture -Fault $fault } 'identity|type|match|process|exit|package|Package|inputs changed|report.json|owner|ownership|dependency.*(?:missing|strings)'
@@ -344,13 +350,14 @@ Test-Case 'UPM multi-package licenses, metadata and complete Editor dependency c
     Assert-Rejected { Get-YLUpmPackages -Repository $source -Ids @('com.kano.ylframework.domain-excel') } 'Mismatched internal package version'
 }
 
-Test-Case 'All five maintained UPM roots satisfy the exact version, materialized content and product-only license boundary' {
+Test-Case 'All catalog UPM roots satisfy exact versions, materialized content and the product-only license boundary' {
     $source = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
-    $ids = @('com.kano.ylframework', 'com.kano.ylframework.dotween', 'com.kano.ylframework.excel', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.hybridclr')
+    $ids = @((Read-YLPackageCatalog).packages.id)
     $packages = @(Get-YLUpmPackages -Repository $source -Ids $ids)
-    Assert-That ($packages.Count -eq 5) 'The maintained product package graph contains unexpected or missing package roots.'
+    Assert-That ($packages.Count -eq $ids.Count) 'The maintained product package graph contains unexpected or missing package roots.'
+    $version = @($packages | Where-Object id -CEQ 'com.kano.ylframework')[0].version
     foreach ($package in $packages) {
-        Assert-That ($package.version -ceq '0.1.0-preview.1') 'A maintained package has a different distribution version.'
+        Assert-That ($package.version -ceq $version) 'A maintained package has a different distribution version.'
         $content = Get-DistributionPackageContent -Root $package.root
         Assert-That ($content.sha256 -cmatch '^[0-9a-f]{64}$' -and $content.files.Count -gt 2) "Maintained package contents could not be audited: $($package.id)"
     }

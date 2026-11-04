@@ -16,7 +16,7 @@ namespace YLFramework.Mission
 
         /// <summary>编辑器分配新任务 ID 时使用的下界，实际新 ID 还会超过现有任务最大值。</summary>
         [HideInInspector]
-        [FormerlySerializedAs("start_id")] public int startId = 0;
+        [FormerlySerializedAs("start_id"), global::YLFramework.Excel.ExcelColumnName("start_id")] public int startId = 0;
 
         /// <summary>
         /// 任务配置集合
@@ -30,7 +30,7 @@ namespace YLFramework.Mission
         /// </summary>
         [Tooltip("参数集合")]
         [HideInInspector]
-        [FormerlySerializedAs("param")] public List<MissionParameter> parameters = new List<MissionParameter>();
+        [FormerlySerializedAs("param"), global::YLFramework.Excel.ExcelColumnName("param")] public List<MissionParameter> parameters = new List<MissionParameter>();
 
         private Dictionary<int, MissionConfigData> _missionsDic = new Dictionary<int, MissionConfigData>();
 
@@ -41,10 +41,10 @@ namespace YLFramework.Mission
         /// </summary>
         [Tooltip("显示名")]
         [Header("显示名")]
-        [FormerlySerializedAs("display_name")] public string displayName;
+        [FormerlySerializedAs("display_name"), global::YLFramework.Excel.ExcelColumnName("display_name")] public string displayName;
 
         /// <summary>编辑器限定可创建任务数据类型的脚本 GUID；为空时采用基础数据类型。</summary>
-        [FormerlySerializedAs("type_script_guid")] public string typeScriptGuid;
+        [FormerlySerializedAs("type_script_guid"), global::YLFramework.Excel.ExcelColumnName("type_script_guid")] public string typeScriptGuid;
 
 
         /// <summary>

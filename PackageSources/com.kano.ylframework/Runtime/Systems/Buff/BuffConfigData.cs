@@ -51,11 +51,11 @@ namespace YLFramework.Buff
         [Tooltip("唯一标识")]
 
         [ExcelScriptableObjectId]
-        [FormerlySerializedAs("buff_id")] public int id;
+        [FormerlySerializedAs("buff_id"), ExcelColumnName("buff_id")] public int id;
         /// <summary>供界面展示的 Buff 名称。</summary>
         [Tooltip("名称")]
         [Header("名称")]
-        [FormerlySerializedAs("buff_name")] public string buffName;
+        [FormerlySerializedAs("buff_name"), ExcelColumnName("buff_name")] public string buffName;
         /// <summary>Buff 图标的资源地址信息。</summary>
         [Tooltip("图标")]
         [Header("图标")]
@@ -83,7 +83,7 @@ namespace YLFramework.Buff
         /// <summary>管理器反射创建的 BuffBase 具体类型全名，须有 public 无参构造器。</summary>
         [Tooltip("Buff脚本名称")]
 
-        [FormerlySerializedAs("buff_class_full_name")] public string buffClassFullName;
+        [FormerlySerializedAs("buff_class_full_name"), ExcelColumnName("buff_class_full_name")] public string buffClassFullName;
 
         /// <summary>供编辑器维护类型绑定的脚本 GUID，运行时按类型全名创建。</summary>
         [Tooltip("Buff脚本guid")]

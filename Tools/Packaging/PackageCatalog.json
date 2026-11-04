@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "id": "com.kano.ylframework",
+      "assemblies": [
+        { "name": "YLFramework.Runtime", "path": "Runtime/YLFramework.Runtime.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Editor", "path": "Editor/YLFramework.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.ResourceStartup.Sample", "path": "Samples~/ResourceStartup/Runtime/YLFramework.ResourceStartup.Sample.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.ResourceStartup.Sample.Editor", "path": "Samples~/ResourceStartup/Editor/YLFramework.ResourceStartup.Sample.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": [
+        "Runtime/Core/Resources/YLFramework/Core/Canvas.prefab",
+        "Runtime/Core/Resources/YLFramework/Core/EventSystem.prefab",
+        "Runtime/Systems/Action/Resources/ActionKit/ScreenTransitionCanvas.prefab",
+        "Prefabs/YLFramework.prefab",
+        "Plugins/BouncyCastle/BouncyCastle.Cryptography.dll",
+        "Plugins/BouncyCastle/SOURCE.txt",
+        "Runtime/Core/Analyzers/YLFramework.Analyzers.dll",
+        "Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs",
+        "Samples~/ResourceStartup/Editor/ResourceStartupExampleEditor.cs"
+      ],
+      "samples": ["Samples~/ResourceStartup"]
+    },
+    {
+      "id": "com.kano.ylframework.domain-excel",
+      "assemblies": [
+        { "name": "YLFramework.Domain.Excel.Editor", "path": "Editor/YLFramework.Domain.Excel.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Editor/Dependencies.json"],
+      "samples": []
+    },
+    {
+      "id": "com.kano.ylframework.dotween",
+      "assemblies": [
+        { "name": "YLFramework.Actions.DOTween", "path": "Runtime/YLFramework.Actions.DOTween.asmdef", "player": true, "defineConstraints": ["DOTWEEN"], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Dependencies.json", "Runtime/DOTweenAction.cs"],
+      "samples": []
+    },
+    {
+      "id": "com.kano.ylframework.excel",
+      "assemblies": [
+        { "name": "YLFramework.Excel.Editor", "path": "Editor/YLFramework.Excel.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Editor/Plugins/MiniExcel.dll", "Editor/Licenses/MiniExcel-LICENSE.txt", "Editor/Licenses/MiniExcel-ATTRIBUTION.txt", "Editor/Dependencies.json"],
+      "samples": []
+    },
+    {
+      "id": "com.kano.ylframework.hybridclr",
+      "assemblies": [
+        { "name": "YLFramework.HybridCLR", "path": "Runtime/YLFramework.HybridCLR.asmdef", "player": true, "defineConstraints": ["YL_HYBRIDCLR_9_0_3"], "versionDefines": [{ "name": "com.code-philosophy.hybridclr", "expression": "[9.0.3,9.0.4)", "define": "YL_HYBRIDCLR_9_0_3" }] },
+        { "name": "YLFramework.HybridCLR.Editor", "path": "Editor/YLFramework.HybridCLR.Editor.asmdef", "player": false, "defineConstraints": ["YL_HYBRIDCLR_9_0_3"], "versionDefines": [{ "name": "com.code-philosophy.hybridclr", "expression": "[9.0.3,9.0.4)", "define": "YL_HYBRIDCLR_9_0_3" }] },
+        { "name": "YLFramework.HybridCLR.Sample.Host", "path": "Samples~/HybridCLR/Host/YLFramework.HybridCLR.Sample.Host.asmdef", "player": true, "defineConstraints": ["YL_HYBRIDCLR_9_0_3"], "versionDefines": [{ "name": "com.code-philosophy.hybridclr", "expression": "[9.0.3,9.0.4)", "define": "YL_HYBRIDCLR_9_0_3" }] },
+        { "name": "YLFramework.HybridCLR.Sample.Entry", "path": "Samples~/HybridCLR/HotEntry/YLFramework.HybridCLR.Sample.Entry.asmdef", "player": true, "defineConstraints": ["YL_HYBRIDCLR_9_0_3"], "versionDefines": [{ "name": "com.code-philosophy.hybridclr", "expression": "[9.0.3,9.0.4)", "define": "YL_HYBRIDCLR_9_0_3" }] },
+        { "name": "YLFramework.HybridCLR.Sample.Support", "path": "Samples~/HybridCLR/HotSupport/YLFramework.HybridCLR.Sample.Support.asmdef", "player": true, "defineConstraints": ["YL_HYBRIDCLR_9_0_3"], "versionDefines": [{ "name": "com.code-philosophy.hybridclr", "expression": "[9.0.3,9.0.4)", "define": "YL_HYBRIDCLR_9_0_3" }] },
+        { "name": "YLFramework.HybridCLR.Sample.Editor", "path": "Samples~/HybridCLR/Editor/YLFramework.HybridCLR.Sample.Editor.asmdef", "player": false, "defineConstraints": ["YL_HYBRIDCLR_9_0_3"], "versionDefines": [{ "name": "com.code-philosophy.hybridclr", "expression": "[9.0.3,9.0.4)", "define": "YL_HYBRIDCLR_9_0_3" }] }
+      ],
+      "requiredFiles": ["Dependencies.json", "Samples~/HybridCLR/Host/HybridCLRExample.cs"],
+      "samples": ["Samples~/HybridCLR"]
+    }
+  ]
+}

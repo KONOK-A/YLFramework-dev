@@ -8,7 +8,6 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Serialization;
 using Object = UnityEngine.Object;
 using YLFramework.Excel;
 
@@ -67,15 +66,7 @@ namespace YLFramework.Integrations.Excel.Editor
         // 将模型字段映射为工作簿协议列名。
         internal static string ColumnName(FieldInfo field)
         {
-            // 仅本轮迁移的自有领域字段沿用旧表头；不把用户模型的 Unity 别名扩展为 Excel 协议。
-            var owner = field.DeclaringType;
-            if (owner.Assembly != typeof(ExcelIgnore).Assembly ||
-                owner.Namespace is not ("YLFramework.Skill" or "YLFramework.Buff" or
-                    "YLFramework.Mission" or "YLFramework.Equipment" or "YLFramework.DataAssets"))
-            {
-                return field.Name;
-            }
-            return field.GetCustomAttributes<FormerlySerializedAsAttribute>().SingleOrDefault()?.oldName ?? field.Name;
+            return field.GetCustomAttribute<ExcelColumnNameAttribute>()?.Name ?? field.Name;
         }
 
         // 将 CLR 字段类型归入列型，非标量且非 Unity 对象的类型按 JSON 处理。

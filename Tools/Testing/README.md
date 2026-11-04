@@ -206,6 +206,27 @@ Formatter 与 Analyzer 保留独立入口，不并入 UTF，也不改变默认�
 旧 Verify/Offline/接收工具的辅助编译结果不能替代上述测试合同。
 正式使用说明只记当前入口和前置；阶段计数、一次性失败、迁移取舍与未验收范围记在原任务 Plan。
 
+## UPM 最小与夹具
+
+`Tools/Packaging/PackageCatalog.json` 是正式包 ID、程序集归属、显式门控及特殊负载的维护入口，版本和依赖仍读取各包的 `package.json`。清单不注册空包；未知包、未知程序集、缺失负载和没有明确前置的宏都必须失败。完整负载包括默认不编译的适配源码，默认 Runtime 的精确源码集合不包括嵌套 asmdef 所有的源码。
+
+`Test-YLIntegrationPackages.ps1 -PackageId <精确包ID>` 从真实 manifest 计算最小自有依赖闭包，检查实际 UPM 来源、完整内容、Editor/Player 编译图和加载的程序集。`-PackageId` 与原 `-Integration DOTween|Excel|DomainExcel|HybridCLR` 互斥，不接受 SDK 专属参数。Excel/DomainExcel/HybridCLR 使用已知前置检查；普通包使用固定编译 profile，不接受任意类型或方法探针。DOTween 的 SDK 正向仍用显式 `-Integration DOTween -DOTweenSdkMode Required`，最小安装本身不是 SDK 正向证明。
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackages.ps1 `
+  -Unity $unity -WorkspaceRoot $workspace -PackageId com.kano.ylframework -PackageSource File
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLOptionalAdapters.ps1 `
+  -Unity $unity -WorkspaceRoot $workspace
+```
+
+`Test-YLOptionalAdapters.ps1` 在工具拥有的目录生成专用测试包，串行验证 neither、feature-only、backend-only、both 四个固定组合，再在 both 的原宿主移除 backend 并重开，要求适配器从编译图与已加载程序集消失。fixture 包不是正式分包占位，不写入正式清单。报告保留全部适配负载、包级 Version Define、作用域、真实类型与源码归属；只有 both 组合要求适配程序集出现。这是隔离编译与安装证据，不是框架业务行为、Player 构建/运行或发行验收。NoUnity 的 `Test-YLPackageCatalogNoUnity.ps1` 不能替代该真实矩阵。
+
+两种入口都把清单 SHA 绑定到源输入身份、宿主受管收据和 C# 请求/报告；缺清单或输入漂移不回退。`summary.json` 是最终不可覆盖回执，矩阵中间结果分别写入各场景的 `case-summary.json`。
+
+`Special / LoggingOnly` 是只含 Logger 与 SingletonSessionState 的源码隔离宿主，明确不编译任何领域 Editor；它验证两次真实 Play 退出后日志句柄关闭，不代表正式 UPM 分包安装。Slice 输入按显式源码归属复制到受管 `Assets`，不能留下未注册的 `PackageSources` 或隐式引入无关 Shared 夹具。
+
+`Special / MigrationFixtures` 只用于在全新工具宿主捕获当前布局的资产、Prefab、正式 ExcelAuthoring 工作簿与 Resource 发布。选集不支持 NUnit `Explicit`；生产用例用独立 Special 模块，不进入 Daily。Resource 构建需要非常短的外部工作根，普通 Temp 路径即使短 Host key 仍可能超过 Windows Mono 上限。生成根存在即拒绝覆盖；只有完整 Passed 回执可交给 `Tools/Testing/Tests/Export-YLAssemblyMigrationFixtures.ps1 -WorkspaceRoot $shortWorkspace -ResultRoot $passedResult`，导出也拒绝已有目标。输入标明生成式基线及精确 Unity 版本，旧 Bundle 不宣称跨 Unity 版本互通。
+
 ## Registry 与冻结产物
 
 `Test-YLDistribution.ps1` 与 `Test-YLIntegrationPackages.ps1` 共用既有 owner、lease、process 和结果合同，不采用 npm publish 或开发宿主依赖作为发行证明。自有包的五份登记模板位于 `Tools/Packaging/OpenUPM/`，使用 OpenUPM `trackingMode: githubRelease`、Git Tag 字面过滤前缀 `upm/` 和各自的稳定资产匹配前缀 `<包ID>-`，不是仓库根目录 Git tracking。该匹配字段不展开 `{version}`；实际预览 Tag 仍为 `upm/v0.1.0-preview.1`，实际资产仍为 `<包ID>-0.1.0-preview.1.tgz`。这些模板本身不代表已在 OpenUPM 登记或发布。
@@ -221,9 +242,9 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Packaging/Build-YLRegistryPa
   -Repository $repository -SourceCommit $commit -OutputRoot $packageWorkspace
 ```
 
-`$repository` 必须是实际 Git 仓库根，`$packageWorkspace` 是其外部的明确绝对工作根；未知已有目录不领养。入口从独立 checkout 检出完整 40hex 提交、物化 LFS，再以隔离 npm 配置/cache 执行两次 `npm pack --ignore-scripts --offline`。当前未提交的 README、manifest 或代码不会被复制进固定提交候选。五包发布白名单分别按真实目录检查，不把源码 `.gitattributes` 当 tarball 必需内容。
+`$repository` 必须是实际 Git 仓库根，`$packageWorkspace` 是其外部的明确绝对工作根；未知已有目录不领养。入口从独立 checkout 检出完整 40hex 提交、读取该提交的包清单、物化 LFS，再以隔离 npm 配置/cache 执行两次 `npm pack --ignore-scripts --offline`。当前未提交的 README、manifest 或代码不会被复制进固定提交候选。正式包按清单和真实目录逐一审计，不接受任意新增目录，不把源码 `.gitattributes` 当 tarball 必需内容。
 
-结果 `artifacts/` 保存五个 `<包ID>-0.1.0-preview.1.tgz` 和 `release-manifest.json`。回执包含源提交、固定工具链、Local 或 CI producer、包依赖、tarball SHA-256 / SHA-512 integrity、完整逐文件原字节摘要及语义内容摘要。只有 `package.json` 做严格 JSON 的递归 ordinal 规范化；非 manifest 文件原字节不可变化。tar 在提取前审计 `package/` 根、路径、重复项、大小写、链接、条目类型、数量、大小和完整性，不信任请求提供的逐文件列表来替代真实负载。
+结果 `artifacts/` 保存清单内各包的 `<包ID>-<manifest版本>.tgz` 和 `release-manifest.json`；同批版本与精确内部依赖必须一致。回执包含源提交、固定工具链、Local 或 CI producer、包依赖、tarball SHA-256 / SHA-512 integrity、完整逐文件原字节摘要及语义内容摘要。只有 `package.json` 做严格 JSON 的递归 ordinal 规范化；非 manifest 文件原字节不可变化。tar 在提取前审计 `package/` 根、路径、重复项、大小写、链接、条目类型、数量、大小和完整性，不信任请求提供的逐文件列表来替代真实负载。本地版本可从 manifest 演进，不等于公开 Registry 或发布版本已获批准。
 
 ### 两种新来源
 

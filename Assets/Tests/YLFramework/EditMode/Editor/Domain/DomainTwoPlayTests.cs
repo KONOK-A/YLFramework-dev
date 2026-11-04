@@ -1,11 +1,13 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
 using YLFramework.Buff;
+using YLFramework.Equipment;
 using YLFramework.Logging;
 using YLFramework.Mission;
 using YLFramework.RedDots;
@@ -18,8 +20,37 @@ namespace YLFramework.Tests.Extensions.Domain
     [Category("YL.Special.Session")]
     public class DomainTwoPlayTests
     {
+        private static readonly List<string> ShutdownCallbacks = new();
+        private static readonly List<bool> LoggerDuringCallbacks = new();
+        private static void RecordShutdown(string domain)
+        {
+            ShutdownCallbacks.Add(domain); LoggerDuringCallbacks.Add(LoggerManager.IsEnabled);
+            LoggerManager.Current?.LogFormat(LogType.Log, null, "domain-shutdown-callback {0}", domain);
+        }
         public sealed class SessionSkill : SkillBase
         {
+            protected internal override void OnRemove() => RecordShutdown("Skill");
+        }
+        public sealed class ThrowingSessionSkill : SkillBase
+        {
+            protected internal override void OnRemove()
+            {
+                RecordShutdown("Skill");
+                throw new System.InvalidOperationException("domain-shutdown-order-marker");
+            }
+        }
+        public sealed class SessionBuff : BuffBase
+        {
+            public override void OnRemove() => RecordShutdown("Buff");
+        }
+        public sealed class SessionEquipment : IEquipment
+        {
+            public IEquippable Equipper { get; set; }
+            public EquipmentConfigData EquipmentData { get; set; }
+            public void OnLoaded() { }
+            public void OnUnloaded() => RecordShutdown("Equipment");
+            public void OnEquip() { }
+            public void OnUnequip() { }
         }
         private string _directory;
         private System.IDisposable _oldPath;
@@ -30,6 +61,7 @@ namespace YLFramework.Tests.Extensions.Domain
             SkillManager.Shutdown();
             BuffManager.Shutdown();
             MissionManager.Shutdown();
+            EquipmentManager.Shutdown();
             _oldPath?.Dispose();
             _oldPath = null;
             if (EditorApplication.isPlaying)
@@ -87,13 +119,15 @@ namespace YLFramework.Tests.Extensions.Domain
         }
 
         [UnityTest]
-        public IEnumerator EachPlayReturnsAllThreeDomainHostsConfigurationsAndRealRootLeases()
+        public IEnumerator DomainShutdownContinuesAndLoggingClosesLast()
         {
             Assert.That(EditorSettings.enterPlayModeOptionsEnabled && (EditorSettings.enterPlayModeOptions & EnterPlayModeOptions.DisableDomainReload) != 0, Is.True);
             for (int round = 1; round <= 2; round++)
             {
                 yield return new EnterPlayMode(false);
+                ShutdownCallbacks.Clear(); LoggerDuringCallbacks.Clear();
                 Assert.That(SkillManager.ConfigCount + BuffManager.ConfigCount + MissionManager.ConfigCount, Is.Zero, "Each entry starts a new domain session.");
+                Assert.That(EquipmentManager.GetConfig("TwoPlay.Equipments"), Is.Null);
                 Assert.That(SkillManager.HostCount + BuffManager.HostCount + BuffManager.EffectOwnerCount, Is.Zero);
                 Assert.That(ResourceSystem.Current, Is.Null);
                 var skills = ScriptableObject.CreateInstance<SkillsConfig>();
@@ -101,14 +135,14 @@ namespace YLFramework.Tests.Extensions.Domain
                 var skillData = ScriptableObject.CreateInstance<SkillConfigData>();
                 skillData.id = 100;
                 skillData.parent = skills;
-                skillData.skillClassFullName = typeof(SessionSkill).FullName;
+                skillData.skillClassFullName = round == 1 ? typeof(SessionSkill).FullName : typeof(ThrowingSessionSkill).FullName;
                 skills.skills.Add(skillData);
                 var buffs = ScriptableObject.CreateInstance<BuffsConfig>();
                 buffs.name = "TwoPlay.Buffs";
                 var buffData = ScriptableObject.CreateInstance<BuffConfigData>();
                 buffData.id = 100;
                 buffData.parent = buffs;
-                buffData.buffClassFullName = typeof(BuffBase).FullName;
+                buffData.buffClassFullName = typeof(SessionBuff).FullName;
                 buffs.buffs.Add(buffData);
                 var missions = ScriptableObject.CreateInstance<MissionsConfig>();
                 missions.name = "TwoPlay.Missions";
@@ -117,10 +151,16 @@ namespace YLFramework.Tests.Extensions.Domain
                 missionData.parent = missions;
                 missionData.missionTypeClassFullName = typeof(MissionBase).FullName;
                 missions.missions.Add(missionData);
+                var equipments = ScriptableObject.CreateInstance<EquipmentsConfig>();
+                equipments.name = "TwoPlay.Equipments";
+                var equipmentData = ScriptableObject.CreateInstance<EquipmentConfigData>(); equipmentData.id = 100; equipmentData.parent = equipments;
+                equipmentData.equipmentType = EquipmentType.Script; equipmentData.equipmentClassFullName = typeof(SessionEquipment).FullName;
+                equipments.Equipments.Add(equipmentData);
                 var source = new SessionSource();
                 source.Assets.Add("skills", skills);
                 source.Assets.Add("buffs", buffs);
                 source.Assets.Add("missions", missions);
+                source.Assets.Add("equipments", equipments);
                 var entries = new List<ResourceCatalogEntry>();
                 foreach (var pair in source.Assets)
                 {
@@ -132,32 +172,52 @@ namespace YLFramework.Tests.Extensions.Domain
                 SkillManager.LoadConfig(resources, new ResourceAddress("domain-two-play", "skills"));
                 BuffManager.LoadConfig(resources, new ResourceAddress("domain-two-play", "buffs"));
                 MissionManager.LoadConfig(resources, new ResourceAddress("domain-two-play", "missions"));
+                EquipmentManager.LoadConfig(resources, new ResourceAddress("domain-two-play", "equipments"));
                 var host = new SessionHost();
                 var skill = SkillManager.AddSkills(host, 100);
+                skill.Release();
                 var buff = BuffManager.AddBuff(host, 100);
+                EquipmentManager.CreateEquipment(100);
                 var mission = MissionManager.GetMission(missions.name, 100);
-                Assert.That(resources.GetDiagnosticsSnapshot().RecordCount, Is.EqualTo(3));
+                Assert.That(resources.GetDiagnosticsSnapshot().RecordCount, Is.EqualTo(4));
                 Assert.That(skill.SkillData, Is.Not.SameAs(skillData));
                 Assert.That(buff.BuffData, Is.Not.SameAs(buffData));
                 Assert.That(mission.MissionConfig, Is.Not.SameAs(missionData));
+                _directory = Path.Combine(Application.temporaryCachePath, "YL.Domain.Shutdown." + System.Guid.NewGuid().ToString("N"));
+                var logger = LoggerManager.Enable(new LoggerOptions { WriteToFile = true, Directory = _directory });
+                logger.LogFormat(LogType.Log, null, "domain-shutdown-start");
+                string logPath = logger.LogFilePath;
+                if (round == 2) { LogAssert.Expect(LogType.Exception, new Regex("domain-shutdown-order-marker")); }
+                var exitTrace = new List<string>();
+                System.Action<PlayModeStateChange> observe = state => exitTrace.Add(state + ":logger=" + LoggerManager.IsEnabled + ",configs=" +
+                    (SkillManager.ConfigCount + BuffManager.ConfigCount + MissionManager.ConfigCount) + ",releases=" + source.Releases);
+                EditorApplication.playModeStateChanged += observe;
                 // 故意不手动Shutdown/Clear static；以下断言只接受真实退出钩子的清理结果。
-                yield return new ExitPlayMode();
+                try { yield return new ExitPlayMode(); }
+                finally { EditorApplication.playModeStateChanged -= observe; }
                 Assert.That(SkillManager.ConfigCount + BuffManager.ConfigCount + MissionManager.ConfigCount, Is.Zero, "Every exit returns all configurations.");
+                Assert.That(EquipmentManager.GetConfig("TwoPlay.Equipments"), Is.Null);
                 Assert.That(SkillManager.HostCount + BuffManager.HostCount + BuffManager.EffectOwnerCount, Is.Zero);
                 Assert.That(host.Skills, Is.Empty);
                 Assert.That(host.Buffs, Is.Empty);
                 Assert.That(skill.Releaser, Is.Null);
                 Assert.That(buff.Owner, Is.Null);
-                Assert.That(source.Releases, Is.EqualTo(3), "Each round must return its own three real root leases.");
+                Assert.That(source.Releases, Is.EqualTo(4), "Each round must return all four real root leases, even after an earlier domain throws.");
+                Assert.That(ShutdownCallbacks, Is.EquivalentTo(new[] { "Skill", "Buff", "Equipment" }));
+                Assert.That(ShutdownCallbacks.IndexOf("Skill"), Is.LessThan(ShutdownCallbacks.IndexOf("Buff")), "Keep the established Skill/Buff ordering.");
+                Assert.That(LoggerDuringCallbacks, Is.All.True, "Domain callbacks, not later Resource source eviction, must precede logger shutdown. " + string.Join(";", exitTrace));
+                Assert.That(logger.IsDisposed, Is.True); Assert.That(LoggerManager.IsEnabled, Is.False);
+                Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(logPath)), Does.Contain("domain-shutdown-callback Equipment"));
                 Assert.That(ResourceSystem.Current, Is.Null);
-                Debug.Log("MC26_DOMAIN_TWO_PLAY_ROUND_PASS round=" + round + "; releases=" + source.Releases);
-                foreach (var asset in new UnityEngine.Object[] { skills, skillData, buffs, buffData, missions, missionData })
+                Debug.Log("DOMAIN_SHUTDOWN_ORDER_PASS round=" + round + "; releases=" + source.Releases);
+                foreach (var asset in new UnityEngine.Object[] { skills, skillData, buffs, buffData, missions, missionData, equipments, equipmentData })
                 {
                     if (asset)
                     {
                         UnityEngine.Object.DestroyImmediate(asset);
                     }
                 }
+                Directory.Delete(_directory, true); _directory = null;
             }
         }
 
@@ -186,7 +246,10 @@ namespace YLFramework.Tests.Extensions.Domain
             }
             public ResourceSourceResult Load(ResourceCatalogEntry entry, System.Type type) => new(Assets[entry.Location.Locator]);
             public ResourceSourceOperation LoadAsync(ResourceCatalogEntry entry, System.Type type) => throw new System.NotSupportedException();
-            public void Release(UnityEngine.Object asset) => Releases++;
+            public void Release(UnityEngine.Object asset)
+            {
+                Releases++;
+            }
         }
     }
 }

@@ -43,7 +43,7 @@ namespace YLFramework.Testing
                     schemaVersion = 1, purpose = "YLTesting.IntegrationPackages", integration = Text(request, "integration"),
                     hostId = Text(request, "hostId"), resultId = Text(request, "resultId"), inputHash = Text(request, "inputHash"),
                     packageOrigin = Text(request, "packageOrigin"), expectedTemplateHash = Text(request, "expectedTemplateHash"),
-                    entryPackage = (string)request["entryPackage"], registryUrl = (string)request["registryUrl"],
+                    entryPackage = Text(request, "entryPackage"), catalogSha256 = Text(request, "catalogSha256"), optionalAdapterScenario = (string)request["optionalAdapterScenario"], registryUrl = (string)request["registryUrl"],
                     registryVersion = (string)request["registryVersion"], releaseManifestSha256 = (string)request["releaseManifestSha256"],
                     cacheEnvironment = Artifact(request) ? CacheEnvironment() : null,
                     unityVersion = Application.unityVersion, pid = System.Diagnostics.Process.GetCurrentProcess().Id,
@@ -76,15 +76,13 @@ namespace YLFramework.Testing
                 report["playerGraph"] = JArray.FromObject(player.Select(Graph));
                 ValidateGraph(request, editor, player);
                 var required = new JArray();
-                foreach (var expected in ((JArray)request["assemblies"]).Cast<JObject>())
+                foreach (var expected in AssemblyPlan(request).Cast<JObject>().Where(row => (bool)row["enabled"]))
                 {
                     string name = Text(expected, "name");
                     var assembly = editor.Single(item => item.name == name);
                     var package = selected.Single(item => Text(item, "name") == Text(expected, "package"));
                     string root = Text(package, "root");
-                    string directory = Text(expected, "directory") + "/";
-                    var sources = ((JArray)package["files"]).Cast<JObject>().Select(file => Text(file, "path"))
-                        .Where(path => path.StartsWith(directory, StringComparison.Ordinal) && path.EndsWith(".cs", StringComparison.Ordinal)).ToArray();
+                    var sources = ((JArray)expected["sources"]).Values<string>().ToArray();
                     var compiledSources = assembly.sourceFiles.Select(source => Physical(source, selected)).ToArray();
                     var expectedSources = new HashSet<string>(sources.Select(source => Path.GetFullPath(Path.Combine(root, source))), StringComparer.OrdinalIgnoreCase);
                     if (sources.Length == 0 || !expectedSources.SetEquals(compiledSources) ||
@@ -99,12 +97,13 @@ namespace YLFramework.Testing
                             "; playerGraph=" + player.Any(item => item.name == name) + "; expectedPlayer=" + expected["player"]);
                     }
                     var loaded = AppDomain.CurrentDomain.GetAssemblies().Single(item => item.GetName().Name == name);
-                    if (!string.Equals(Path.GetFullPath(loaded.Location), Path.GetFullPath(assembly.outputPath), StringComparison.OrdinalIgnoreCase) || loaded.GetTypes().Length == 0)
+                    int loadedTypeCount = loaded.GetTypes().Length;
+                    if (!string.Equals(Path.GetFullPath(loaded.Location), Path.GetFullPath(assembly.outputPath), StringComparison.OrdinalIgnoreCase) || loadedTypeCount == 0)
                     {
                         throw new InvalidOperationException("The required compiled assembly is not actually loaded with types: " + name);
                     }
                     required.Add(JObject.FromObject(new { name, assembly.sourceFiles, assembly.defines, assembly.outputPath,
-                        references = References(assembly), assembly.compiledAssemblyReferences, loadedPath = loaded.Location,
+                        references = References(assembly), assembly.compiledAssemblyReferences, loadedPath = loaded.Location, loadedTypeCount,
                         loadedReferences = loaded.GetReferencedAssemblies().Select(reference => reference.FullName).ToArray(), sha256 = Hash(loaded.Location) }));
                 }
                 report["assemblies"] = required;
@@ -113,6 +112,21 @@ namespace YLFramework.Testing
                 if (global.Contains("YL_DOMAIN_EXCEL") || global.Contains("YL_HYBRIDCLR_9_0_3"))
                 {
                     throw new InvalidOperationException("Package presence/version gates must not be replaced by global integration symbols.");
+                }
+                if (integration == "OptionalAdapterFixture")
+                {
+                    if (global.Contains("YL_FIXTURE_BACKEND")) { throw new InvalidOperationException("The fixture must use a package Version Define, not a global substitute."); }
+                    var declared = new HashSet<string>(((JArray)Catalog(request)["packages"]).Cast<JObject>().SelectMany(package => ((JArray)package["assemblies"]).Cast<JObject>()).Select(assembly => Text(assembly, "name")), StringComparer.Ordinal);
+                    var loaded = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetName().Name).Where(declared.Contains).ToArray();
+                    var expectedLoaded = AssemblyPlan(request).Cast<JObject>().Where(assembly => (bool)assembly["enabled"]).Select(assembly => Text(assembly, "name"));
+                    if (!new HashSet<string>(expectedLoaded, StringComparer.Ordinal).SetEquals(loaded)) { throw new InvalidOperationException("A disabled/uninstalled fixture assembly is still loaded, or a required one is missing."); }
+                    report["loadedFixtureAssemblies"] = JArray.FromObject(loaded);
+                    var adapter = editor.SingleOrDefault(assembly => assembly.name == "YLFramework.FixtureAdapter");
+                    if (adapter != null && (!adapter.defines.Contains("YL_FIXTURE_BACKEND") || !adapter.assemblyReferences.Any(assembly => assembly.name == "YLFramework.FixtureBackend")))
+                    {
+                        throw new InvalidOperationException("The required fixture adapter lacks its actual package define/backend assembly reference.");
+                    }
+                    if (editor.Any(assembly => assembly.name == "YLFramework.FixtureFeature" && assembly.defines.Contains("YL_FIXTURE_BACKEND"))) { throw new InvalidOperationException("The adapter-only Version Define leaked into its parent Runtime."); }
                 }
                 if (integration == "DOTween")
                 {
@@ -251,9 +265,28 @@ namespace YLFramework.Testing
         private static void ValidateGraph(JObject request, CompiledAssembly[] editor, CompiledAssembly[] player)
         {
             var installed = PackageInfo.GetAllRegisteredPackages();
+            var plan = AssemblyPlan(request);
+            PackageCatalogContract.AssertGraph(plan, editor.Select(row => row.name), player.Select(row => row.name));
+            var owners = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
+            foreach (var owner in plan.Cast<JObject>())
+            {
+                var package = installed.Single(item => item.name == Text(owner, "package"));
+                foreach (string source in ((JArray)owner["sources"]).Values<string>())
+                {
+                    owners.Add(Path.GetFullPath(Path.Combine(package.resolvedPath, source)), owner);
+                }
+            }
             foreach (var assembly in editor.Concat(player))
             {
                 var compiledSources = new List<string>();
+                if (assembly.name == "YLFramework.Runtime")
+                {
+                    var forbidden = References(assembly).Where(reference =>
+                        !(Regex.IsMatch(reference, @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)(?:\.dll)?$") ||
+                            !player.Contains(assembly) && Regex.IsMatch(reference, @"^(?:UnityEditor(?:\.[A-Za-z0-9_]+)*|Unity\.Android\.(?:Types|Gradle|GradleProject))(?:\.dll)?$")) ||
+                        Regex.IsMatch(reference, "TestRunner|Tests|Mcp|ReflectorNet|Analyzer", RegexOptions.IgnoreCase)).ToArray();
+                    if (forbidden.Length != 0) { throw new InvalidOperationException("The main Runtime acquired an unapproved dependency: " + string.Join(", ", forbidden)); }
+                }
                 if (Regex.IsMatch(assembly.name, "TestRunner|Tests|Acceptance|Mcp|ReflectorNet", RegexOptions.IgnoreCase) ||
                     References(assembly).Any(reference => Regex.IsMatch(reference, "TestRunner|nunit|Mcp|ReflectorNet", RegexOptions.IgnoreCase)))
                 {
@@ -280,6 +313,7 @@ namespace YLFramework.Testing
                         if (Inside(path, Application.dataPath))
                         {
                             if (!string.Equals(path, Path.GetFullPath(Path.Combine(Project(), "Assets/YLTestingIntegration/Editor/IntegrationEntry.cs")), StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(path, Path.GetFullPath(Path.Combine(Project(), "Assets/YLTestingIntegration/Editor/PackageCatalogContract.cs")), StringComparison.OrdinalIgnoreCase) &&
                                 !(Text(request, "integration") == "DOTween" && (string)request["dotweenSdkMode"] != "Absent" &&
                                     Inside(path, Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween"))))
                             {
@@ -293,16 +327,18 @@ namespace YLFramework.Testing
                     }
                     if (!File.Exists(path)) { throw new InvalidOperationException("A compiled source is missing from its actual owner: " + source); }
                     RejectLinks(path);
+                    if (owners.TryGetValue(path, out var owner) && (!(bool)owner["enabled"] || Text(owner, "name") != assembly.name ||
+                        player.Contains(assembly) && !(bool)owner["player"]))
+                    {
+                        throw new InvalidOperationException("A disabled, differently owned or Editor-only product source entered an actual assembly: " + source);
+                    }
                     compiledSources.Add(path);
                 }
-                var required = ((JArray)request["assemblies"]).Cast<JObject>().SingleOrDefault(item => Text(item, "name") == assembly.name);
+                var required = plan.Cast<JObject>().SingleOrDefault(item => (bool)item["enabled"] && Text(item, "name") == assembly.name);
                 if (required != null)
                 {
-                    var expected = ((JArray)request["packages"]).Cast<JObject>().Single(item => Text(item, "name") == Text(required, "package"));
                     var package = installed.Single(item => item.name == Text(required, "package"));
-                    string prefix = Text(required, "directory") + "/";
-                    var sources = ((JArray)expected["files"]).Cast<JObject>().Select(file => Text(file, "path"))
-                        .Where(path => path.StartsWith(prefix, StringComparison.Ordinal) && path.EndsWith(".cs", StringComparison.Ordinal))
+                    var sources = ((JArray)required["sources"]).Values<string>()
                         .Select(path => Path.GetFullPath(Path.Combine(package.resolvedPath, path))).ToArray();
                     if (sources.Length == 0 || sources.Length != compiledSources.Count || !new HashSet<string>(sources, StringComparer.OrdinalIgnoreCase).SetEquals(compiledSources))
                     {
@@ -362,6 +398,10 @@ namespace YLFramework.Testing
 
         private static string PackageFileHash(string path, string relative, string name, bool git, bool localTarball = false)
         {
+            if (Regex.IsMatch(relative, @"(?:^|/)(?:SDK|SDKs|ThirdPartySdk|Demigiant)(?:/|$)|(?:^|/)(?:DOTween[^/]*\.dll|HybridCLR[^/]*\.dll|dnlib\.dll)$", RegexOptions.IgnoreCase))
+            {
+                throw new InvalidOperationException("An external SDK was bundled in an owned package: " + relative);
+            }
             if (Regex.IsMatch(relative, @"^(?:Assets|Packages|ProjectSettings|Library|Temp|Tests|Tools|\.git|\.kilo|\.kilocode|\.opencode|obj|bin)(?:/|$)|(?:^|/)(?:AGENTS\.md|\.yl-[^/]+|[^/]+\.(?:csproj|sln|slnx))$|IvanMurzak|UnityMcp|ReflectorNet", RegexOptions.IgnoreCase))
             {
                 throw new InvalidOperationException("Unauthorized installed product content: " + relative);
@@ -400,7 +440,7 @@ namespace YLFramework.Testing
 
         private static JArray CapturePackages(JObject request)
         {
-            if (Artifact(request)) { return CaptureArtifactPackages(request); }
+            if (Artifact(request)) { return ValidateInstalledCatalog(request, CaptureArtifactPackages(request)); }
             bool git = Text(request, "packageOrigin") == "GitRemote";
             string samples = Path.Combine(Project(), "Assets", "Samples");
             if (Directory.Exists(samples) && Files(samples).Any()) { throw new InvalidOperationException("The consumer must not default-import Samples, including non-script assets."); }
@@ -475,7 +515,38 @@ namespace YLFramework.Testing
                 row["resolvedPath"] = root; row["revision"] = revision; row["contentSha256"] = contentSha256; row["verifiedFiles"] = files.Length;
                 result.Add(row);
             }
-            return result;
+            return ValidateInstalledCatalog(request, result);
+        }
+
+        private static JObject Catalog(JObject request) => PackageCatalogContract.Load(request, Project(), ReadJson);
+
+        private static JArray AssemblyPlan(JObject request) => PackageCatalogContract.Plan(Catalog(request), (JArray)request["packages"],
+            Text(request, "integration"), Text(request, "integration") == "DOTween" ? (string)request["dotweenSdkMode"] ?? "Required" : null);
+
+        private static JArray ValidateInstalledCatalog(JObject request, JArray packages)
+        {
+            var manifests = new JObject();
+            foreach (var package in packages.Cast<JObject>())
+            {
+                manifests.Add(Text(package, "name"), ReadJson(Path.Combine(Text(package, "resolvedPath"), "package.json")));
+            }
+            var catalog = Catalog(request);
+            PackageCatalogContract.AssertClosure(catalog, manifests, EntryPackages(request, catalog));
+            return packages;
+        }
+
+        private static string[] EntryPackages(JObject request, JObject catalog)
+        {
+            if (Text(request, "integration") != "OptionalAdapterFixture") { return new[] { Text(request, "entryPackage") }; }
+            const string main = "com.kano.ylframework", feature = "com.kano.ylframework.fixture-feature", backend = "com.kano.ylframework.fixture-backend";
+            string scenario = Text(request, "optionalAdapterScenario");
+            if (Text(request, "packageOrigin") != "File" || Text(request, "entryPackage") != main || !new[] { "Neither", "Feature", "Backend", "Both" }.Contains(scenario) ||
+                !new HashSet<string>(new[] { main, feature, backend }, StringComparer.Ordinal).SetEquals(((JArray)catalog["packages"]).Cast<JObject>().Select(package => Text(package, "id"))))
+            {
+                throw new InvalidOperationException("Unknown optional-adapter fixture scenario/catalog/source.");
+            }
+            return new[] { main }.Concat(scenario == "Feature" || scenario == "Both" ? new[] { feature } : Array.Empty<string>())
+                .Concat(scenario == "Backend" || scenario == "Both" ? new[] { backend } : Array.Empty<string>()).ToArray();
         }
 
         private static bool Artifact(JObject request) => (string)request["packageOrigin"] == "Registry" || (string)request["packageOrigin"] == "LocalTarball";
@@ -567,7 +638,6 @@ namespace YLFramework.Testing
             foreach (var token in (JArray)request["packages"])
             {
                 if (token is not JObject package || !names.Add(Text(package, "name")) ||
-                    !new[] { "com.kano.ylframework", "com.kano.ylframework.excel", "com.kano.ylframework.domain-excel", "com.kano.ylframework.dotween", "com.kano.ylframework.hybridclr" }.Contains(Text(package, "name")) ||
                     package["root"]?.Type != JTokenType.Null || !Regex.IsMatch(Text(package, "contentSha256"), @"\A[0-9a-fA-F]{64}\z") ||
                     package["dependencies"] is not JObject dependencies || dependencies.Properties().Any(property => property.Value.Type != JTokenType.String || string.IsNullOrWhiteSpace((string)property.Value)) ||
                     package["files"] is not JArray files || files.Count == 0 || (registry && Text(package, "version") != Text(request, "registryVersion")))
@@ -784,9 +854,9 @@ namespace YLFramework.Testing
         {
             if (request["schemaVersion"]?.Type != JTokenType.Integer || (long)request["schemaVersion"] != 1 ||
                 Text(request, "purpose") != "YLTesting.IntegrationPackages" || !Application.isBatchMode ||
-                !new[] { "DOTween", "Excel", "DomainExcel", "HybridCLR" }.Contains(Text(request, "integration")) ||
+                !new[] { "Package", "DOTween", "Excel", "DomainExcel", "HybridCLR", "OptionalAdapterFixture" }.Contains(Text(request, "integration")) ||
                 !new[] { "File", "GitRemote", "Registry", "LocalTarball" }.Contains(Text(request, "packageOrigin")) ||
-                request["packages"] is not JArray packages || packages.Count == 0 || request["assemblies"] is not JArray assemblies || assemblies.Count < 2)
+                request["packages"] is not JArray packages || packages.Count == 0 || request["assemblies"] is not JArray assemblies || assemblies.Count == 0)
             {
                 throw new InvalidOperationException("An explicit typed integration compilation request in a batch host is required.");
             }
@@ -794,10 +864,11 @@ namespace YLFramework.Testing
             if (Artifact(request)) { ValidateArtifactRequest(request); }
             if ((request["dotweenSdkMode"] != null && request["dotweenSdkMode"].Type != JTokenType.Null &&
                     !new[] { "Required", "Absent" }.Contains(Text(request, "dotweenSdkMode"))) ||
-                ((string)request["dotweenSdkMode"] == "Absent" && Text(request, "integration") != "DOTween"))
+                (request.Property("dotweenSdkMode") != null && Text(request, "integration") != "DOTween"))
             {
                 throw new InvalidOperationException("Invalid explicit DOTween SDK mode.");
             }
+            if (request.Property("optionalAdapterScenario") != null && Text(request, "integration") != "OptionalAdapterFixture") { throw new InvalidOperationException("A fixture scenario cannot alter a product smoke profile."); }
             if (git) { ValidateGitSource(request); }
             else if (new[] { "gitRepository", "gitRevision" }.Any(field => request[field] != null && request[field].Type != JTokenType.Null))
             {
@@ -839,19 +910,29 @@ namespace YLFramework.Testing
             {
                 throw new InvalidOperationException("The owned integration manifest was changed.");
             }
-            var expected = new HashSet<string>(new[] { "com.kano.ylframework" }, StringComparer.Ordinal);
-            switch (Text(request, "integration"))
+            var catalog = Catalog(request);
+            var known = new HashSet<string>(((JArray)catalog["packages"]).Cast<JObject>().Select(package => Text(package, "id")), StringComparer.Ordinal);
+            string entryPackage = Text(request, "entryPackage");
+            string profileEntry = Text(request, "integration") switch
             {
-                case "DOTween": expected.Add("com.kano.ylframework.dotween"); break;
-                case "Excel": expected.Add("com.kano.ylframework.excel"); break;
-                case "DomainExcel": expected.Add("com.kano.ylframework.excel"); expected.Add("com.kano.ylframework.domain-excel"); break;
-                case "HybridCLR": expected.Add("com.kano.ylframework.hybridclr"); break;
+                "DOTween" => "com.kano.ylframework.dotween", "Excel" => "com.kano.ylframework.excel",
+                "DomainExcel" => "com.kano.ylframework.domain-excel", "HybridCLR" => "com.kano.ylframework.hybridclr", _ => entryPackage
+            };
+            if (!known.Contains(entryPackage) || entryPackage != profileEntry || packages.Any(token => token is not JObject) ||
+                packages.Cast<JObject>().Any(package => !known.Contains(Text(package, "name"))) ||
+                packages.Cast<JObject>().Select(package => Text(package, "name")).Distinct(StringComparer.Ordinal).Count() != packages.Count)
+            {
+                throw new InvalidOperationException("Unknown, duplicate or mismatched integration package selection.");
             }
-            if (packages.Any(token => token is not JObject) || packages.Count != expected.Count ||
-                !expected.SetEquals(packages.Cast<JObject>().Select(package => Text(package, "name")))) { throw new InvalidOperationException("Integration package selection is not the exact required closure."); }
+            var entryPackages = EntryPackages(request, catalog);
+            if (Text(request, "integration") == "OptionalAdapterFixture" &&
+                !new HashSet<string>(entryPackages, StringComparer.Ordinal).SetEquals(packages.Cast<JObject>().Select(package => Text(package, "name"))))
+            {
+                throw new InvalidOperationException("The fixture package selection differs from its explicit four-state scenario.");
+            }
             foreach (var package in packages.Cast<JObject>())
             {
-                if (Text(package, "version") != "0.1.0-preview.1" || !Regex.IsMatch(Text(package, "contentSha256"), @"\A[0-9a-f]{64}\z") ||
+                if (!Regex.IsMatch(Text(package, "version"), @"\A\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\z") || !Regex.IsMatch(Text(package, "contentSha256"), @"\A[0-9a-f]{64}\z") ||
                     (!git && !Artifact(request) && Text(package, "root") != Path.Combine(project, "PackageSources", Text(package, "name"))) ||
                     (git && package["root"] != null && package["root"].Type != JTokenType.Null) ||
                     package["files"] is not JArray files || files.Count == 0) { throw new InvalidOperationException("Integration expected template/staging identity is invalid."); }
@@ -863,20 +944,15 @@ namespace YLFramework.Testing
                         !paths.Add(Text(file, "path"))) { throw new InvalidOperationException("Invalid or duplicate expected package file identity."); }
                 }
             }
-            var required = new HashSet<string>(new[] { "YLFramework.Runtime", "YLFramework.Editor" }, StringComparer.Ordinal);
-            switch (Text(request, "integration"))
-            {
-                case "DOTween": if ((string)request["dotweenSdkMode"] != "Absent") { required.Add("YLFramework.Actions.DOTween"); } break;
-                case "Excel": required.Add("YLFramework.Excel.Editor"); break;
-                case "DomainExcel": required.Add("YLFramework.Excel.Editor"); required.Add("YLFramework.Domain.Excel.Editor"); break;
-                case "HybridCLR": required.Add("YLFramework.HybridCLR"); required.Add("YLFramework.HybridCLR.Editor"); break;
-            }
+            var plan = AssemblyPlan(request).Cast<JObject>().Where(row => (bool)row["enabled"]).ToArray();
+            var required = new HashSet<string>(plan.Select(row => Text(row, "name")), StringComparer.Ordinal);
             if (assemblies.Any(token => token is not JObject) || assemblies.Count != required.Count ||
                 !required.SetEquals(assemblies.Cast<JObject>().Select(assembly => Text(assembly, "name")))) { throw new InvalidOperationException("Required integration assemblies cannot be omitted."); }
             foreach (var assembly in assemblies.Cast<JObject>())
             {
-                if (!expected.Contains(Text(assembly, "package")) || !new[] { "Editor", "Runtime" }.Contains(Text(assembly, "directory")) ||
-                    assembly["player"]?.Type != JTokenType.Boolean) { throw new InvalidOperationException("Invalid required assembly source/Player graph contract."); }
+                var expected = plan.Single(row => Text(row, "name") == Text(assembly, "name"));
+                if (Text(assembly, "package") != Text(expected, "package") || Text(assembly, "directory") != Text(expected, "directory") ||
+                    assembly["player"]?.Type != JTokenType.Boolean || (bool)assembly["player"] != (bool)expected["player"]) { throw new InvalidOperationException("Invalid required assembly source/Player graph contract."); }
             }
         }
 

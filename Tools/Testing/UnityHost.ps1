@@ -203,7 +203,13 @@ function Invoke-YLUnitySuite {
             if ((-not $relative.StartsWith('Assets/', [StringComparison]::Ordinal) -and
                 -not $relative.StartsWith('PackageSources/', [StringComparison]::Ordinal)) -or
                 ($Definition.nativeLayout -ceq 'Slice' -and $relative -cin $Definition.assemblyMetadata)) { continue }
-            $files[$relative] = [IO.File]::ReadAllBytes((Join-Path $Repository $relative))
+            $target = $relative
+            if ($Definition.nativeLayout -ceq 'Slice' -and $relative.StartsWith('PackageSources/', [StringComparison]::Ordinal)) {
+                $prefix = 'PackageSources/com.kano.ylframework/'
+                if (-not $relative.StartsWith($prefix, [StringComparison]::Ordinal)) { throw 'A source-slice host only supports explicitly selected main-package inputs.' }
+                $target = 'Assets/YLFramework/' + $relative.Substring($prefix.Length)
+            }
+            $files[$target] = [IO.File]::ReadAllBytes((Join-Path $Repository $relative))
         }
         foreach ($relative in @($Definition.assemblyMetadata | Where-Object { $Definition.nativeLayout -ceq 'Slice' })) {
             $assembly = [IO.File]::ReadAllText((Join-Path $Repository $relative)) | ConvertFrom-Json -AsHashtable -DateKind String
@@ -219,7 +225,9 @@ function Invoke-YLUnitySuite {
                 $null = $assembly.Remove('optionalUnityReferences')
                 $assembly['defineConstraints'] = @('UNITY_INCLUDE_TESTS')
             }
-            $files[$relative] = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Json -InputObject $assembly -Depth 15))
+            $target = $relative
+            if ($relative.StartsWith('PackageSources/com.kano.ylframework/', [StringComparison]::Ordinal)) { $target = 'Assets/YLFramework/' + $relative.Substring('PackageSources/com.kano.ylframework/'.Length) }
+            $files[$target] = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Json -InputObject $assembly -Depth 15))
         }
         $dependencies = [ordered]@{
             'com.unity.test-framework' = $EditorProfile.testFramework

@@ -124,9 +124,9 @@ try {
         $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
         [IO.File]::Copy($source, $target)
     }
-    Case 'Five real source packages have explicit complete publish inputs' {
+    Case 'All catalog source packages have explicit complete publish inputs' {
         $set = @(Get-YLRegistryPackageSet -Root $sources)
-        Check ($set.Count -eq 5) 'Expected the complete five-package batch.'
+        Check ($set.Count -eq (Get-YLRegistryPackageIds).Count) 'Expected the complete catalog package batch.'
         Check (@($set | Where-Object version -CNE '0.1.0-preview.1').Count -eq 0) 'The first preview changed.'
     }
     Case 'Independent fixed-commit checkout never copies the current dirty source tree' {
@@ -179,7 +179,7 @@ try {
             } { Reject { Get-YLRegistryPackageSet -Root $sources } 'version|dependency|SemVer|SDK|lifecycle|files|whitelist' }
         }
     }
-    Case 'First release refuses all five packages and internal dependencies synchronized to preview.2' {
+    Case 'Local package versions come from synchronized manifests, not a first-release constant' {
         $originals = @{}
         $packages = @(Get-YLRegistryPackageSet -Root $sources)
         try {
@@ -197,8 +197,10 @@ try {
                 $package | Add-Member -NotePropertyName sha256 -NotePropertyValue ('a' * 64)
                 $package | Add-Member -NotePropertyName integrity -NotePropertyValue ('sha512-' + [Convert]::ToBase64String([byte[]]::new(64)))
             }
-            Reject { Get-YLRegistryPackageSet -Root $sources } 'version|preview|release'
-            Reject { New-YLRegistryReleaseManifest -SourceCommit ('a' * 40) -Toolchain @{ node = '22.23.3'; npm = '10.9.9'; powershell = '7.6.9' } -Packages $packages } 'version|preview|release'
+            $updated = @(Get-YLRegistryPackageSet -Root $sources)
+            Check ($updated.Count -eq $packages.Count -and @($updated | Where-Object version -CNE '0.1.0-preview.2').Count -eq 0) 'Synchronized manifest versions were replaced by a tool constant.'
+            $receipt = New-YLRegistryReleaseManifest -SourceCommit ('a' * 40) -Toolchain @{ node = '22.23.3'; npm = '10.9.9'; powershell = '7.6.9' } -Packages $packages
+            Check (@($receipt.packages | Where-Object version -CNE '0.1.0-preview.2').Count -eq 0) 'The local receipt lost the actual package versions.'
         } finally { foreach ($path in $originals.Keys) { [IO.File]::WriteAllBytes($path, $originals[$path]) } }
     }
     foreach ($fault in @('duplicate', 'nested-duplicate', 'trailing', 'comment', 'trailing-comma', 'fingerprint')) {

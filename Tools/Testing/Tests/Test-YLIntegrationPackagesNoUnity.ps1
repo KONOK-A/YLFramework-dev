@@ -83,8 +83,10 @@ try {
     [IO.File]::WriteAllText((Join-Path $package 'unapproved.dll'), 'version https://git-lfs.github.com/spec/v1')
     Reject { Get-YLIntegrationPackageFiles -Repository $root -Packages @(Get-YLUpmPackages -Repository $root) } 'LFS'
     "PASS: $count NoUnity integration prerequisite and source drift contracts. No Unity, Player or native verification."
-    & (Join-Path $PSScriptRoot 'Test-YLIntegrationPackagesGitNoUnity.ps1') -TemporaryRoot $TemporaryRoot
-    & (Join-Path $PSScriptRoot 'Test-YLIntegrationPackagesEntryNoUnity.ps1') -TemporaryRoot $TemporaryRoot
+    foreach ($test in @('Test-YLIntegrationPackagesGitNoUnity.ps1', 'Test-YLIntegrationPackagesEntryNoUnity.ps1')) {
+        & (Join-Path $PSHOME 'pwsh.exe') -NoLogo -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot $test) -TemporaryRoot $TemporaryRoot
+        if ($LASTEXITCODE -ne 0) { throw "Integration contract child failed: $test ($LASTEXITCODE)." }
+    }
 } finally {
     if ([IO.Directory]::Exists($root)) { $null = @(Get-YLTestTreeFiles $root); [IO.Directory]::Delete($root, $true) }
 }
