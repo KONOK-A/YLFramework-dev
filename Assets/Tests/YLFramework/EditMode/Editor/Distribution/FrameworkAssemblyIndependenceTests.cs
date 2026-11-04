@@ -66,7 +66,10 @@ namespace YLFramework.Tests.Resource
             Assert.That(type, Is.Not.Null, fullName);
             Assert.That(type.IsPublic, Is.True, fullName);
             Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(assembly => assembly.GetType(fullName) != null), Is.EqualTo(1), fullName);
-            Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(legacyName) != null), Is.False, legacyName);
+            if (!string.IsNullOrEmpty(legacyName))
+            {
+                Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(legacyName) != null), Is.False, legacyName);
+            }
             if (owner != runtime)
             {
                 Assert.That(runtime.GetType(fullName), Is.Null, "A migrated type must not remain in the main Runtime.");

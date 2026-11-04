@@ -338,7 +338,7 @@ namespace YLFramework.Testing
         private static JObject Receipt(Context context, string purpose, string root, bool generated)
         {
             var request = context.request; var receipt = new JObject { ["schemaVersion"] = 1, ["purpose"] = purpose };
-            foreach (var field in new[] { "workspaceId", "hostId", "cacheId", "resultId", "inputHash", "entryPackage", "packageOrigin", "releaseManifestSha256" }) receipt[field] = request[field].DeepClone();
+            foreach (var field in new[] { "workspaceId", "hostId", "cacheId", "resultId", "inputHash", "entryPackage", "packageOrigin", "releaseManifestSha256", "catalogSha256" }) receipt[field] = request[field].DeepClone();
             receipt["sourceCommit"] = Text(context.release, "sourceCommit");
             receipt["unityVersion"] = Application.unityVersion;
             receipt["unityProductVersion"] = FileVersionInfo.GetVersionInfo(EditorApplication.applicationPath).ProductVersion;
@@ -367,6 +367,18 @@ namespace YLFramework.Testing
                 return new JObject { ["path"] = assetRelative, ["guid"] = guid, ["metaSha256"] = Hash(path + ".meta"), ["type"] = "UnityEditor.DefaultAsset" };
             }));
             if (files.Count == 0) throw new InvalidOperationException("Empty output cannot prove authoring execution.");
+            var guids = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var row in files.Concat(directoryRows).Cast<JObject>())
+            {
+                var asset = Text(row, "path");
+                if (asset.EndsWith(".meta", StringComparison.Ordinal)) { asset = asset.Substring(0, asset.Length - 5); }
+                var guid = Text(row, "guid");
+                if (guids.TryGetValue(guid, out var previous) && !string.Equals(previous, asset, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("Duplicate authoring GUID identifies different assets/directories.");
+                }
+                guids[guid] = asset;
+            }
             return new JObject { ["files"] = files, ["directories"] = directoryRows };
         }
 
@@ -402,7 +414,7 @@ namespace YLFramework.Testing
                 request["registryUrl"]?.Type != JTokenType.Null || request["registryVersion"]?.Type != JTokenType.Null) throw new InvalidOperationException("Own package Registry provenance must not be inferred from SDK/scoped Registry routing.");
             if (!Application.isBatchMode || !args.Contains("-batchmode") || args.Contains("-quit")) throw new InvalidOperationException("Interactive/non-batch requests have no Editor exit authority.");
             foreach (var field in new[] { "workspaceId", "hostId", "resultId", "cacheId", "requestId" }) Pattern(Text(request, field), "^[0-9a-f]{32}$");
-            foreach (var field in new[] { "inputHash", "inputReceiptSha256", "originalManifestSha256", "releaseManifestSha256" }) Pattern(Text(request, field), "^[0-9a-f]{64}$");
+            foreach (var field in new[] { "inputHash", "inputReceiptSha256", "originalManifestSha256", "releaseManifestSha256", "catalogSha256" }) Pattern(Text(request, field), "^[0-9a-f]{64}$");
             var host = Safe(Text(request, "hostRoot")); var workspaceRoot = Safe(Text(request, "workspaceRoot"));
             EqualPath(Path.GetDirectoryName(Application.dataPath), host); EqualPath(Argument(args, "-projectPath"), host);
             if (Argument(args, "-executeMethod") != "YLFramework.Testing.RegistryAuthoringEntry.Execute") throw new InvalidOperationException("Wrong authoring execute method.");
@@ -422,8 +434,13 @@ namespace YLFramework.Testing
                 EqualPath(Text(request, pair[0]), Path.Combine(root, pair[1]));
                 if (Hash(Text(request, pair[0])) != Text(request, pair[2])) throw new InvalidOperationException("Frozen authoring release/manifest changed.");
             }
+            var catalog = PackageCatalogContract.Load(request, host, Read);
+            var known = new HashSet<string>(Array(catalog, "packages").Cast<JObject>().Select(package => Text(package, "id")), StringComparer.Ordinal);
             context.release = Read(Text(request, "releaseManifest"));
-            if (Integer(context.release, "schemaVersion") != 1 || Array(context.release, "packages").Count != 5) throw new InvalidOperationException("Invalid frozen five-package release.");
+            var released = Array(context.release, "packages");
+            if (Integer(context.release, "schemaVersion") != 1 || released.Any(package => package is not JObject) || released.Count != known.Count ||
+                !known.SetEquals(released.Cast<JObject>().Select(package => Text(package, "id"))) || !known.Contains(Text(request, "entryPackage")))
+                throw new InvalidOperationException("Invalid frozen package catalog release/entry identity.");
             Pattern(Text(context.release, "sourceCommit"), "^[0-9a-f]{40}$");
             var expectedManifest = new JObject { ["dependencies"] = new JObject() };
             foreach (var package in Closure(context))
@@ -472,7 +489,7 @@ namespace YLFramework.Testing
                 }
                 if (Hash(path) != expected) throw new InvalidOperationException("Imported/generated receipt bytes changed.");
                 var receipt = Read(path);
-                foreach (var field in new[] { "workspaceId", "hostId", "cacheId", "resultId", "inputHash", "entryPackage", "packageOrigin", "releaseManifestSha256" })
+                foreach (var field in new[] { "workspaceId", "hostId", "cacheId", "resultId", "inputHash", "entryPackage", "packageOrigin", "releaseManifestSha256", "catalogSha256" })
                     if (Text(receipt, field) != Text(request, field)) throw new InvalidOperationException("Sample/generated receipt ownership/source changed.");
                 if (Integer(receipt, "schemaVersion") != 1 || Text(receipt, "purpose") != spec[2]) throw new InvalidOperationException("Invalid managed authoring receipt.");
                 var snapshot = Snapshot(context, spec[3], spec[0] != ".yl-samples.json");
@@ -516,7 +533,7 @@ namespace YLFramework.Testing
             Authority(current); AssertAssets(current, false);
             if (status == "Completed") packages = CapturePackages(current);
             var request = current.request; var report = new JObject { ["schemaVersion"] = 1, ["status"] = status, ["error"] = error };
-            foreach (var field in new[] { "purpose", "phase", "requestId", "workspaceId", "hostId", "cacheId", "resultId", "inputHash", "entryPackage", "packageOrigin", "releaseManifestSha256", "assetDirectory" }) report[field] = request[field].DeepClone();
+            foreach (var field in new[] { "purpose", "phase", "requestId", "workspaceId", "hostId", "cacheId", "resultId", "inputHash", "entryPackage", "packageOrigin", "releaseManifestSha256", "catalogSha256", "assetDirectory" }) report[field] = request[field].DeepClone();
             report["registryUrl"] = request["registryUrl"].DeepClone(); report["registryVersion"] = request["registryVersion"].DeepClone();
             report["resolutionRegistryUrl"] = Text(request, "resolutionRegistryUrl");
             report["requestSha256"] = current.requestHash; report["pid"] = Process.GetCurrentProcess().Id;

@@ -31,7 +31,7 @@ try {
     $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key AuthoringContracts
     $references = @([IO.Directory]::EnumerateFiles((Join-Path $PSHOME 'ref'), '*.dll')) + @([Newtonsoft.Json.Linq.JObject].Assembly.Location)
     $stubAssembly = Join-Path $root 'RegistryAuthoring.Contracts.dll'
-    $null = Add-Type -Path @((Join-Path $PSScriptRoot '../RegistryAuthoringEntry.cs'), (Join-Path $PSScriptRoot 'RegistryAuthoringUnityStubs.cs')) -ReferencedAssemblies $references -OutputAssembly $stubAssembly -CompilerOptions @('/define:UNITY_EDITOR', '/langversion:9.0', '/nowarn:1701')
+    $null = Add-Type -Path @((Join-Path $PSScriptRoot '../RegistryAuthoringEntry.cs'), (Join-Path $PSScriptRoot '../PackageCatalogContract.cs'), (Join-Path $PSScriptRoot 'RegistryAuthoringUnityStubs.cs')) -ReferencedAssemblies $references -OutputAssembly $stubAssembly -CompilerOptions @('/define:UNITY_EDITOR', '/langversion:9.0', '/nowarn:1701')
     $null = [Reflection.Assembly]::LoadFrom($stubAssembly)
     $sampleAssemblies = [ordered]@{
         'YLFramework.ResourceStartup.Sample' = 'namespace YLFramework.Samples.Resource { public class ResourceStartupExampleData : UnityEngine.ScriptableObject {} }'
@@ -55,11 +55,10 @@ try {
     $version = '0.1.0-preview.1'; $url = 'https://package.openupm.com'
     $payloadRoot = Join-Path $root 'Expected'; $null = [IO.Directory]::CreateDirectory($payloadRoot)
     $script:payloads = @()
-    $packages = @(foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.dotween', 'com.kano.ylframework.excel', 'com.kano.ylframework.hybridclr')) {
+    . (Join-Path $PSScriptRoot 'PackageCatalogFixtures.ps1')
+    $packages = @(foreach ($id in @((Read-YLPackageCatalog).packages.id)) {
         $packageRoot = Join-Path $payloadRoot $id; $null = [IO.Directory]::CreateDirectory($packageRoot)
-        $deps = [ordered]@{}
-        if ($id -cne 'com.kano.ylframework') { $deps['com.kano.ylframework'] = $version }
-        if ($id.EndsWith('.domain-excel')) { $deps['com.kano.ylframework.excel'] = $version }
+        $deps = Get-YLFixtureInternalDependencies -PackageId $id -Version $version
         if ($id.EndsWith('.hybridclr')) { $deps['com.code-philosophy.hybridclr'] = '9.0.3' }
         [string[]]$dependencyNames = @($deps.Keys); [Array]::Sort($dependencyNames, [StringComparer]::Ordinal)
         $orderedDeps = [ordered]@{}; foreach ($dependency in $dependencyNames) { $orderedDeps[$dependency] = $deps[$dependency] }; $deps = $orderedDeps
@@ -118,7 +117,7 @@ try {
     }
     function Get-YLHybridClrRegistrySdk { param($Approval, $Output, $RegistryUrl); return @{ dependencies = @{}; files = @(); evidence = @{ fixture = $true }; source = 'Registry'; version = '9.0.3' } }
     function Assert-YLHybridClrRegistryInstalled { param($Sdk, $Root) }
-    $script:fault = ''; $script:starts = [Collections.Generic.List[object]]::new()
+    $script:fault = ''; $script:catalogGuardsChecked = $false; $script:starts = [Collections.Generic.List[object]]::new()
     $script:realIdle = (Get-Command Assert-YLUnityHostIdle).ScriptBlock; $script:idleCounts = @{}
     function Assert-YLUnityHostIdle([object] $HostRecord) {
         & $script:realIdle $HostRecord
@@ -144,6 +143,8 @@ try {
         if ($request.packageOrigin -ceq 'LocalTarball') { Check ($null -eq $request.registryUrl -and $null -eq $request.registryVersion -and $request.resolutionRegistryUrl -ceq $url) 'LocalTarball source identity reused the Registry routing constant as own package provenance.' }
         $script:starts.Add(@{ host = $StartInfo.WorkingDirectory; cache = $StartInfo.Environment['UPM_CACHE_ROOT']; phase = $request.phase })
         $hostRoot = $StartInfo.WorkingDirectory
+        $catalogPath = Join-Path $hostRoot 'YLTesting/PackageCatalog.json'
+        Check ([IO.File]::Exists($catalogPath) -and (Hash $catalogPath) -ceq (Hash (Join-Path $repository 'Tools/Packaging/PackageCatalog.json'))) 'Authoring must carry the actual maintained catalog as a frozen host input.'
         $projectVersion = "m_EditorVersion: $($editor.version)`nm_EditorVersionWithRevision: $($editor.version) ($($editor.productVersion.Split('_')[-1]))`n"
         Check ([IO.File]::ReadAllText((Join-Path $hostRoot 'ProjectSettings/ProjectVersion.txt')) -ceq $projectVersion) 'The frozen producer must supply the complete Editor version/revision bytes instead of adopting a first-launch rewrite.'
         [UnityEngine.Application]::dataPath = (Join-Path $hostRoot 'Assets').Replace('\', '/'); [UnityEngine.Application]::isBatchMode = $true
@@ -201,6 +202,47 @@ try {
             if ($script:fault -ceq 'manifest-extra') { $p = Join-Path $hostRoot 'Packages/manifest.json'; $m = Read-YLPackageEvidenceJson $p; $m.unapproved = $true; Save $p $m }
             if ($script:fault -ceq 'input-bytes') { [IO.File]::AppendAllText((Join-Path $hostRoot 'Assets/RegistryAuthoring/Editor/RegistryAuthoringEntry.cs'), '// drift') }
             if ($script:fault -ceq 'duplicate-request') { $argv += @('-ylRegistryAuthoringRequest', $requestPath) }
+            if (-not $script:catalogGuardsChecked) {
+                $inputPath = Join-Path $hostRoot '.yl-inputs.json'
+                $requestBytes = [IO.File]::ReadAllBytes($requestPath); $inputBytes = [IO.File]::ReadAllBytes($inputPath)
+                $catalogBytes = [IO.File]::ReadAllBytes($catalogPath); $releaseBytes = [IO.File]::ReadAllBytes($request.releaseManifest)
+                foreach ($fault in @('missing-catalog', 'catalog-bytes', 'unbound-catalog', 'duplicate-catalog-binding', 'missing-catalog-schema', 'catalog-schema-type', 'catalog-schema-version', 'catalog-extra-field', 'duplicate-catalog-package', 'missing-release-schema', 'release-schema-type', 'unknown-release-package', 'duplicate-release-package', 'missing-release-package')) {
+                    $bad = Copy-Value $request; $inputs = Read-YLPackageEvidenceJson $inputPath
+                    $catalog = Read-YLPackageEvidenceJson $catalogPath; $frozen = Read-YLPackageEvidenceJson $request.releaseManifest
+                    try {
+                        switch ($fault) {
+                            'missing-catalog' { [IO.File]::Delete($catalogPath) }
+                            'catalog-bytes' { [IO.File]::AppendAllText($catalogPath, ' ') }
+                            'unbound-catalog' { $inputs.files = @($inputs.files | Where-Object path -cne 'YLTesting/PackageCatalog.json') }
+                            'duplicate-catalog-binding' { $inputs.files += Copy-Value @($inputs.files | Where-Object path -ceq 'YLTesting/PackageCatalog.json')[0] }
+                            'missing-catalog-schema' { $catalog.Remove('schemaVersion') }
+                            'catalog-schema-type' { $catalog.schemaVersion = $true }
+                            'catalog-schema-version' { $catalog.schemaVersion = 2 }
+                            'catalog-extra-field' { $catalog.unapproved = $true }
+                            'duplicate-catalog-package' { $catalog.packages[1] = Copy-Value $catalog.packages[0] }
+                            'missing-release-schema' { $frozen.Remove('schemaVersion') }
+                            'release-schema-type' { $frozen.schemaVersion = $true }
+                            'unknown-release-package' { $frozen.packages[1].id = 'com.kano.ylframework.unknown' }
+                            'duplicate-release-package' { $frozen.packages[1] = Copy-Value $frozen.packages[0] }
+                            'missing-release-package' { $frozen.packages = @($frozen.packages | Where-Object id -cne 'com.kano.ylframework.data-assets') }
+                        }
+                        if ($fault -cmatch '^(?:missing-catalog-schema|catalog-schema-|catalog-extra-field|duplicate-catalog-package)') {
+                            Save $catalogPath $catalog; $bad.catalogSha256 = Hash $catalogPath
+                            @($inputs.files | Where-Object path -ceq 'YLTesting/PackageCatalog.json')[0].sha256 = $bad.catalogSha256
+                        }
+                        Save $inputPath $inputs; $bad.inputReceiptSha256 = Hash $inputPath
+                        Save $request.releaseManifest $frozen; $bad.releaseManifestSha256 = Hash $request.releaseManifest
+                        Save $requestPath $bad
+                        Reject { Call-Entry $argv } 'catalog|Catalog|schema|field|release|frozen|input|identity|package'
+                    } finally {
+                        [IO.File]::WriteAllBytes($requestPath, $requestBytes); [IO.File]::WriteAllBytes($inputPath, $inputBytes)
+                        [IO.File]::WriteAllBytes($catalogPath, $catalogBytes); [IO.File]::WriteAllBytes($request.releaseManifest, $releaseBytes)
+                    }
+                }
+                Check ([UnityEditor.EditorApplication]::ExitCodes.Count -eq 0 -and -not [IO.File]::Exists((Join-Path $request.output 'report.json')) -and
+                    [UnityEditor.PackageManager.UI.Sample]::ImportCalls -eq 0) 'A rejected catalog/release acquired report/import/exit authority.'
+                $script:catalogGuardsChecked = $true
+            }
             try { Call-Entry $argv } catch {
                 if ($script:fault -cnotin @('owner', 'interactive', 'cache-environment', 'sample-drift', 'reopen-drift', 'unknown-output', 'unknown-sample', 'unknown-empty-sample', 'unknown-empty-folder', 'wrong-editor', 'manifest-extra', 'input-bytes', 'duplicate-request')) { throw }
                 Check ([UnityEditor.EditorApplication]::ExitCodes.Count -eq 0) 'Invalid authority/output acquired permission to exit.'
@@ -243,9 +285,41 @@ try {
         Check ($outcome.boundaries.native -ceq 'NotRun' -and $outcome.boundaries.playerHotUpdate -ceq 'NotVerified') 'Asset generation was mislabeled as native or Player validation.'
         Check ($outcome.inputIdentity.sha256 -ceq $outcome.producerInputs.inputHash -and $outcome.sourceCommit -ceq ('a' * 40) -and
             $outcome.sampleReceipt.sourceCommit -ceq ('a' * 40) -and $outcome.managedOutputs.sourceCommit -ceq ('a' * 40)) 'Source/producer identities are missing from actual output evidence.'
+        Check ($outcome.inputIdentity.files.path -ccontains 'Tools/Packaging/PackageCatalog.json' -and
+            $outcome.producerInputs.files.path -ccontains 'YLTesting/PackageCatalog.json') 'The catalog must participate in both producer and host input identities.'
         $sampleReceiptPath = Join-Path $outcome.host.path '.yl-samples.json'; $managedPath = Join-Path $outcome.host.path '.yl-authoring-outputs.json'
         Check ([IO.File]::Exists($sampleReceiptPath) -and [IO.File]::Exists($managedPath)) 'Host-managed import/output receipts are missing.'
         foreach ($file in $outcome.managedOutputs.files) { Check ((Hash (Join-Path $outcome.host.path $file.path)) -ceq $file.sha256) 'A managed output receipt does not bind the actual bytes.' }
+        $managedRequest = Read-YLPackageEvidenceJson (Join-Path $outcome.phases[-1].output 'request.json')
+        foreach ($fault in @('missing-schema', 'schema-type', 'schema-version', 'duplicate-file-guid', 'duplicate-directory-guid', 'duplicate-directory')) {
+            $bad = Copy-Value $outcome.managedOutputs
+            switch ($fault) {
+                'missing-schema' { $bad.Remove('schemaVersion') }
+                'schema-type' { $bad.schemaVersion = $true }
+                'schema-version' { $bad.schemaVersion = 2 }
+                'duplicate-file-guid' {
+                    $project = @($bad.files | Where-Object path -CEQ ($outcome.assetDirectory + '/Project.asset'))[0]
+                    $project.guid = @($bad.files | Where-Object guid -CNE $project.guid)[0].guid
+                }
+                'duplicate-directory-guid' { $bad.directories[1].guid = $bad.directories[0].guid }
+                'duplicate-directory' { $bad.directories += Copy-Value $bad.directories[0] }
+            }
+            $badPath = Join-Path $outcome.output ('receipt-' + $fault + '.json'); Save $badPath $bad
+            Reject { Read-YLRegistryAuthoringReceipt -Path $badPath -HostRecord $outcome.host -Request $managedRequest -Purpose 'YLTesting.RegistryAuthoring.Outputs' } 'identity|GUID|directory'
+        }
+        $contextType = $entryType.GetNestedType('Context', [Reflection.BindingFlags]'NonPublic')
+        $context = [Activator]::CreateInstance($contextType, $true)
+        $contextType.GetField('request').SetValue($context, [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject @{ hostRoot = $outcome.host.path })))
+        $snapshot = $entryType.GetMethod('Snapshot', [Reflection.BindingFlags]'NonPublic,Static')
+        $projectMeta = Join-Path $outcome.host.path ($outcome.assetDirectory + '/Project.asset.meta')
+        $otherAsset = if ($entryPackage.EndsWith('.hybridclr')) { 'Recipe.asset.meta' } else { 'Example.unity.meta' }
+        foreach ($relative in @(($outcome.assetDirectory + '/' + $otherAsset), ($outcome.assetDirectory + '.meta'))) {
+            $target = Join-Path $outcome.host.path $relative; $bytes = [IO.File]::ReadAllBytes($target)
+            try {
+                [IO.File]::WriteAllBytes($target, [IO.File]::ReadAllBytes($projectMeta))
+                Reject { try { $null = $snapshot.Invoke($null, [object[]]@($context, $outcome.assetDirectory, $true)) } catch { throw $_.Exception.GetBaseException() } } 'duplicate.*GUID|GUID.*duplicate'
+            } finally { [IO.File]::WriteAllBytes($target, $bytes) }
+        }
     }
     $tar = Copy-Value $source; $tar.packageOrigin = 'LocalTarball'
     foreach ($entryPackage in @('com.kano.ylframework', 'com.kano.ylframework.hybridclr')) {

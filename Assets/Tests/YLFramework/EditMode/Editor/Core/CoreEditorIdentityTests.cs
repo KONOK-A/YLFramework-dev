@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections;
 using System.IO;
 using System.Linq;
@@ -51,6 +52,7 @@ namespace YLFramework.Core.Editor.Tests
             public string sourceAssembly;
             public string currentAssembly;
             public string targetAssembly;
+            public string package;
             public string scriptGuid;
         }
 
@@ -113,6 +115,7 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(captured.captureKind, Is.EqualTo("GeneratedCurrentLayoutBeforeAssemblySplit"));
             Assert.That(captured.sourceAssembly, Is.EqualTo("YLFramework.Runtime"));
             Assert.That(captured.assets, Has.Length.EqualTo(14));
+            var compiledTypes = new HashSet<Type>();
             foreach (var file in captured.files)
             {
                 string path = Physical(file.path);
@@ -126,6 +129,7 @@ namespace YLFramework.Core.Editor.Tests
                 var asset = AssetDatabase.LoadMainAssetAtPath(Root + expected.path);
                 Assert.That(asset, Is.Not.Null, expected.path);
                 Assert.That(asset.GetType().FullName, Is.EqualTo(expected.typeFullName));
+                compiledTypes.Add(asset.GetType());
                 Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string guid, out long localId), Is.True);
                 Assert.That(guid, Is.EqualTo(expected.guid));
                 Assert.That(localId, Is.EqualTo(expected.localId));
@@ -155,6 +159,11 @@ namespace YLFramework.Core.Editor.Tests
                 var snapshot = YLFramework.Resource.ResourceLocalSnapshot.Open(Physical(captured.catalog.versionDirectory), captured.catalog.projectId,
                     captured.catalog.catalogDigest, captured.catalog.platform, captured.catalog.appContentCompatibilityId);
                 Assert.That(snapshot.Document.CatalogDigest, Is.EqualTo(document.CatalogDigest));
+                var migratedData = compiledTypes.Single(type => type.FullName == "YLFramework.DataAssets.ScriptableObjectData");
+                Assert.That(migratedData.Assembly.GetName().Name, Is.EqualTo("YLFramework.DataAssets"));
+                var error = Assert.Throws<YLFramework.Resource.ResourceException>(() => snapshot.CreateCatalog(compiledTypes));
+                Assert.That(error.Kind, Is.EqualTo(YLFramework.Resource.ResourceError.TypeMismatch));
+                Assert.That(error.Message, Does.Contain("YLFramework.DataAssets."), "The real old catalog must not silently remap the moved DataAssets assembly tuple.");
             }
         }
 
@@ -166,7 +175,7 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(asset, Is.Not.Null, "Freeze explicit assembly ownership before moving any functional source.");
             var table = JsonUtility.FromJson<AssemblyMoveTable>(asset.text);
             Assert.That(table.schemaVersion, Is.EqualTo(1));
-            Assert.That(table.moves, Has.Length.EqualTo(13), "Do not drop the original public identity anchors.");
+            Assert.That(table.moves, Has.Length.EqualTo(16), "Keep all original identity anchors and the three migrated DataAssets types.");
             Assert.That(table.moves.Select(move => move.fullName).Distinct().Count(), Is.EqualTo(table.moves.Length));
             Assert.That(table.moves.Select(move => move.scriptGuid).Distinct().Count(), Is.EqualTo(table.moves.Length));
             foreach (var move in table.moves)
@@ -176,9 +185,13 @@ namespace YLFramework.Core.Editor.Tests
                 var owner = System.Reflection.Assembly.Load(move.currentAssembly);
                 Assert.That(owner.GetType(move.fullName)?.IsPublic, Is.True, move.fullName);
                 Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(assembly => assembly.GetType(move.fullName) != null), Is.EqualTo(1), move.fullName);
-                Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(move.legacyName) != null), Is.False, move.legacyName);
+                if (!string.IsNullOrEmpty(move.legacyName))
+                {
+                    Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(move.legacyName) != null), Is.False, move.legacyName);
+                }
                 string script = AssetDatabase.GUIDToAssetPath(move.scriptGuid);
-                Assert.That(script, Does.StartWith("Packages/com.kano.ylframework"), move.fullName);
+                string currentPackage = move.currentAssembly == "YLFramework.Runtime" ? "com.kano.ylframework" : move.package;
+                Assert.That(script, Does.StartWith("Packages/" + currentPackage + "/"), move.fullName);
                 string definition = CompilationPipeline.GetAssemblyDefinitionFilePathFromScriptPath(script);
                 Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(definition)), Does.Contain('"' + move.currentAssembly + '"'), script);
             }

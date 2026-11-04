@@ -24,9 +24,11 @@ function Save([string] $Path, [object] $Value) { [IO.File]::WriteAllText($Path, 
 function Copy-Value([object] $Value) { return ,(ConvertTo-Json -InputObject $Value -Depth 40 | ConvertFrom-Json -AsHashtable -NoEnumerate -DateKind String) }
 try {
     $version = '0.1.0-preview.1'; $url = 'https://package.openupm.com'
-    $rows = @(foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.dotween', 'com.kano.ylframework.excel', 'com.kano.ylframework.hybridclr')) {
-        $deps = if ($id -ceq 'com.kano.ylframework') { @{ 'com.unity.ugui' = '1.0.0' } } else { @{ 'com.kano.ylframework' = $version } }
-        if ($id.EndsWith('.domain-excel')) { $deps['com.kano.ylframework.excel'] = $version }
+    . (Join-Path $PSScriptRoot 'PackageCatalogFixtures.ps1')
+    $ids = @((Read-YLPackageCatalog).packages.id)
+    $rows = @(foreach ($id in $ids) {
+        $deps = Get-YLFixtureInternalDependencies -PackageId $id -Version $version
+        if ($id -ceq 'com.kano.ylframework') { $deps['com.unity.ugui'] = '1.0.0' }
         if ($id.EndsWith('.hybridclr')) { $deps['com.code-philosophy.hybridclr'] = '9.0.3' }
         $text = 'package.json' + [char]0 + ('b' * 64) + "`n"
         @{ id = $id; version = $version; dependencies = $deps; assetName = "$id-$version.tgz"; sha256 = ('a' * 64)
@@ -59,7 +61,7 @@ try {
         if ($script -ceq 'Test-YLIntegrationPackages.ps1') { $args.Integration = 'Excel' }
         Check ((& $bind @args) -ceq 'Registry') "The maintained $script must expose the exact Registry CLI contract."
     }
-    Check ($release.packages.Count -eq 5 -and $release.sha256 -cmatch '^[0-9a-f]{64}$') 'A typed five-package receipt was not read.'
+    Check ($release.packages.Count -eq $ids.Count -and $release.sha256 -cmatch '^[0-9a-f]{64}$') 'A typed complete catalog receipt was not read.'
     foreach ($id in $rows.id) {
         $manifest = New-YLRegistryHostManifest -PackageSource Registry -Release $release -EntryPackage $id -RegistryUrl $url
         Check ($manifest.dependencies.Count -eq 1 -and $manifest.dependencies[$id] -ceq $version) 'Registry must declare only the selected entry, never its closure or official packages.'
@@ -67,16 +69,20 @@ try {
             $manifest.scopedRegistries[0].scopes[0] -ceq 'com.kano.ylframework' -and 'com.unity' -cnotin $manifest.scopedRegistries[0].scopes) 'Registry scopes leaked outside the approved names.'
     }
     $domain = @(Get-YLRegistryClosure -Release $release -EntryPackage 'com.kano.ylframework.domain-excel')
-    Check (($domain.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.domain-excel,com.kano.ylframework.excel') 'DomainExcel closure must come from frozen declarations.'
+    Check (($domain.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.domain-excel,com.kano.ylframework.excel') 'DomainExcel closure must include the exact DataAssets/Excel backend declarations.'
     $tarManifest = New-YLRegistryHostManifest -PackageSource LocalTarball -Release $release -EntryPackage 'com.kano.ylframework.domain-excel' -RegistryUrl $url
-    Check ($tarManifest.dependencies.Count -eq 3 -and @($tarManifest.dependencies.Values | Where-Object { $_ -notmatch '^file:.+\.tgz$' }).Count -eq 0) 'ArtifactPreflight must use actual UPM tarball locators for its entire own closure.'
+    Check ($tarManifest.dependencies.Count -eq 4 -and @($tarManifest.dependencies.Values | Where-Object { $_ -notmatch '^file:.+\.tgz$' }).Count -eq 0) 'ArtifactPreflight must use actual UPM tarball locators for its entire own closure.'
     $hybrid = New-YLRegistryHostManifest -PackageSource Registry -Release $release -EntryPackage 'com.kano.ylframework.hybridclr' -RegistryUrl $url
     Check ($hybrid.scopedRegistries[0].scopes.Count -eq 2 -and 'com.code-philosophy.hybridclr' -cin $hybrid.scopedRegistries[0].scopes -and
         -not $hybrid.dependencies.Contains('com.code-philosophy.hybridclr')) 'HybridCLR SDK must be indirect and narrowly routed.'
-    foreach ($fault in @('missing', 'version', 'internal', 'commit', 'producer', 'toolchain', 'boolean-node', 'boolean-npm', 'boolean-producer-repository', 'path', 'file-hash', 'payload', 'extra-field')) {
+    foreach ($fault in @('missing', 'missing-schema', 'schema-type', 'unknown-package', 'duplicate-package', 'version', 'internal', 'commit', 'producer', 'toolchain', 'boolean-node', 'boolean-npm', 'boolean-producer-repository', 'path', 'file-hash', 'payload', 'extra-field')) {
         $bad = Copy-Value $receipt
         switch ($fault) {
             missing { $bad.packages = @($bad.packages[0..3]) }
+            'missing-schema' { $bad.Remove('schemaVersion') }
+            'schema-type' { $bad.schemaVersion = $true }
+            'unknown-package' { $bad.packages[1].id = 'com.kano.ylframework.unknown' }
+            'duplicate-package' { $bad.packages[1] = Copy-Value $bad.packages[0] }
             version { $bad.packages[1].version = '0.1.0-preview.2' }
             internal { $bad.packages[1].dependencies['com.kano.ylframework'] = '0.0.1' }
             commit { $bad.sourceCommit = $true }
@@ -160,13 +166,22 @@ try {
         $direct = $package.id -ceq $entry
         $actual += @{ name = $package.id; version = $version; source = 'Registry'; packageId = $package.id + '@' + $version
             resolvedPath = Join-Path $root ('Host/Library/PackageCache/' + $package.id); isDirectDependency = $direct; registryUrl = $url; dependencies = $package.dependencies }
-        $lock.dependencies[$package.id] = @{ version = $version; source = 'registry'; url = $url; depth = $(if ($direct) { 0 } else { 1 }); dependencies = $package.dependencies }
+        $lock.dependencies[$package.id] = @{ version = $version; source = 'registry'; url = $url; dependencies = $package.dependencies }
     }
     $actual += @{ name = 'com.unity.ugui'; version = '2.0.0'; source = 'BuiltIn'; packageId = 'com.unity.ugui@2.0.0'; resolvedPath = 'C:\Editor\BuiltInPackages\com.unity.ugui'; isDirectDependency = $false; registryUrl = $null; dependencies = @{} }
-    $lock.dependencies['com.unity.ugui'] = @{ version = '2.0.0'; source = 'builtin'; depth = 2; dependencies = @{} }
+    $lock.dependencies['com.unity.ugui'] = @{ version = '2.0.0'; source = 'builtin'; dependencies = @{} }
+    $depths = @{ $entry = 0 }; $pending = [Collections.Generic.Queue[string]]::new(); $pending.Enqueue($entry)
+    while ($pending.Count -gt 0) {
+        $id = $pending.Dequeue(); $lock.dependencies[$id].depth = $depths[$id]
+        foreach ($dependency in $lock.dependencies[$id].dependencies.Keys) {
+            if (-not $depths.ContainsKey($dependency)) { $depths[$dependency] = $depths[$id] + 1; $pending.Enqueue($dependency) }
+        }
+    }
+    Check ($depths.Count -eq 5 -and $depths['com.kano.ylframework.data-assets'] -eq 2 -and
+        $depths['com.kano.ylframework.excel'] -eq 1 -and $depths['com.unity.ugui'] -eq 2) 'The fixture must represent shortest dependency distances, including the transitive DataAssets backend.'
     $graphArgs = @{ Manifest = $manifest; Lock = $lock; Rows = $actual; Release = $release; EntryPackage = $entry; PackageSource = 'Registry'; RegistryUrl = $url; EditorVersion = '6000.3.27f1'; HostRoot = (Join-Path $root 'Host'); CacheRoot = (Join-Path $root 'Cache') }
     $evidence = Assert-YLRegistryResolvedGraph @graphArgs
-    Check ($evidence.packages.Count -eq 4 -and $evidence.origin -ceq 'Registry') 'The observed graph lost its Registry/Editor baseline distinction.'
+    Check ($evidence.packages.Count -eq 5 -and $evidence.origin -ceq 'Registry') 'The observed graph lost its Registry/Editor baseline distinction.'
     $foreignOfficial = Copy-Value $graphArgs
     $foreignOfficial.Rows[-1].source = 'Registry'; $foreignOfficial.Rows[-1].registryUrl = 'https://packages.unity.com'
     $foreignOfficial.Rows[-1].resolvedPath = 'C:\foreign-global-cache\com.unity.ugui'
@@ -188,7 +203,7 @@ try {
         } else { $tarGraphArgs.Lock.dependencies[$row.name].depth = 1 }
     }
     $tarEvidence = Assert-YLRegistryResolvedGraph @tarGraphArgs
-    Check ($tarEvidence.origin -ceq 'LocalTarball' -and $tarEvidence.directPackages.Count -eq 3) 'Actual tarball graph must preserve direct locator closure, not Registry indirectness.'
+    Check ($tarEvidence.origin -ceq 'LocalTarball' -and $tarEvidence.directPackages.Count -eq 4) 'Actual tarball graph must preserve direct locator closure, not Registry indirectness.'
     foreach ($fault in @('tar-git', 'tar-folder', 'tar-version', 'tar-depth', 'tar-indirect')) {
         $arguments = Copy-Value $tarGraphArgs
         switch ($fault) {
@@ -200,7 +215,7 @@ try {
         }
         Reject { Assert-YLRegistryResolvedGraph @arguments } 'source|lock|depth|direct|graph|package'
     }
-    foreach ($fault in @('predeclared', 'boolean-scope-url', 'boolean-lock-url', 'wrong-source', 'wrong-direct', 'wrong-url', 'lock-depth', 'lock-version', 'lock-deps', 'package-id', 'foreign-cache', 'foreign-package', 'unreachable-official', 'official-version')) {
+    foreach ($fault in @('predeclared', 'boolean-scope-url', 'boolean-lock-url', 'wrong-source', 'wrong-direct', 'wrong-url', 'lock-depth', 'transitive-lock-depth', 'missing-backend', 'lock-version', 'lock-deps', 'package-id', 'foreign-cache', 'foreign-package', 'unreachable-official', 'official-version')) {
         $arguments = Copy-Value $graphArgs
         switch ($fault) {
             predeclared { $arguments.Manifest.dependencies['com.kano.ylframework'] = $version }
@@ -210,6 +225,8 @@ try {
             'wrong-direct' { $arguments.Rows[0].isDirectDependency = $true }
             'wrong-url' { $arguments.Rows[0].registryUrl = 'https://other.invalid' }
             'lock-depth' { $arguments.Lock.dependencies[$entry].depth = 1 }
+            'transitive-lock-depth' { $arguments.Lock.dependencies['com.kano.ylframework.data-assets'].depth = 1 }
+            'missing-backend' { $arguments.Rows = @($arguments.Rows | Where-Object name -cne 'com.kano.ylframework.data-assets'); $arguments.Lock.dependencies.Remove('com.kano.ylframework.data-assets') }
             'lock-version' { $arguments.Lock.dependencies[$entry].version = '0.0.1' }
             'lock-deps' { $arguments.Lock.dependencies[$entry].dependencies = @{} }
             'package-id' { $arguments.Rows[0].packageId = $arguments.Rows[0].name + '@file:/untrusted' }

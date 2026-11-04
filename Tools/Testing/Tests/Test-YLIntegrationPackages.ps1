@@ -304,7 +304,10 @@ $sourceIdentity = if ($source.packageOrigin -cin @('Registry', 'LocalTarball')) 
 } else { $source }
 $profile = "IntegrationPackages-v1-$($editor.productVersion)-$profileName-$($definition.id)-" + (ConvertTo-Json -InputObject $sourceIdentity -Depth 5 -Compress)
 $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $repository
-$run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key "Integration-$profileName-$($editor.productVersion)"
+$entryKey = if ($definition.id -ceq 'com.kano.ylframework') { 'main' } else { $definition.id.Substring('com.kano.ylframework.'.Length) }
+$resultKey = "Integration-$profileName-$entryKey-$($source.packageOrigin)-$($editor.productVersion)"
+if ($profileName -ceq 'DOTween') { $resultKey += "-$DOTweenSdkMode" }
+$run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key $resultKey
 $lease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
 $hostLease = $null; $hostRecord = $null; $cacheLease = $null; $cache = $null; $identity = $null; $templateIdentity = $null
 $inputPaths = @(); $sdk = $null; $products = @(); $report = $null

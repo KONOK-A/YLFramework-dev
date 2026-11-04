@@ -1,7 +1,7 @@
 root = true
 
 # YL-owned CSharp only. Game code and external packages keep their own style.
-[{PackageSources/{com.kano.ylframework,com.kano.ylframework.dotween,com.kano.ylframework.excel,com.kano.ylframework.domain-excel,com.kano.ylframework.hybridclr}/{Runtime,Editor,Samples~}/**.cs,Assets/Tests/YLFramework/**.cs,Assets/Editor/YLFrameworkDev/**.cs,Tools/YLFramework.Analyzers/{Analyzer,Tests}/**.cs,Tools/UIPanelOfflineRunner.cs}]
+[{PackageSources/com.kano.ylframework{,.*}/{Runtime,Editor,Samples~}/**.cs,Assets/Tests/YLFramework/**.cs,Assets/Editor/YLFrameworkDev/**.cs,Tools/YLFramework.Analyzers/{Analyzer,Tests}/**.cs,Tools/UIPanelOfflineRunner.cs}]
 charset = utf-8
 end_of_line = lf
 insert_final_newline = true
@@ -40,7 +40,7 @@ dotnet_naming_style.yl_interface.required_prefix = I
 dotnet_naming_style.yl_interface.capitalization = pascal_case
 
 # Do not apply YL formatting to upstream libraries or generated/build content.
-[{PackageSources/{com.kano.ylframework,com.kano.ylframework.dotween,com.kano.ylframework.excel,com.kano.ylframework.domain-excel,com.kano.ylframework.hybridclr}/{Plugins/**,Runtime/Utilities/Json/**,Runtime/Utilities/ZipTool/ICSharpCode.SharpZipLib/**,**/Plugins/**,**/Generated/**,**/obj/**,**/bin/**,**/*.g,**/*.generated}.cs,Assets/Tests/YLFramework/{Integrations/HybridCLR/PlayMode/Resources/**,**/Generated/**,**/obj/**,**/bin/**,**/*.g,**/*.generated}.cs,Tools/YLFramework.Analyzers/{Analyzer,Tests}/{obj/**,bin/**,**/*.g,**/*.generated}.cs}]
+[{PackageSources/com.kano.ylframework{,.*}/{Plugins/**,Runtime/Utilities/Json/**,Runtime/Utilities/ZipTool/ICSharpCode.SharpZipLib/**,**/Plugins/**,**/Generated/**,**/obj/**,**/bin/**,**/*.g,**/*.generated}.cs,Assets/Tests/YLFramework/{Integrations/HybridCLR/PlayMode/Resources/**,**/Generated/**,**/obj/**,**/bin/**,**/*.g,**/*.generated}.cs,Tools/YLFramework.Analyzers/{Analyzer,Tests}/{obj/**,bin/**,**/*.g,**/*.generated}.cs}]
 charset = unset
 end_of_line = unset
 insert_final_newline = unset

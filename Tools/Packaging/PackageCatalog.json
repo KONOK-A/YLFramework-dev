@@ -23,6 +23,15 @@
       "samples": ["Samples~/ResourceStartup"]
     },
     {
+      "id": "com.kano.ylframework.data-assets",
+      "assemblies": [
+        { "name": "YLFramework.DataAssets", "path": "Runtime/YLFramework.DataAssets.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.DataAssets.Editor", "path": "Editor/YLFramework.DataAssets.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Runtime/Systems/DataAssets/ScriptableObjectConfigs.cs", "Runtime/Systems/DataAssets/ScriptableObjectData.cs", "Editor/Systems/DataAssets/ScriptableObjectConfigsController.cs"],
+      "samples": []
+    },
+    {
       "id": "com.kano.ylframework.domain-excel",
       "assemblies": [
         { "name": "YLFramework.Domain.Excel.Editor", "path": "Editor/YLFramework.Domain.Excel.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }

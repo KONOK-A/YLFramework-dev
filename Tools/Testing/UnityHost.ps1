@@ -2,6 +2,22 @@
 #requires -PSEdition Core
 . (Join-Path $PSScriptRoot 'Common/Packages.ps1')
 
+function Get-YLNativeTestAssembly {
+    param([Collections.IDictionary] $Assembly, [string[]] $PackageIds, [Collections.IDictionary] $Catalog)
+    if ($Assembly['name'] -isnot [string] -or $Assembly['name'] -cnotmatch '\.Tests(?:\.|$)' -or $Assembly['references'] -isnot [array]) {
+        throw 'Only declared test assembly metadata may be projected; product definitions are immutable.'
+    }
+    $known = @($Catalog['packages'] | ForEach-Object { $_['id'] })
+    if (@($PackageIds | Where-Object { $_ -cnotin $known }).Count) { throw 'Unknown package in the native test closure.' }
+    $absent = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($package in $Catalog['packages'] | Where-Object { $_['id'] -cnotin $PackageIds }) {
+        foreach ($declaration in $package['assemblies']) { $null = $absent.Add($declaration['name']) }
+    }
+    $copy = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $Assembly -Depth 25) -AsHashtable -NoEnumerate
+    $copy['references'] = @($Assembly['references'] | Where-Object { -not $absent.Contains($_) })
+    return ,$copy
+}
+
 function Get-YLUnityPackageInputs([object] $EditorProfile) {
     if ($null -eq $EditorProfile -or $null -eq $EditorProfile.PSObject.Properties['productVersion'] -or
         $null -eq $EditorProfile.PSObject.Properties['version'] -or $EditorProfile.productVersion -isnot [string] -or $EditorProfile.version -isnot [string]) {
@@ -198,6 +214,9 @@ function Invoke-YLUnitySuite {
             }
         }
         Assert-YLUnityHostIdle $hostRecord
+        $ids = if ('packageInputs' -cin $Definition.PSObject.Properties.Name) { @($Definition.packageInputs) } else { @('com.kano.ylframework') }
+        $productPackages = @(Get-YLUpmPackages -Repository $Repository -Ids $ids)
+        $catalog = Read-YLPackageCatalog
         $files = [ordered]@{}
         foreach ($relative in $sources.inputs) {
             if ((-not $relative.StartsWith('Assets/', [StringComparison]::Ordinal) -and
@@ -210,6 +229,13 @@ function Invoke-YLUnitySuite {
                 $target = 'Assets/YLFramework/' + $relative.Substring($prefix.Length)
             }
             $files[$target] = [IO.File]::ReadAllBytes((Join-Path $Repository $relative))
+            if ($Definition.nativeLayout -ceq 'Framework' -and $relative.StartsWith('Assets/Tests/', [StringComparison]::Ordinal) -and $relative.EndsWith('.asmdef', [StringComparison]::Ordinal)) {
+                $assembly = [Text.Encoding]::UTF8.GetString($files[$target]) | ConvertFrom-Json -AsHashtable -DateKind String
+                if ($assembly['name'] -is [string] -and $assembly['name'] -cmatch '\.Tests(?:\.|$)') {
+                    $projected = Get-YLNativeTestAssembly -Assembly $assembly -PackageIds @($productPackages.id) -Catalog $catalog
+                    $files[$target] = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Json -InputObject $projected -Depth 25))
+                }
+            }
         }
         foreach ($relative in @($Definition.assemblyMetadata | Where-Object { $Definition.nativeLayout -ceq 'Slice' })) {
             $assembly = [IO.File]::ReadAllText((Join-Path $Repository $relative)) | ConvertFrom-Json -AsHashtable -DateKind String
@@ -243,8 +269,6 @@ function Invoke-YLUnitySuite {
             $projectLock = [IO.File]::ReadAllText((Join-Path $Repository $packageInputs[1])) | ConvertFrom-Json -DateKind String
             $dependencies['com.unity.nuget.newtonsoft-json'] = $projectLock.dependencies.'com.unity.nuget.newtonsoft-json'.version
         }
-        $ids = if ('packageInputs' -cin $Definition.PSObject.Properties.Name) { @($Definition.packageInputs) } else { @('com.kano.ylframework') }
-        $productPackages = @(Get-YLUpmPackages -Repository $Repository -Ids $ids)
         $manifest = @{ dependencies = $dependencies }
         foreach ($package in $productPackages) {
             $manifest.dependencies[$package.id] = 'file:../' + $package.relative

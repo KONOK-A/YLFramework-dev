@@ -72,17 +72,31 @@ try {
     $lockPath = Join-Path $hostRecord.path 'Packages/packages-lock.json'; Save $lockPath @{ dependencies = $locked }
     $valid = @{ schemaVersion = 1; purpose = 'YLTesting.IntegrationPackages'; integration = 'Excel'; hostId = $hostRecord.id; resultId = $result.id; workspaceId = $workspace.id
         resultRoot = $result.path; output = $output; unityVersion = '2022.3.62f3'; inputHash = ('a' * 64); manifestSha256 = (Get-FileHash -LiteralPath $manifest).Hash
-        packageOrigin = 'GitRemote'; gitRepository = $repo; gitRevision = $sha; cacheRoot = $cache.path; cacheId = $cache.id; expectedTemplateHash = ('a' * 64); packages = $packages; assemblies = (Get-YLIntegrationDefinition Excel).assemblies }
+        packageOrigin = 'GitRemote'; gitRepository = $repo; gitRevision = $sha; cacheRoot = $cache.path; cacheId = $cache.id; expectedTemplateHash = ('a' * 64); packages = $packages
+        assemblies = @(Get-YLPackageAssemblyPlan -Catalog $fixtureCatalog -Packages $packages -Profile Excel -MetadataOnly | Where-Object enabled) }
     Save (Join-Path $hostRecord.path '.yl-inputs.json') @{ schemaVersion = 1; purpose = 'YLTesting.HostInputs'; hostId = $hostRecord.id; inputHash = ('a' * 64) }
     $valid.entryPackage = 'com.kano.ylframework.excel'
     $valid.catalogSha256 = Set-YLFixtureCatalogInput -HostRecord $hostRecord -Catalog $fixtureCatalog -InputHash ('a' * 64)
     [UnityEditor.PackageManager.PackageInfo]::Registered = $registered
     function Request { return ,([Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -Depth 30 -InputObject $valid))) }
     $null = Call ValidateInvocation (Request); $checks++
-    foreach ($field in @('catalogSha256', 'entryPackage')) {
+    foreach ($field in @('schemaVersion', 'catalogSha256', 'entryPackage')) {
         $r = Request; $null = $r.Remove($field); Reject { Call ValidateInvocation $r } "missing mandatory catalog/entry $field"
     }
     $r = Request; $r['catalogSha256'] = [Newtonsoft.Json.Linq.JValue]::new(('d' * 64)); Reject { Call ValidateInvocation $r } 'catalog digest mismatch'
+    foreach ($fault in @('schema-type', 'schema-version', 'unknown-entry', 'unknown-package', 'duplicate-package', 'missing-assembly', 'duplicate-assembly')) {
+        $r = Request
+        switch ($fault) {
+            'schema-type' { $r['schemaVersion'] = [Newtonsoft.Json.Linq.JValue]::new($true) }
+            'schema-version' { $r['schemaVersion'] = [Newtonsoft.Json.Linq.JValue]::new(2) }
+            'unknown-entry' { $r['entryPackage'] = [Newtonsoft.Json.Linq.JValue]::new('com.kano.ylframework.unknown') }
+            'unknown-package' { $r['packages'][1]['name'] = [Newtonsoft.Json.Linq.JValue]::new('com.kano.ylframework.unknown') }
+            'duplicate-package' { $r['packages'].Add($r['packages'][0].DeepClone()) }
+            'missing-assembly' { $r['assemblies'][0].Remove() }
+            'duplicate-assembly' { $r['assemblies'].Add($r['assemblies'][0].DeepClone()) }
+        }
+        Reject { Call ValidateInvocation $r } $fault
+    }
     foreach ($relative in @('Runtime/DOTween.dll', 'Runtime/HybridCLR.Runtime.dll', 'Runtime/SDK/Hidden.cs')) {
         $path = Join-Path $hostRecord.path ('VendorShapeFixture/' + $relative)
         $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)); [IO.File]::WriteAllText($path, 'MZ NoUnity vendor-shaped input, not a real SDK')
@@ -235,7 +249,6 @@ try {
         $script:valid.entryPackage = 'com.kano.ylframework.' + $suffix
         $fields = Get-YLRegistryRequestFields -Source @{ packageOrigin = $Origin; registryUrl = 'https://package.openupm.com'; registryVersion = '0.1.0-preview.1'; release = @{ sha256 = ('c' * 64) } } -EntryPackage $script:valid.entryPackage
         foreach ($field in $fields.GetEnumerator()) { $script:valid[$field.Key] = $field.Value }
-        $script:valid.assemblies = (Get-YLIntegrationDefinition $Integration).assemblies
         $script:valid.Remove('dotweenSdkMode'); $script:valid.Remove('sdk')
         $ids = @('com.kano.ylframework'); if ($Integration -ceq 'DomainExcel') { $ids += 'com.kano.ylframework.excel' }; $ids += $script:valid.entryPackage
         $script:publishedApis = @(); $expected = @(); $direct = @{}; $locks = @{}
@@ -268,6 +281,8 @@ try {
             if ($Origin -ceq 'Registry') { $locks[$id].url = $script:valid.registryUrl }
         }
         $script:valid.packages = $expected
+        $mode = if ($Integration -ceq 'DOTween') { 'Required' } else { $null }
+        $script:valid.assemblies = @(Get-YLPackageAssemblyPlan -Catalog $fixtureCatalog -Packages $expected -Profile $Integration -DOTweenSdkMode $mode -MetadataOnly | Where-Object enabled)
         Save $manifest @{ dependencies = $direct }; Save $lockPath @{ dependencies = $locks }
         $script:valid.manifestSha256 = (Get-FileHash -LiteralPath $manifest).Hash
         [UnityEditor.PackageManager.PackageInfo]::Registered = $script:publishedApis
@@ -390,7 +405,7 @@ try {
     [IO.Directory]::Delete((Join-Path $hostRecord.path 'Assets/Plugins'), $true)
     $r = Request; $r['dotweenSdkMode'] = [Newtonsoft.Json.Linq.JValue]::new('optional'); Reject { Call ValidateInvocation $r } 'unknown DOTween SDK mode'
     $r = Request; $null = $r.Remove('dotweenSdkMode'); Reject { Call ValidateInvocation $r } 'omitting DOTween mode must still require wrapper assembly'
-    $valid.Remove('dotweenSdkMode'); $valid.assemblies = (Get-YLIntegrationDefinition DOTween).assemblies
+    $valid.Remove('dotweenSdkMode'); $valid.assemblies = @(Get-YLPackageAssemblyPlan -Catalog $fixtureCatalog -Packages $valid.packages -Profile DOTween -DOTweenSdkMode Required -MetadataOnly | Where-Object enabled)
     $null = Call ValidateInvocation (Request)
     Reject { Boundary ValidateDotween @((Request), $empty, $empty, $selected, [string[]]@()) } 'Required mode cannot pass without real wrapper/SDK'
     $module = Join-Path $hostRecord.path 'Assets/Plugins/Demigiant/DOTween/Modules/DOTweenModuleFixture.cs'

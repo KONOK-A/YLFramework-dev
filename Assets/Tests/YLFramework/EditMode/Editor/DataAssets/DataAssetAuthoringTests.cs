@@ -18,6 +18,27 @@ namespace YLFramework.Tests.DataAssets
         private ScriptableObjectConfigs _root;
         private string[] _absentParents = Array.Empty<string>();
 
+        [Test]
+        public void DataAssetsHasItsOwnRuntimeAndEditorWithoutReverseMainOrExcelDependencies()
+        {
+            var runtime = typeof(ScriptableObjectConfigs).Assembly;
+            var editor = typeof(ScriptableObjectConfigsController).Assembly;
+            Assert.That(runtime.GetName().Name, Is.EqualTo("YLFramework.DataAssets"));
+            Assert.That(editor.GetName().Name, Is.EqualTo("YLFramework.DataAssets.Editor"));
+            Assert.That(typeof(global::YLFramework.Resource.ResourceSystem).Assembly.GetType(typeof(ScriptableObjectConfigs).FullName), Is.Null);
+            Assert.That(typeof(global::YLFramework.Editor.Core.CreateModuleCommand).Assembly.GetType(typeof(ScriptableObjectConfigsController).FullName), Is.Null);
+            Assert.That(runtime.GetReferencedAssemblies().Select(reference => reference.Name), Does.Not.Contain("YLFramework.Excel.Editor"));
+            Assert.That(editor.GetReferencedAssemblies().Select(reference => reference.Name), Does.Not.Contain("YLFramework.Excel.Editor").And.Not.Contain("MiniExcel"));
+        }
+
+        [TestCase("5e54610ded7e2994aaa66cefe28b02ce", "Runtime/Systems/DataAssets/ScriptableObjectConfigs.cs")]
+        [TestCase("a1743beab98e80e47b2c8b4917852add", "Runtime/Systems/DataAssets/ScriptableObjectData.cs")]
+        [TestCase("20a3d0268ac5c82468c0535097f0aaa6", "Editor/Systems/DataAssets/ScriptableObjectConfigsController.cs")]
+        public void MovedDataAssetsKeepTheirOriginalScriptGuids(string guid, string relative)
+        {
+            Assert.That(AssetDatabase.GUIDToAssetPath(guid), Is.EqualTo("Packages/com.kano.ylframework.data-assets/" + relative));
+        }
+
         [SetUp]
         public void SetUp()
         {

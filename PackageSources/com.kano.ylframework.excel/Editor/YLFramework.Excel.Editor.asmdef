@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Excel.Editor",
     "rootNamespace": "YLFramework.Integrations.Excel.Editor",
-    "references": ["YLFramework.Runtime", "YLFramework.Editor"],
+  "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.DataAssets", "YLFramework.DataAssets.Editor"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

@@ -9,5 +9,5 @@
   "author": { "name": "Kano" },
   "repository": { "type": "git", "url": "https://github.com/KONOK-A/YLFramework-dev.git", "directory": "PackageSources/com.kano.ylframework.excel" },
   "files": ["package.json", "package.json.meta", "README.md", "README.md.meta", "LICENSE.md", "LICENSE.md.meta", "Editor", "Editor.meta"],
-  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1", "com.unity.nuget.newtonsoft-json": "3.2.1" }
+  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1", "com.kano.ylframework.data-assets": "0.1.0-preview.1", "com.unity.nuget.newtonsoft-json": "3.2.1" }
 }

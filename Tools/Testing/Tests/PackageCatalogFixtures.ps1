@@ -1,4 +1,16 @@
 # Test-only miniature payloads. These helpers never attest a Unity installation or compilation.
+function Get-YLFixtureInternalDependencies {
+    param([string] $PackageId, [string] $Version)
+    $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+    $manifest = Read-YLPackageEvidenceJson (Join-Path $root "PackageSources/$PackageId/package.json")
+    if ($manifest['name'] -cne $PackageId -or $manifest['version'] -cne $Version) { throw 'Fixture package identity differs from its maintained manifest.' }
+    $dependencies = [ordered]@{}
+    foreach ($dependency in $manifest['dependencies'].GetEnumerator()) {
+        if ($dependency.Key.StartsWith('com.kano.', [StringComparison]::Ordinal)) { $dependencies[$dependency.Key] = $dependency.Value }
+    }
+    return ,$dependencies
+}
+
 function Get-YLFixturePackageCatalog {
     param([switch] $ConditionalAdapter)
     $catalog = Read-YLPackageCatalog

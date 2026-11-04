@@ -3,6 +3,7 @@
   "rootNamespace": "YLFramework.Tests.DataBatch",
   "references": [
     "YLFramework.Runtime",
+    "YLFramework.DataAssets",
     "YLFramework.Tests.Fixtures"
   ],
   "includePlatforms": [],

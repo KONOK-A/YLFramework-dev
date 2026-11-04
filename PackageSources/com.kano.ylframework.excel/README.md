@@ -1,15 +1,17 @@
 # YLFramework Excel Authoring
 
 Editor-only package `com.kano.ylframework.excel`, version `0.1.0-preview.1`.
-Declare the main package and this package explicitly when installing from Git.
+Declare the main package, `com.kano.ylframework.data-assets`, and this package
+explicitly at the same validated revision when installing from Git. DataAssets
+owns the configuration roots and their Editor API without depending on Excel.
 UPM resolves the declared Newtonsoft.Json registry dependency.
 
 For the intended OpenUPM release channel, declare only
 `"com.kano.ylframework.excel": "0.1.0-preview.1"` under the narrow
 `com.kano.ylframework` scope at `https://package.openupm.com`. UPM resolves the
-main package automatically. Use the [Registry installation configuration](../com.kano.ylframework/README.md#registry-installation)
+main and DataAssets packages automatically. Use the [Registry installation configuration](../com.kano.ylframework/README.md#registry-installation)
 only after the frozen Release and acceptance handoff confirm version availability;
-this preview is not claimed published by this README. The explicit main-plus-Excel
+this preview is not claimed published by this README. The explicit main-plus-DataAssets-plus-Excel
 closure below applies to the Git fallback, not Registry installation.
 
 Excel URL format (`<full-commit-sha>` is notation, not a usable revision):
@@ -18,7 +20,7 @@ Excel URL format (`<full-commit-sha>` is notation, not a usable revision):
 https://github.com/KONOK-A/YLFramework-dev.git?path=/PackageSources/com.kano.ylframework.excel#<full-commit-sha>
 ```
 
-Use the actual full SHA and main-plus-Excel manifest entries supplied by the
+Use the actual full SHA and main-plus-DataAssets-plus-Excel manifest entries supplied by the
 acceptance handoff. Package-level SemVer dependencies do not fetch sibling Git
 packages. See the [installation guide](../com.kano.ylframework/Documentation~/README.md#git-url-与依赖闭包).
 

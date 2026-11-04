@@ -380,7 +380,7 @@ try {
         $path = Join-Path $run.path 'fixture-release-manifest.json'
         Write-YLTestJson -Path $path -Value $manifest
         $wire = [IO.File]::ReadAllText($path) | ConvertFrom-Json -AsHashtable -DateKind String
-        Check ($wire.schemaVersion -eq 1 -and $wire.sourceCommit -ceq ('a' * 40) -and $wire.packages.Count -eq 5) 'Wrong manifest schema/source/batch.'
+        Check ($wire.schemaVersion -eq 1 -and $wire.sourceCommit -ceq ('a' * 40) -and $wire.packages.Count -eq (Get-YLRegistryPackageIds).Count) 'Wrong manifest schema/source/complete catalog batch.'
         Check ($wire.toolchain.node -ceq '22.23.3' -and $wire.toolchain.npm -ceq '10.9.9' -and $wire.toolchain.powershell -ceq '7.6.9') 'Unpinned toolchain.'
         foreach ($row in $wire.packages) {
             Check ($row.assetName -ceq ($row.id + '-' + $row.version + '.tgz')) 'Wrong stable asset filename.'

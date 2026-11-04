@@ -30,9 +30,9 @@ try {
     $workspace = Initialize-YLTestWorkspace -WorkspaceRoot (Join-Path $root 'Workspace') -Repository $repository
     $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key LifecycleContracts
     $version = '0.1.0-preview.1'; $url = 'https://package.openupm.com'
-    $packages = @(foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.dotween', 'com.kano.ylframework.excel', 'com.kano.ylframework.hybridclr')) {
-        $deps = @{}; if ($id -cne 'com.kano.ylframework') { $deps['com.kano.ylframework'] = $version }
-        if ($id.EndsWith('.domain-excel')) { $deps['com.kano.ylframework.excel'] = $version }
+    . (Join-Path $PSScriptRoot 'PackageCatalogFixtures.ps1')
+    $packages = @(foreach ($id in @((Read-YLPackageCatalog).packages.id)) {
+        $deps = Get-YLFixtureInternalDependencies -PackageId $id -Version $version
         if ($id.EndsWith('.hybridclr')) { $deps['com.code-philosophy.hybridclr'] = '9.0.3' }
         $line = 'package.json' + [char]0 + ('b' * 64) + "`n"
         @{ id = $id; version = $version; dependencies = $deps; assetName = "$id-$version.tgz"; sha256 = ('a' * 64)
@@ -91,8 +91,9 @@ try {
                 # This literal fixture is independent of the request's expected closure.
                 $ids = switch -CaseSensitive ($script:scenarioEntry) {
                     'com.kano.ylframework' { @('com.kano.ylframework') }
-                    'com.kano.ylframework.excel' { @('com.kano.ylframework', 'com.kano.ylframework.excel') }
-                    'com.kano.ylframework.domain-excel' { @('com.kano.ylframework', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.excel') }
+                    'com.kano.ylframework.data-assets' { @('com.kano.ylframework', 'com.kano.ylframework.data-assets') }
+                    'com.kano.ylframework.excel' { @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel') }
+                    'com.kano.ylframework.domain-excel' { @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.excel') }
                     'com.kano.ylframework.dotween' { @('com.kano.ylframework', 'com.kano.ylframework.dotween') }
                     'com.kano.ylframework.hybridclr' { @('com.kano.ylframework', 'com.kano.ylframework.hybridclr', 'com.code-philosophy.hybridclr') }
                     default { throw 'Unknown contract scenario.' }
@@ -105,7 +106,8 @@ try {
                     $null = [IO.Directory]::CreateDirectory($api.resolvedPath)
                     [IO.File]::WriteAllText((Join-Path $api.resolvedPath 'cached.bytes'), 'cache may survive removal')
                     $api.registry = [UnityEditor.PackageManager.RegistryInfo]::new(); $api.registry.url = 'https://package.openupm.com'
-                    $deps = if ($id -cin @('com.kano.ylframework', 'com.code-philosophy.hybridclr')) { @{} } elseif ($id.EndsWith('.domain-excel')) { @{ 'com.kano.ylframework' = '0.1.0-preview.1'; 'com.kano.ylframework.excel' = '0.1.0-preview.1' } } elseif ($id.EndsWith('.hybridclr')) { @{ 'com.kano.ylframework' = '0.1.0-preview.1'; 'com.code-philosophy.hybridclr' = '9.0.3' } } else { @{ 'com.kano.ylframework' = '0.1.0-preview.1' } }
+                    $deps = if ($id -ceq 'com.code-philosophy.hybridclr') { @{} } else { Get-YLFixtureInternalDependencies -PackageId $id -Version $version }
+                    if ($id -ceq 'com.kano.ylframework.hybridclr') { $deps['com.code-philosophy.hybridclr'] = '9.0.3' }
                     $api.dependencies = @($deps.GetEnumerator() | ForEach-Object { $d = [UnityEditor.PackageManager.DependencyInfo]::new(); $d.name = $_.Key; $d.version = $_.Value; $d })
                     $api
                 })
@@ -113,10 +115,21 @@ try {
                 $lock = @{ dependencies = @{} }
                 foreach ($api in $apis) {
                     $deps = @{}; foreach ($d in $api.dependencies) { $deps[$d.name] = $d.version }
-                    $lock.dependencies[$api.name] = @{ version = $api.version; source = 'registry'; url = 'https://package.openupm.com'; depth = $(if ($api.isDirectDependency) { 0 } else { 1 }); dependencies = $deps }
+                    $lock.dependencies[$api.name] = @{ version = $api.version; source = 'registry'; url = 'https://package.openupm.com'; dependencies = $deps }
                 }
+                $depths = @{ $script:scenarioEntry = 0 }; $pending = [Collections.Generic.Queue[string]]::new(); $pending.Enqueue($script:scenarioEntry)
+                while ($pending.Count -gt 0) {
+                    $id = $pending.Dequeue(); $lock.dependencies[$id].depth = $depths[$id]
+                    foreach ($dependency in $lock.dependencies[$id].dependencies.Keys) {
+                        if (-not $depths.ContainsKey($dependency)) { $depths[$dependency] = $depths[$id] + 1; $pending.Enqueue($dependency) }
+                    }
+                }
+                Check ($depths.Count -eq $apis.Count) 'The observed fixture contains a package outside its declared dependency closure.'
+                if ($script:scenarioEntry -ceq 'com.kano.ylframework.domain-excel') { Check ($depths['com.kano.ylframework.data-assets'] -eq 2) 'DomainExcel must reach DataAssets through its Excel backend.' }
                 Save $lockPath $lock
                 if ($script:fault -ceq 'lock-depth') { $lock.dependencies[$script:scenarioEntry].depth = 7; Save $lockPath $lock }
+                if ($script:fault -ceq 'transitive-lock-depth') { $lock.dependencies['com.kano.ylframework.data-assets'].depth = 1; Save $lockPath $lock }
+                if ($script:fault -ceq 'missing-backend') { [UnityEditor.PackageManager.PackageInfo]::Registered = @($apis | Where-Object name -cne 'com.kano.ylframework.data-assets'); $lock.dependencies.Remove('com.kano.ylframework.data-assets'); Save $lockPath $lock }
                 if ($script:fault -ceq 'direct-dependency') { [UnityEditor.PackageManager.PackageInfo]::Registered[0].isDirectDependency = $true }
             }
             if ($script:fault -ceq 'warm-path-drift' -and $request.phase -ceq 'Reopen') { [UnityEditor.PackageManager.PackageInfo]::Registered[0].resolvedPath = Join-Path $request.cacheRoot 'Upm/ChangedIdentity' }
@@ -215,7 +228,7 @@ try {
     Check ([IO.File]::Exists((Join-Path $outcome.host.path 'Library/PackageCache/com.kano.ylframework/cached.bytes'))) 'Cached files were incorrectly deleted to force uninstall success.'
     $asmdef = Read-YLPackageEvidenceJson (Join-Path $outcome.host.path 'Assets/RegistryLifecycle/Editor/RegistryLifecycle.asmdef')
     Check ($asmdef.references.Count -eq 0 -and $asmdef.overrideReferences -and $asmdef.precompiledReferences.Count -eq 0 -and ($asmdef.includePlatforms -join ',') -ceq 'Editor') 'The neutral probe inherited product/SDK/Json.NET references or entered Player compilation.'
-    foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.excel', 'com.kano.ylframework.dotween', 'com.kano.ylframework.hybridclr')) {
+    foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel', 'com.kano.ylframework.dotween', 'com.kano.ylframework.hybridclr')) {
         $script:scenarioEntry = $id; $caseArguments = $arguments.Clone(); $caseArguments.EntryPackage = $id
         $case = Invoke-YLRegistryLifecycle @caseArguments
         Check ($case.status -ceq 'Completed' -and $case.phases.Count -eq 4) "Frozen entry lifecycle failed for ${id}: $($case.error)"
@@ -228,7 +241,7 @@ try {
     Check ($reloaded.phases[2].report.removal.completion -ceq 'ResolvedAfterReload' -and $reloaded.phases[2].report.removal.requestStatusObserved -is [bool] -and
         -not $reloaded.phases[2].report.removal.requestStatusObserved -and $reloaded.phases[2].report.removal.requestStatus -ceq '') 'A lost RemoveRequest must not be fabricated as observed Success.'
     $script:reload = $false
-    foreach ($faultName in @('compile', 'request-only', 'remove-failed', 'indirect-remains', 'manifest-extra', 'sentinel', 'cache-environment', 'warm-path-drift', 'lock-depth', 'direct-dependency', 'report-pid', 'report-cache', 'cancelled', 'forced-cleanup', 'operation-owner-report', 'neutral-receipt-drift', 'input-receipt-drift')) {
+    foreach ($faultName in @('compile', 'request-only', 'remove-failed', 'indirect-remains', 'manifest-extra', 'sentinel', 'cache-environment', 'warm-path-drift', 'lock-depth', 'transitive-lock-depth', 'missing-backend', 'direct-dependency', 'report-pid', 'report-cache', 'cancelled', 'forced-cleanup', 'operation-owner-report', 'neutral-receipt-drift', 'input-receipt-drift')) {
         $script:fault = $faultName
         $failed = Invoke-YLRegistryLifecycle @arguments
         Check ($failed.status -ceq 'Failed' -and $failed.error.Length -gt 0) "Lifecycle incorrectly accepted actual $faultName evidence."

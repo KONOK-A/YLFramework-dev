@@ -157,7 +157,9 @@ function Invoke-YLRegistryLifecycle {
         $cacheLease = Lock-YLTestDirectory -Workspace $Workspace -Path $cache.path
         $outcome.host = $hostRecord; $outcome.cache = $cache
         Assert-YLUnityHostIdle $hostRecord
-        $identity = Get-YLTestInputIdentity -Repository $Workspace.repository -Paths @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1',
+        $catalogPath = Join-Path $Workspace.repository 'Tools/Packaging/PackageCatalog.json'
+        $null = Read-YLPackageCatalog -Path $catalogPath
+        $identity = Get-YLTestInputIdentity -Repository $Workspace.repository -Paths @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1', 'Tools/Packaging/PackageCatalog.json',
             'Tools/Testing/Common/Packages.ps1', 'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/UnityHost.ps1') -Toolchain @($Unity) -Profile ('RegistryLifecycle-v1-' + $Editor.productVersion + '-' + $EntryPackage + '-' + $release.sha256 + '-' + $token)
         $files = [ordered]@{}
         $files['Assets/RegistryLifecycle/Editor/RegistryLifecycleEntry.cs'] = [IO.File]::ReadAllBytes((Join-Path $Workspace.repository 'Tools/Testing/RegistryLifecycleEntry.cs'))
@@ -173,6 +175,7 @@ function Invoke-YLRegistryLifecycle {
         foreach ($folder in @('Assets/RegistryLifecycle', 'Assets/RegistryLifecycle/Editor', 'Assets/RegistryLifecycleSentinels')) {
             $files[$folder + '.meta'] = [Text.Encoding]::UTF8.GetBytes("fileFormatVersion: 2`nguid: $([Guid]::NewGuid().ToString('N'))`nfolderAsset: yes`nDefaultImporter:`n  externalObjects: {}`n  userData: `n  assetBundleName: `n  assetBundleVariant: `n")
         }
+        $files['YLTesting/PackageCatalog.json'] = [IO.File]::ReadAllBytes($catalogPath)
         $files['Packages/manifest.json'] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $original -Depth 10) + "`n")
         Sync-YLUnityHost -HostRecord $hostRecord -Files $files -Identity $identity -EditorVersion $Editor.version
         $receipt = @{ schemaVersion = 1; purpose = 'YLTesting.RegistryLifecycle.NeutralInputs'; workspaceId = $Workspace.id; hostId = $hostRecord.id; resultId = $run.id; cacheId = $cache.id

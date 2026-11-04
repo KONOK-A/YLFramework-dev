@@ -1,0 +1,13 @@
+{
+  "name": "com.kano.ylframework.data-assets",
+  "version": "0.1.0-preview.1",
+  "displayName": "YLFramework DataAssets",
+  "description": "Resource-owned ScriptableObject configuration roots and their Unity authoring tools.",
+  "unity": "2022.3",
+  "unityRelease": "62f3",
+  "license": "MIT",
+  "author": { "name": "Kano" },
+  "repository": { "type": "git", "url": "https://github.com/KONOK-A/YLFramework-dev.git", "directory": "PackageSources/com.kano.ylframework.data-assets" },
+  "files": ["package.json", "package.json.meta", "README.md", "README.md.meta", "LICENSE.md", "LICENSE.md.meta", "Runtime", "Runtime.meta", "Editor", "Editor.meta"],
+  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1" }
+}

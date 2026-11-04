@@ -373,7 +373,33 @@
       "sampleInputs": []
     },
     {
+      "name": "DataAssets",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "category": "",
+      "assemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "excludedCategories": ["YL.Special.Session"],
+      "specialCategory": "YL.Special.Session",
+      "disableDomainReload": true,
+      "description": "DataAssets-only authoring, identity, resources and session contracts; no Excel/Localization/Save feature inputs.",
+      "suites": ["Daily", "Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.data-assets/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/NamespaceMigration", "Assets/Tests/YLFramework/Fixtures/DataAssets/Runtime", "Assets/Editor/YLFrameworkDev"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/DataAssets", "Assets/Tests/YLFramework/EditMode/Editor/DataAssets"],
+      "playTests": ["Assets/Tests/YLFramework/PlayMode/Systems/DataAssets"],
+      "assemblyMetadata": ["PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef", "PackageSources/com.kano.ylframework.data-assets/Runtime/YLFramework.DataAssets.asmdef", "PackageSources/com.kano.ylframework.data-assets/Editor/YLFramework.DataAssets.Editor.asmdef", "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"],
+      "packageInputs": ["com.kano.ylframework.data-assets"],
+      "sampleInputs": []
+    },
+    {
       "name": "Data",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "shortHostKey": true,
       "category": "",
       "assemblies": [
         "YLFramework.Tests.EditMode",
@@ -405,6 +431,7 @@
         "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
         "Assets/Tests/YLFramework/Fixtures/Extensions/Domain",
         "Assets/Tests/YLFramework/Fixtures/Authoring",
+        "Assets/Tests/YLFramework/Fixtures/DataAssets/Runtime",
         "Assets/Editor/YLFrameworkDev"
       ],
       "editTests": [
@@ -426,7 +453,8 @@
         "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
       ],
       "packageInputs": [
-        "com.kano.ylframework"
+        "com.kano.ylframework",
+        "com.kano.ylframework.data-assets"
       ],
       "sampleInputs": []
     },
@@ -492,7 +520,8 @@
         "Daily"
       ],
       "runtimeSources": [
-        "PackageSources/com.kano.ylframework/Runtime"
+        "PackageSources/com.kano.ylframework/Runtime",
+        "PackageSources/com.kano.ylframework.data-assets/Runtime"
       ],
       "nativeSources": [],
       "editTests": [
