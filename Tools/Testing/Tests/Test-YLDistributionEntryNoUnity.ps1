@@ -4,6 +4,7 @@ param([Parameter(Mandatory)][string] $TemporaryRoot)
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
+. (Join-Path $PSScriptRoot 'PackageCatalogFixtures.ps1')
 if (-not [IO.Directory]::Exists($TemporaryRoot)) { throw 'An existing temporary parent is required.' }
 $sandbox = Join-Path (Get-YLTestPath $TemporaryRoot) ('yl-distribution-entry-' + [Guid]::NewGuid().ToString('N'))
 $null = [IO.Directory]::CreateDirectory($sandbox)
@@ -15,7 +16,7 @@ $cache = New-YLTestDirectory -Workspace $workspace -Kind Cache -Key Entry
 $checks = 0
 try {
     $references = @([IO.Directory]::EnumerateFiles((Join-Path $PSHOME 'ref'), '*.dll')) + @([Newtonsoft.Json.Linq.JObject].Assembly.Location)
-    $diagnostics = @(Add-Type -Path @((Join-Path $PSScriptRoot '../DistributionEntry.cs'), (Join-Path $PSScriptRoot 'DistributionUnityStubs.cs')) -ReferencedAssemblies $references -CompilerOptions @('/define:UNITY_EDITOR', '/langversion:9.0') -IgnoreWarnings 3>&1)
+    $diagnostics = @(Add-Type -Path @((Join-Path $PSScriptRoot '../DistributionEntry.cs'), (Join-Path $PSScriptRoot '../PackageCatalogContract.cs'), (Join-Path $PSScriptRoot 'DistributionUnityStubs.cs')) -ReferencedAssemblies $references -CompilerOptions @('/define:UNITY_EDITOR', '/langversion:9.0') -IgnoreWarnings 3>&1)
     foreach ($diagnostic in @($diagnostics | ForEach-Object { $_.ToString() } | Sort-Object -Unique)) { Write-Warning $diagnostic }
     $method = [YLFramework.Testing.DistributionEntry].GetMethod('ValidateInvocation', [Reflection.BindingFlags]'NonPublic,Static')
     if ($null -eq $method) { throw 'DistributionEntry must validate typed v2 ownership before it acquires process exit authority.' }
@@ -25,12 +26,20 @@ try {
     $manifest = Join-Path $hostRecord.path 'Packages/manifest.json'; $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($manifest)); [IO.File]::WriteAllText($manifest, '{"dependencies":{}}')
     $valid = @{ schemaVersion = 2; hostId = $hostRecord.id; resultId = $result.id; resultRoot = $result.path; output = $output; unityVersion = '2022.3.62f3'
         phase = 'Inspect'; packageOrigin = 'File'; backend = 'Mono'; smoke = $false; hybridCLR = $false; manifestSha256 = (Get-FileHash -LiteralPath $manifest).Hash; packages = @(@{name = 'com.kano.ylframework'; version = '0.1.0-preview.1'}) }
+    $fixtureCatalog = Get-YLFixturePackageCatalog
+    $valid.entryPackage = 'com.kano.ylframework'; $valid.inputHash = 'a' * 64
+    $valid.catalogSha256 = Set-YLFixtureCatalogInput -HostRecord $hostRecord -Catalog $fixtureCatalog -InputHash $valid.inputHash
     function Invoke-Validation([hashtable] $Value) {
         $request = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $Value -Depth 20))
         $parameters = [object[]]::new(1); $parameters[0] = $request
         try { $null = $method.Invoke($null, $parameters) } catch { throw $_.Exception.GetBaseException() }
     }
     Invoke-Validation $valid; $checks++
+    foreach ($field in @('catalogSha256', 'inputHash', 'entryPackage')) {
+        $invalid = $valid.Clone(); $invalid.Remove($field)
+        $rejected = $false; try { Invoke-Validation $invalid } catch { if ($_.Exception -isnot [InvalidOperationException]) { throw }; $rejected = $true }
+        if (-not $rejected) { throw "Missing $field was accepted without an owned catalog/entry identity." }; $checks++
+    }
     foreach ($field in @('schemaVersion', 'hostId', 'resultId', 'resultRoot', 'output', 'unityVersion', 'phase', 'packageOrigin', 'backend', 'manifestSha256', 'packages')) {
         $invalid = $valid.Clone(); $invalid[$field] = $true
         $rejected = $false; try { Invoke-Validation $invalid } catch { if ($_.Exception -isnot [InvalidOperationException]) { throw }; $rejected = $true }
@@ -289,11 +298,11 @@ try {
     function New-PublishedFixture([string] $Origin, [string] $Suffix = 'excel') {
         $script:valid = $fileRequest.Clone(); $script:valid.packageOrigin = $Origin; $script:valid.cacheRoot = $cache.path
         [IO.File]::Delete((Join-Path $script:valid.output 'report.json'))
-        $script:valid.entryPackage = 'com.kano.ylframework.' + $Suffix; $script:valid.releaseManifestSha256 = 'c' * 64
+        $script:valid.entryPackage = if ($Suffix) { 'com.kano.ylframework.' + $Suffix } else { 'com.kano.ylframework' }; $script:valid.releaseManifestSha256 = 'c' * 64
         $fields = Get-YLRegistryRequestFields -Source @{ packageOrigin = $Origin; registryUrl = 'https://package.openupm.com'; registryVersion = '0.1.0-preview.1'; release = @{ sha256 = ('c' * 64) } } -EntryPackage $script:valid.entryPackage
         foreach ($field in $fields.GetEnumerator()) { $script:valid[$field.Key] = $field.Value }
         $script:publishedApis = @(); $expected = @(); $direct = @{}; $locks = @{}
-        foreach ($id in @('com.kano.ylframework', $script:valid.entryPackage)) {
+        foreach ($id in @(@('com.kano.ylframework', $script:valid.entryPackage) | Sort-Object -Unique -CaseSensitive)) {
             $deps = @{}; $dependencyJson = '{}'
             if ($id -cne 'com.kano.ylframework') { $deps['com.kano.ylframework'] = '0.1.0-preview.1'; $dependencyJson = '{"com.kano.ylframework":"0.1.0-preview.1"}' }
             if ($Suffix -ceq 'hybridclr' -and $id -ceq $script:valid.entryPackage) { $deps['com.code-philosophy.hybridclr'] = '9.0.3'; $dependencyJson = '{"com.code-philosophy.hybridclr":"9.0.3","com.kano.ylframework":"0.1.0-preview.1"}' }
@@ -537,7 +546,13 @@ try {
     }
     $graphFailures = [Collections.Generic.List[string]]::new(); $passedGraphs = [Collections.Generic.List[object]]::new()
     foreach ($origin in @('File', 'GitFixture', 'GitRemote', 'Registry', 'LocalTarball')) {
-        if ($origin -cin @('Registry', 'LocalTarball')) { New-PublishedFixture $origin; $mainApi = $publishedApis[0] }
+        if ($origin -cin @('Registry', 'LocalTarball')) {
+            New-PublishedFixture $origin
+            Set-LoadedFixtures; Set-InspectGraph $publishedApis[0]
+            $null = Invoke-InspectCase Failed "$origin cannot accept an installed leaf without its declared assembly payload"
+            New-PublishedFixture $origin ''
+            $mainApi = $publishedApis[0]
+        }
         else {
             $script:valid = $fileRequest.Clone(); $script:valid.packageOrigin = $origin
             $declaration = $locator

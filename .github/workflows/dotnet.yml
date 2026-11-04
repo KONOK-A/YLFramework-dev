@@ -121,6 +121,8 @@ jobs:
 
       - name: Test Registry packaging and installation contracts, not Unity acceptance
         run: |
+          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLPackageCatalogNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $nodeRoot = [IO.Path]::GetDirectoryName((Get-Command node.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source)
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryPackagesNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP -NodeRoot $nodeRoot
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -138,7 +140,9 @@ jobs:
         run: |
           $output = Join-Path $env:RUNNER_TEMP ('yl-registry-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
           $built = & ./Tools/Packaging/Build-YLRegistryPackages.ps1 -Repository $env:GITHUB_WORKSPACE -SourceCommit $env:GITHUB_SHA -OutputRoot $output
-          if ($built.packageCount -ne 5 -or $built.sourceCommit -cne $env:GITHUB_SHA) { throw 'Incomplete fixed-commit package build.' }
+          . ./Tools/Testing/Common/Packages.ps1
+          $expectedCount = (Read-YLPackageCatalog).packages.Count
+          if ($built.packageCount -ne $expectedCount -or $built.sourceCommit -cne $env:GITHUB_SHA) { throw 'Incomplete fixed-commit package build.' }
           "artifactPath=$($built.artifacts)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
 
       - name: Preserve readonly main-push release candidate

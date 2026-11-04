@@ -331,7 +331,8 @@ namespace YLFramework.Foundation.Tests
                 .Cast<InternalsVisibleToAttribute>().Select(attribute => attribute.AssemblyName),
                 Is.EquivalentTo(new[] { "YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode", "YLFramework.Core.Tests.EditMode", "YLFramework.Editor",
                     "YLFramework.ResourceStartup.Sample.Tests.EditMode", "YLFramework.Dev.Editor",
-                    "YLFramework.Actions.DOTween", "YLFramework.Actions.DOTween.Tests.EditMode", "YLFramework.Actions.DOTween.Tests.PlayMode" }));
+                    "YLFramework.Actions.DOTween", "YLFramework.Actions.DOTween.Tests.EditMode", "YLFramework.Actions.DOTween.Tests.PlayMode",
+                    "YLFramework.DataAssets", "YLFramework.Localization", "YLFramework.RedDots", "YLFramework.Skill", "YLFramework.Buff", "YLFramework.Mission", "YLFramework.Equipment" }));
         }
 
         [TestCase("YLFramework.Singletons.Singleton`1", "YLFramework.Core." + "Singleton.Singleton`1")]

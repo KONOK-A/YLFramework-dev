@@ -42,6 +42,10 @@ if ($hasRepository) {
     $GitRevision = $GitRevision.ToLowerInvariant()
 }
 $packageOrigin = if ($artifact) { $registrySource.packageOrigin } elseif ($PackageSource -ceq 'File') { 'File' } elseif ($hasRepository) { 'GitRemote' } else { 'GitFixture' }
+$catalogPath = Join-Path $repository 'Tools/Packaging/PackageCatalog.json'
+$catalog = Read-YLPackageCatalog -Path $catalogPath
+$catalogSha256 = (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$entryPackage = if ($HybridCLR) { 'com.kano.ylframework.hybridclr' } else { 'com.kano.ylframework' }
 $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($Unity)
 $editor = Get-YLTestEditorProfile -Editors $configuration.editors -VersionInfo $version
 $packageInputs = if ($artifact) { @() } else { @(Get-YLUnityPackageInputs -EditorProfile $editor) }
@@ -171,7 +175,7 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
         smoke = [bool]$RunPlayer; backend = $Backend; hybridCLR = [bool]$HybridCLR; nativeSource = $NativeSource; nativeVariant = $nativeVariant
         baseline = $baselineRoot; runtimeCache = $runtimeCache; cacheOwnerId = $cacheOwnerId; playerRoot = $nativePlayerRoot; playerOwnerId = $playerOwnerId
         cacheRoot = $cache.path; registryUrl = $(if ($artifact) { $artifactFields.registryUrl } else { $null }); registryVersion = $(if ($artifact) { $artifactFields.registryVersion } else { $null })
-        entryPackage = $(if ($artifact) { $artifactFields.entryPackage } else { $null }); releaseManifestSha256 = $(if ($artifact) { $artifactFields.releaseManifestSha256 } else { $null }) }
+        entryPackage = $entryPackage; inputHash = $identity.sha256; catalogSha256 = $catalogSha256; releaseManifestSha256 = $(if ($artifact) { $artifactFields.releaseManifestSha256 } else { $null }) }
     $start = [Diagnostics.ProcessStartInfo]::new($Unity)
     $start.UseShellExecute = $false; $start.WorkingDirectory = $HostRecord.path
     foreach ($key in @($start.Environment.Keys | Where-Object { $_.StartsWith('GIT_', [StringComparison]::OrdinalIgnoreCase) })) { $null = $start.Environment.Remove($key) }
@@ -199,10 +203,11 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
     $owner = Get-YLTestDirectory -Workspace $workspace -Path $HostRecord.path
     if ($owner.id -cne $HostRecord.id) { throw 'Distribution host owner changed.' }
     $report = [IO.File]::ReadAllText((Join-Path $output 'report.json')) | ConvertFrom-Json -AsHashtable -DateKind String
-    foreach ($field in @('hostId', 'resultId', 'unityVersion', 'phase', 'packageOrigin')) { if ($report[$field] -isnot [string]) { throw 'Distribution evidence identity fields must be strings.' } }
+    foreach ($field in @('hostId', 'resultId', 'unityVersion', 'phase', 'packageOrigin', 'entryPackage', 'inputHash', 'catalogSha256')) { if ($report[$field] -isnot [string]) { throw 'Distribution evidence identity fields must be strings.' } }
     if ($report['schemaVersion'] -isnot [long] -or $report['schemaVersion'] -ne 2 -or $report['pid'] -isnot [long] -or $report['pid'] -ne $fact.pid -or
         $report['hostId'] -cne $HostRecord.id -or $report['resultId'] -cne $run.id -or $report['unityVersion'] -cne $editor.version -or
-        $report['phase'] -cne $Phase -or $report['packageOrigin'] -cne $packageOrigin -or $report['result'] -isnot [Collections.IDictionary] -or
+        $report['phase'] -cne $Phase -or $report['packageOrigin'] -cne $packageOrigin -or $report['entryPackage'] -cne $entryPackage -or
+        $report['inputHash'] -cne $identity.sha256 -or $report['catalogSha256'] -cne $catalogSha256 -or $report['result'] -isnot [Collections.IDictionary] -or
         $report['result']['status'] -isnot [string] -or $report['result']['status'] -cne $(if ($prerequisite) { 'PrerequisiteNotMet' } elseif ($Phase -ceq 'HybridConfigure') { 'Completed' } else { 'Passed' })) { throw 'Distribution evidence identity/status does not match.' }
     if ($report['packages'] -isnot [array] -or $report['packages'].Count -ne $expectedPackages.Count -or $report['resolvedDependencies'] -isnot [array]) { throw 'Distribution package graph is incomplete.' }
     $lock = [IO.File]::ReadAllText((Join-Path $HostRecord.path 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable -DateKind String
@@ -269,7 +274,7 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
         $resolvedLock = $lock['dependencies'][$entry.Key]
         if ($resolvedLock -isnot [Collections.IDictionary] -or $resolvedLock['source'] -isnot [string] -or
             $actual['source'].ToLowerInvariant() -cne $resolvedLock['source']) { throw 'Distribution resolved dependency source does not match the actual lock.' }
-        $expectedVersion = if ($entry.Key.StartsWith('com.kano.', [StringComparison]::Ordinal)) { '0.1.0-preview.1' } elseif ($entry.Key -ceq 'com.code-philosophy.hybridclr') { '9.0.3' } else { $entry.Value }
+        $expectedVersion = if ($entry.Key.StartsWith('com.kano.', [StringComparison]::Ordinal)) { @($expectedPackages | Where-Object name -CEQ $entry.Key)[0].version } elseif ($entry.Key -ceq 'com.code-philosophy.hybridclr') { '9.0.3' } else { $entry.Value }
         if ($actual['version'] -cne $expectedVersion) { throw 'Distribution resolved dependency version does not match.' }
         if ($entry.Key -ceq 'com.code-philosophy.hybridclr' -and ($actual['source'] -cne 'Git' -or $lock['dependencies'][$entry.Key]['hash'] -cne $sdk.revision)) { throw 'HybridCLR SDK actual Git revision does not match.' }
     }
@@ -330,6 +335,9 @@ try {
         }
     }
     $ids = @('com.kano.ylframework'); if ($HybridCLR) { $ids += 'com.kano.ylframework.hybridclr' }
+    $templates = @(Get-YLUpmPackages -Repository $repository -Ids $ids -Catalog $catalog)
+    $versions = [ordered]@{}; foreach ($template in $templates) { $versions[$template.id] = $template.version }
+    $summary['expectedVersions'] = @{ purpose = 'LocalManifestMetadataNotInstallSource'; versions = $versions }
     $products = @(); $inventories = @{}
     if ($artifact) {
         $artifactInputs = Initialize-YLRegistryExpectedInputs -Source $registrySource -Output (Join-Path $run.path 'ExpectedArtifacts')
@@ -340,14 +348,13 @@ try {
         $summary['release'] = @{ sourceCommit = $registrySource.release.sourceCommit; manifestSha256 = $registrySource.release.sha256; producer = $registrySource.release.producer }
         $summary['acceptanceKind'] = if ($PackageSource -ceq 'LocalTarball') { 'ArtifactPreflight' } else { 'RegistryInstallation' }
     } elseif ($packageOrigin -cne 'GitRemote') {
-        $products = @(Get-YLUpmPackages -Repository $repository -Ids $ids)
+        $products = $templates
         foreach ($package in $products) {
-            if ($package.version -cne '0.1.0-preview.1') { throw 'Distribution requires the exact preview package version.' }
             $inventories[$package.id] = Get-DistributionPackageContent -Root $package.root
         }
     }
     $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($relative in @('Tools/Testing/DistributionEntry.cs', 'Tools/Testing/Tests/Test-YLDistribution.ps1', 'Tools/Testing/Common/Workspace.ps1',
+    foreach ($relative in @('Tools/Testing/DistributionEntry.cs', 'Tools/Testing/PackageCatalogContract.cs', 'Tools/Packaging/PackageCatalog.json', 'Tools/Testing/Tests/Test-YLDistribution.ps1', 'Tools/Testing/Common/Workspace.ps1',
         'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/Common/Packages.ps1', 'Tools/Testing/UnityHost.ps1', 'Tools/Testing/TestSuites.json') + $hostPackages.inputs) { $null = $paths.Add($relative) }
     if ($artifact) { $null = $paths.Add('Tools/Packaging/Build-YLRegistryPackages.ps1') }
     if ($artifact) { foreach ($relative in @('Tools/Testing/RegistryAuthoringEntry.cs', 'Tools/Testing/Common/RegistryAuthoring.ps1')) { $null = $paths.Add($relative) } }
@@ -395,7 +402,7 @@ try {
         if ($GitRevision -cnotmatch '^[0-9a-f]{40}$') { throw 'The owned Git fixture did not produce a complete revision.' }
         $GitRepository = 'git+' + ([Uri]$stage).AbsoluteUri
     }
-    $profile = "Distribution-v2-$($version.ProductVersion)-$Backend-Hybrid$HybridCLR-$packageOrigin-$GitRepository-$GitRevision"
+    $profile = "Distribution-v2-$($version.ProductVersion)-$Backend-Hybrid$HybridCLR-$packageOrigin-$GitRepository-$GitRevision-" + (ConvertTo-Json -InputObject $versions -Compress)
     $identity = Get-YLTestInputIdentity -Repository $repository -Paths @($paths) -Toolchain $toolchain.ToArray() -Profile $profile
     $summary['inputIdentity'] = $identity
     $dependencies = $hostPackages.dependencies
@@ -410,11 +417,13 @@ try {
     $expectedPackages = @(foreach ($id in $ids) {
         $root = Join-Path $stage "PackageSources/$id"
         $dependencies[$id] = if ($PackageSource -ceq 'File') { 'file:' + $root.Replace('\', '/') } else { "$GitRepository`?path=/PackageSources/$id#$GitRevision" }
-        @{ name = $id; version = '0.1.0-preview.1'; root = $(if ($packageOrigin -ceq 'File') { $root } else { $null }); contentSha256 = $(if ($inventories.ContainsKey($id)) { $inventories[$id].sha256 } else { $null }) }
+        @{ name = $id; version = $versions[$id]; root = $(if ($packageOrigin -ceq 'File') { $root } else { $null }); contentSha256 = $(if ($inventories.ContainsKey($id)) { $inventories[$id].sha256 } else { $null }) }
     })
     $manifestObject = @{ dependencies = $dependencies }
     }
     $bootstrap = [ordered]@{ 'Assets/YLTestingDistribution/Editor/DistributionEntry.cs' = [IO.File]::ReadAllBytes((Join-Path $repository 'Tools/Testing/DistributionEntry.cs')) }
+    $bootstrap['Assets/YLTestingDistribution/Editor/PackageCatalogContract.cs'] = [IO.File]::ReadAllBytes((Join-Path $repository 'Tools/Testing/PackageCatalogContract.cs'))
+    $bootstrap['YLTesting/PackageCatalog.json'] = [IO.File]::ReadAllBytes($catalogPath)
     $bootstrap['Packages/manifest.json'] = [Text.Encoding]::UTF8.GetBytes(($manifestObject | ConvertTo-Json -Depth 8) + "`n")
     $manifestHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$bootstrap['Packages/manifest.json']))
     $hostKey = if ($HybridCLR) { "H$($run.id.Substring(0, 7))" } else { "D-$($editor.version)-$($run.id.Substring(0, 8))" }

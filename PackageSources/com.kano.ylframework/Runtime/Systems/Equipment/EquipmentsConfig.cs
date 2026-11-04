@@ -12,10 +12,10 @@ namespace YLFramework.Equipment
         /// <summary>供作者工具或业务界面展示的配表名称。</summary>
         public string displayName;
         /// <summary>作者工具生成条目 ID 时使用的起始基数。</summary>
-        [HideInInspector, FormerlySerializedAs("start_id")] public int startId;
+        [HideInInspector, FormerlySerializedAs("start_id"), global::YLFramework.Excel.ExcelColumnName("start_id")] public int startId;
         [SerializeField] private List<EquipmentConfigData> equipments = new();
         /// <summary>编辑器限制新建定义类型的脚本 GUID，为空时使用基础配置类型。</summary>
-        [HideInInspector, FormerlySerializedAs("type_script_guid")] public string typeScriptGuid;
+        [HideInInspector, FormerlySerializedAs("type_script_guid"), global::YLFramework.Excel.ExcelColumnName("type_script_guid")] public string typeScriptGuid;
         private Dictionary<int, EquipmentConfigData> _index;
         private EquipmentConfigData[] _snapshot;
         private int[] _ids;

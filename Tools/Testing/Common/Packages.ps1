@@ -2,9 +2,84 @@
 #requires -PSEdition Core
 . (Join-Path $PSScriptRoot 'Workspace.ps1')
 
+function Read-YLPackageCatalog {
+    param([string] $Path = ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../Packaging/PackageCatalog.json'))))
+    $catalog = Read-YLPackageEvidenceJson $Path
+    Assert-YLPackageFields $catalog @('schemaVersion', 'packages')
+    if ($catalog['schemaVersion'] -isnot [long] -or $catalog['schemaVersion'] -ne 1 -or
+        $catalog['packages'] -isnot [array] -or $catalog['packages'].Count -eq 0) { throw 'Invalid package catalog schema.' }
+    $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $assemblies = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($package in $catalog['packages']) {
+        Assert-YLPackageFields $package @('id', 'assemblies', 'requiredFiles', 'samples')
+        if ($package['id'] -isnot [string] -or $package['id'] -cnotmatch '^com\.kano\.ylframework(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)?$' -or
+            -not $ids.Add($package['id'])) { throw 'Invalid/duplicate package catalog identity.' }
+    }
+    if (-not $ids.Contains('com.kano.ylframework')) { throw 'The package catalog must include the main package.' }
+    foreach ($package in $catalog['packages']) {
+        if ($package['assemblies'] -isnot [array] -or $package['assemblies'].Count -eq 0) { throw 'Catalog assemblies must be explicit and nonempty.' }
+        $directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($assembly in $package['assemblies']) {
+            Assert-YLPackageFields $assembly @('name', 'path', 'player', 'defineConstraints', 'versionDefines')
+            if ($assembly['name'] -isnot [string] -or $assembly['name'] -cnotmatch '^YLFramework\.[A-Za-z0-9_.]+$' -or
+                -not $assemblies.Add($assembly['name']) -or $assembly['player'] -isnot [bool]) { throw 'Invalid/duplicate catalog assembly name/player policy.' }
+            $path = $assembly['path']
+            Assert-YLPackageCatalogPath $path
+            if (-not $path.EndsWith('/' + $assembly['name'] + '.asmdef', [StringComparison]::Ordinal) -or
+                $path -cnotmatch '^(?:Runtime|Editor|Samples~)/' -or
+                -not $directories.Add($path.Substring(0, $path.LastIndexOf('/')))) { throw 'Invalid/duplicate catalog assembly path.' }
+            if ($assembly['defineConstraints'] -isnot [array] -or $assembly['versionDefines'] -isnot [array]) { throw 'Catalog assembly conditions must be arrays.' }
+            $defines = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($define in $assembly['defineConstraints']) {
+                if ($define -isnot [string] -or $define -cnotmatch '^[A-Z][A-Z0-9_]*$' -or -not $defines.Add($define)) { throw 'Unsupported/duplicate catalog define constraint.' }
+            }
+            $versionDefines = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($version in $assembly['versionDefines']) {
+                Assert-YLPackageFields $version @('name', 'expression', 'define')
+                if ($version['name'] -isnot [string] -or (-not $ids.Contains($version['name']) -and $version['name'] -cne 'com.code-philosophy.hybridclr') -or
+                    $version['expression'] -isnot [string] -or $version['expression'] -cnotin @('0.0.0', '[9.0.3,9.0.4)') -or
+                    $version['define'] -isnot [string] -or -not $defines.Contains($version['define']) -or -not $versionDefines.Add($version['define'])) {
+                    throw 'Unsupported/unknown package catalog version define.'
+                }
+            }
+            if (@($defines | Where-Object { $_ -cne 'DOTWEEN' -and -not $versionDefines.Contains($_) }).Count -ne 0) { throw 'A catalog define has no explicit supported prerequisite/profile.' }
+        }
+        foreach ($field in @('requiredFiles', 'samples')) {
+            if ($package[$field] -isnot [array]) { throw "Catalog $field must be an array." }
+            $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            foreach ($path in $package[$field]) {
+                Assert-YLPackageCatalogPath $path
+                if (-not $paths.Add($path) -or ($field -ceq 'samples' -and -not $path.StartsWith('Samples~/', [StringComparison]::Ordinal))) { throw "Invalid/duplicate catalog $field path." }
+            }
+        }
+    }
+    return ,$catalog
+}
+
+function Assert-YLPackageCatalogPath {
+    param([object] $Path)
+    if ($Path -isnot [string] -or -not $Path -or $Path -match '^[\/]|[\\:\x00-\x1f<>"|?*]|(?:^|/)\.\.?(?:/|$)' -or
+        @($Path.Split('/') | Where-Object { -not $_ -or $_.EndsWith('.') -or $_.EndsWith(' ') -or $_ -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)' }).Count -ne 0) {
+        throw 'Invalid package catalog path.'
+    }
+}
+
+function Get-YLPackageAssemblyPlan {
+    param([Collections.IDictionary] $Catalog, [object[]] $Packages, [string] $Profile, [string] $DOTweenSdkMode, [switch] $MetadataOnly)
+    if ($null -eq ('YLFramework.Testing.PackageCatalogContract' -as [type])) {
+        $references = @([IO.Directory]::EnumerateFiles((Join-Path $PSHOME 'ref'), '*.dll')) + @([Newtonsoft.Json.Linq.JObject].Assembly.Location)
+        Add-Type -Path (Join-Path $PSScriptRoot '../PackageCatalogContract.cs') -ReferencedAssemblies $references -CompilerOptions @('/langversion:9.0', '/nowarn:1701')
+    }
+    $catalogJson = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $Catalog -Depth 40))
+    $packageJson = [Newtonsoft.Json.Linq.JArray]::Parse((ConvertTo-Json -InputObject @($Packages) -Depth 40))
+    if ($MetadataOnly) { $plan = [YLFramework.Testing.PackageCatalogContract]::Definitions($catalogJson, $packageJson, $Profile, $DOTweenSdkMode) }
+    else { $plan = [YLFramework.Testing.PackageCatalogContract]::Plan($catalogJson, $packageJson, $Profile, $DOTweenSdkMode) }
+    return (ConvertFrom-Json -InputObject $plan.ToString() -AsHashtable -NoEnumerate)
+}
+
 function Get-YLUpmPackages {
-    param([string] $Repository, [string[]] $Ids = @('com.kano.ylframework'))
-    $known = @('com.kano.ylframework', 'com.kano.ylframework.dotween', 'com.kano.ylframework.excel', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.hybridclr')
+    param([string] $Repository, [string[]] $Ids = @('com.kano.ylframework'), [Collections.IDictionary] $Catalog = (Read-YLPackageCatalog))
+    $known = @($Catalog['packages'] | ForEach-Object { $_['id'] })
     $pending = [Collections.Generic.Queue[string]]::new()
     foreach ($id in $Ids) { $pending.Enqueue($id) }
     $result = [Collections.Generic.SortedDictionary[string, object]]::new([StringComparer]::Ordinal)
@@ -14,11 +89,13 @@ function Get-YLUpmPackages {
         if ($result.ContainsKey($id)) { continue }
         $relative = "PackageSources/$id"
         $root = Get-YLTestPath (Join-Path $Repository $relative)
-        $manifest = [IO.File]::ReadAllText((Join-Path $root 'package.json')) | ConvertFrom-Json -AsHashtable -DateKind String
+        $manifest = Read-YLPackageEvidenceJson (Join-Path $root 'package.json')
         if ($manifest['name'] -isnot [string] -or $manifest['name'] -cne $id -or $manifest['version'] -isnot [string] -or $manifest['version'] -cnotmatch '^\d+\.\d+\.\d+(?:-[\w.-]+)?$') { throw "Invalid package identity: $id" }
+        if ($manifest['dependencies'] -isnot [Collections.IDictionary]) { throw "Invalid package dependencies: $id" }
         $result.Add($id, [pscustomobject]@{ id = $id; version = $manifest['version']; root = $root; relative = $relative; manifest = $manifest })
         foreach ($dependency in $manifest['dependencies'].GetEnumerator()) {
             if ($dependency.Key.StartsWith('com.kano.ylframework', [StringComparison]::Ordinal)) {
+                if ($id -ceq 'com.kano.ylframework') { throw 'The main package cannot depend on an optional package.' }
                 if ($dependency.Value -isnot [string] -or $dependency.Value -cne $manifest['version']) { throw "Mismatched internal package version: $id -> $($dependency.Key)" }
                 $pending.Enqueue($dependency.Key)
             }
@@ -73,7 +150,8 @@ function Assert-YLPackageDependencies {
 }
 
 function Read-YLRegistryRelease {
-    param([string] $Path, [switch] $VerifyTarballs)
+    param([string] $Path, [switch] $VerifyTarballs, [Collections.IDictionary] $Catalog = (Read-YLPackageCatalog),
+        [string] $PackageRoot = ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../PackageSources'))))
     $Path = Get-YLTestPath $Path
     $manifest = Read-YLPackageEvidenceJson $Path
     Assert-YLPackageFields $manifest @('schemaVersion', 'sourceCommit', 'toolchain', 'producer', 'packages')
@@ -90,19 +168,23 @@ function Read-YLRegistryRelease {
             $producer['runId'] -isnot [string] -or $producer['runId'] -cnotmatch '^[1-9][0-9]*$' -or
             $producer['runAttempt'] -isnot [string] -or $producer['runAttempt'] -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid release CI producer identity.' }
     } else { throw 'Unknown release producer kind.' }
-    $ids = @('com.kano.ylframework', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.dotween', 'com.kano.ylframework.excel', 'com.kano.ylframework.hybridclr')
+    $ids = @($Catalog['packages'] | ForEach-Object { $_['id'] })
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    if ($manifest['packages'] -isnot [array] -or $manifest['packages'].Count -ne $ids.Count) { throw 'Release manifest requires all five packages.' }
+    if ($manifest['packages'] -isnot [array] -or $manifest['packages'].Count -ne $ids.Count) { throw 'Release manifest requires the complete catalog package set.' }
     $packages = @(foreach ($row in $manifest['packages']) {
         Assert-YLPackageFields $row @('id', 'version', 'dependencies', 'assetName', 'sha256', 'integrity', 'payloadSha256', 'files')
         $id = $row['id']; $version = $row['version']
-        if ($id -isnot [string] -or $id -cnotin $ids -or -not $seen.Add($id) -or $version -isnot [string] -or $version -cne '0.1.0-preview.1' -or
+        if ($id -isnot [string] -or $id -cnotin $ids -or -not $seen.Add($id) -or $version -isnot [string] -or $version -cnotmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$' -or
             $row['assetName'] -isnot [string] -or $row['assetName'] -cne "$id-$version.tgz") { throw 'Invalid release package identity/version/asset name.' }
         foreach ($field in @('sha256', 'payloadSha256')) { if ($row[$field] -isnot [string] -or $row[$field] -cnotmatch '^[0-9a-f]{64}$') { throw "Invalid release package digest: $field" } }
         if ($row['integrity'] -isnot [string] -or $row['integrity'] -cnotmatch '^sha512-[A-Za-z0-9+/]{86}==$') { throw 'Invalid release package integrity.' }
         $deps = $row['dependencies']; $internal = @()
-        if ($id -cne 'com.kano.ylframework') { $internal += 'com.kano.ylframework' }
-        if ($id -ceq 'com.kano.ylframework.domain-excel') { $internal += 'com.kano.ylframework.excel' }
+        $sourceManifest = Read-YLPackageEvidenceJson (Join-Path $PackageRoot "$id/package.json")
+        if ($sourceManifest['name'] -isnot [string] -or $sourceManifest['name'] -cne $id -or
+            $sourceManifest['dependencies'] -isnot [Collections.IDictionary]) { throw 'Invalid maintained release package declaration.' }
+        $internal = @($sourceManifest['dependencies'].Keys | Where-Object { $_.StartsWith('com.kano.', [StringComparison]::Ordinal) })
+        if (($id -ceq 'com.kano.ylframework' -and $internal.Count -ne 0) -or
+            @($internal | Where-Object { $_ -cnotin $ids -or $_ -ceq $id }).Count -ne 0) { throw 'Invalid release internal dependency direction.' }
         if ($deps -isnot [Collections.IDictionary]) { throw 'Invalid release package dependencies.' }
         foreach ($entry in $deps.GetEnumerator()) {
             if ($entry.Value -isnot [string] -or $entry.Value -cnotmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$' -or
@@ -130,12 +212,13 @@ function Read-YLRegistryRelease {
         $row['path'] = Join-Path ([IO.Path]::GetDirectoryName($Path)) $row['assetName']
         $row
     })
+    if (@($packages.version | Sort-Object -Unique -CaseSensitive).Count -ne 1) { throw 'Release package versions must match.' }
     $release = @{ path = $Path; sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant(); sourceCommit = $manifest['sourceCommit']; producer = $producer; packages = $packages }
     if ($VerifyTarballs) {
         . (Join-Path $PSScriptRoot '../../Packaging/Build-YLRegistryPackages.ps1')
         foreach ($package in $packages) {
             if (-not [IO.File]::Exists($package.path)) { throw "Missing release tarball: $($package.assetName)" }
-            $payload = Read-YLRegistryTarball -Path $package.path
+            $payload = Read-YLRegistryTarball -Path $package.path -Catalog $Catalog
             Assert-YLRegistryPayloadReceipt -Payload $payload -Expected $package
         }
     }
@@ -169,13 +252,15 @@ function Get-YLRegistrySource {
     }
     $release = Read-YLRegistryRelease -Path $Arguments['ReleaseManifest']
     if ($registry -and $release.producer['kind'] -cne 'GitHubActions') { throw 'Registry acceptance requires a CI producer receipt, not a Local release candidate.' }
-    return @{ packageOrigin = $PackageSource; registryUrl = 'https://package.openupm.com'; registryVersion = '0.1.0-preview.1'; release = $release; gitRepository = $null; gitRevision = $null }
+    if ($registry -and @($release.packages | Where-Object { $_.version -cne $Arguments['RegistryVersion'] }).Count -ne 0) { throw 'RegistryVersion differs from the frozen release packages.' }
+    return @{ packageOrigin = $PackageSource; registryUrl = 'https://package.openupm.com'; registryVersion = $release.packages[0].version; release = $release; gitRepository = $null; gitRevision = $null }
 }
 
 function Get-YLRegistryRequestFields {
     param([Collections.IDictionary] $Source, [string] $EntryPackage)
+    $ids = @((Read-YLPackageCatalog)['packages'] | ForEach-Object { $_['id'] })
     if ($Source['packageOrigin'] -cnotin @('Registry', 'LocalTarball') -or
-        $EntryPackage -cnotin @('com.kano.ylframework', 'com.kano.ylframework.excel', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.dotween', 'com.kano.ylframework.hybridclr')) { throw 'Invalid artifact request source/entry.' }
+        $EntryPackage -cnotin $ids) { throw 'Invalid artifact request source/entry.' }
     $registry = $Source['packageOrigin'] -ceq 'Registry'
     return @{ entryPackage = $EntryPackage; releaseManifestSha256 = $Source.release.sha256; gitRepository = $null; gitRevision = $null
         registryUrl = $(if ($registry) { $Source.registryUrl } else { $null }); registryVersion = $(if ($registry) { $Source.registryVersion } else { $null }) }

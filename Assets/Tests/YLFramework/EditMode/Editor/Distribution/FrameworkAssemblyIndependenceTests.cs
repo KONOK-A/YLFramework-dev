@@ -30,27 +30,47 @@ namespace YLFramework.Tests.Resource
             }
         }
 
-        [TestCase("YLFramework.Audio.AudioKit", "YLFramework.Services." + "Audio.AudioKit")]
-        [TestCase("YLFramework.Resource.ResourceSystem", "YLFramework.Services." + "Resource.ResourceSystem")]
-        [TestCase("YLFramework.Save.SaveManager", "YLFramework.Services." + "Save.SaveManager")]
-        [TestCase("YLFramework.Http.HttpManager", "YLFramework.Services." + "Http.HttpManager")]
-        [TestCase("YLFramework.Skill.SkillManager", "YLFramework." + "SkillSystem.SkillManager")]
-        [TestCase("YLFramework.Buff.BuffManager", "YLFramework." + "BuffSystem.BuffManager")]
-        [TestCase("YLFramework.Mission.MissionManager", "YLFramework." + "MissionSystem.MissionManager")]
-        [TestCase("YLFramework.Equipment.EquipmentManager", "YLFramework." + "EquipmentSystem.EquipmentManager")]
-        [TestCase("YLFramework.RedDots.ReddotManager", "YLFramework." + "ReddotSystem.ReddotManager")]
-        [TestCase("YLFramework.Character2D.CharacterController2D", "YLFramework.Character." + "Controller2D.CharacterController2D")]
-        [TestCase("YLFramework.Extensions.GameObjectExtension", "YLFramework.Utilities." + "Extensions.GameObjectExtension")]
-        [TestCase("YLFramework.Grids.NormalGrid`1", "YLFramework.Utilities." + "Grid.NormalGrid`1")]
-        [TestCase("YLFramework.Tables.Table`1", "YLFramework.Utilities." + "Table.Table`1")]
-        public void FunctionalDomainsKeepOneRuntimeIdentity(string fullName, string legacyName)
+        [Serializable]
+        private sealed class AssemblyMoveTable
+        {
+            public AssemblyMove[] moves;
+        }
+
+        [Serializable]
+        private sealed class AssemblyMove
+        {
+            public string fullName;
+            public string legacyName;
+            public string currentAssembly;
+        }
+
+        private static IEnumerable<TestCaseData> PublicAssemblyMoves()
+        {
+            const string Path = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblyMoves.json";
+            var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(Path);
+            Assert.That(asset, Is.Not.Null, Path);
+            var table = JsonUtility.FromJson<AssemblyMoveTable>(asset.text);
+            Assert.That(table.moves, Is.Not.Empty);
+            foreach (var move in table.moves)
+            {
+                yield return new TestCaseData(move.fullName, move.legacyName, move.currentAssembly);
+            }
+        }
+
+        [TestCaseSource(nameof(PublicAssemblyMoves))]
+        public void FunctionalDomainsKeepOneDeclaredAssemblyIdentity(string fullName, string legacyName, string expectedAssembly)
         {
             var runtime = typeof(ResourceSystem).Assembly;
-            Assert.That(runtime.GetName().Name, Is.EqualTo("YLFramework.Runtime"));
-            var type = runtime.GetType(fullName);
+            var owner = System.Reflection.Assembly.Load(expectedAssembly);
+            var type = owner.GetType(fullName);
             Assert.That(type, Is.Not.Null, fullName);
             Assert.That(type.IsPublic, Is.True, fullName);
-            Assert.That(runtime.GetType(legacyName), Is.Null, legacyName);
+            Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(assembly => assembly.GetType(fullName) != null), Is.EqualTo(1), fullName);
+            Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(legacyName) != null), Is.False, legacyName);
+            if (owner != runtime)
+            {
+                Assert.That(runtime.GetType(fullName), Is.Null, "A migrated type must not remain in the main Runtime.");
+            }
         }
 
         [Test]

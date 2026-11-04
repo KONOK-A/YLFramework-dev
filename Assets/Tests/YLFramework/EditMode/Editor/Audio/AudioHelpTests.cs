@@ -34,6 +34,9 @@ namespace YLFramework.Tests.Audio
             // Bee restores declared DLL/PDB outputs but not the csc -doc side effect; verify a real owned compiler run.
             UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation(UnityEditor.Compilation.RequestScriptCompilationOptions.CleanBuildCache);
             yield return new RecompileScripts(true);
+            // UTF resumes a new enumerator after reload; pre-yield locals are not restored.
+            project = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            output = Path.Combine(project, "Library/YLFramework.Runtime.xml");
             var deadline = EditorApplication.timeSinceStartup + 30;
             while (!File.Exists(output) && EditorApplication.timeSinceStartup < deadline)
             {

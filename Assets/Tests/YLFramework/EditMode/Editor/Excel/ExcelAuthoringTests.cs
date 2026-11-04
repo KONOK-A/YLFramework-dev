@@ -32,6 +32,12 @@ namespace YLFramework.Tests.Extensions.Data
             [ExcelIgnore] public string Ignored;
             [Scale] public int Scaled;
         }
+        public class ExplicitColumnRow
+        {
+            [ExcelScriptableObjectId] public int id;
+            [ExcelColumnName("old_custom_column"), UnityEngine.Serialization.FormerlySerializedAs("unity_alias_only")] public string renamed;
+            [UnityEngine.Serialization.FormerlySerializedAs("not_a_workbook_column")] public string plain;
+        }
         public sealed class ScaleAttribute : CustomExcelFieldImportAndExport
         {
             public override object Import(object owner, object value, ExcelFieldsType type)
@@ -86,6 +92,91 @@ namespace YLFramework.Tests.Extensions.Data
         private static List<Row> Original() => new List<Row> { new Row { Id = 1, Name = "old", Numbers = new List<int> { 8 }, State = Mode.Off, Count = 3, Rate = 0.5f, Scaled = 20 }, new Row { Id = 9, Name = "remove", Numbers = new List<int>() } };
         private void Export(IEnumerable<Row> rows, string path) => Call("ListToExcel", typeof(Row), rows, path, "Sheet1");
         private object Preview(string path, List<Row> target) => Call("PreviewList", typeof(Row), path, target, null);
+
+        [Test]
+        public void ExplicitColumnsWorkAcrossAssembliesWithoutBorrowingUnityAliases()
+        {
+            string workbook = FilePath("explicit-column-contract.xlsx"), json = FilePath("explicit-column-contract.json");
+            Call("ListToExcel", typeof(ExplicitColumnRow), new[] { new ExplicitColumnRow { id = 7, renamed = "stable", plain = "plain" } }, workbook, "Sheet1");
+            using (var plan = (IDisposable)Call("PreviewJson", null, workbook, json, "", null))
+            {
+                Assert.That(Errors(plan), Is.Empty);
+                Assert.That(Commit(plan, true), Is.EqualTo("Applied"));
+            }
+            var row = JArray.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(json))).Single();
+            Assert.That((string)row["old_custom_column"], Is.EqualTo("stable"));
+            Assert.That((string)row["plain"], Is.EqualTo("plain"));
+            Assert.That(row["renamed"], Is.Null);
+            Assert.That(row["unity_alias_only"], Is.Null);
+            Assert.That(row["not_a_workbook_column"], Is.Null);
+        }
+
+        [Test]
+        public void EveryExistingDomainColumnHasAnExplicitAssemblyIndependentName()
+        {
+            var owners = new[] { typeof(YLFramework.Skill.SkillsConfig), typeof(YLFramework.Skill.SkillConfigData), typeof(YLFramework.Buff.BuffsConfig),
+                typeof(YLFramework.Buff.BuffConfigData), typeof(YLFramework.Buff.EffectData), typeof(YLFramework.Mission.MissionsConfig),
+                typeof(YLFramework.Mission.MissionConfigData), typeof(YLFramework.Mission.MissionParameter), typeof(YLFramework.Mission.MissionCondition),
+                typeof(YLFramework.Equipment.EquipmentsConfig), typeof(YLFramework.Equipment.EquipmentConfigData),
+                typeof(YLFramework.DataAssets.ScriptableObjectConfigs), typeof(YLFramework.DataAssets.ScriptableObjectData) };
+            int count = 0;
+            foreach (var field in owners.SelectMany(type => type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)))
+            {
+                var aliases = field.GetCustomAttributes<UnityEngine.Serialization.FormerlySerializedAsAttribute>().ToArray();
+                if (aliases.Length == 0 || field.GetCustomAttribute<ExcelIgnore>() != null)
+                {
+                    continue;
+                }
+                count++;
+                Assert.That(field.GetCustomAttribute<ExcelColumnNameAttribute>()?.Name, Is.EqualTo(aliases.Single().oldName), field.DeclaringType.FullName + "." + field.Name);
+            }
+            Assert.That(count, Is.EqualTo(32), "All pre-split shipped workbook aliases must remain explicit.");
+        }
+
+        [TestCase("skills.xlsx", typeof(YLFramework.Skill.SkillConfigData))]
+        [TestCase("buffs.xlsx", typeof(YLFramework.Buff.BuffConfigData))]
+        [TestCase("missions.xlsx", typeof(YLFramework.Mission.MissionConfigData))]
+        [TestCase("mission-parameters.xlsx", typeof(YLFramework.Mission.MissionParameter))]
+        [TestCase("equipments.xlsx", typeof(YLFramework.Equipment.EquipmentConfigData))]
+        [TestCase("dataassets.xlsx", typeof(YLFramework.DataAssets.ScriptableObjectData))]
+        public void FrozenPreSplitWorkbooksImportAndCurrentExporterKeepsTheirActualColumns(string file, Type type)
+        {
+            const string Root = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblySplitV1/";
+            var identity = JObject.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Root + "FixtureIdentity.json")));
+            var workbook = identity["workbooks"].Cast<JObject>().Single(row => (string)row["path"] == "Excel/" + file);
+            var headers = workbook["headers"].Values<string>().ToArray();
+            var frozenJson = FilePath("frozen-" + file + ".json");
+            using (var plan = (IDisposable)Call("PreviewJson", null, global::YLFramework.Testing.PackageTestPaths.Physical(Root + "Excel/" + file), frozenJson, "", (string)workbook["sheet"]))
+            {
+                Assert.That(Errors(plan), Is.Empty);
+                Assert.That(Commit(plan, true), Is.EqualTo("Applied"));
+            }
+            var frozen = JArray.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(frozenJson))).Cast<JObject>().Single();
+            Assert.That(frozen.Properties().Select(property => property.Name), Is.EqualTo(headers), "The actual captured workbook, not synthesized JSON, is the old input.");
+            object value = typeof(UnityEngine.ScriptableObject).IsAssignableFrom(type) ? UnityEngine.ScriptableObject.CreateInstance(type) : Activator.CreateInstance(type);
+            try
+            {
+                var rows = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(type));
+                rows.Add(value);
+                string currentWorkbook = FilePath("current-" + file), currentJson = FilePath("current-" + file + ".json");
+                if (value is UnityEngine.ScriptableObject)
+                {
+                    Call("ScriptableObjectToExcel", type, rows, currentWorkbook, (string)workbook["sheet"], type);
+                }
+                else
+                {
+                    Call("ListToExcel", type, rows, currentWorkbook, (string)workbook["sheet"]);
+                }
+                using (var plan = (IDisposable)Call("PreviewJson", null, currentWorkbook, currentJson, "", (string)workbook["sheet"]))
+                {
+                    Assert.That(Errors(plan), Is.Empty);
+                    Assert.That(Commit(plan, true), Is.EqualTo("Applied"));
+                }
+                var current = JArray.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(currentJson))).Cast<JObject>().Single();
+                Assert.That(current.Properties().Select(property => property.Name), Is.EqualTo(headers), "New CLR/assembly ownership must not rename an existing worksheet column.");
+            }
+            finally { if (value is UnityEngine.Object asset) { UnityEngine.Object.DestroyImmediate(asset); } }
+        }
 
         [Test]
         public void LossyConversionAlreadyPresentAtPreviewStillReportsActualFieldUpdate()

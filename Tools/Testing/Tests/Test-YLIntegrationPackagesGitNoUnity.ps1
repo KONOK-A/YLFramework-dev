@@ -6,6 +6,7 @@ Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 $entry = Join-Path $PSScriptRoot 'Test-YLIntegrationPackages.ps1'
 . $entry -WorkspaceRoot $TemporaryRoot -Unity 'C:\unused\Unity.exe' -Integration Excel
+. (Join-Path $PSScriptRoot 'PackageCatalogFixtures.ps1')
 $sandbox = Join-Path (Get-YLTestPath $TemporaryRoot) ('yl-integration-git-' + [Guid]::NewGuid().ToString('N'))
 $null = [IO.Directory]::CreateDirectory($sandbox)
 $checks = 0
@@ -27,6 +28,17 @@ try {
     Check ($errors.Count -eq 0) 'The integration controller must parse.'
     $binding = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n" + '(Get-Variable PackageSource -ValueOnly -ErrorAction SilentlyContinue)')
     Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -Integration Excel) -ceq 'File') 'Omitting PackageSource must preserve File, not silently choose Git.'
+    Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -PackageId 'com.kano.ylframework') -ceq 'File') 'PackageId must be an explicit minimal-install entry.'
+    foreach ($options in @(@{ Integration = 'Excel'; PackageId = 'com.kano.ylframework' },
+        @{ PackageId = 'com.kano.ylframework'; DOTweenSdkMode = 'Required' }, @{ PackageId = 'com.kano.ylframework'; DOTweenArchive = 'unused.zip' })) {
+        $refused = $false
+        try { $null = & $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' @options }
+        catch [Management.Automation.ParameterBindingException] { $refused = $true }
+        Check $refused 'PackageId/Integration and SDK-only options must be mutually exclusive at parameter binding.'
+    }
+    $unusedPackageWorkspace = Join-Path $sandbox 'UnknownPackageMustNotBeCreated'
+    Reject { & $entry -WorkspaceRoot $unusedPackageWorkspace -Unity 'C:\not-an-editor\Unity.exe' -PackageId 'com.kano.ylframework.unknown' } 'Unknown package'
+    Check (-not [IO.Path]::Exists($unusedPackageWorkspace)) 'An unknown package reached workspace or Editor preparation.'
     $sha = '0123456789abcdef0123456789abcdef01234567'
     foreach ($repo in @('https://example.invalid/product.git', 'http://example.invalid/product.git', 'ssh://git@example.invalid/team/product.git')) {
         $source = Get-YLIntegrationSource -PackageSource Git -GitRepository $repo -GitRevision $sha.ToUpperInvariant()
@@ -68,7 +80,7 @@ try {
     Check ($baseline.sha256 -ceq $normalized.sha256 -and $normalized.files.Count -eq 4) 'Only Git UPM formatting/fingerprint may differ; no real file, including meta, may be discarded.'
     Reject { Get-YLIntegrationPackageContent -Root $package -PackageId 'com.kano.ylframework' -NormalizeManifest } 'fingerprint'
     foreach ($bad in @('true', '"short"', '"' + ('g' * 40) + '"')) {
-        Save $manifestPath ('{"name":"com.kano.ylframework","_fingerprint":' + $bad + '}')
+        Save $manifestPath ('{"name":"com.kano.ylframework","version":"0.1.0-preview.1","dependencies":{},"_fingerprint":' + $bad + '}')
         Reject { Get-YLIntegrationPackageContent -Root $package -PackageId 'com.kano.ylframework' -NormalizeManifest -AllowManagedFingerprint } 'fingerprint'
     }
     foreach ($text in @($original.Replace('true', 'false'), $original.Replace('Z"', '+00:00"'))) {
@@ -84,14 +96,16 @@ try {
     Check ((Get-YLIntegrationPackageContent -Root $package -PackageId 'com.kano.ylframework' -NormalizeManifest).sha256 -cne $baseline.sha256) 'Non-manifest files must use raw bytes.'
 
     function Invoke-ControllerFixture([string] $Fault = '', [Alias('Source')][string] $FixtureSource = 'Git', [string] $EditorVersion = '2022.3.62f3', [string] $Revision = $sha,
-        [string] $RemoteRepository = 'https://example.invalid/product.git') {
+        [string] $RemoteRepository = 'https://example.invalid/product.git', [string] $EntryPackage) {
         $root = Join-Path $sandbox ([Guid]::NewGuid().ToString('N'))
         $fixtureRepository = Join-Path $root 'Repository'; $null = [IO.Directory]::CreateDirectory($fixtureRepository)
-        foreach ($relative in @('Tests/Test-YLIntegrationPackages.ps1', 'IntegrationEntry.cs', 'Common/Packages.ps1', 'Common/Workspace.ps1', 'Common/Process.ps1', 'Common/Results.ps1', 'UnityHost.ps1', 'TestSuites.json')) {
+        foreach ($relative in @('Tests/Test-YLIntegrationPackages.ps1', 'IntegrationEntry.cs', 'PackageCatalogContract.cs', 'Common/Packages.ps1', 'Common/Workspace.ps1', 'Common/Process.ps1', 'Common/Results.ps1', 'UnityHost.ps1', 'TestSuites.json')) {
             $target = Join-Path $fixtureRepository "Tools/Testing/$relative"
             $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
             [IO.File]::Copy((Join-Path $PSScriptRoot "../$relative"), $target)
         }
+        $fixtureCatalog = Get-YLFixturePackageCatalog -ConditionalAdapter
+        Save (Join-Path $fixtureRepository 'Tools/Packaging/PackageCatalog.json') (ConvertTo-Json -InputObject $fixtureCatalog -Depth 30)
         foreach ($prefix in @('Packages', 'Tools/Testing/Profiles/Unity2022')) {
             Save (Join-Path $fixtureRepository "$prefix/manifest.json") '{"dependencies":{"com.unity.modules.jsonserialize":"1.0.0"}}'
             Save (Join-Path $fixtureRepository "$prefix/packages-lock.json") '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.1"}}}'
@@ -105,6 +119,7 @@ try {
             Save (Join-Path $p 'LICENSE.md') 'fixture license'
             Save (Join-Path $p 'Editor/Product.cs') '// fixture product'
             if ($id -ceq 'com.kano.ylframework') { Save (Join-Path $p 'Runtime/Product.cs') '// fixture product' }
+            Add-YLFixtureAssemblyPayload -Catalog $fixtureCatalog -PackageId $id -Root $p -Sources
         }
         $excel = Join-Path $fixtureRepository 'PackageSources/com.kano.ylframework.excel/Editor'
         $dll = Join-Path $excel 'Plugins/MiniExcel.dll'; $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($dll))
@@ -147,6 +162,7 @@ try {
             }
             $report = @{ schemaVersion = 1; purpose = $request.purpose; integration = $request.integration; hostId = $request.hostId; resultId = $request.resultId; inputHash = $request.inputHash
                 unityVersion = $EditorVersion; packageOrigin = $(if ($FixtureSource -ceq 'Git') { 'GitRemote' } else { 'File' }); expectedTemplateHash = $request.expectedTemplateHash
+                entryPackage = $request.entryPackage; catalogSha256 = $request.catalogSha256
                 status = 'Completed'; pid = 42; isBatchMode = $true; scriptCompilationFailed = $false; packages = $packages; assemblies = $assemblies }
             switch ($Fault) {
                 'source' { $packages[0].source = 'Local' }
@@ -168,6 +184,7 @@ try {
                 'escape' { $packages[0].resolvedPath = Join-Path $fixtureRepository ('PackageSources/' + $packages[0].name) }
                 'imported-sample' { Save (Join-Path $project 'Assets/Samples/Unexpected/sample.txt') 'not imported by this tool' }
                 'input-drift' { [IO.File]::AppendAllText((Join-Path $fixtureRepository 'Tools/Testing/IntegrationEntry.cs'), '// drift') }
+                'catalog-drift' { [IO.File]::AppendAllText((Join-Path $fixtureRepository 'Tools/Packaging/PackageCatalog.json'), "`n") }
                 'template-drift' { [IO.File]::AppendAllText((Join-Path $fixtureRepository 'PackageSources/com.kano.ylframework/LICENSE.md'), 'drift') }
                 'cache-owner-drift' { $path = Join-Path $request.cacheRoot '.yl-owner.json'; $j = [IO.File]::ReadAllText($path) | ConvertFrom-Json -AsHashtable; $j.id = 'f' * 32; Save $path (ConvertTo-Json -Depth 10 -InputObject $j) }
             }
@@ -185,6 +202,7 @@ try {
         }
         $controller = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n" + ($statements -join "`n"))
         $options = @{ WorkspaceRoot = (Join-Path $root 'Workspace'); Unity = (Join-Path $fixtureRepository 'Unity.exe'); Integration = 'DomainExcel'; PackageSource = $FixtureSource }
+        if ($EntryPackage) { $options.Remove('Integration'); $options.PackageId = $EntryPackage }
         if ($FixtureSource -ceq 'Git') { $options.GitRepository = $RemoteRepository; $options.GitRevision = $Revision }
         $null = & $controller @options
         $summary = [IO.File]::ReadAllText((Join-Path $state.request.resultRoot 'summary.json')) | ConvertFrom-Json -AsHashtable -DateKind String
@@ -203,6 +221,10 @@ try {
             Check ($manifest.dependencies['com.kano.ylframework.domain-excel'] -ceq ('https://example.invalid/product.git?path=/PackageSources/com.kano.ylframework.domain-excel#' + $sha)) 'Wrong actual Git subfolder locator.'
             Check (@($fixture.summary.inputIdentity.files | Where-Object { $_.path.StartsWith('PackageSources/') -and -not $_.path.EndsWith('/Dependencies.json') }).Count -eq 0) 'Local product bytes were presented as observed remote inputs.'
             Check ($fixture.summary.expectedTemplate.purpose -ceq 'LocalReleaseExpectedTemplateNotInstallSource') 'The local comparison template was not disclosed separately.'
+            Check (@($fixture.summary.inputIdentity.files | Where-Object path -CEQ 'Tools/Packaging/PackageCatalog.json').Count -eq 1) 'The package catalog was omitted from the source input identity.'
+            Check (@($fixture.state.request.assemblies | Where-Object name -CEQ 'YLFramework.FixtureAdapter').Count -eq 0) 'The default profile silently enabled an SDK-dependent adapter.'
+            $mainInput = @($fixture.state.request.packages | Where-Object name -CEQ 'com.kano.ylframework')[0]
+            Check (@($mainInput.files | Where-Object path -CEQ 'Runtime/Integration/Fixture/Product.cs').Count -eq 1) 'The disabled adapter source disappeared from the complete payload.'
             $identity = $fixture.summary.inputIdentity
             $localSource = Join-Path $fixture.repository 'PackageSources/com.kano.ylframework/Runtime/Product.cs'
             [IO.File]::AppendAllText($localSource, '// changed local source after the fixture')
@@ -220,9 +242,15 @@ try {
     } finally { foreach ($key in $keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) } }
     $file = Invoke-ControllerFixture -Source File
     Check ($file.summary.status -ceq 'Completed' -and $file.summary.packageOrigin -ceq 'File' -and [IO.Directory]::Exists((Join-Path $file.state.project 'PackageSources'))) 'File no longer keeps complete staging.'
+    foreach ($version in @('2022.3.62f3', '6000.3.27f1')) {
+        $minimal = Invoke-ControllerFixture -Source File -EditorVersion $version -EntryPackage 'com.kano.ylframework'
+        Check ($minimal.summary.status -ceq 'Completed' -and $minimal.summary.integration -ceq 'Package') 'The known minimum-compilation profile was not selected.'
+        Check ($minimal.state.request.packages.Count -eq 1 -and $minimal.state.request.entryPackage -ceq 'com.kano.ylframework') 'Minimum installation silently added optional packages.'
+        Check (-not $minimal.state.request.ContainsKey('dotweenSdkMode')) 'PackageId accepted an implicit SDK request.'
+    }
     $fixture = Invoke-ControllerFixture -RemoteRepository 'https://example.invalid/@git+product.git' -Fault locator-path
     Check ($fixture.summary.status -ceq 'Failed') 'Only the UPM git+ scheme marker may be normalized; repository path bytes must match exactly.'
-    foreach ($fault in @('source', 'locator', 'revision', 'api-hash', 'api-revision', 'lock-hash', 'lock-version', 'lock-source', 'lock-dependency', 'origin', 'content', 'extra-file', 'missing-file', 'public-manifest', 'sources', 'escape', 'input-drift', 'template-drift', 'imported-sample', 'cache-owner-drift')) {
+    foreach ($fault in @('source', 'locator', 'revision', 'api-hash', 'api-revision', 'lock-hash', 'lock-version', 'lock-source', 'lock-dependency', 'origin', 'content', 'extra-file', 'missing-file', 'public-manifest', 'sources', 'escape', 'input-drift', 'catalog-drift', 'template-drift', 'imported-sample', 'cache-owner-drift')) {
         $fixture = Invoke-ControllerFixture -Fault $fault
         Check ($fixture.summary.status -ceq 'Failed' -and $fixture.state.exitCode -eq 1) "Remote controller accepted $fault."
     }

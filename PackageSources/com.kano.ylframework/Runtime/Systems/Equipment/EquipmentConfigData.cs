@@ -32,7 +32,7 @@ namespace YLFramework.Equipment
         /// <summary>跨已登记配表唯一的装备 ID。</summary>
         [ExcelScriptableObjectId] public int id;
         /// <summary>装备的显示名称。</summary>
-        [FormerlySerializedAs("equipment_name")] public string equipmentName;
+        [FormerlySerializedAs("equipment_name"), ExcelColumnName("equipment_name")] public string equipmentName;
         /// <summary>装备图标的资源地址信息。</summary>
         public IconInfo icon = new();
         /// <summary>供作者工具或业务界面展示的说明文本。</summary>
@@ -40,7 +40,7 @@ namespace YLFramework.Equipment
         /// <summary>运行实例的取得方式，决定使用脚本类型还是 Prefab 地址。</summary>
         public EquipmentType equipmentType;
         /// <summary>Script 模式下用于反射创建的普通装备类全名。</summary>
-        [FormerlySerializedAs("equipment_class_full_name")] public string equipmentClassFullName;
+        [FormerlySerializedAs("equipment_class_full_name"), ExcelColumnName("equipment_class_full_name")] public string equipmentClassFullName;
         /// <summary>编辑器维护脚本类型绑定的 GUID，运行时不按此字段加载。</summary>
         [HideInInspector, ExcelIgnore, FormerlySerializedAs("equipment_class_guid")] public string equipmentClassGuid;
         /// <summary>Asset 模式下装备 Prefab 所属的资源项目标识。</summary>

@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
@@ -35,6 +36,154 @@ namespace YLFramework.Core.Editor.Tests
         private const string EditorRoot = "Packages/com.kano.ylframework/Editor/Core";
         private const string EditorAssemblyName = "YLFramework.Editor";
 
+        [Serializable]
+        private sealed class AssemblyMoveTable
+        {
+            public int schemaVersion;
+            public AssemblyMove[] moves;
+        }
+
+        [Serializable]
+        private sealed class AssemblyMove
+        {
+            public string fullName;
+            public string legacyName;
+            public string sourceAssembly;
+            public string currentAssembly;
+            public string targetAssembly;
+            public string scriptGuid;
+        }
+
+        [Serializable]
+        private sealed class FrozenFixture
+        {
+            public int schemaVersion;
+            public string captureKind;
+            public string unityVersion;
+            public string sourceAssembly;
+            public FrozenAsset[] assets;
+            public FrozenFile[] files;
+            public FrozenCatalog catalog;
+        }
+
+        [Serializable]
+        private sealed class FrozenAsset
+        {
+            public string path;
+            public string guid;
+            public long localId;
+            public string typeFullName;
+            public string scriptGuid;
+            public FrozenComponent[] components;
+        }
+
+        [Serializable]
+        private sealed class FrozenComponent
+        {
+            public string typeFullName;
+            public string scriptGuid;
+        }
+
+        [Serializable]
+        private sealed class FrozenFile
+        {
+            public string path;
+            public long length;
+            public string sha256;
+        }
+
+        [Serializable]
+        private sealed class FrozenCatalog
+        {
+            public string versionDirectory;
+            public string projectId;
+            public string catalogDigest;
+            public string platform;
+            public string unityCompatibility;
+            public string appContentCompatibilityId;
+        }
+
+        [Test]
+        public void PublicTypeOldAssetSurvivesAssemblyMoveWithCapturedGuidsAndCatalogIdentity()
+        {
+            const string Root = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblySplitV1/";
+            string Physical(string path) => Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(Root + path));
+            var captured = JsonUtility.FromJson<FrozenFixture>(File.ReadAllText(Physical("FixtureIdentity.json")));
+            Assert.That(captured.schemaVersion, Is.EqualTo(1));
+            Assert.That(captured.captureKind, Is.EqualTo("GeneratedCurrentLayoutBeforeAssemblySplit"));
+            Assert.That(captured.sourceAssembly, Is.EqualTo("YLFramework.Runtime"));
+            Assert.That(captured.assets, Has.Length.EqualTo(14));
+            foreach (var file in captured.files)
+            {
+                string path = Physical(file.path);
+                Assert.That(new FileInfo(path).Length, Is.EqualTo(file.length), file.path);
+                using var input = File.OpenRead(path);
+                using var hash = SHA256.Create();
+                Assert.That(string.Concat(hash.ComputeHash(input).Select(value => value.ToString("x2"))), Is.EqualTo(file.sha256), file.path);
+            }
+            foreach (var expected in captured.assets)
+            {
+                var asset = AssetDatabase.LoadMainAssetAtPath(Root + expected.path);
+                Assert.That(asset, Is.Not.Null, expected.path);
+                Assert.That(asset.GetType().FullName, Is.EqualTo(expected.typeFullName));
+                Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string guid, out long localId), Is.True);
+                Assert.That(guid, Is.EqualTo(expected.guid));
+                Assert.That(localId, Is.EqualTo(expected.localId));
+                if (asset is ScriptableObject data)
+                {
+                    Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(data))), Is.EqualTo(expected.scriptGuid));
+                }
+                if (asset is GameObject prefab)
+                {
+                    var components = prefab.GetComponentsInChildren<MonoBehaviour>(true);
+                    Assert.That(components, Has.Length.EqualTo(expected.components.Length));
+                    foreach (var component in components)
+                    {
+                        Assert.That(component, Is.Not.Null, "A serialized public component became a missing script.");
+                        string script = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(component)));
+                        Assert.That(expected.components.Any(item => item.typeFullName == component.GetType().FullName && item.scriptGuid == script), Is.True);
+                    }
+                }
+            }
+            var document = YLFramework.Resource.ResourceCatalogCodec.Read(File.ReadAllBytes(Physical(captured.catalog.versionDirectory + "/resource-catalog.json")),
+                captured.catalog.projectId, captured.catalog.platform, captured.catalog.unityCompatibility, captured.catalog.appContentCompatibilityId);
+            Assert.That(document.CatalogDigest, Is.EqualTo(captured.catalog.catalogDigest));
+            Assert.That(document.Assets.Any(asset => asset.AssetType == "YLFramework.DataAssets.ScriptableObjectData" && asset.AssetAssembly == "YLFramework.Runtime"), Is.True,
+                "This is the real old assembly tuple, not a silently rewritten compatible catalog.");
+            if (Application.unityVersion == captured.unityVersion)
+            {
+                var snapshot = YLFramework.Resource.ResourceLocalSnapshot.Open(Physical(captured.catalog.versionDirectory), captured.catalog.projectId,
+                    captured.catalog.catalogDigest, captured.catalog.platform, captured.catalog.appContentCompatibilityId);
+                Assert.That(snapshot.Document.CatalogDigest, Is.EqualTo(document.CatalogDigest));
+            }
+        }
+
+        [Test]
+        public void PublicAssemblyMoveMapKeepsEveryExistingAnchorAndItsScriptIdentity()
+        {
+            const string Path = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblyMoves.json";
+            var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(Path);
+            Assert.That(asset, Is.Not.Null, "Freeze explicit assembly ownership before moving any functional source.");
+            var table = JsonUtility.FromJson<AssemblyMoveTable>(asset.text);
+            Assert.That(table.schemaVersion, Is.EqualTo(1));
+            Assert.That(table.moves, Has.Length.EqualTo(13), "Do not drop the original public identity anchors.");
+            Assert.That(table.moves.Select(move => move.fullName).Distinct().Count(), Is.EqualTo(table.moves.Length));
+            Assert.That(table.moves.Select(move => move.scriptGuid).Distinct().Count(), Is.EqualTo(table.moves.Length));
+            foreach (var move in table.moves)
+            {
+                Assert.That(move.sourceAssembly, Is.EqualTo("YLFramework.Runtime"));
+                Assert.That(move.targetAssembly, Is.Not.Null.And.Not.Empty);
+                var owner = System.Reflection.Assembly.Load(move.currentAssembly);
+                Assert.That(owner.GetType(move.fullName)?.IsPublic, Is.True, move.fullName);
+                Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(assembly => assembly.GetType(move.fullName) != null), Is.EqualTo(1), move.fullName);
+                Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(move.legacyName) != null), Is.False, move.legacyName);
+                string script = AssetDatabase.GUIDToAssetPath(move.scriptGuid);
+                Assert.That(script, Does.StartWith("Packages/com.kano.ylframework"), move.fullName);
+                string definition = CompilationPipeline.GetAssemblyDefinitionFilePathFromScriptPath(script);
+                Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(definition)), Does.Contain('"' + move.currentAssembly + '"'), script);
+            }
+        }
+
         [TestCase("YLFramework.Editor.Core.UIPanelAssetMigration", "YLFramework.Core." + "Editor.UIPanelAssetMigration")]
         [TestCase("YLFramework.Editor.Common.EditorAssetTool", "YLFramework.Core." + "Editor.EditorAssetTool")]
         [TestCase("YLFramework.Editor.Common.AssetNameTools", "YLFramework.Core." + "Editor.AssetNameTools")]
@@ -47,6 +196,19 @@ namespace YLFramework.Core.Editor.Tests
             var assembly = System.Reflection.Assembly.Load(EditorAssemblyName);
             Assert.That(assembly.GetType(fullName), Is.Not.Null, fullName);
             Assert.That(assembly.GetType(legacyName), Is.Null, legacyName);
+        }
+
+        [TestCase("DomainAssetOwnership", "1ddd9cd019957054cbe3961a7ca6d7b5")]
+        [TestCase("DomainResourceIconGui", "95449e78762f9234296438a98b933042")]
+        [TestCase("DomainSessionLifecycle", "5005498a231ad034cba239967420cf2e")]
+        public void SharedDomainEditorHelpersKeepTheirInternalSingleOwnerAndGuid(string name, string guid)
+        {
+            string path = "Packages/com.kano.ylframework/Editor/Systems/Shared/" + name + ".cs";
+            var type = typeof(CreateModuleCommand).Assembly.GetType("YLFramework.Editor.Domain." + name, true);
+            Assert.That(type.IsNotPublic, Is.True);
+            Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+            Assert.That(AssetDatabase.LoadAssetAtPath<MonoScript>(path).GetClass(), Is.SameAs(type));
+            Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(assembly => assembly.GetType(type.FullName) != null), Is.EqualTo(1));
         }
 
         [Test]

@@ -22,6 +22,29 @@ namespace YLFramework.Tests.Extensions.Shared
             Assert.That(attribute.GetType().Assembly.GetName().Name, Is.EqualTo("YLFramework.Runtime"));
         }
 
+        [Test]
+        public void ExplicitColumnNameRemainsALightweightMainPackageFieldContract()
+        {
+            var type = Contract("ExcelColumnNameAttribute");
+            Assert.That(type.Assembly.GetName().Name, Is.EqualTo("YLFramework.Runtime"));
+            Assert.That(type.IsSealed, Is.True);
+            var usage = type.GetCustomAttribute<AttributeUsageAttribute>();
+            Assert.That(usage.ValidOn, Is.EqualTo(AttributeTargets.Field));
+            Assert.That(usage.AllowMultiple, Is.False);
+            var column = Activator.CreateInstance(type, "old_column_name");
+            Assert.That(type.GetProperty("Name").GetValue(column), Is.EqualTo("old_column_name"));
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase(" ")]
+        public void ExplicitColumnNameRejectsMissingOrWhitespaceNames(string name)
+        {
+            var constructor = Contract("ExcelColumnNameAttribute").GetConstructor(new[] { typeof(string) });
+            var error = Assert.Throws<TargetInvocationException>(() => constructor.Invoke(new object[] { name }));
+            Assert.That(error.InnerException, Is.InstanceOf<ArgumentException>());
+        }
+
         [TestCase("None", 0)]
         [TestCase("Int", 1)]
         [TestCase("Float", 2)]

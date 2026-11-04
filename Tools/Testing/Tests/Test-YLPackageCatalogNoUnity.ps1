@@ -1,0 +1,223 @@
+#requires -Version 7.6
+#requires -PSEdition Core
+[CmdletBinding()]
+param([string] $TemporaryRoot = [IO.Path]::GetTempPath())
+Set-StrictMode -Version 3.0
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../../../Tools/Packaging/Build-YLRegistryPackages.ps1')
+. (Join-Path $PSScriptRoot '../Common/Packages.ps1')
+$repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+$catalogPath = Join-Path $repository 'Tools/Packaging/PackageCatalog.json'
+if (-not [IO.File]::Exists($catalogPath)) { throw 'RED: PackageCatalog is missing; package ownership is still hard-coded.' }
+$parent = Get-YLTestPath $TemporaryRoot
+if (-not [IO.Directory]::Exists($parent)) { throw 'TemporaryRoot must exist.' }
+$root = Join-Path $parent ('yl-catalog-' + [Guid]::NewGuid().ToString('N'))
+$null = [IO.Directory]::CreateDirectory($root)
+$checks = 0
+$failures = [Collections.Generic.List[string]]::new()
+function Check([bool] $Condition, [string] $Message) { if (-not $Condition) { throw $Message } }
+function Reject([scriptblock] $Action, [string] $Pattern) {
+    try { $null = & $Action } catch {
+        if ($_.Exception -is [Management.Automation.CommandNotFoundException] -or $_.Exception.Message -notmatch $Pattern) { throw }
+        return
+    }
+    throw "Expected rejection: $Pattern"
+}
+function Case([string] $Name, [scriptblock] $Body) {
+    $script:checks++
+    try { & $Body; "PASS: $Name" } catch { $failures.Add("${Name}: $($_.Exception.Message)"); "FAIL: ${Name}: $($_.Exception.Message)" }
+}
+function Clone([object] $Value) { return ,(ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $Value -Depth 40) -AsHashtable -NoEnumerate) }
+function Bytes([string] $Text) { return ,([Text.Encoding]::UTF8.GetBytes($Text)) }
+function Asset([Collections.Generic.Dictionary[string, byte[]]] $Contents, [string] $Path, [string] $Text) {
+    $Contents.Add($Path, (Bytes $Text))
+    $Contents.Add($Path + '.meta', (Bytes ("fileFormatVersion: 2`nguid: " + [Guid]::NewGuid().ToString('N') + "`n")))
+}
+function Fixture([string] $Id) {
+    $contents = [Collections.Generic.Dictionary[string, byte[]]]::new([StringComparer]::Ordinal)
+    $manifest = @{ name = $Id; version = '0.1.0-preview.1'; displayName = 'Catalog Probe'; description = 'Test-only optional package';
+        unity = '2022.3'; unityRelease = '62f3'; license = 'MIT'; author = @{ name = 'Fixture' };
+        repository = @{ type = 'git'; url = 'https://github.com/KONOK-A/YLFramework-dev.git'; directory = "PackageSources/$Id" };
+        files = @('package.json', 'package.json.meta', 'README.md', 'README.md.meta', 'LICENSE.md', 'LICENSE.md.meta', 'Runtime', 'Runtime.meta');
+        dependencies = @{ 'com.kano.ylframework' = '0.1.0-preview.1' } }
+    Asset $contents 'package.json' (ConvertTo-Json -InputObject $manifest -Depth 15)
+    Asset $contents 'README.md' 'Test-only package, never a maintained product.'
+    Asset $contents 'LICENSE.md' 'MIT License'
+    $contents.Add('Runtime.meta', (Bytes ("fileFormatVersion: 2`nguid: " + [Guid]::NewGuid().ToString('N') + "`nfolderAsset: yes`n")))
+    Asset $contents 'Runtime/YLFramework.CatalogProbe.asmdef' '{"name":"YLFramework.CatalogProbe","references":["YLFramework.Runtime"],"includePlatforms":[],"excludePlatforms":[],"defineConstraints":[],"versionDefines":[]}'
+    Asset $contents 'Runtime/Probe.cs' 'namespace CatalogFixture { public sealed class Probe {} }'
+    return ,$contents
+}
+try {
+    $catalog = Read-YLPackageCatalog
+    $id = 'com.kano.ylframework.catalog-probe'
+    $entry = @{ id = $id; assemblies = @(@{ name = 'YLFramework.CatalogProbe'; path = 'Runtime/YLFramework.CatalogProbe.asmdef';
+        player = $true; defineConstraints = @(); versionDefines = @() }); requiredFiles = @('Runtime/Probe.cs'); samples = @() }
+    $extended = Clone $catalog
+    $extended.packages += $entry
+    $contents = Fixture $id
+    Case 'PackageCatalogRejectsUnknownOrPartialPayload: an unlisted package is refused' {
+        Reject { Get-YLRegistryPayload -Contents $contents } 'identity|catalog|Unknown'
+    }
+    Case 'A declared additional package receives the complete payload audit' {
+        $payload = Get-YLRegistryPayload -Contents $contents -Catalog $extended
+        Check ($payload.id -ceq $id -and $payload.assemblies.Count -eq 1) 'The extra declared package was not audited.'
+        Check (($payload.assemblies[0].sources -join ',') -ceq 'Runtime/Probe.cs') 'The declared assembly did not own its exact source set.'
+        $mainGuid = @((Get-YLRegistryPackageSet -Root (Join-Path $repository 'PackageSources'))[0].guids.Keys)[0]
+        $meta = $contents['Runtime/Probe.cs.meta']
+        try {
+            $contents['Runtime/Probe.cs.meta'] = Bytes "fileFormatVersion: 2`nguid: $mainGuid`n"
+            $duplicate = Get-YLRegistryPayload -Contents $contents -Catalog $extended
+            $batch = @(Get-YLRegistryPackageSet -Root (Join-Path $repository 'PackageSources')) + @($duplicate)
+            Reject { Assert-YLRegistryPackageBatch -Packages $batch -Catalog $extended } 'GUID'
+        } finally { $contents['Runtime/Probe.cs.meta'] = $meta }
+    }
+    foreach ($path in @('LICENSE.md', 'Runtime/Probe.cs', 'Runtime/Probe.cs.meta', 'Runtime/YLFramework.CatalogProbe.asmdef')) {
+        Case "A newly declared package cannot omit $path" {
+            $bytes = $contents[$path]
+            try { $null = $contents.Remove($path); Reject { Get-YLRegistryPayload -Contents $contents -Catalog $extended } 'Missing|required|payload|assembly|source|Orphan' }
+            finally { $contents[$path] = $bytes }
+        }
+    }
+    foreach ($path in @('Runtime/Tests/Hidden.cs', 'Runtime/DOTween.dll', 'Runtime/SDK/Vendor.cs', 'Runtime/Extra.asmdef')) {
+        Case "A newly declared package cannot hide $path" {
+            Asset $contents $path $(if ($path.EndsWith('.asmdef')) { '{"name":"Unlisted.Assembly"}' } else { '// unapproved input' })
+            try { Reject { Get-YLRegistryPayload -Contents $contents -Catalog $extended } 'Forbidden|unapproved|unauthorized|undeclared|assembly|catalog' }
+            finally { $null = $contents.Remove($path); $null = $contents.Remove($path + '.meta') }
+        }
+    }
+    Case 'Nested conditional source belongs to the adapter, not to the default Runtime' {
+        $nested = 'Runtime/Integration/Adapter/YLFramework.CatalogProbe.Adapter.asmdef'
+        $definition = Clone $entry
+        $definition.assemblies += @{ name = 'YLFramework.CatalogProbe.Adapter'; path = $nested; player = $true;
+            defineConstraints = @('DOTWEEN'); versionDefines = @() }
+        $withAdapter = Clone $catalog; $withAdapter.packages += $definition
+        $contents.Add('Runtime/Integration.meta', (Bytes ("fileFormatVersion: 2`nguid: " + [Guid]::NewGuid().ToString('N') + "`nfolderAsset: yes`n")))
+        $contents.Add('Runtime/Integration/Adapter.meta', (Bytes ("fileFormatVersion: 2`nguid: " + [Guid]::NewGuid().ToString('N') + "`nfolderAsset: yes`n")))
+        Asset $contents $nested '{"name":"YLFramework.CatalogProbe.Adapter","references":["YLFramework.Runtime"],"includePlatforms":[],"excludePlatforms":[],"defineConstraints":["DOTWEEN"],"versionDefines":[]}'
+        Asset $contents 'Runtime/Integration/Adapter/Adapter.cs' 'namespace CatalogFixture { public sealed class Adapter {} }'
+        try {
+            $payload = Get-YLRegistryPayload -Contents $contents -Catalog $withAdapter
+            $runtime = @($payload.assemblies | Where-Object name -CEQ 'YLFramework.CatalogProbe')[0]
+            $adapter = @($payload.assemblies | Where-Object name -CEQ 'YLFramework.CatalogProbe.Adapter')[0]
+            Check (($runtime.sources -join ',') -ceq 'Runtime/Probe.cs') 'The disabled adapter polluted the core source set.'
+            Check (($adapter.sources -join ',') -ceq 'Runtime/Integration/Adapter/Adapter.cs') 'Adapter source disappeared from the payload audit.'
+            $adapterBytes = $contents['Runtime/Integration/Adapter/Adapter.cs']
+            $adapterMeta = $contents['Runtime/Integration/Adapter/Adapter.cs.meta']
+            try {
+                $null = $contents.Remove('Runtime/Integration/Adapter/Adapter.cs'); $null = $contents.Remove('Runtime/Integration/Adapter/Adapter.cs.meta')
+                Reject { Get-YLRegistryPayload -Contents $contents -Catalog $withAdapter } 'source|empty|payload'
+            } finally {
+                $contents['Runtime/Integration/Adapter/Adapter.cs'] = $adapterBytes; $contents['Runtime/Integration/Adapter/Adapter.cs.meta'] = $adapterMeta
+            }
+        } finally {
+            foreach ($path in @($nested, $nested + '.meta', 'Runtime/Integration/Adapter/Adapter.cs', 'Runtime/Integration/Adapter/Adapter.cs.meta', 'Runtime/Integration/Adapter.meta', 'Runtime/Integration.meta')) { $null = $contents.Remove($path) }
+        }
+    }
+    Case 'MainHasNoOptionalAssemblyReferences rejects a main-to-leaf reference' {
+        $main = [Collections.Generic.Dictionary[string, byte[]]]::new([StringComparer]::Ordinal)
+        foreach ($file in @(Get-YLTestTreeFiles (Join-Path $repository 'PackageSources/com.kano.ylframework'))) {
+            $relative = [IO.Path]::GetRelativePath((Join-Path $repository 'PackageSources/com.kano.ylframework'), $file).Replace('\', '/')
+            if ($relative -cne '.gitattributes') { $main.Add($relative, [IO.File]::ReadAllBytes($file)) }
+        }
+        $asmdef = ConvertFrom-Json -InputObject ([Text.Encoding]::UTF8.GetString($main['Runtime/YLFramework.Runtime.asmdef'])) -AsHashtable
+        $asmdef.references += 'YLFramework.Excel.Editor'
+        $main['Runtime/YLFramework.Runtime.asmdef'] = Bytes (ConvertTo-Json -InputObject $asmdef -Depth 20)
+        Reject { Get-YLRegistryPayload -Contents $main } 'optional|reference|dependency|main'
+    }
+    Case 'Package discovery rejects an unlisted source directory instead of silently skipping it' {
+        $sourceRoot = Join-Path $root 'PackageSources'; $null = [IO.Directory]::CreateDirectory($sourceRoot)
+        $unknown = Join-Path $sourceRoot 'com.kano.ylframework.unknown'; $null = [IO.Directory]::CreateDirectory($unknown)
+        Reject { Get-YLRegistryPackageSet -Root $sourceRoot } 'Unknown|unlisted|catalog|unauthorized'
+    }
+    foreach ($fault in @('schema-type', 'unknown-field', 'duplicate-package', 'duplicate-assembly', 'unsafe-path', 'invalid-player', 'unknown-version-package', 'unmapped-define')) {
+        Case "Catalog schema refuses $fault" {
+            $bad = Clone $catalog
+            switch ($fault) {
+                'schema-type' { $bad.schemaVersion = $true }
+                'unknown-field' { $bad['acceptAnyPackage'] = $true }
+                'duplicate-package' { $bad.packages += (Clone $bad.packages[0]) }
+                'duplicate-assembly' { $bad.packages[1].assemblies += (Clone $bad.packages[0].assemblies[0]) }
+                'unsafe-path' { $bad.packages[0].assemblies[0].path = '../outside.asmdef' }
+                'invalid-player' { $bad.packages[0].assemblies[0].player = 'true' }
+                'unknown-version-package' { $bad.packages[0].assemblies[0].versionDefines = @(@{ name = 'com.kano.ylframework.unknown'; expression = '0.0.0'; define = 'UNKNOWN' }) }
+                'unmapped-define' { $bad.packages[0].assemblies[0].defineConstraints = @('NEVER_COMPILE_WITHOUT_A_PROFILE') }
+            }
+            $path = Join-Path $root 'PackageCatalog.json'
+            [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $bad -Depth 40), [Text.UTF8Encoding]::new($false))
+            Reject { Read-YLPackageCatalog -Path $path } 'catalog|schema|fields|duplicate|path|player|package'
+        }
+    }
+    $contractSource = Join-Path $PSScriptRoot '../PackageCatalogContract.cs'
+    if (-not [IO.File]::Exists($contractSource)) { throw 'RED: the compiled package catalog/source-set contract is missing.' }
+    $references = @([IO.Directory]::EnumerateFiles((Join-Path $PSHOME 'ref'), '*.dll')) + @([Newtonsoft.Json.Linq.JObject].Assembly.Location)
+    Add-Type -Path $contractSource -ReferencedAssemblies $references -CompilerOptions @('/langversion:9.0', '/nowarn:1701')
+    Case 'Compiled catalog cannot use an unknown macro to silently drop a required assembly' {
+        $invalid = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $catalog -Depth 40))
+        $invalid['packages'][0]['assemblies'][0]['defineConstraints'] = [Newtonsoft.Json.Linq.JArray]::new([object[]]@('NEVER_COMPILE_WITHOUT_A_PROFILE'))
+        Reject { [YLFramework.Testing.PackageCatalogContract]::Validate($invalid) } 'catalog|condition|define'
+    }
+    $feature = 'com.kano.ylframework.fixture-feature'; $backend = 'com.kano.ylframework.fixture-backend'
+    $fixtureCatalog = @{ schemaVersion = 1; packages = @(
+        @{ id = 'com.kano.ylframework'; requiredFiles = @(); samples = @(); assemblies = @(
+            @{ name = 'YLFramework.Runtime'; path = 'Runtime/YLFramework.Runtime.asmdef'; player = $true; defineConstraints = @(); versionDefines = @() },
+            @{ name = 'YLFramework.Editor'; path = 'Editor/YLFramework.Editor.asmdef'; player = $false; defineConstraints = @(); versionDefines = @() }) },
+        @{ id = $feature; requiredFiles = @(); samples = @(); assemblies = @(
+            @{ name = 'YLFramework.FixtureFeature'; path = 'Runtime/YLFramework.FixtureFeature.asmdef'; player = $true; defineConstraints = @(); versionDefines = @() },
+            @{ name = 'YLFramework.FixtureAdapter'; path = 'Runtime/Integration/YLFramework.FixtureAdapter.asmdef'; player = $true;
+                defineConstraints = @('YL_FIXTURE_BACKEND'); versionDefines = @(@{ name = $backend; expression = '0.0.0'; define = 'YL_FIXTURE_BACKEND' }) }) },
+        @{ id = $backend; requiredFiles = @(); samples = @(); assemblies = @(
+            @{ name = 'YLFramework.FixtureBackend'; path = 'Runtime/YLFramework.FixtureBackend.asmdef'; player = $true; defineConstraints = @(); versionDefines = @() }) }
+    ) }
+    Case 'A known fixture root set keeps the backend independent without accepting undeclared extra installs' {
+        $manifests = @{
+            'com.kano.ylframework' = @{ name = 'com.kano.ylframework'; version = '0.1.0-preview.1'; dependencies = @{} }
+        }
+        $manifests[$feature] = @{ name = $feature; version = '0.1.0-preview.1'; dependencies = @{ 'com.kano.ylframework' = '0.1.0-preview.1' } }
+        $manifests[$backend] = @{ name = $backend; version = '0.1.0-preview.1'; dependencies = @{} }
+        $catalogJson = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $fixtureCatalog -Depth 30))
+        $manifestJson = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $manifests -Depth 20))
+        [YLFramework.Testing.PackageCatalogContract]::AssertClosure($catalogJson, $manifestJson, [string[]]@('com.kano.ylframework', $feature, $backend))
+        Reject { [YLFramework.Testing.PackageCatalogContract]::AssertClosure($catalogJson, $manifestJson, [string[]]@($feature)) } 'closure|selection|exceeds'
+    }
+    function Planned([string[]] $Ids, [string] $Fault = '') {
+        $packages = @(foreach ($selected in $fixtureCatalog.packages | Where-Object { $_.id -cin $Ids }) {
+            $files = @(); foreach ($assembly in $selected.assemblies) {
+                $directory = $assembly.path.Substring(0, $assembly.path.LastIndexOf('/'))
+                $files += @{ path = $assembly.path }; $files += @{ path = "$directory/$($assembly.name).cs" }
+            }
+            if ($Fault -ceq 'unknown-assembly' -and $selected.id -ceq $feature) { $files += @{ path = 'Runtime/Hidden.asmdef' } }
+            if ($Fault -ceq 'unowned-source' -and $selected.id -ceq $feature) { $files += @{ path = 'Outside/Hidden.cs' } }
+            if ($Fault -ceq 'empty-adapter' -and $selected.id -ceq $feature) { $files = @($files | Where-Object path -CNE 'Runtime/Integration/YLFramework.FixtureAdapter.cs') }
+            @{ name = $selected.id; version = '0.1.0-preview.1'; files = $files }
+        })
+        $json = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $fixtureCatalog -Depth 30))
+        $inputs = [Newtonsoft.Json.Linq.JArray]::Parse((ConvertTo-Json -InputObject @($packages) -Depth 30))
+        return ,([YLFramework.Testing.PackageCatalogContract]::Plan($json, $inputs, 'Package', $null))
+    }
+    foreach ($combination in @(@{ feature = $false; backend = $false }, @{ feature = $true; backend = $false },
+        @{ feature = $false; backend = $true }, @{ feature = $true; backend = $true })) {
+        Case "Compiled conditional plan: feature=$($combination.feature), backend=$($combination.backend)" {
+            $ids = @('com.kano.ylframework'); if ($combination.feature) { $ids += $feature }; if ($combination.backend) { $ids += $backend }
+            $plan = Planned $ids
+            $adapters = @($plan | Where-Object { [string]$_['name'] -ceq 'YLFramework.FixtureAdapter' })
+            Check ($adapters.Count -eq [int]$combination.feature) 'The adapter payload owner does not follow feature installation.'
+            if ($combination.feature) {
+                Check ([bool]$adapters[0]['enabled'].Value -eq $combination.backend) 'Compiled expectation was inferred from the actual graph, not explicit package presence.'
+                Check (@($adapters[0]['sources']).Count -eq 1) 'Disabled adapter sources disappeared from the complete payload.'
+                $owner = @($plan | Where-Object { [string]$_['name'] -ceq 'YLFramework.FixtureFeature' })[0]
+                Check ((@($owner['sources'] | ForEach-Object { $_.ToString() }) -join ',') -ceq 'Runtime/YLFramework.FixtureFeature.cs') 'The conditional subtree contaminated its parent Runtime source set.'
+            }
+        }
+    }
+    foreach ($fault in @('unknown-assembly', 'unowned-source', 'empty-adapter')) {
+        Case "Compiled ownership refuses $fault, including when the adapter is disabled" {
+            Reject { Planned @('com.kano.ylframework', $feature) $fault } 'assembly|source|payload|owner'
+        }
+    }
+    if ($failures.Count) { throw "Package catalog contracts failed ($($failures.Count)/$checks):`n$($failures -join "`n")" }
+    "PASS: $checks package catalog NoUnity contracts. Not Unity compilation, installation or Player acceptance."
+} finally {
+    if ($failures.Count -eq 0) { $null = @(Get-YLTestTreeFiles $root); [IO.Directory]::Delete($root, $true) }
+    else { "Failed contract evidence retained: $root" }
+}

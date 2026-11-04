@@ -59,7 +59,7 @@ Runtime 不要求安装 MiniExcel。需要 xlsx 时显式安装 `com.kano.ylfram
 - `ExcelAuthoring` / `ExcelImportPlan` 先产生 `Errors/Changes/CanCommit` 预览，再显式 `Commit(true)`；取消不写入，过期输入或引用失效拒绝提交或按合同回滚。
 - 支持 SO / List / JSON 的导出与导入预览；保留 `boolean → Bool`、`int64 → Long` 字段合同。
 - SO 根的 Project 右键菜单为 `Assets/YLFramework/Excel/`，这是菜单名，不是安装或输出目录。工作簿绝对路径按资产 GUID 保存于 EditorPrefs，不写入资产；只有文件存在时才启用打开目录操作。工作簿与生成配置属于使用工程，升级/卸载包不覆盖或删除它们。
-- 领域工作表列名是独立协议。自有模型通过唯一的 `FormerlySerializedAs` 旧名映射维持已有表头，如 `buff_id/skill_name/equipment_name`；外部模型使用自身字段规则。未知列、重复列和 ID 校验保持严格。
+- 领域工作表列名是独立协议，用主包的 `[ExcelColumnName("已有列名")]` 显式维持 `buff_id/skill_name/equipment_name` 等表头，跨程序集同样生效；未标记字段使用 `field.Name`。`FormerlySerializedAs` 只负责 Unity 字段迁移，不再根据它、namespace 或程序集猜 Excel 列名。未知列、重复列和 ID 校验保持严格。
 - `ExcelImportPlan.AddValidation` 是预览与提交前的只读约束，不用于提交后修补数据。
 
 改名或升级时，用真实旧资产及工作簿验证字段、引用和往返结果，不以 GUID 未变或预览成功代替实际提交验证。

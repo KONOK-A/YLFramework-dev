@@ -122,6 +122,7 @@
       ],
       "editTests": [
         "Assets/Tests/YLFramework/EditMode/Foundation",
+        "Assets/Tests/YLFramework/EditMode/Utilities/Excel/ExcelFieldContractTests.cs",
         "Assets/Tests/YLFramework/EditMode/Editor/Foundation"
       ],
       "playTests": [
@@ -142,6 +143,7 @@
     },
     {
       "name": "Core",
+      "shortHostKey": true,
       "sortingLayer": "YL.Testing.Core",
       "category": "",
       "assemblies": [
@@ -206,7 +208,7 @@
       ],
       "specialCategory": "YL.Special.Session",
       "disableDomainReload": true,
-      "description": "Real Skill/Buff/Mission/Reddot/Logging pure contracts; Mono execution is not Unity lifecycle acceptance.",
+      "description": "Skill/Buff/Mission/Equipment/Reddot/Logging contracts and real lifecycle modes; offline execution is not Unity acceptance.",
       "suites": [
         "Quick",
         "Daily",
@@ -233,6 +235,7 @@
         "Assets/Tests/YLFramework/EditMode/Systems/Skill",
         "Assets/Tests/YLFramework/EditMode/Systems/Buff",
         "Assets/Tests/YLFramework/EditMode/Systems/Mission",
+        "Assets/Tests/YLFramework/EditMode/Systems/Equipment",
         "Assets/Tests/YLFramework/EditMode/Systems/Reddot",
         "Assets/Tests/YLFramework/EditMode/Systems/Logging"
       ],
@@ -240,6 +243,7 @@
         "Assets/Tests/YLFramework/PlayMode/Systems/Skill",
         "Assets/Tests/YLFramework/PlayMode/Systems/Buff",
         "Assets/Tests/YLFramework/PlayMode/Systems/Mission",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Equipment",
         "Assets/Tests/YLFramework/PlayMode/Systems/Reddot",
         "Assets/Tests/YLFramework/PlayMode/Systems/Logging",
         "Assets/Tests/YLFramework/PlayMode/Systems/Domain"
@@ -461,6 +465,122 @@
         "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
         "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
         "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework",
+        "com.kano.ylframework.excel"
+      ],
+      "sampleInputs": []
+    },
+    {
+      "name": "DomainExcel",
+      "category": "",
+      "assemblies": [
+        "YLFramework.Domain.Excel.Tests"
+      ],
+      "modes": [
+        "EditMode"
+      ],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "sortingLayer": "",
+      "shortHostKey": true,
+      "excludedCategories": [],
+      "specialCategory": "",
+      "description": "Execute the current DomainExcel NUnit authoring contracts, not only its compilation probe; replaced explicitly by the future Excel/Gameplay combination.",
+      "suites": [
+        "Daily"
+      ],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
+      "nativeSources": [],
+      "editTests": [
+        "Assets/Tests/YLFramework/Integrations/DomainExcel/EditMode"
+      ],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "Assets/Tests/YLFramework/Integrations/DomainExcel/EditMode/YLFramework.Domain.Excel.Tests.asmdef"
+      ],
+      "packageInputs": [
+        "com.kano.ylframework",
+        "com.kano.ylframework.excel",
+        "com.kano.ylframework.domain-excel"
+      ],
+      "sampleInputs": []
+    },
+    {
+      "name": "LoggingOnly",
+      "nativeFixtureInputs": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"
+      ],
+      "category": "",
+      "assemblies": [
+        "YLFramework.LoggingOnly.Tests.EditMode"
+      ],
+      "modes": [
+        "EditMode"
+      ],
+      "nativeLayout": "Slice",
+      "graphics": true,
+      "sortingLayer": "",
+      "shortHostKey": true,
+      "excludedCategories": [],
+      "specialCategory": "YL.Special.LoggingOnly",
+      "description": "Runtime-only Logger and SingletonSessionState source-slice lifecycle contract with no domain or Gameplay Editor assembly; not formal UPM package isolation.",
+      "suites": [
+        "Special"
+      ],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime/Foundation/Singleton/Internal/SingletonSessionState.cs",
+        "PackageSources/com.kano.ylframework/Runtime/Systems/Logging"
+      ],
+      "nativeSources": [],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Editor/LoggingOnly"
+      ],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Editor/LoggingOnly/YLFramework.LoggingOnly.Tests.EditMode.asmdef"
+      ],
+      "packageInputs": [],
+      "sampleInputs": []
+    },
+    {
+      "name": "MigrationFixtures",
+      "category": "",
+      "assemblies": [
+        "YLFramework.MigrationFixtures.Tests.EditMode"
+      ],
+      "modes": [
+        "EditMode"
+      ],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "sortingLayer": "",
+      "shortHostKey": true,
+      "excludedCategories": [],
+      "specialCategory": "YL.Special.MigrationFixtures",
+      "description": "Explicit fresh owned host producer for pre-assembly-split Unity assets, formal XLSX exports and a genuine Resource publication. Never overwrites captured input.",
+      "suites": [
+        "Special"
+      ],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework/Runtime"
+      ],
+      "nativeSources": [],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures"
+      ],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/YLFramework.MigrationFixtures.Tests.EditMode.asmdef"
       ],
       "packageInputs": [
         "com.kano.ylframework",

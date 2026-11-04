@@ -506,7 +506,7 @@ try {
             $fixtureRoot = Join-Path $sandbox ('DistributionSdk-' + [Guid]::NewGuid().ToString('N'))
             $repository = Join-Path $fixtureRoot 'Repository'
             $null = [IO.Directory]::CreateDirectory($repository)
-            foreach ($relative in @('Tools/Testing/DistributionEntry.cs', 'Tools/Testing/PlayerSmoke.cs', 'Tools/Testing/HybridCLREntry.cs',
+            foreach ($relative in @('Tools/Testing/DistributionEntry.cs', 'Tools/Testing/PackageCatalogContract.cs', 'Tools/Packaging/PackageCatalog.json', 'Tools/Testing/PlayerSmoke.cs', 'Tools/Testing/HybridCLREntry.cs',
                 'Tools/Testing/HybridCLRSmoke.cs', 'Tools/Testing/UnityHost.ps1', 'Tools/Testing/TestSuites.json',
                 'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1',
                 'Tools/Testing/Tests/Test-YLDistribution.ps1', 'Packages/manifest.json', 'Packages/packages-lock.json',

@@ -16,7 +16,7 @@ namespace YLFramework.Skill
 
         /// <summary>编辑器分配新技能 ID 时的下界，实际新 ID 还会超过当前配表的最大 ID。</summary>
         [HideInInspector]
-        [FormerlySerializedAs("start_id")] public int startId = 0;
+        [FormerlySerializedAs("start_id"), global::YLFramework.Excel.ExcelColumnName("start_id")] public int startId = 0;
 
         /// <summary>配表显示名称，不替代管理器登记时使用的资产名称。</summary>
         [Header("显示名称")]
@@ -28,7 +28,7 @@ namespace YLFramework.Skill
 
         /// <summary>编辑器限制可创建数据类型的脚本 GUID；为空时使用 SkillConfigData。</summary>
         [HideInInspector]
-        [FormerlySerializedAs("type_script_guid")] public string typeScriptGuid;
+        [FormerlySerializedAs("type_script_guid"), global::YLFramework.Excel.ExcelColumnName("type_script_guid")] public string typeScriptGuid;
 
         private Dictionary<int, SkillConfigData> _skillsDic = new Dictionary<int, SkillConfigData>();
 

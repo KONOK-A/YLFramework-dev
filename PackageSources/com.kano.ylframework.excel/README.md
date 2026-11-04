@@ -32,5 +32,19 @@ The [license](Editor/Licenses/MiniExcel-LICENSE.txt),
 The assembly remains `YLFramework.Excel.Editor`. Runtime field attributes remain
 part of `YLFramework.Runtime`. Generated configurations belong to the consuming
 project, never to this installed package.
+
+Use the lightweight `YLFramework.Excel.ExcelColumnNameAttribute` from the main
+package when a CLR field must keep an existing workbook column across renames
+or assembly moves:
+
+```csharp
+[ExcelColumnName("existing_column")]
+public string renamedField;
+```
+
+The backend uses this exact name or, when unmarked, `field.Name`. Unity's
+`FormerlySerializedAs` remains a Unity serialization contract, not an implicit
+Excel alias. Column names are not inferred from namespaces or assembly names.
+
 Package upgrades and removal do not overwrite/delete existing assets, workbook
 files or workbook selections. Maintained by Kano; original copyrights are retained.

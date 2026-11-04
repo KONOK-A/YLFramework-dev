@@ -66,7 +66,7 @@ namespace YLFramework.Testing
                         .Concat(runtime.compiledAssemblyReferences.Select(Path.GetFileName)).ToArray();
                     RejectReferences(references);
                     var main = packages.Cast<JObject>().Single(package => Text(package, "name") == "com.kano.ylframework");
-                    var requiredAssemblies = CaptureMainAssemblies(request, main, editor, player);
+                    var requiredAssemblies = CaptureCatalogAssemblies(request, packages, editor, player);
                     foreach (var package in packages.Cast<JObject>())
                     {
                         var root = Text(package, "resolvedPath");
@@ -208,60 +208,88 @@ namespace YLFramework.Testing
             }
         }
 
-        private static JArray CaptureMainAssemblies(JObject request, JObject main, Assembly[] editor, Assembly[] player)
+        private static JArray CaptureCatalogAssemblies(JObject request, JArray packages, Assembly[] editor, Assembly[] player)
         {
-            string root = Path.GetFullPath(Text(main, "resolvedPath"));
-            string assetRoot = Text(main, "assetPath") + "/";
-            var expected = ((JArray)request["packages"]).Cast<JObject>().Single(package => Text(package, "name") == "com.kano.ylframework");
-            var installedFiles = PackageFiles(root).Select(path => path.Substring(root.Length + 1).Replace('\\', '/')).ToArray();
-            // Existing File/Git v2 requests bind the installed inventory by digest/SHA without a files array.
-            var files = expected["files"] is JArray frozen ? frozen.Cast<JObject>().Select(file => Text(file, "path")).ToArray() :
-                installedFiles;
+            var selected = packages.Cast<JObject>().ToDictionary(package => Text(package, "name"), StringComparer.Ordinal);
+            var inventories = new JArray();
+            foreach (var package in selected.Values)
+            {
+                string root = Path.GetFullPath(Text(package, "resolvedPath"));
+                var files = PackageFiles(root).Select(path => path.Substring(root.Length + 1).Replace('\\', '/')).ToArray();
+                var expected = ((JArray)request["packages"]).Cast<JObject>().Single(row => Text(row, "name") == Text(package, "name"));
+                if (expected["files"] is JArray frozen && (frozen.Count != files.Length ||
+                    !new HashSet<string>(frozen.Cast<JObject>().Select(file => Text(file, "path")), StringComparer.Ordinal).SetEquals(files)))
+                {
+                    throw new InvalidOperationException("The frozen and complete installed package inventories differ.");
+                }
+                inventories.Add(new JObject { ["name"] = Text(package, "name"), ["version"] = Text(package, "version"),
+                    ["files"] = new JArray(files.Select(path => new JObject { ["path"] = path })) });
+            }
+            var plan = PackageCatalogContract.Plan(Catalog(request), inventories, (bool)request["hybridCLR"] ? "HybridCLR" : "Package", null);
+            PackageCatalogContract.AssertGraph(plan, editor.Select(row => row.name), player.Select(row => row.name));
             string Physical(string source)
             {
                 string normalized = source.Replace('\\', '/');
-                return Path.GetFullPath(normalized.StartsWith(assetRoot, StringComparison.Ordinal) ? Path.Combine(root, normalized.Substring(assetRoot.Length)) :
-                    Path.IsPathRooted(source) ? source : Path.Combine(Project(), source));
-            }
-            string[] Sources(Assembly assembly, string directory)
-            {
-                var expectedPaths = files.Where(path => path.StartsWith(directory + "/", StringComparison.Ordinal) && path.EndsWith(".cs", StringComparison.Ordinal))
-                    .Select(path => Path.GetFullPath(Path.Combine(root, path))).ToArray();
-                var expectedSet = new HashSet<string>(expectedPaths, StringComparer.OrdinalIgnoreCase);
-                var installedSources = installedFiles.Where(path => path.StartsWith(directory + "/", StringComparison.Ordinal) && path.EndsWith(".cs", StringComparison.Ordinal))
-                    .Select(path => Path.GetFullPath(Path.Combine(root, path))).ToArray();
-                var actual = assembly.sourceFiles.Select(Physical).ToArray();
-                if (expectedPaths.Length == 0 || expectedSet.Count != expectedPaths.Length || !expectedSet.SetEquals(installedSources) || actual.Length != expectedPaths.Length || !expectedSet.SetEquals(actual) ||
-                    actual.Any(path => !Inside(path, Path.Combine(root, directory)) || !File.Exists(path)))
+                foreach (var package in selected.Values)
                 {
-                    throw new InvalidOperationException("A required main assembly lost, duplicated or changed its complete installed source set: " + assembly.name +
-                        "; expected=" + expectedPaths.Length + "; installed=" + installedSources.Length + "; actual=" + actual.Length +
+                    string prefix = Text(package, "assetPath") + "/";
+                    if (normalized.StartsWith(prefix, StringComparison.Ordinal)) { return Path.GetFullPath(Path.Combine(Text(package, "resolvedPath"), normalized.Substring(prefix.Length))); }
+                }
+                return Path.GetFullPath(Path.IsPathRooted(source) ? source : Path.Combine(Project(), source));
+            }
+            var owners = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in plan.Cast<JObject>())
+            {
+                string root = Text(selected[Text(row, "package")], "resolvedPath");
+                foreach (string source in ((JArray)row["sources"]).Values<string>()) { owners.Add(Path.GetFullPath(Path.Combine(root, source)), row); }
+            }
+            foreach (var assembly in editor.Concat(player))
+            {
+                foreach (string source in assembly.sourceFiles)
+                {
+                    if (owners.TryGetValue(Physical(source), out var owner) && (!(bool)owner["enabled"] || Text(owner, "name") != assembly.name))
+                    {
+                        throw new InvalidOperationException("A disabled or differently owned package source entered the graph: " + source);
+                    }
+                }
+            }
+            string[] Sources(Assembly assembly, JObject row)
+            {
+                string root = Text(selected[Text(row, "package")], "resolvedPath");
+                var expectedPaths = ((JArray)row["sources"]).Values<string>().Select(path => Path.GetFullPath(Path.Combine(root, path))).ToArray();
+                var expectedSet = new HashSet<string>(expectedPaths, StringComparer.OrdinalIgnoreCase);
+                var actual = assembly.sourceFiles.Select(Physical).ToArray();
+                if (expectedPaths.Length == 0 || expectedSet.Count != expectedPaths.Length || actual.Length != expectedPaths.Length || !expectedSet.SetEquals(actual) ||
+                    actual.Any(path => !Inside(path, Path.Combine(root, Text(row, "directory"))) || !File.Exists(path)))
+                {
+                    throw new InvalidOperationException("A required catalog assembly lost, duplicated or changed its complete installed source set: " + assembly.name +
+                        "; expected=" + expectedPaths.Length + "; actual=" + actual.Length +
                         "; missing=" + string.Join(",", expectedSet.Except(actual, StringComparer.OrdinalIgnoreCase)) +
                         "; extra=" + string.Join(",", actual.Except(expectedSet, StringComparer.OrdinalIgnoreCase)));
                 }
                 return actual;
             }
-            if (player.Any(assembly => assembly.name == "YLFramework.Editor" || assembly.sourceFiles.Any(source => Inside(Physical(source), Path.Combine(root, "Editor")))))
+            if (player.Any(assembly => assembly.sourceFiles.Any(source => owners.TryGetValue(Physical(source), out var owner) && !(bool)owner["player"])))
             {
-                throw new InvalidOperationException("The main Editor assembly or its installed sources entered the Player graph.");
+                throw new InvalidOperationException("A catalog Editor assembly source entered the Player graph.");
             }
             var result = new JArray();
-            foreach (string directory in new[] { "Runtime", "Editor" })
+            foreach (var row in plan.Cast<JObject>().Where(row => (bool)row["enabled"]))
             {
-                string name = "YLFramework." + directory;
+                string name = Text(row, "name");
                 var assembly = editor.Single(item => item.name == name);
-                var sources = Sources(assembly, directory);
-                var playerAssembly = directory == "Runtime" ? player.Single(item => item.name == name) : null;
-                var playerSources = playerAssembly == null ? Array.Empty<string>() : Sources(playerAssembly, directory);
+                var sources = Sources(assembly, row);
+                var playerAssembly = (bool)row["player"] ? player.Single(item => item.name == name) : null;
+                var playerSources = playerAssembly == null ? Array.Empty<string>() : Sources(playerAssembly, row);
                 var loaded = AppDomain.CurrentDomain.GetAssemblies().SingleOrDefault(item => item.GetName().Name == name);
                 string output = Path.Combine(Project(), "Library", "ScriptAssemblies", name + ".dll");
                 if (!File.Exists(assembly.outputPath) || !string.Equals(Path.GetFullPath(assembly.outputPath), output, StringComparison.OrdinalIgnoreCase) ||
                     loaded == null || loaded.IsDynamic || !string.Equals(Path.GetFullPath(loaded.Location), output, StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new InvalidOperationException("The required main assembly is not actually loaded from its compiled host output: " + name);
+                    throw new InvalidOperationException("The required catalog assembly is not actually loaded from its compiled host output: " + name);
                 }
                 int loadedTypeCount = loaded.GetTypes().Length;
-                if (loadedTypeCount == 0) { throw new InvalidOperationException("The required main assembly has no loaded types: " + name); }
+                if (loadedTypeCount == 0) { throw new InvalidOperationException("The required catalog assembly has no loaded types: " + name); }
                 result.Add(JObject.FromObject(new { name, assembly.sourceFiles, resolvedSources = sources, assembly.outputPath, loadedPath = loaded.Location, loadedTypeCount,
                     playerSourceFiles = playerAssembly?.sourceFiles ?? Array.Empty<string>(), playerResolvedSources = playerSources }));
             }
@@ -411,6 +439,11 @@ namespace YLFramework.Testing
             }
             RejectLinks(output);
             RejectLinks(project);
+            var catalog = Catalog(request);
+            var known = new HashSet<string>(((JArray)catalog["packages"]).Cast<JObject>().Select(package => Text(package, "id")), StringComparer.Ordinal);
+            var names = ((JArray)request["packages"]).Cast<JObject>().Select(package => Text(package, "name")).ToArray();
+            if (!known.Contains(Text(request, "entryPackage")) || !names.Contains(Text(request, "entryPackage")) || names.Any(name => !known.Contains(name)) ||
+                names.Distinct(StringComparer.Ordinal).Count() != names.Length) { throw new InvalidOperationException("Unknown/duplicate package catalog selection."); }
             if (Artifact(request))
             {
                 var cache = Path.GetFullPath(Text(request, "cacheRoot"));
@@ -538,7 +571,7 @@ namespace YLFramework.Testing
 
         private static JArray CapturePackages(JObject request)
         {
-            if (Artifact(request)) { return CaptureArtifactPackages(request); }
+            if (Artifact(request)) { return ValidateInstalledCatalog(request, CaptureArtifactPackages(request)); }
             var all = PackageInfo.GetAllRegisteredPackages();
             var selected = (JArray)request["packages"];
             var names = selected.Cast<JObject>().Select(package => Text(package, "name")).ToArray();
@@ -553,8 +586,8 @@ namespace YLFramework.Testing
             foreach (var expected in selected.Cast<JObject>())
             {
                 var name = Text(expected, "name");
-                if (!new[] { "com.kano.ylframework", "com.kano.ylframework.dotween", "com.kano.ylframework.excel", "com.kano.ylframework.domain-excel", "com.kano.ylframework.hybridclr" }.Contains(name) ||
-                    Text(expected, "version") != "0.1.0-preview.1")
+                if (!((JArray)Catalog(request)["packages"]).Cast<JObject>().Any(package => Text(package, "id") == name) ||
+                    !Regex.IsMatch(Text(expected, "version"), @"\A\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\z"))
                 {
                     throw new InvalidOperationException("Unknown distribution package identity.");
                 }
@@ -623,7 +656,20 @@ namespace YLFramework.Testing
                 var row = PackageRow(package); row["resolvedPath"] = root; row["contentSha256"] = digest; row["revision"] = resolvedRevision;
                 result.Add(row);
             }
-            return result;
+            return ValidateInstalledCatalog(request, result);
+        }
+
+        private static JObject Catalog(JObject request) => PackageCatalogContract.Load(request, Project(), ReadJson);
+
+        private static JArray ValidateInstalledCatalog(JObject request, JArray packages)
+        {
+            var manifests = new JObject();
+            foreach (var package in packages.Cast<JObject>())
+            {
+                manifests.Add(Text(package, "name"), ReadJson(Path.Combine(Text(package, "resolvedPath"), "package.json")));
+            }
+            PackageCatalogContract.AssertClosure(Catalog(request), manifests, new[] { Text(request, "entryPackage") });
+            return packages;
         }
 
         private static JObject Dependencies(PackageInfo package)
@@ -714,7 +760,6 @@ namespace YLFramework.Testing
             foreach (var token in (JArray)request["packages"])
             {
                 if (token is not JObject package || !names.Add(Text(package, "name")) ||
-                    !new[] { "com.kano.ylframework", "com.kano.ylframework.excel", "com.kano.ylframework.domain-excel", "com.kano.ylframework.dotween", "com.kano.ylframework.hybridclr" }.Contains(Text(package, "name")) ||
                     package["root"]?.Type != JTokenType.Null || !Regex.IsMatch(Text(package, "contentSha256"), @"\A[0-9a-fA-F]{64}\z") ||
                     package["dependencies"] is not JObject dependencies || dependencies.Properties().Any(property => property.Value.Type != JTokenType.String || string.IsNullOrWhiteSpace((string)property.Value)) ||
                     package["files"] is not JArray files || files.Count == 0 || (registry && Text(package, "version") != Text(request, "registryVersion")))
@@ -876,7 +921,7 @@ namespace YLFramework.Testing
                 capturedUtc = DateTime.UtcNow.ToString("o"),
                 pid = System.Diagnostics.Process.GetCurrentProcess().Id,
                 packageOrigin = Text(request, "packageOrigin"),
-                entryPackage = (string)request["entryPackage"], registryUrl = (string)request["registryUrl"], registryVersion = (string)request["registryVersion"],
+                entryPackage = Text(request, "entryPackage"), inputHash = Text(request, "inputHash"), catalogSha256 = Text(request, "catalogSha256"), registryUrl = (string)request["registryUrl"], registryVersion = (string)request["registryVersion"],
                 releaseManifestSha256 = (string)request["releaseManifestSha256"],
                 cacheEnvironment = Artifact(request) ? CacheEnvironment() : null,
                 observationsUnavailable,
