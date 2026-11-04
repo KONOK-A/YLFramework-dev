@@ -99,6 +99,14 @@
         "com.unity.modules.unitywebrequest": "1.0.0"
       }
     },
+    "com.kano.ylframework.data-assets": {
+      "version": "file:../PackageSources/com.kano.ylframework.data-assets",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.kano.ylframework": "0.1.0-preview.1"
+      }
+    },
     "com.kano.ylframework.dotween": {
       "version": "file:../PackageSources/com.kano.ylframework.dotween",
       "depth": 0,
@@ -113,6 +121,7 @@
       "source": "local",
       "dependencies": {
         "com.kano.ylframework": "0.1.0-preview.1",
+        "com.kano.ylframework.data-assets": "0.1.0-preview.1",
         "com.unity.nuget.newtonsoft-json": "3.2.1"
       }
     },

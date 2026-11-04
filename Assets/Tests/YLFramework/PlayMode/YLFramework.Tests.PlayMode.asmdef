@@ -3,6 +3,7 @@
   "rootNamespace": "YLFramework.Tests",
   "references": [
     "YLFramework.Runtime",
+    "YLFramework.DataAssets",
     "UnityEngine.UI",
     "UnityEngine.TestRunner",
     "YLFramework.Tests.Fixtures"

@@ -3,8 +3,8 @@
     "includedInMainPackage": false,
     "packageId": "com.kano.ylframework.excel",
     "version": "0.1.0-preview.1",
-    "requiredPackages": ["com.kano.ylframework"],
-    "gitInstallation": "Explicitly declare the main and Excel Git URLs at the same full validated SHA in the consuming project manifest; UPM resolves the Newtonsoft.Json registry dependency.",
+    "requiredPackages": ["com.kano.ylframework", "com.kano.ylframework.data-assets"],
+    "gitInstallation": "Explicitly declare the main, DataAssets and Excel Git URLs at the same full validated SHA in the consuming project manifest; UPM resolves the Newtonsoft.Json registry dependency.",
     "pathBase": "Paths to local notices are relative to this Dependencies.json. adaptedSource.upstreamFile names historical upstream input, not a file in this package.",
     "backend": {
         "name": "MiniExcel",

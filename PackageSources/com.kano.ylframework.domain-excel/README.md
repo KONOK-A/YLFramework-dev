@@ -2,15 +2,16 @@
 
 Editor-only package `com.kano.ylframework.domain-excel`, version
 `0.1.0-preview.1`. It reuses `com.kano.ylframework.excel`; no second MiniExcel
-backend is copied here. Git consumers must explicitly declare the main, Excel
-and Domain Excel packages at the same validated revision.
+backend is copied here. Git consumers must explicitly declare the main,
+DataAssets (`com.kano.ylframework.data-assets`), Excel and Domain Excel packages
+at the same validated revision.
 
 For the intended OpenUPM release channel, declare only
 `"com.kano.ylframework.domain-excel": "0.1.0-preview.1"` with the
-`com.kano.ylframework` scope at `https://package.openupm.com`. The main and Excel
+`com.kano.ylframework` scope at `https://package.openupm.com`. The main, DataAssets and Excel
 packages are automatic dependencies. See the [Registry configuration](../com.kano.ylframework/README.md#registry-installation);
 use it only after the frozen Release and acceptance handoff confirm availability.
-This preview is not claimed published. The three explicit Git entries below
+This preview is not claimed published. The four explicit Git entries below
 remain necessary for the fallback Git route.
 
 Domain Excel URL format (`<full-commit-sha>` is notation, not a usable revision):
@@ -19,7 +20,7 @@ Domain Excel URL format (`<full-commit-sha>` is notation, not a usable revision)
 https://github.com/KONOK-A/YLFramework-dev.git?path=/PackageSources/com.kano.ylframework.domain-excel#<full-commit-sha>
 ```
 
-Use the actual full SHA and the three-package manifest closure supplied by the
+Use the actual full SHA and the four-package manifest closure supplied by the
 acceptance handoff. Package-level SemVer dependencies do not fetch sibling Git
 packages. See the [installation guide](../com.kano.ylframework/Documentation~/README.md#git-url-与依赖闭包).
 

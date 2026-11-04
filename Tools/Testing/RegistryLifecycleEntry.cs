@@ -243,9 +243,15 @@ namespace YLFramework.Testing
             if (Number(release, "schemaVersion") != 1) throw new InvalidOperationException("Invalid frozen release schema.");
             Pattern(Text(release, "sourceCommit"), "^[0-9a-f]{40}$");
             var entryId = Text(request, "entryPackage");
-            var known = new[] { "com.kano.ylframework", "com.kano.ylframework.domain-excel", "com.kano.ylframework.dotween", "com.kano.ylframework.excel", "com.kano.ylframework.hybridclr" };
+            var catalogPath = Child(host, "YLTesting/PackageCatalog.json");
+            var catalog = Read(catalogPath);
+            if (catalog.Count != 2 || Number(catalog, "schemaVersion") != 1) throw new InvalidOperationException("Invalid owned package catalog schema.");
+            var known = Array(catalog, "packages").Select(Object).Select(package => Text(package, "id")).ToArray();
+            foreach (var id in known) Pattern(id, "^com\\.kano\\.ylframework(?:\\.[a-z0-9]+(?:-[a-z0-9]+)*)?$");
+            if (known.Length == 0 || known.Distinct(StringComparer.Ordinal).Count() != known.Length || !known.Contains("com.kano.ylframework"))
+                throw new InvalidOperationException("Invalid/duplicate owned package catalog identities.");
             var released = Array(release, "packages").Select(Object).ToArray();
-            if (released.Length != 5 || !new HashSet<string>(released.Select(p => Text(p, "id")), StringComparer.Ordinal).SetEquals(known) || !known.Contains(entryId))
+            if (released.Length != known.Length || !new HashSet<string>(released.Select(p => Text(p, "id")), StringComparer.Ordinal).SetEquals(known) || !known.Contains(entryId))
                 throw new InvalidOperationException("Incomplete frozen release/entry identity.");
             var entry = released.Single(p => Text(p, "id") == entryId);
             var original = Read(Text(request, "originalManifest"));
@@ -263,6 +269,9 @@ namespace YLFramework.Testing
             var inputs = Read(inputPath);
             if (Number(inputs, "schemaVersion") != 1 || Text(inputs, "purpose") != "YLTesting.HostInputs" || Text(inputs, "hostId") != Text(request, "hostId") || Text(inputs, "inputHash") != Text(request, "inputHash"))
                 throw new InvalidOperationException("Invalid host input identity/owner.");
+            if (Array(inputs, "files").Select(Object).Count(item => Text(item, "path") == "YLTesting/PackageCatalog.json" &&
+                string.Equals(Text(item, "sha256"), Hash(catalogPath), StringComparison.OrdinalIgnoreCase)) != 1)
+                throw new InvalidOperationException("The package catalog is not bound to the immutable host input receipt.");
             var context = new Context { request = request, arguments = arguments, sha256 = Hash(requestPath), entryVersion = Text(entry, "version"), original = original };
             var savedState = SafePath(Path.Combine(output, "operation.json"));
             if (resume && phase == "Remove") ReadOperation(context);

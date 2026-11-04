@@ -4,6 +4,8 @@
   "references": [
     "YLFramework.Runtime",
     "YLFramework.Editor",
+    "YLFramework.DataAssets",
+    "YLFramework.DataAssets.Editor",
     "YLFramework.Tests.Data.Probes",
     "YLFramework.Tests.Domain.Probes",
     "UnityEngine.UI",

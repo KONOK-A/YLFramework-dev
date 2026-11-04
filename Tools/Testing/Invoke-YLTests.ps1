@@ -108,7 +108,7 @@ function Get-SelectedSources([switch] $Native, [object] $EditorProfile) {
         elseif (-not $relative.StartsWith('PackageSources/', [StringComparison]::Ordinal)) { throw "Missing participating asset metadata: $meta" }
     }
     foreach ($relative in @('Tools/Testing/TestSuites.json', 'Tools/Testing/Invoke-YLTests.ps1',
-        'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/Common/Packages.ps1')) { $null = $inputs.Add($relative) }
+        'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/Common/Packages.ps1', 'Tools/Packaging/PackageCatalog.json')) { $null = $inputs.Add($relative) }
     if ($Native) {
         $null = $inputs.Add('Tools/Testing/UnityHost.ps1')
         if ($definition.nativeLayout -ceq 'Framework') {

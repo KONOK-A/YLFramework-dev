@@ -24,13 +24,9 @@ $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $rootPrefix = $root.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 $sdkDirectory = Join-Path $root 'Tools/YLFramework.Analyzers'
 $comparison = [StringComparison]::OrdinalIgnoreCase
-$packageRoots = @(
-    'PackageSources/com.kano.ylframework',
-    'PackageSources/com.kano.ylframework.dotween',
-    'PackageSources/com.kano.ylframework.excel',
-    'PackageSources/com.kano.ylframework.domain-excel',
-    'PackageSources/com.kano.ylframework.hybridclr'
-)
+. (Join-Path $root 'Tools/Testing/Common/Packages.ps1')
+$catalog = Read-YLPackageCatalog -Path (Join-Path $root 'Tools/Packaging/PackageCatalog.json')
+$packageRoots = @($catalog['packages'] | ForEach-Object { 'PackageSources/' + $_['id'] })
 $allowedRoots = @($packageRoots | ForEach-Object { "$_/Runtime"; "$_/Editor"; "$_/Samples~" }) + @(
     'Assets/Tests/YLFramework',
     'Assets/Editor/YLFrameworkDev',

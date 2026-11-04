@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.DataAssets.Editor",
+    "rootNamespace": "YLFramework.Editor.DataAssets",
+    "references": ["YLFramework.DataAssets", "YLFramework.Editor"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

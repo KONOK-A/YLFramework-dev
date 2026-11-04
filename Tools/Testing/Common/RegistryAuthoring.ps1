@@ -13,7 +13,7 @@ function Read-YLRegistryAuthoringReceipt {
         $receipt['hostId'] -cne $HostRecord.id -or $receipt['inputHash'] -cne $Request.inputHash -or
         $receipt['workspaceId'] -cne $Request.workspaceId -or $receipt['resultId'] -cne $Request.resultId -or
         $receipt['entryPackage'] -cne $Request.entryPackage -or $receipt['packageOrigin'] -cne $Request.packageOrigin -or
-        $receipt['releaseManifestSha256'] -cne $Request.releaseManifestSha256 -or $receipt['files'] -isnot [array] -or
+        $receipt['releaseManifestSha256'] -cne $Request.releaseManifestSha256 -or $receipt['catalogSha256'] -cne $Request.catalogSha256 -or $receipt['files'] -isnot [array] -or
         $receipt['files'].Count -eq 0 -or $receipt['directories'] -isnot [array] -or $receipt['directories'].Count -eq 0) { throw 'Authoring receipt ownership/source/input identity is invalid.' }
     $prefix = if ($Purpose -ceq 'YLTesting.Samples') { 'Assets/Samples/' } else { $Request.assetDirectory + '/' }
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -27,11 +27,18 @@ function Read-YLRegistryAuthoringReceipt {
     }
     foreach ($directory in $receipt['directories']) {
         if ($directory['path'] -isnot [string] -or $directory['guid'] -isnot [string] -or $directory['guid'] -cnotmatch '^[0-9a-f]{32}$' -or
-            $directory['type'] -cne 'UnityEditor.DefaultAsset' -or $directory['metaSha256'] -isnot [string] -or $directory['metaSha256'] -cnotmatch '^[0-9a-f]{64}$') { throw 'Invalid authoring directory/meta evidence.' }
+            $directory['type'] -cne 'UnityEditor.DefaultAsset' -or $directory['metaSha256'] -isnot [string] -or $directory['metaSha256'] -cnotmatch '^[0-9a-f]{64}$' -or
+            -not $seen.Add($directory['path'])) { throw 'Invalid/duplicate authoring directory/meta evidence.' }
         $allowed = if ($Purpose -ceq 'YLTesting.Samples') { $directory['path'] -ceq 'Assets/Samples' -or $directory['path'].StartsWith('Assets/Samples/', [StringComparison]::Ordinal) } else { $directory['path'] -ceq 'Assets/YLFrameworkData' -or $directory['path'] -ceq $Request.assetDirectory -or $directory['path'].StartsWith($prefix, [StringComparison]::Ordinal) }
         if (-not $allowed) { throw 'Authoring directory receipt escaped its managed output boundary.' }
         $actual = Get-YLHostManagedPath $HostRecord $directory['path']
         if (-not [IO.Directory]::Exists($actual) -or (Get-FileHash -LiteralPath ($actual + '.meta') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $directory['metaSha256']) { throw 'Authoring directory/meta changed.' }
+    }
+    $guids = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+    foreach ($row in @($receipt['files']) + @($receipt['directories'])) {
+        $asset = $row['path']; if ($asset.EndsWith('.meta', [StringComparison]::Ordinal)) { $asset = $asset.Substring(0, $asset.Length - 5) }
+        if ($guids.ContainsKey($row['guid']) -and -not $guids[$row['guid']].Equals($asset, [StringComparison]::OrdinalIgnoreCase)) { throw 'Duplicate authoring GUID identifies different assets/directories.' }
+        $guids[$row['guid']] = $asset
     }
     return $receipt
 }
@@ -49,7 +56,7 @@ function Read-YLRegistryAuthoringPhase {
     }
     $report = Read-YLPackageEvidenceJson $reportPath
     foreach ($field in @('purpose', 'phase', 'requestId', 'workspaceId', 'hostId', 'cacheId', 'resultId', 'inputHash', 'entryPackage',
-        'packageOrigin', 'releaseManifestSha256', 'unityVersion', 'unityProductVersion', 'assetDirectory')) {
+        'packageOrigin', 'releaseManifestSha256', 'catalogSha256', 'unityVersion', 'unityProductVersion', 'assetDirectory')) {
         if ($report[$field] -isnot [string] -or $report[$field] -cne $Request[$field]) { throw "Authoring report identity differs: $field" }
     }
     foreach ($field in @('registryUrl', 'registryVersion', 'resolutionRegistryUrl')) {
@@ -130,11 +137,14 @@ function Invoke-YLRegistryAuthoring {
         $hostLease = Lock-YLTestDirectory -Workspace $Workspace -Path $hostRecord.path; $cacheLease = Lock-YLTestDirectory -Workspace $Workspace -Path $cache.path
         $outcome.host = $hostRecord; $outcome.cache = $cache
         Assert-YLUnityHostIdle $hostRecord
-        $identity = Get-YLTestInputIdentity -Repository $Workspace.repository -Paths @('Tools/Testing/RegistryAuthoringEntry.cs', 'Tools/Testing/Common/RegistryAuthoring.ps1',
+        $catalogPath = Join-Path $Workspace.repository 'Tools/Packaging/PackageCatalog.json'
+        $null = Read-YLPackageCatalog -Path $catalogPath
+        $identity = Get-YLTestInputIdentity -Repository $Workspace.repository -Paths @('Tools/Testing/RegistryAuthoringEntry.cs', 'Tools/Testing/PackageCatalogContract.cs', 'Tools/Testing/Common/RegistryAuthoring.ps1', 'Tools/Packaging/PackageCatalog.json',
             'Tools/Testing/Common/Packages.ps1', 'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/UnityHost.ps1') -Toolchain @($Unity) -Profile ('RegistryAuthoring-v1-' + $Editor.productVersion + '-' + $EntryPackage + '-' + $Source.packageOrigin + '-' + $release.sha256 + '-' + $token)
         $outcome.inputIdentity = $identity
         $files = [ordered]@{}
         $files['Assets/RegistryAuthoring/Editor/RegistryAuthoringEntry.cs'] = [IO.File]::ReadAllBytes((Join-Path $Workspace.repository 'Tools/Testing/RegistryAuthoringEntry.cs'))
+        $files['Assets/RegistryAuthoring/Editor/PackageCatalogContract.cs'] = [IO.File]::ReadAllBytes((Join-Path $Workspace.repository 'Tools/Testing/PackageCatalogContract.cs'))
         $asmdef = @{ name = 'RegistryAuthoring.Editor'; references = @(); includePlatforms = @('Editor'); excludePlatforms = @(); allowUnsafeCode = $false
             overrideReferences = $true; precompiledReferences = @('Newtonsoft.Json.dll'); autoReferenced = $false; defineConstraints = @(); versionDefines = @(); noEngineReferences = $false }
         $files['Assets/RegistryAuthoring/Editor/RegistryAuthoring.asmdef'] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $asmdef -Depth 8))
@@ -143,11 +153,13 @@ function Invoke-YLRegistryAuthoring {
             $files[$relative + '.meta'] = [Text.Encoding]::UTF8.GetBytes("fileFormatVersion: 2`nguid: $([Guid]::NewGuid().ToString('N'))`n" + $importer + "  userData: `n  assetBundleName: `n  assetBundleVariant: `n")
         }
         foreach ($folder in @('Assets/RegistryAuthoring', 'Assets/RegistryAuthoring/Editor')) { $files[$folder + '.meta'] = [Text.Encoding]::UTF8.GetBytes("fileFormatVersion: 2`nguid: $([Guid]::NewGuid().ToString('N'))`nfolderAsset: yes`nDefaultImporter:`n  externalObjects: {}`n  userData: `n  assetBundleName: `n  assetBundleVariant: `n") }
+        $files['YLTesting/PackageCatalog.json'] = [IO.File]::ReadAllBytes($catalogPath)
         $files['Packages/manifest.json'] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $original -Depth 10) + "`n")
         $revision = $Editor.productVersion.Split('_')[-1]
         $files['ProjectSettings/ProjectVersion.txt'] = [Text.Encoding]::UTF8.GetBytes("m_EditorVersion: $($Editor.version)`nm_EditorVersionWithRevision: $($Editor.version) ($revision)`n")
         Sync-YLUnityHost -HostRecord $hostRecord -Files $files -Identity $identity -EditorVersion $Editor.version
         $outcome.producerInputs = Read-YLPackageEvidenceJson (Join-Path $hostRecord.path '.yl-inputs.json')
+        $catalogHash = (Get-FileHash -LiteralPath (Join-Path $hostRecord.path 'YLTesting/PackageCatalog.json') -Algorithm SHA256).Hash.ToLowerInvariant()
         $before = Join-Path $outputRoot 'manifest.before.json'; [IO.File]::Copy((Join-Path $hostRecord.path 'Packages/manifest.json'), $before)
         $releasePath = Join-Path $outputRoot 'release-manifest.json'; [IO.File]::Copy($release.path, $releasePath)
         $inputReceiptHash = (Get-FileHash -LiteralPath (Join-Path $hostRecord.path '.yl-inputs.json') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -172,7 +184,7 @@ function Invoke-YLRegistryAuthoring {
                 unityExecutable = $Unity; unityVersion = $Editor.version; unityProductVersion = $Editor.productVersion
                 inputReceiptSha256 = $inputReceiptHash
                 originalManifest = $before; originalManifestSha256 = $originalManifestHash
-                releaseManifest = $releasePath; releaseManifestSha256 = $release.sha256; entryPackage = $EntryPackage
+                releaseManifest = $releasePath; releaseManifestSha256 = $release.sha256; catalogSha256 = $catalogHash; entryPackage = $EntryPackage
                 registryUrl = $sourceFields.registryUrl; registryVersion = $sourceFields.registryVersion; resolutionRegistryUrl = $Source.registryUrl
                 initialReportSha256 = $initialReportHash
                 assetDirectory = $outcome.assetDirectory; baselineDirectory = (Join-Path $hostRecord.path 'RegistryAuthoringBaseline')

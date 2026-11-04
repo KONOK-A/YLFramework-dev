@@ -247,6 +247,7 @@ try {
         Check ($minimal.summary.status -ceq 'Completed' -and $minimal.summary.integration -ceq 'Package') 'The known minimum-compilation profile was not selected.'
         Check ($minimal.state.request.packages.Count -eq 1 -and $minimal.state.request.entryPackage -ceq 'com.kano.ylframework') 'Minimum installation silently added optional packages.'
         Check (-not $minimal.state.request.ContainsKey('dotweenSdkMode')) 'PackageId accepted an implicit SDK request.'
+        Check ($minimal.state.request.resultRoot.Contains('-main-File-')) 'Result rotation must not erase another minimum entry package or origin under the same generic Package profile.'
     }
     $fixture = Invoke-ControllerFixture -RemoteRepository 'https://example.invalid/@git+product.git' -Fault locator-path
     Check ($fixture.summary.status -ceq 'Failed') 'Only the UPM git+ scheme marker may be normalized; repository path bytes must match exactly.'

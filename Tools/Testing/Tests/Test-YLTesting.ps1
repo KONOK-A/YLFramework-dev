@@ -104,6 +104,17 @@ function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minut
 
 try {
     if ($Group -in @('All', 'Workspace')) {
+        Test-Case 'Native test references follow the declared package closure without installing unrelated features' {
+            $catalog = Read-YLPackageCatalog
+            $assembly = @{ name = 'YLFramework.Tests.EditMode'; references = @('YLFramework.Runtime', 'YLFramework.DataAssets', 'YLFramework.DataAssets.Editor', 'YLFramework.Tests.Fixtures', 'UnityEngine.TestRunner') }
+            $minimal = Get-YLNativeTestAssembly -Assembly $assembly -PackageIds @('com.kano.ylframework') -Catalog $catalog
+            Assert-That (($minimal.references -join ',') -ceq 'YLFramework.Runtime,YLFramework.Tests.Fixtures,UnityEngine.TestRunner') 'A main-only test host silently acquired an optional product dependency.'
+            $data = Get-YLNativeTestAssembly -Assembly $assembly -PackageIds @('com.kano.ylframework', 'com.kano.ylframework.data-assets') -Catalog $catalog
+            Assert-That (($data.references -join ',') -ceq ($assembly.references -join ',')) 'The explicitly installed feature reference was removed.'
+            Assert-That ($assembly.references.Count -eq 5) 'Project test metadata was mutated instead of projecting the owned host input.'
+            Assert-Rejected { Get-YLNativeTestAssembly -Assembly @{ name = 'YLFramework.Runtime'; references = @('YLFramework.DataAssets') } -PackageIds @('com.kano.ylframework') -Catalog $catalog } 'test|product'
+            Assert-Rejected { Get-YLNativeTestAssembly -Assembly $assembly -PackageIds @('com.kano.ylframework.unknown') -Catalog $catalog } 'Unknown|package'
+        }
         Test-Case 'Unity test assets do not import external tool scripts' {
             $sourceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $external = @(Get-YLTestTreeFiles (Join-Path $sourceRoot 'Assets/Tests/YLFramework') | Where-Object {
@@ -364,6 +375,7 @@ try {
                 [IO.File]::Copy((Join-Path $PSScriptRoot "../$relative"), $target)
             }
             $files = [ordered]@{
+                'Tools/Packaging/PackageCatalog.json' = [IO.File]::ReadAllText([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../Packaging/PackageCatalog.json')))
                 'PackageSources/com.kano.ylframework/package.json' = '{"name":"com.kano.ylframework","version":"0.1.0-preview.1","dependencies":{}}'
                 'PackageSources/com.kano.ylframework/LICENSE.md' = 'MIT License fixture'
                 'PackageSources/com.kano.ylframework/Runtime/Product.cs' = 'class Product {}'

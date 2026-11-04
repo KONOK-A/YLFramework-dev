@@ -34,18 +34,12 @@
 
 ## DataAssets
 
-`ScriptableObjectManager.AddConfig` / `Load` 返回独立登记；`LoadAsync` 返回持有消费者请求、成功 lease 和登记的加载句柄。
-
-- 根按资产对象名称与 hash 查询，不按 `displayName` 查询；碰撞会被拒绝。
-- 多 owner 可共享同一根，每个 owner 只 Dispose 自己的登记或加载句柄。
-- 作者入口为 `Window/YLFramework/Data Assets`，只编辑明确选择的 YL 根，不扫描或认领其他框架的数据。
+DataAssets 的 Runtime、作者工具、根/条目字段与登记租约合同已归独立 [`com.kano.ylframework.data-assets`](../../../com.kano.ylframework.data-assets/README.md)。主包不引用或自动启动该包；Excel 是它的可选作者消费者。
 
 当前持久字段是资产协议，不因 C# 整理随意改变：
 
 | 资产 | 字段 |
 | --- | --- |
-| SO 根 | `displayName/configs/typeScriptGuid` |
-| SO 条目 | `parent/id/configName/icon/description` |
 | 多语言根 | `displayName/languages`，公开读取为 `Languages` |
 | 语言 | `language/displayName/languagesInfo` |
 | 语言条目 | `id/type/str/image/url/notes` |
@@ -54,7 +48,7 @@
 
 ## Excel 作者后端
 
-Runtime 不要求安装 MiniExcel。需要 xlsx 时显式安装 `com.kano.ylframework.excel`；Git 消费方同时声明主包与 Excel 包。Excel 包携带 MiniExcel `1.31.2`、Apache-2.0 完整许可和归属说明，Json.NET Registry 依赖由 UPM 解析，不在安装时执行 NuGet 下载。领域菜单另需 [DomainExcel](Domain.md#domainexcel)。
+Runtime 不要求安装 MiniExcel。需要 xlsx 时显式安装 `com.kano.ylframework.excel`；Git 消费方同时声明主包、DataAssets 与 Excel 包。Excel 包携带 MiniExcel `1.31.2`、Apache-2.0 完整许可和归属说明，Json.NET Registry 依赖由 UPM 解析，不在安装时执行 NuGet 下载。领域菜单另需 [DomainExcel](Domain.md#domainexcel)。
 
 - `ExcelAuthoring` / `ExcelImportPlan` 先产生 `Errors/Changes/CanCommit` 预览，再显式 `Commit(true)`；取消不写入，过期输入或引用失效拒绝提交或按合同回滚。
 - 支持 SO / List / JSON 的导出与导入预览；保留 `boolean → Bool`、`int64 → Long` 字段合同。

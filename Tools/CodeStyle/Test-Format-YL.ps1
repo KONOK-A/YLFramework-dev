@@ -50,20 +50,19 @@ try {
     [IO.File]::Copy($entry, (Join-Path $root 'Tools/CodeStyle/Format-YL.ps1'))
     [IO.File]::Copy((Join-Path $repository '.editorconfig'), (Join-Path $root '.editorconfig'))
     $null = Set-Fixture 'Tools/YLFramework.Analyzers/global.json' ([IO.File]::ReadAllText((Join-Path $repository 'Tools/YLFramework.Analyzers/global.json')))
+    foreach ($relative in @('Tools/Testing/Common/Packages.ps1', 'Tools/Testing/Common/Workspace.ps1', 'Tools/Packaging/PackageCatalog.json')) {
+        $null = Set-Fixture $relative ([IO.File]::ReadAllText((Join-Path $repository $relative)))
+    }
 
     $bad = "namespace Demo{public class Example{public int Sum(int a,int b){return a+b;}}}`r`n"
     $first = Set-Fixture 'PackageSources/com.kano.ylframework/Runtime/Example [one].cs' $bad
     $second = Set-Fixture 'PackageSources/com.kano.ylframework/Editor/ExampleTwo.cs' $bad
     $third = Set-Fixture 'Tools/YLFramework.Analyzers/Tests/ExampleThree.cs' $bad
-    $packageRoots = @(
-        'PackageSources/com.kano.ylframework',
-        'PackageSources/com.kano.ylframework.dotween',
-        'PackageSources/com.kano.ylframework.excel',
-        'PackageSources/com.kano.ylframework.domain-excel',
-        'PackageSources/com.kano.ylframework.hybridclr'
-    )
+    $catalog = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Packaging/PackageCatalog.json')) | ConvertFrom-Json -DateKind String
+    $packageRoots = @($catalog.packages | ForEach-Object { 'PackageSources/' + $_.id })
     $otherAllowedPaths = @(
         'PackageSources/com.kano.ylframework/Samples~/Demo/ExampleSample.cs',
+        'PackageSources/com.kano.ylframework.data-assets/Runtime/DataAssetsExample.cs',
         'PackageSources/com.kano.ylframework.dotween/Runtime/DOTweenExample.cs',
         'PackageSources/com.kano.ylframework.excel/Editor/ExcelExample.cs',
         'PackageSources/com.kano.ylframework.domain-excel/Editor/DomainExcelExample.cs',
@@ -115,7 +114,7 @@ try {
 
     $result = Invoke-Entry
     Assert-That ($result.Code -ne 0 -and $result.Output -match 'Mode=Check' -and $result.Output -match 'WHITESPACE') "Default Check must report real formatting diagnostics: $($result.Output)"
-    Assert-That ($result.Output.Contains("Files=$($allowedPaths.Count) SDK=")) "Default Check must include all five packages, tests, author tools and tooling: $($result.Output)"
+    Assert-That ($result.Output.Contains("Files=$($allowedPaths.Count) SDK=")) "Default Check must include every declared package, tests, author tools and tooling: $($result.Output)"
     foreach ($path in $allowedPaths) {
         Assert-That ([IO.File]::ReadAllText($path) -ceq $bad) 'Default Check must not change source bytes.'
     }
@@ -160,7 +159,7 @@ try {
         $result = Invoke-Entry @('-Paths', $packageRoot)
         Assert-That ($result.Code -ne 0 -and $result.Output -match 'WHITESPACE') "Each package root must select its own CSharp sources: $packageRoot`n$($result.Output)"
     }
-    Pass 'all five package roots select their owned source directories'
+    Pass 'all catalog package roots select their owned source directories'
 
     $result = Invoke-Entry @('-Mode', 'Apply', '-Paths', 'PackageSources', 'Assets/Tests/YLFramework', 'Assets/Editor/YLFrameworkDev', 'Tools/YLFramework.Analyzers')
     Assert-That ($result.Code -eq 0) "Allowed root selection failed: $($result.Output)"

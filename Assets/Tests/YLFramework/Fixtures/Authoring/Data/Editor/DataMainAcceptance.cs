@@ -398,6 +398,31 @@ namespace YLFramework.Tests.DataBatch
             });
         }
 
+        public static string ExpectedSourceOwner(string path)
+        {
+            var value = path.Replace('\\', '/');
+            if (value.StartsWith("Packages/com.kano.ylframework.data-assets/Runtime/", StringComparison.Ordinal))
+                return "YLFramework.DataAssets";
+            if (value.StartsWith("Packages/com.kano.ylframework.data-assets/Editor/", StringComparison.Ordinal))
+                return "YLFramework.DataAssets.Editor";
+            bool system = value.Contains("/Systems/Localization/") || value.Contains("/Systems/Save/");
+            if (system && value.StartsWith("Packages/com.kano.ylframework/Runtime/", StringComparison.Ordinal))
+                return "YLFramework.Runtime";
+            if (system && value.StartsWith("Packages/com.kano.ylframework/Editor/", StringComparison.Ordinal))
+                return "YLFramework.Editor";
+            bool dataTest = value.Contains("/Systems/DataAssets/") || system || value.Contains("/Editor/DataAssets/") ||
+                value.Contains("/Editor/Localization/") || value.Contains("/Editor/Excel/") || value.Contains("/Editor/Data/");
+            if (dataTest && value.StartsWith("Assets/Tests/YLFramework/EditMode/", StringComparison.Ordinal))
+                return "YLFramework.Tests.EditMode";
+            if (dataTest && value.StartsWith("Assets/Tests/YLFramework/PlayMode/", StringComparison.Ordinal))
+                return "YLFramework.Tests.PlayMode";
+            if (value.StartsWith("Assets/Tests/YLFramework/Fixtures/Authoring/Data/Runtime/", StringComparison.Ordinal))
+                return "YLFramework.Tests.Data.Probes";
+            if (value.StartsWith("Assets/Tests/YLFramework/Fixtures/Authoring/Data/Editor/", StringComparison.Ordinal))
+                return "YLFramework.Tests.Tools.Editor";
+            return null;
+        }
+
         public static void Audit(string name)
         {
             string output = Begin(name);
@@ -405,18 +430,15 @@ namespace YLFramework.Tests.DataBatch
             {
                 DataUnityAcceptance.Audit();
                 var graph = CompilationPipeline.GetAssemblies(AssembliesType.Editor);
-                var files = Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical("Assets/YLFramework"), "*.cs", SearchOption.AllDirectories).Select(p => p.Replace('\\', '/'))
-                    .Where(p => p.Contains("/Systems/DataAssets/") || p.Contains("/Systems/Localization/") || p.Contains("/Systems/Save/") || p.Contains("/Integrations/Excel/") || p.Contains("/Extensions/Data/") ||
-                        p.Contains("/Tests/EditMode/Editor/DataAssets/") || p.Contains("/Tests/EditMode/Editor/Localization/") ||
-                        p.Contains("/Tests/EditMode/Editor/Excel/") || p.Contains("/Tests/EditMode/Editor/Data/")).ToArray();
+                var roots = new[] { "Packages/com.kano.ylframework", "Packages/com.kano.ylframework.data-assets", "Assets/Tests/YLFramework" };
+                var files = roots.SelectMany(root => Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(root), "*.cs", SearchOption.AllDirectories)
+                    .Select(path => root + "/" + Path.GetRelativePath(global::YLFramework.Testing.PackageTestPaths.Physical(root), path).Replace('\\', '/')))
+                    .Where(p => ExpectedSourceOwner(p) != null).ToArray();
                 var rows = files.Select(p => new { path = p, sha256 = Hash(p), assembly = graph.SingleOrDefault(a => a.sourceFiles.Any(f => Canonical(f) == Canonical(p)))?.name }).ToArray();
                 Require(rows.All(r => r.assembly != null), "New source was omitted from actual Unity compilation.");
                 foreach (var row in rows)
                 {
-                    string expected = row.path.StartsWith("Packages/com.kano.ylframework/Runtime/", StringComparison.Ordinal) ? "YLFramework.Runtime" :
-                        row.path.StartsWith("Packages/com.kano.ylframework/Editor/", StringComparison.Ordinal) ? "YLFramework.Editor" :
-                        row.path.Contains("/Integrations/Excel/") ? "YLFramework.Excel.Editor" : row.path.Contains("/Tests/EditMode/") ? "YLFramework.Tests.EditMode" :
-                        row.path.Contains("/Tests/PlayMode/") ? "YLFramework.Tests.PlayMode" : row.path.Contains("/Data/Editor/") ? "Assembly-CSharp-Editor" : "Assembly-CSharp";
+                    string expected = ExpectedSourceOwner(row.path);
                     Require(row.assembly == expected, row.path + " compiled into " + row.assembly + ", expected " + expected);
                 }
                 Write(output + "/source-owners.json", rows);
