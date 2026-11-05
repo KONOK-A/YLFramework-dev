@@ -69,7 +69,7 @@ namespace YLFramework.Behavior.Acceptance
             Save();
             Hook();
             // 使用产品Create And Add入口及其待绑定队列，不在测试中手动附加脚本。
-            var creator = Type.GetType("YLFramework.Editor.StateMachine.FsmStateCreator, YLFramework.Editor", true);
+            var creator = Type.GetType("YLFramework.Editor.StateMachine.FsmStateCreator, YLFramework.StateMachine.Editor", true);
             var create = creator.GetMethod("CreateFsmState", BindingFlags.Static | BindingFlags.NonPublic);
             if (!(bool)create.Invoke(null, new object[] { _state.scriptPath, false, asset, node }))
             {

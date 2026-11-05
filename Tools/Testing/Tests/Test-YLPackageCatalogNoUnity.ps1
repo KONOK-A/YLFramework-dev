@@ -50,6 +50,22 @@ function Fixture([string] $Id) {
 }
 try {
     $catalog = Read-YLPackageCatalog
+    Case 'Configured FSM owns its Runtime, Editor, template and stylesheet without the lightweight FSM' {
+        $fsm = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.state-machine')
+        Check ($fsm.Count -eq 1) 'The configured FSM package is missing from the maintained catalog.'
+        $root = Join-Path $repository 'PackageSources/com.kano.ylframework.state-machine'
+        $manifest = Read-YLPackageEvidenceJson (Join-Path $root 'package.json')
+        Check ($manifest.dependencies.Count -eq 1 -and $manifest.dependencies['com.kano.ylframework'] -ceq '0.1.0-preview.1') 'The FSM package must declare its actual main-package dependency only.'
+        $runtime = Read-YLPackageEvidenceJson (Join-Path $root 'Runtime/YLFramework.StateMachine.asmdef')
+        $editor = Read-YLPackageEvidenceJson (Join-Path $root 'Editor/YLFramework.StateMachine.Editor.asmdef')
+        Check ($runtime.name -ceq 'YLFramework.StateMachine' -and ($runtime.references -join ',') -ceq 'YLFramework.Runtime') 'Configured FSM runtime dependency is not explicit.'
+        Check ($editor.name -ceq 'YLFramework.StateMachine.Editor' -and ($editor.includePlatforms -join ',') -ceq 'Editor' -and
+            ($editor.references -join ',') -ceq 'YLFramework.StateMachine,YLFramework.Editor') 'FSM Editor must declare its configured runtime and actual package-path helper owner.'
+        Check ([IO.File]::ReadAllText((Join-Path $root 'Editor/Systems/StateMachine/Template/FSMStateTemplate.txt.meta')).Contains('497ab7439af8a164a8a4dc6315fde458')) 'The existing state template GUID changed.'
+        Check ([IO.File]::ReadAllText((Join-Path $root 'Editor/Systems/StateMachine/Styles/FSMGraph.uss.meta')).Contains('182916d1698abe740874ab8495e1b2b8')) 'The existing graph stylesheet GUID changed.'
+        Check ([IO.Directory]::Exists((Join-Path $repository 'PackageSources/com.kano.ylframework/Runtime/Utilities/FSM')) -and
+            -not [IO.Directory]::Exists((Join-Path $root 'Runtime/Utilities/FSM'))) 'The unrelated lightweight FSM moved with the configured FSM.'
+    }
     Case 'Save is a real standalone package with explicit Newtonsoft and no main-package dependency' {
         $save = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.save')
         Check ($save.Count -eq 1) 'The Save package is missing from the maintained catalog.'

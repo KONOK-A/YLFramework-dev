@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.StateMachine.Editor",
+    "rootNamespace": "YLFramework.Editor.StateMachine",
+    "references": ["YLFramework.StateMachine", "YLFramework.Editor"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

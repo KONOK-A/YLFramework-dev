@@ -45,6 +45,10 @@ namespace YLFramework.Tests.MigrationFixtures
             Assert.That((string)owner["purpose"], Is.EqualTo("YLTesting.Directory"));
             Assert.That((string)owner["kind"], Is.EqualTo("Host"));
             Assert.That(Path.GetFullPath((string)owner["path"]), Is.EqualTo(projectRoot).IgnoreCase);
+            Assert.That(typeof(ScriptableObjectData).Assembly.GetName().Name, Is.EqualTo("YLFramework.Runtime"),
+                "Historical pre-split production requires the original sourceCommit recorded in FixtureIdentity.json; discovery/compilation must not recapture a post-split snapshot.");
+            Assert.That(typeof(RuntimeFsmController).Assembly.GetName().Name, Is.EqualTo("YLFramework.Runtime"),
+                "The historical producer must run before the configured FSM assembly split, never rewrite the frozen original.");
             Assert.That(Directory.Exists(Physical(Root)), Is.False, "Never replace a captured fixture or adopt unknown output.");
             Assert.That(EditorUserBuildSettings.activeBuildTarget, Is.EqualTo(BuildTarget.StandaloneWindows64));
             Folder(Content + "/Domain");
@@ -141,12 +145,12 @@ namespace YLFramework.Tests.MigrationFixtures
             var state = (RuntimeFsmController)NewAsset(typeof(RuntimeFsmController), statePath);
             state.layers.Add("BeforeAssembly");
             state.originGuid = AssetDatabase.AssetPathToGUID(statePath);
-            var createState = typeof(ResourceProject).Assembly.GetType("YLFramework.Editor.StateMachine.FsmStateNodeFactory", true)
+            var createState = typeof(YLFramework.Editor.StateMachine.FsmEditorWindow).Assembly.GetType("YLFramework.Editor.StateMachine.FsmStateNodeFactory", true)
                 .GetMethods(BindingFlags.Static | BindingFlags.Public).Single(method => method.Name == "CreateStateNode" && method.GetParameters().Length == 8);
             createState.Invoke(null, new object[] { state, "Idle", new Rect(0, 0, 200, 40), true, false, null, false, "" });
             createState.Invoke(null, new object[] { state, "Run", new Rect(240, 0, 200, 40), false, false, null, false, "" });
             state.AddParameters(new FsmParameterData { name = "Go", parameterType = ParameterType.Bool });
-            typeof(ResourceProject).Assembly.GetType("YLFramework.Editor.StateMachine.FsmTransitionFactory", true)
+            typeof(YLFramework.Editor.StateMachine.FsmEditorWindow).Assembly.GetType("YLFramework.Editor.StateMachine.FsmTransitionFactory", true)
                 .GetMethod("CreateTransition", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Invoke(null, new object[] { state, "Idle", "Run" });
             state.GetTransitionData("Idle", "Run").autoSwitch = true;
             state.GetTransitionData("Idle", "Run").groupConditions.Add(new GroupCondition { conditions = new List<FsmConditionData> { new FsmConditionData { parameterName = "Go", targetValue = 1 } } });

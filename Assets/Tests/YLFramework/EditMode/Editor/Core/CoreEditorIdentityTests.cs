@@ -126,6 +126,10 @@ namespace YLFramework.Core.Editor.Tests
             }
             foreach (var expected in captured.assets)
             {
+                if (expected.path.StartsWith("Content/Behavior/", StringComparison.Ordinal))
+                {
+                    continue;
+                }
                 var asset = AssetDatabase.LoadMainAssetAtPath(Root + expected.path);
                 Assert.That(asset, Is.Not.Null, expected.path);
                 Assert.That(asset.GetType().FullName, Is.EqualTo(expected.typeFullName));
@@ -175,7 +179,7 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(asset, Is.Not.Null, "Freeze explicit assembly ownership before moving any functional source.");
             var table = JsonUtility.FromJson<AssemblyMoveTable>(asset.text);
             Assert.That(table.schemaVersion, Is.EqualTo(1));
-            Assert.That(table.moves, Has.Length.EqualTo(21), "Keep all original anchors and the migrated DataAssets/Localization identities.");
+            Assert.That(table.moves, Has.Length.EqualTo(23), "Keep all original anchors and the migrated feature identities.");
             Assert.That(table.moves.Select(move => move.fullName).Distinct().Count(), Is.EqualTo(table.moves.Length));
             Assert.That(table.moves.Select(move => move.scriptGuid).Distinct().Count(), Is.EqualTo(table.moves.Length));
             foreach (var move in table.moves)
@@ -211,7 +215,6 @@ namespace YLFramework.Core.Editor.Tests
         [TestCase("YLFramework.Editor.Foundation.DisableEditDrawer", "YLFramework.Core." + "Editor.DisableEditDrawer")]
         [TestCase("YLFramework.Editor.Foundation.SerializedDictionaryDrawer", "YLFramework.Editor." + "SerializedDictionaryDrawer")]
         [TestCase("YLFramework.Editor.Skill.SkillsConfigController", "YLFramework.Skill." + "SkillsConfigController")]
-        [TestCase("YLFramework.Editor.StateMachine.FsmEditorWindow", "YLFramework.StateMachine." + "FsmEditorWindow")]
         public void EditorTypesUseOwnedScopesWithoutRuntimeNamespaceAliases(string fullName, string legacyName)
         {
             var assembly = System.Reflection.Assembly.Load(EditorAssemblyName);

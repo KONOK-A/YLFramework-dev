@@ -40,6 +40,7 @@ function Get-YLDevelopmentHostInputs([string] $Repository) {
         'Assets/Settings/UniversalRenderPipelineGlobalSettings.asset', 'Assets/Settings/DefaultVolumeProfile.asset',
         'PackageSources/com.kano.ylframework.data-assets/package.json', 'PackageSources/com.kano.ylframework.localization/package.json',
         'PackageSources/com.kano.ylframework.save/package.json',
+        'PackageSources/com.kano.ylframework.state-machine/package.json',
         'PackageSources/com.kano.ylframework.dotween/package.json', 'PackageSources/com.kano.ylframework.excel/package.json',
         'PackageSources/com.kano.ylframework.domain-excel/package.json', 'PackageSources/com.kano.ylframework.hybridclr/package.json')) {
         $null = $paths.Add($relative); $null = $paths.Add($relative + '.meta')

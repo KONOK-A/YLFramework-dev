@@ -5,6 +5,7 @@
     "YLFramework.Runtime",
     "YLFramework.DataAssets",
     "YLFramework.Localization",
+    "YLFramework.StateMachine",
     "UnityEngine.UI",
     "UnityEngine.TestRunner",
     "YLFramework.Tests.Fixtures"

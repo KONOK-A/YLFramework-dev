@@ -64,6 +64,15 @@
       "samples": []
     },
     {
+      "id": "com.kano.ylframework.state-machine",
+      "assemblies": [
+        { "name": "YLFramework.StateMachine", "path": "Runtime/YLFramework.StateMachine.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.StateMachine.Editor", "path": "Editor/YLFramework.StateMachine.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Runtime/csc.rsp", "Runtime/Systems/StateMachine/FsmController.cs", "Runtime/Systems/StateMachine/Scriptable/RuntimeFsmController.cs", "Editor/Systems/StateMachine/Creator/FsmStateCreator.cs", "Editor/Systems/StateMachine/Template/FSMStateTemplate.txt", "Editor/Systems/StateMachine/Styles/FSMGraph.uss"],
+      "samples": []
+    },
+    {
       "id": "com.kano.ylframework.localization",
       "assemblies": [
         { "name": "YLFramework.Localization", "path": "Runtime/YLFramework.Localization.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },

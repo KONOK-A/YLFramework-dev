@@ -90,6 +90,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Domain | Quick / Daily / Special | Skill / Buff / Mission / Reddot / Logging 逻辑、作者及场景生命周期；无 Domain Reload 会话使用独立宿主。 |
 | Behavior | Quick / Daily / Special | 日常Overlap / CharacterMotor / MovingPlatform / 两套FSM；Special在显式自有Desktop宿主执行两个原生窗口事件合同。 |
 | Save | Daily / Special | 仅 Save + Newtonsoft，不安装主包。Daily 执行原生门面合同与真实双进程 Mono Player 冷重开/显式备份恢复；Special 以 .NET 执行 BCL 合同，不替代 Unity 或 Player。 |
+| StateMachine | Daily / Special | 仅配置式FSM包及主包。Daily验原生状态/图/生命周期；Special在自有空场景宿主经过两次真实编译重载验Create And Add绑定，再构建运行双进程Mono Player。不是无输入模拟或旧Resource tuple兼容声明。 |
 | Data | Daily / Special | Save native JSON、Localization、DataAssets 作者和资源生命周期；会话前置不能由主工程代替。 |
 | DataAssets | Daily / Special | 仅主包+DataAssets：身份、作者、请求与租约、双Play、旧资产副本重建及真实Mono Player；不是完整Data组合。 |
 | Localization | Daily / Special | 仅主包+Localization：回退、显示、ResourceImage责任、作者、双Play及正式内容Player；不借DataAssets/Excel依赖。 |
@@ -99,6 +100,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Resource | Daily / Special | 有界真实Catalog / Codec / Bundle构建；Special保留原场景安全、双次Play及租约隔离断言，使用碰撞拒绝的短宿主名。 |
 
 准确范围以当前 `TestSuites.json` 和发现产物为准。模块声明不是所有平台或所有环境已验收的承诺。
+
+`MigrationFixtures` 是历史拆分前快照的 producer，只能在冻结 `FixtureIdentity.json` 所记录的原 `sourceCommit` 检出中重建。当前源码保留真实依赖以支持编译与 `-Action Discover -Suite Special -Module MigrationFixtures`；当前拆包布局运行该 producer 会在输出前拒绝，不得为验证新包重写原 54 份冻结输入或其旧 Catalog tuple。
 
 Data 组合保留主包字典与 Save 的实际消费者测试和组合 Player，但明确排除要求主包缺席的 `YL.Package.SaveStandalone` 用例；该用例仍由 Save Daily 完整执行，不能通过 Skip 或允许主包存在来替代独立包验收。
 

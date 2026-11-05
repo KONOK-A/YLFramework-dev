@@ -154,6 +154,44 @@ try {
             $excel = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'PackageSources/com.kano.ylframework.excel/package.json')
             Assert-That (-not $excel.dependencies.Contains('com.kano.ylframework.localization')) 'Test-only Localization must not become an Excel product dependency.'
         }
+        Test-Case 'Configured FSM standalone keeps its exact two-package closure and real reload scene preconditions' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $fsm = @($configuration.modules | Where-Object name -CEQ 'StateMachine')[0]
+            Assert-That (@($fsm.packageInputs).Count -eq 1 -and $fsm.packageInputs[0] -ceq 'com.kano.ylframework.state-machine') 'The standalone configured FSM root must be declared exactly.'
+            Assert-That ($fsm.Contains('sortingLayer') -and $fsm.sortingLayer -ceq '') 'The owned native host requires an explicit no-sorting-layer declaration.'
+            $consumers = @($configuration.modules | Where-Object { $_.Contains('packageInputs') -and @($_.packageInputs) -ccontains 'com.kano.ylframework.state-machine' })
+            Assert-That ((@($consumers.name | Sort-Object) -join ',') -ceq 'Behavior,MigrationFixtures,StateMachine') 'Only actual FSM consumers may declare this optional package.'
+            $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($fsm.packageInputs))
+            Assert-That (($closure.id | Sort-Object) -join ',' -ceq 'com.kano.ylframework,com.kano.ylframework.state-machine') 'The standalone FSM acquired an unrelated functional package.'
+            Assert-That ($fsm.Contains('prepareSessionScene') -and $fsm.prepareSessionScene -is [bool] -and $fsm.prepareSessionScene -and
+                $fsm.Contains('prepareSceneTemplates') -and $fsm.prepareSceneTemplates -is [bool] -and $fsm.prepareSceneTemplates) 'The actual reload/Player acceptance needs the owned empty session scene and templates.'
+            foreach ($name in @('Core', 'Save', 'Localization', 'DataAssets')) {
+                $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
+                Assert-That (@($module.packageInputs) -cnotcontains 'com.kano.ylframework.state-machine') "$name must not acquire the configured FSM to keep old assembly anchors alive."
+            }
+            $editAssembly = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef')
+            Assert-That (@($editAssembly.references) -cnotcontains 'YLFramework.StateMachine.Acceptance') 'A standalone fixture reference cannot leak into every shared test assembly consumer.'
+            $fixtureMetadata = @([IO.Directory]::EnumerateFiles((Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/StateMachine'), '*.meta', [IO.SearchOption]::AllDirectories)) +
+                @((Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/StateMachine.meta'), (Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/StateMachine/StateMachinePackageAcceptanceTests.cs.meta'))
+            Assert-That ($fixtureMetadata.Count -eq 6) 'The standalone fixture must retain all six owned asset identities.'
+            foreach ($metadata in $fixtureMetadata) {
+                Assert-That ([regex]::Matches([IO.File]::ReadAllText($metadata), '(?m)^guid: [0-9a-f]{32}\s*$').Count -eq 1) "Unity cannot import a malformed standalone fixture identity: $metadata"
+            }
+        }
+        Test-Case 'Historical migration producer declares its current compile owners without recapturing old assets' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $module = @($configuration.modules | Where-Object name -CEQ 'MigrationFixtures')[0]
+            Assert-That (@($module.packageInputs) -ccontains 'com.kano.ylframework.state-machine') 'MigrationFixtures copies real FSM consumers but omits their installation input.'
+            $assembly = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/YLFramework.MigrationFixtures.Tests.EditMode.asmdef')
+            foreach ($reference in @('YLFramework.StateMachine', 'YLFramework.StateMachine.Editor')) {
+                Assert-That (@($assembly.references) -ccontains $reference) "MigrationFixtures is missing its actual compile reference: $reference"
+            }
+            $source = [IO.File]::ReadAllText((Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/AssemblyMigrationFixtureFreezeTests.cs'))
+            Assert-That ([regex]::Matches($source, 'typeof\(YLFramework[.]Editor[.]StateMachine[.]FsmEditorWindow\)[.]Assembly[.]GetType').Count -eq 2) 'Both FSM factory lookups need their real Editor owner, not the Resource Editor assembly.'
+            Assert-That ($module.description.Contains('Historical pre-split') -and $module.description.Contains('sourceCommit')) 'The historical producer must state its frozen source revision boundary.'
+        }
         Test-Case 'Domain authoring tests declare Save without adding it to main-only modules' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')

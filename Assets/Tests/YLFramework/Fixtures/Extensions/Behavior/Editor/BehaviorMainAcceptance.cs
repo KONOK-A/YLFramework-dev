@@ -184,6 +184,8 @@ namespace YLFramework.Behavior.Acceptance
                 path.StartsWith("Packages/com.kano.ylframework/Editor/" + (module == "StateMachine" ? "Systems/" : "Utilities/") + module + "/", StringComparison.Ordinal) ||
                 path.StartsWith("Assets/Tests/YLFramework/EditMode/" + (module == "StateMachine" ? "Editor/" : "Utilities/") + module + "/", StringComparison.Ordinal) ||
                 path.StartsWith("Assets/Tests/YLFramework/PlayMode/" + (module == "StateMachine" ? "Systems/" : "Utilities/") + module + "/", StringComparison.Ordinal)) ||
+                path.StartsWith("Packages/com.kano.ylframework.state-machine/Runtime/", StringComparison.Ordinal) ||
+                path.StartsWith("Packages/com.kano.ylframework.state-machine/Editor/", StringComparison.Ordinal) ||
                 path.StartsWith("Assets/Tests/YLFramework/Fixtures/Extensions/Behavior/", StringComparison.Ordinal) ||
                 path.StartsWith("Assets/Tests/YLFramework/EditMode/Editor/Behavior/", StringComparison.Ordinal) ||
                 path.StartsWith("Assets/Tests/YLFramework/EditMode/Systems/Behavior/", StringComparison.Ordinal) ||
@@ -195,7 +197,7 @@ namespace YLFramework.Behavior.Acceptance
             string output = Gate(name);
             var errors = new List<string>();
             var assemblies = CompilationPipeline.GetAssemblies(AssembliesType.Editor);
-            string[] names = { "YLFramework.Runtime", "YLFramework.Editor", "YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode", "YLFramework.Behavior.Acceptance", "YLFramework.Behavior.Acceptance.Editor" };
+            string[] names = { "YLFramework.Runtime", "YLFramework.Editor", "YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode", "YLFramework.Behavior.Acceptance", "YLFramework.Behavior.Acceptance.Editor", "YLFramework.StateMachine", "YLFramework.StateMachine.Editor" };
             foreach (string expected in names)
             {
                 if (assemblies.All(item => item.name != expected))
@@ -204,10 +206,15 @@ namespace YLFramework.Behavior.Acceptance
                 }
             }
 
-            var files = Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical("Assets/YLFramework"), "*.cs", SearchOption.AllDirectories).Select(path => path.Replace('\\', '/')).Where(Owned).ToArray();
+            var files = new[] { "Packages/com.kano.ylframework", "Packages/com.kano.ylframework.state-machine", "Assets/Tests/YLFramework" }
+                .SelectMany(root => Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(root), "*.cs", SearchOption.AllDirectories)
+                    .Select(path => root + "/" + path.Substring(Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(root)).Length + 1).Replace('\\', '/')))
+                .Where(Owned).ToArray();
             foreach (string path in files)
             {
-                string expected = path.StartsWith("Packages/com.kano.ylframework/Runtime/", StringComparison.Ordinal) ? names[0] :
+                string expected = path.StartsWith("Packages/com.kano.ylframework.state-machine/Runtime/", StringComparison.Ordinal) ? names[6] :
+                    path.StartsWith("Packages/com.kano.ylframework.state-machine/Editor/", StringComparison.Ordinal) ? names[7] :
+                    path.StartsWith("Packages/com.kano.ylframework/Runtime/", StringComparison.Ordinal) ? names[0] :
                     path.StartsWith("Packages/com.kano.ylframework/Editor/", StringComparison.Ordinal) ? names[1] :
                     path.Contains("/Tests/EditMode/") ? names[2] : path.Contains("/Tests/PlayMode/") ? names[3] : path.Contains("/Behavior/Editor/") ? names[5] : names[4];
                 var owner = assemblies.SingleOrDefault(item => item.sourceFiles.Any(file => Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(file)) == Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(path))));
@@ -255,7 +262,7 @@ namespace YLFramework.Behavior.Acceptance
                 foreach (string reference in item.references)
                 {
                     var referenceName = new AssemblyName(reference).Name;
-                    if (!new[] { "mscorlib", "netstandard", "System", "System.Core", "Newtonsoft.Json", "BouncyCastle.Cryptography", names[0] }
+                    if (!new[] { "mscorlib", "netstandard", "System", "System.Core", "Newtonsoft.Json", "BouncyCastle.Cryptography", names[0], names[6] }
                         .Contains(referenceName) && !referenceName.StartsWith("UnityEngine.", StringComparison.Ordinal) &&
                         !referenceName.StartsWith("UnityEditor.", StringComparison.Ordinal))
                     {
@@ -510,7 +517,7 @@ namespace YLFramework.Behavior.Acceptance
             _progress.scriptPath = Path.GetDirectoryName(_progress.scene).Replace('\\', '/') + "/MainBoundState" + Guid.NewGuid().ToString("N") + ".cs";
             SaveProgress();
             Hook();
-            var creator = Type.GetType("YLFramework.Editor.StateMachine.FsmStateCreator, YLFramework.Editor", true);
+            var creator = Type.GetType("YLFramework.Editor.StateMachine.FsmStateCreator, YLFramework.StateMachine.Editor", true);
             var create = creator.GetMethod("CreateFsmState", BindingFlags.Static | BindingFlags.NonPublic);
             Require((bool)create.Invoke(null, new object[] { _progress.scriptPath, false, asset, node }), "Product Create And Add rejected the owned source path.");
         }
