@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Tests.EditMode",
     "rootNamespace": "YLFramework.Tests",
-    "references": ["YLFramework.Runtime", "YLFramework.DataAssets", "YLFramework.DataAssets.Editor", "YLFramework.Localization", "YLFramework.Localization.Editor", "YLFramework.Foundation.Tests.EditMode", "YLFramework.Tests.Fixtures", "YLFramework.Tests.Fixtures.Editor", "YLFramework.Tests.Infrastructure.Editor", "YLFramework.Editor", "UnityEngine.UI", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+    "references": ["YLFramework.Runtime", "YLFramework.DataAssets", "YLFramework.DataAssets.Editor", "YLFramework.Localization", "YLFramework.Localization.Editor", "YLFramework.Save", "YLFramework.Foundation.Tests.EditMode", "YLFramework.Tests.Fixtures", "YLFramework.Tests.Fixtures.Editor", "YLFramework.Tests.Infrastructure.Editor", "YLFramework.Editor", "UnityEngine.UI", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

@@ -1,0 +1,13 @@
+{
+  "name": "com.kano.ylframework.save",
+  "version": "0.1.0-preview.1",
+  "displayName": "YLFramework Save",
+  "description": "Standalone save slots, atomic JSON files, explicit backup recovery and synchronous/asynchronous storage owners.",
+  "unity": "2022.3",
+  "unityRelease": "62f3",
+  "license": "MIT",
+  "author": { "name": "Kano" },
+  "repository": { "type": "git", "url": "https://github.com/KONOK-A/YLFramework-dev.git", "directory": "PackageSources/com.kano.ylframework.save" },
+  "files": ["package.json", "package.json.meta", "README.md", "README.md.meta", "LICENSE.md", "LICENSE.md.meta", "Runtime", "Runtime.meta"],
+  "dependencies": { "com.unity.nuget.newtonsoft-json": "3.2.1" }
+}

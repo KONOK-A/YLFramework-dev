@@ -56,6 +56,14 @@
       "samples": []
     },
     {
+      "id": "com.kano.ylframework.save",
+      "assemblies": [
+        { "name": "YLFramework.Save", "path": "Runtime/YLFramework.Save.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Runtime/Systems/Save/SaveStore.cs", "Runtime/Systems/Save/SaveManager.cs", "Runtime/Systems/Save/link.xml"],
+      "samples": []
+    },
+    {
       "id": "com.kano.ylframework.localization",
       "assemblies": [
         { "name": "YLFramework.Localization", "path": "Runtime/YLFramework.Localization.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },

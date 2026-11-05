@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -162,6 +163,290 @@ namespace YLFramework.Tests.Extensions.Data.Save
                     Assert.That((int)store.LoadGlobalSetting<Payload>("options").Number, Is.EqualTo(9));
                     Assert.That((int)store.GetAllSaveItems().Count, Is.EqualTo(2));
                     Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(root, "SaveData/7/player.json"))), Does.Contain("42"));
+                }
+            });
+        }
+
+        [TestCase(0)]
+        [TestCase(7)]
+        public void UnknownSlotSynchronousObjectOperationsAndSelectionThrowWithoutCreatingData(int saveId)
+        {
+            Run(root =>
+            {
+                using (var store = Open(root))
+                {
+                    AssertEmptyStoreHasNoSaveData(store, root);
+                    Assert.Throws<KeyNotFoundException>(() => store.SaveObject(
+                        new Payload { Number = 42 }, "player", saveId));
+                    AssertEmptyStoreHasNoSaveData(store, root);
+                    Assert.Throws<KeyNotFoundException>(() => store.LoadObject<Payload>("player", saveId));
+                    AssertEmptyStoreHasNoSaveData(store, root);
+                    Assert.Throws<KeyNotFoundException>(() => store.ReadObject<Payload>("player", saveId));
+                    AssertEmptyStoreHasNoSaveData(store, root);
+                    Assert.Throws<KeyNotFoundException>(() => store.CurrentSaveId = saveId);
+                    AssertEmptyStoreHasNoSaveData(store, root);
+                }
+                Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(
+                    Path.Combine(root, "SaveData"))), Is.False);
+            });
+        }
+
+        [TestCase(0)]
+        [TestCase(7)]
+        public void UnknownSlotAsynchronousObjectOperationsThrowWithoutCreatingData(int saveId)
+        {
+            Run(root =>
+            {
+                using (var store = Open(root))
+                {
+                    AssertEmptyStoreHasNoSaveData(store, root);
+                    Assert.ThrowsAsync<KeyNotFoundException>(() => store.SaveObjectAsync(
+                        new Payload { Number = 42 }, "player", saveId));
+                    AssertEmptyStoreHasNoSaveData(store, root);
+                    Assert.ThrowsAsync<KeyNotFoundException>(() => store.LoadObjectAsync<Payload>("player", saveId));
+                    AssertEmptyStoreHasNoSaveData(store, root);
+                    Assert.ThrowsAsync<KeyNotFoundException>(() => store.ReadObjectAsync<Payload>("player", saveId));
+                    AssertEmptyStoreHasNoSaveData(store, root);
+                }
+                Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(
+                    Path.Combine(root, "SaveData"))), Is.False);
+            });
+        }
+
+        [TestCase(0)]
+        [TestCase(7)]
+        public void UnknownSlotQueriesAndDeletionAreIdempotentWithoutCreatingData(int saveId)
+        {
+            Run(root =>
+            {
+                using (var store = Open(root))
+                {
+                    AssertEmptyStoreHasNoSaveData(store, root);
+                    for (var attempt = 0; attempt < 2; attempt++)
+                    {
+                        Assert.That(store.HasSaveItem(saveId), Is.False);
+                        Assert.That(store.GetSaveItem(saveId), Is.Null);
+                        Assert.That(store.HasObject("player", saveId), Is.False);
+                        Assert.That(store.GetObjectNames(saveId), Is.Empty);
+                        Assert.That(store.DeleteObject("player", saveId), Is.False);
+                        store.DeleteSaveItem(saveId);
+                        Assert.DoesNotThrowAsync(() => store.DeleteSaveItemAsync(saveId));
+                        AssertEmptyStoreHasNoSaveData(store, root);
+                    }
+                }
+                Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(
+                    Path.Combine(root, "SaveData"))), Is.False);
+            });
+        }
+
+        [Test]
+        public void UnknownSlotQueriesAndDeletionDoNotCommitAnExistingIndexOrChangeItsSelection()
+        {
+            Run(root =>
+            {
+                using (var store = Open(root))
+                {
+                    store.CreateSaveItem(0);
+                    store.CurrentSaveId = 0;
+                    var payload = new Payload { Number = 42 };
+                    store.SaveObject(payload, "player", 0);
+                    var path = global::YLFramework.Testing.PackageTestPaths.Physical(
+                        Path.Combine(root, "SaveData/SaveSystemData.json"));
+                    var before = File.ReadAllBytes(path);
+                    var entries = Directory.GetFileSystemEntries(
+                        global::YLFramework.Testing.PackageTestPaths.Physical(root), "*", SearchOption.AllDirectories);
+
+                    Assert.That(store.HasObject("player", 7), Is.False);
+                    Assert.That(store.GetObjectNames(7), Is.Empty);
+                    Assert.That(store.DeleteObject("player", 7), Is.False);
+                    store.DeleteSaveItem(7);
+                    Assert.DoesNotThrowAsync(() => store.DeleteSaveItemAsync(7));
+
+                    Assert.That(store.HasSaveItem(7), Is.False);
+                    Assert.That(store.GetSaveItem(7), Is.Null);
+                    Assert.That(store.GetAllSaveItems().Single().SaveId, Is.EqualTo(0));
+                    Assert.That(store.CurrentSaveId, Is.EqualTo(0));
+                    Assert.That(store.LoadObject<Payload>("player", 0), Is.SameAs(payload));
+                    Assert.That(File.ReadAllBytes(path), Is.EqualTo(before));
+                    Assert.That(Directory.GetFileSystemEntries(
+                        global::YLFramework.Testing.PackageTestPaths.Physical(root), "*", SearchOption.AllDirectories),
+                        Is.EquivalentTo(entries));
+                }
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void BorrowedMetadataMutationsDoNotWriteImmediatelyOrSurviveDisposalWithoutAnIndexWrite(bool fromList)
+        {
+            Run(root =>
+            {
+                var path = global::YLFramework.Testing.PackageTestPaths.Physical(
+                    Path.Combine(root, "SaveData/SaveSystemData.json"));
+                SaveManager.SaveItem borrowed;
+                DateTime savedAt;
+                byte[] before;
+                using (var store = Open(root))
+                {
+                    store.CreateSaveItem(0);
+                    Assert.That(store.RenameSaveItem(0, "saved-name"), Is.True);
+                    Assert.That(store.SetSaveItemNote(0, "saved-note"), Is.True);
+                    borrowed = fromList ? store.GetAllSaveItems().Single() : store.GetSaveItem(0);
+                    Assert.That(borrowed, Is.SameAs(store.GetSaveItem(0)));
+                    Assert.That(borrowed, Is.SameAs(store.GetAllSaveItems().Single()));
+                    savedAt = borrowed.LastSaveTime;
+                    before = File.ReadAllBytes(path);
+
+                    borrowed.DisplayName = "memory-name";
+                    Assert.That(store.GetSaveItem(0).DisplayName, Is.EqualTo("memory-name"));
+                    Assert.That(File.ReadAllBytes(path), Is.EqualTo(before));
+                    borrowed.Note = "memory-note";
+                    Assert.That(store.GetAllSaveItems().Single().Note, Is.EqualTo("memory-note"));
+                    Assert.That(File.ReadAllBytes(path), Is.EqualTo(before));
+                    borrowed.UpdateSaveTime(savedAt.AddHours(1));
+                    Assert.That(store.GetSaveItem(0).LastSaveTime, Is.EqualTo(savedAt.AddHours(1)));
+                    Assert.That(File.ReadAllBytes(path), Is.EqualTo(before));
+                    Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(
+                        Path.Combine(root, "SaveData/0"))), Is.False,
+                        "No object files may recalibrate the cold-open timestamp.");
+                }
+
+                Assert.That(File.ReadAllBytes(path), Is.EqualTo(before), "Dispose must not flush borrowed metadata.");
+                using (var reopened = Open(root))
+                {
+                    var restored = reopened.GetSaveItem(0);
+                    Assert.That(restored, Is.Not.SameAs(borrowed));
+                    Assert.That(restored.DisplayName, Is.EqualTo("saved-name"));
+                    Assert.That(restored.Note, Is.EqualTo("saved-note"));
+                    Assert.That(restored.LastSaveTime, Is.EqualTo(savedAt));
+                    Assert.That(File.ReadAllBytes(path), Is.EqualTo(before));
+                }
+            });
+        }
+
+        [Test]
+        public void ExplicitMetadataChangesUpdateBorrowedReferencesAndSurviveAColdReopen()
+        {
+            Run(root =>
+            {
+                var path = global::YLFramework.Testing.PackageTestPaths.Physical(
+                    Path.Combine(root, "SaveData/SaveSystemData.json"));
+                using (var store = Open(root))
+                {
+                    store.CreateSaveItem(0);
+                    var borrowed = store.GetSaveItem(0);
+                    var beforeRename = File.ReadAllBytes(path);
+
+                    Assert.That(store.RenameSaveItem(0, "persisted-name"), Is.True);
+                    Assert.That(borrowed.DisplayName, Is.EqualTo("persisted-name"));
+                    Assert.That(store.GetSaveItem(0), Is.SameAs(borrowed));
+                    var beforeNote = File.ReadAllBytes(path);
+                    Assert.That(beforeNote, Is.Not.EqualTo(beforeRename));
+                    Assert.That(JObject.Parse(File.ReadAllText(path))["SaveItemDict"]["0"]["DisplayName"].Value<string>(),
+                        Is.EqualTo("persisted-name"));
+
+                    Assert.That(store.SetSaveItemNote(0, "persisted-note"), Is.True);
+                    Assert.That(borrowed.Note, Is.EqualTo("persisted-note"));
+                    Assert.That(store.GetAllSaveItems().Single(), Is.SameAs(borrowed));
+                    Assert.That(File.ReadAllBytes(path), Is.Not.EqualTo(beforeNote));
+                    Assert.That(JObject.Parse(File.ReadAllText(path))["SaveItemDict"]["0"]["Note"].Value<string>(),
+                        Is.EqualTo("persisted-note"));
+                }
+
+                using (var reopened = Open(root))
+                {
+                    Assert.That(reopened.GetSaveItem(0).DisplayName, Is.EqualTo("persisted-name"));
+                    Assert.That(reopened.GetSaveItem(0).Note, Is.EqualTo("persisted-note"));
+                }
+            });
+        }
+
+        [Test]
+        public void CreatingAnUnrelatedSlotPersistsTheCurrentBorrowedMetadataSnapshot()
+        {
+            Run(root =>
+            {
+                var path = global::YLFramework.Testing.PackageTestPaths.Physical(
+                    Path.Combine(root, "SaveData/SaveSystemData.json"));
+                DateTime changedAt;
+                using (var store = Open(root))
+                {
+                    store.CreateSaveItem(0);
+                    var borrowed = store.GetSaveItem(0);
+                    var before = File.ReadAllBytes(path);
+                    changedAt = borrowed.LastSaveTime.AddHours(1);
+                    borrowed.DisplayName = "borrowed-name";
+                    borrowed.Note = "borrowed-note";
+                    borrowed.UpdateSaveTime(changedAt);
+                    Assert.That(File.ReadAllBytes(path), Is.EqualTo(before));
+
+                    // 索引容器浅拷贝会携带其他槽的借出条目，不能把“不立即写盘”扩大为“永不持久化”。
+                    store.CreateSaveItem(7);
+
+                    Assert.That(store.GetSaveItem(0), Is.SameAs(borrowed));
+                    var committed = JObject.Parse(File.ReadAllText(path));
+                    Assert.That(committed["SaveItemDict"]["0"]["DisplayName"].Value<string>(),
+                        Is.EqualTo("borrowed-name"));
+                    Assert.That(committed["SaveItemDict"]["0"]["Note"].Value<string>(), Is.EqualTo("borrowed-note"));
+                }
+
+                using (var reopened = Open(root))
+                {
+                    Assert.That(reopened.GetAllSaveItems().Count, Is.EqualTo(2));
+                    Assert.That(reopened.GetSaveItem(0).DisplayName, Is.EqualTo("borrowed-name"));
+                    Assert.That(reopened.GetSaveItem(0).Note, Is.EqualTo("borrowed-note"));
+                    Assert.That(reopened.GetSaveItem(0).LastSaveTime, Is.EqualTo(changedAt));
+                    Assert.That(reopened.HasSaveItem(7), Is.True);
+                    Assert.That(reopened.CurrentSaveId, Is.Null);
+                }
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AnOpenOwnerDoesNotMergeExternalIndexMetadataBeforeItsNextIndexCommit(bool commitOwnerSelection)
+        {
+            Run(root =>
+            {
+                var path = global::YLFramework.Testing.PackageTestPaths.Physical(
+                    Path.Combine(root, "SaveData/SaveSystemData.json"));
+                using (var store = Open(root))
+                {
+                    store.CreateSaveItem(0);
+                    Assert.That(store.RenameSaveItem(0, "owner-name"), Is.True);
+                    Assert.That(store.SetSaveItemNote(0, "owner-note"), Is.True);
+                    var borrowed = store.GetSaveItem(0);
+                    var external = JObject.Parse(File.ReadAllText(path));
+                    external["SaveItemDict"]["0"]["DisplayName"] = "external-name";
+                    external["SaveItemDict"]["0"]["Note"] = "external-note";
+                    var externalJson = external.ToString(Formatting.Indented);
+                    File.WriteAllText(path, externalJson);
+
+                    Assert.That(store.GetSaveItem(0), Is.SameAs(borrowed));
+                    Assert.That(store.GetSaveItem(0).DisplayName, Is.EqualTo("owner-name"));
+                    Assert.That(store.GetAllSaveItems().Single().Note, Is.EqualTo("owner-note"));
+                    Assert.That(store.CurrentSaveId, Is.Null);
+                    Assert.That(File.ReadAllText(path), Is.EqualTo(externalJson));
+
+                    if (commitOwnerSelection)
+                    {
+                        store.CurrentSaveId = 0;
+                        var committed = JObject.Parse(File.ReadAllText(path));
+                        Assert.That(committed["SaveItemDict"]["0"]["DisplayName"].Value<string>(),
+                            Is.EqualTo("owner-name"));
+                        Assert.That(committed["SaveItemDict"]["0"]["Note"].Value<string>(), Is.EqualTo("owner-note"));
+                    }
+                }
+
+                using (var reopened = Open(root))
+                {
+                    Assert.That(reopened.IndexNeedsRecovery, Is.False,
+                        "The external edit must remain a valid primary index.");
+                    Assert.That(reopened.GetSaveItem(0).DisplayName,
+                        Is.EqualTo(commitOwnerSelection ? "owner-name" : "external-name"));
+                    Assert.That(reopened.GetSaveItem(0).Note,
+                        Is.EqualTo(commitOwnerSelection ? "owner-note" : "external-note"));
+                    Assert.That(reopened.CurrentSaveId, Is.EqualTo(commitOwnerSelection ? (int?)0 : null));
                 }
             });
         }
@@ -884,6 +1169,15 @@ namespace YLFramework.Tests.Extensions.Data.Save
                     Assert.Catch<InvalidDataException>(() => store.LoadModel<Model>(3));
                 }
             });
+        }
+
+        private static void AssertEmptyStoreHasNoSaveData(SaveStore store, string root)
+        {
+            Assert.That(store.GetAllSaveItems(), Is.Empty);
+            Assert.That(store.CurrentSaveId, Is.Null);
+            Assert.That(Directory.GetFileSystemEntries(
+                global::YLFramework.Testing.PackageTestPaths.Physical(root), "*", SearchOption.AllDirectories)
+                .Select(Path.GetFileName), Is.EquivalentTo(new[] { ".yl-save.lock" }));
         }
 
         private static SaveStore Open(string root, JsonSerializerSettings settings = null)

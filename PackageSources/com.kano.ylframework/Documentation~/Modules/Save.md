@@ -12,10 +12,10 @@
 
 ## 位置
 
-- 运行时：[`Runtime/Systems/Save/`](../../Runtime/Systems/Save/)
-- namespace 为 `YLFramework.Save`，程序集仍为 `YLFramework.Runtime`；旧 `YLFramework.Services.Save` 调用方须更新 using/完整名，不提供转发壳。
-- 唯一存储引擎：[`SaveStore.cs`](../../Runtime/Systems/Save/SaveStore.cs)；Unity 门面：[`SaveManager.cs`](../../Runtime/Systems/Save/SaveManager.cs)；模型/来源/版本合同：[`SaveContracts.cs`](../../Runtime/Systems/Save/SaveContracts.cs)。
-- 文件读写辅助：`SaveFileIO.cs`（原子写入 / 备份恢复）；序列化辅助：[`Serialization/`](../../Runtime/Systems/Save/Serialization/)。
+- 独立包：[`com.kano.ylframework.save`](../../../com.kano.ylframework.save/README.md)，真实依赖只有Newtonsoft UPM；不需要安装主包。
+- namespace 保持 `YLFramework.Save`，程序集为 `YLFramework.Save`；旧 `YLFramework.Services.Save` 调用方须更新 using/完整名，不提供转发壳。
+- 唯一存储引擎：[`SaveStore.cs`](../../../com.kano.ylframework.save/Runtime/Systems/Save/SaveStore.cs)；Unity 门面：[`SaveManager.cs`](../../../com.kano.ylframework.save/Runtime/Systems/Save/SaveManager.cs)；模型/来源/版本合同：[`SaveContracts.cs`](../../../com.kano.ylframework.save/Runtime/Systems/Save/SaveContracts.cs)。
+- 文件读写辅助：`SaveFileIO.cs`（原子写入 / 备份恢复）；序列化辅助：[`Serialization/`](../../../com.kano.ylframework.save/Runtime/Systems/Save/Serialization/)。
 - 通用字典：[`Runtime/Foundation/Serialization/SerializedDictionary.cs`](../../Runtime/Foundation/Serialization/SerializedDictionary.cs)，归 Runtime 主体的 Foundation 职责，不是 Save 专属类型。
 - 原生 Inspector：[`Editor/Foundation/Serialization/SerializedDictionaryDrawer.cs`](../../Editor/Foundation/Serialization/SerializedDictionaryDrawer.cs)，归 Editor-only 的 `YLFramework.Editor`。
 
@@ -76,9 +76,11 @@ Debug.Log($"{result.Status}, cached={result.IsCached}");
 - 主件和备份都不存在才是 Missing。主件读取失败时会尝试备份，仍无有效结果则抛错；内部 `Failed` 状态在公开读取边界转为异常，IO/权限错误也不会静默当作缺失。`TryLoadObject/TryLoadGlobalSetting` 不吞这些错误，不能把它们当作通用安全回退。
 - `LoadGlobalSetting<T>` 仅文件缺失时创建并写入 `new T()`；`TryLoadGlobalSetting` 和 `ReadGlobalSetting` 不自动创建。坏文件不会被默认设置覆盖。
 - `RestoreObjectBackup` / `RestoreSettingBackup` / `RestoreIndexBackup` 是显式修盘入口，保留 `.corrupt-*` 原件和原 `.bak`，返回保留路径。索引从备份打开时 `IndexNeedsRecovery` 为 true，需显式恢复后才能进行受保护的索引/槽位写入；健康索引不能用该入口任意回滚。
-- 重命名或修改备注使用 `RenameSaveItem/SetSaveItemNote` 持久化，失败回滚内存；直接改 SaveItem 只影响内存。对象文件写成功后才更新该槽的保存时间。
+- 重命名或修改备注使用 `RenameSaveItem/SetSaveItemNote` 持久化，失败回滚内存；直接改借出的SaveItem不会立即写盘，未发生后续索引写入就冷重开时会丢弃这些内存改动。后续任一次索引写入会快照当前内存metadata，可能连同直接改动一起保存；已打开owner不合并外部索引编辑。对象文件写成功后才更新该槽的保存时间。
 
 ## SerializedDictionary 用法与边界
+
+这是可选的主包 Foundation 与 Save 组合用法，不是独立Save包的安装依赖；无主包时使用普通DTO/标准字典即可。
 
 ```csharp
 using UnityEngine;
@@ -124,6 +126,6 @@ public class ExampleConfig : MonoBehaviour
 
 ## 验证与历史
 
-测试入口为 `Tests/EditMode/Systems/Save/SaveStoreSafetyTests.cs`、`SaveManagerFacadeTests.cs`、`SerializedDictionarySaveTests.cs`；字典原生编辑另见 `Tests/EditMode/Editor/Foundation/Serialization/SerializedDictionaryEditorTests.cs`。覆盖涉及槽位/模型、版本拒绝、文件安全、取消并发、缓存来源/显式恢复、Prefab 保存重开与隔离磁盘往返；字典专题不能替代 Save 全系统故障恢复验收。
+源码仓库测试位于 `Assets/Tests/YLFramework/`。独立 Save 的 `EditMode/Systems/Save/` 包含 `SaveStoreSafetyTests.cs`、`SaveFacadeContractsTests.cs`、`SaveMissingSlotNativeTests.cs` 和 `SaveStandalonePlayerTests.cs`；通过 Save Daily 验原生合同和无主包的双进程 Player，Save Special 单独验 BCL 合同。主包字典组合测试 `SaveManagerFacadeTests.cs`、`SerializedDictionarySaveTests.cs` 位于 `EditMode/Editor/Data/`，由 Data 组合入口执行；字典原生编辑另见 `EditMode/Editor/Foundation/Serialization/SerializedDictionaryEditorTests.cs`。覆盖涉及槽位/模型、版本拒绝、文件安全、取消并发、缓存来源/显式恢复、Prefab 保存重开与隔离磁盘往返；BCL、原生及 Player 是不同证据，字典专题不能替代 Save 全系统故障恢复验收。
 
 集成与历史验证导航见 [融合记录](../IntegrationPlan.md)，详细接收与字典记录保留在 Git 历史中，不是产品包运行依赖。旧格式迁移结果不作为当前 v2 合同或新运行证明。

@@ -13,7 +13,7 @@ namespace YLFramework.Tests.Http
         [Test]
         public void HttpHasOneRuntimeServiceOwnerWithoutCoreOrEditorProductDependencies()
         {
-            var runtime = typeof(YLFramework.Save.SaveManager).Assembly;
+            var runtime = typeof(HttpManager).Assembly;
             var core = typeof(YLFramework.Core.Module).Assembly;
             Assert.That(core, Is.SameAs(runtime));
             foreach (var name in new[] { "HttpManager", "SendWebRequest", "HttpRequestStatus" })

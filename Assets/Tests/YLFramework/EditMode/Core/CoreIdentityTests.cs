@@ -66,7 +66,7 @@ namespace YLFramework.Core.Tests
         [Test]
         public void PeripheralToolsHaveOneRuntimeOwnerAndCoreHasNoUtilityAuthority()
         {
-            var runtime = typeof(YLFramework.Save.SaveManager).Assembly;
+            var runtime = typeof(YLFramework.YLFrameworkRoot).Assembly;
             var core = typeof(Module).Assembly;
             foreach (var name in new[] { "AnimatorExtensions", "BoundsExtensions", "ColorExtensions", "EventTriggerExtensions",
                 "LayerMaskExtensions", "QuaternionExtensions", "RandomExtensions", "RayExtensions", "RigidbodyExtensions",
@@ -89,7 +89,7 @@ namespace YLFramework.Core.Tests
         {
             var foundation = typeof(CustomAsyncOperation<>).Assembly;
             var core = typeof(Module).Assembly;
-            var runtime = typeof(YLFramework.Save.SaveManager).Assembly;
+            var runtime = typeof(YLFramework.YLFrameworkRoot).Assembly;
             var dictionary = foundation.GetType("YLFramework.Serialization.SerializedDictionary`2");
             Assert.That(dictionary, Is.Not.Null);
             var products = new[] { foundation, core, runtime };

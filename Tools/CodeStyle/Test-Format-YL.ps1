@@ -62,16 +62,14 @@ try {
     $packageRoots = @($catalog.packages | ForEach-Object { 'PackageSources/' + $_.id })
     $otherAllowedPaths = @(
         'PackageSources/com.kano.ylframework/Samples~/Demo/ExampleSample.cs',
-        'PackageSources/com.kano.ylframework.data-assets/Runtime/DataAssetsExample.cs',
-        'PackageSources/com.kano.ylframework.dotween/Runtime/DOTweenExample.cs',
-        'PackageSources/com.kano.ylframework.excel/Editor/ExcelExample.cs',
-        'PackageSources/com.kano.ylframework.domain-excel/Editor/DomainExcelExample.cs',
-        'PackageSources/com.kano.ylframework.hybridclr/Runtime/HybridCLRExample.cs',
         'PackageSources/com.kano.ylframework.hybridclr/Editor/HybridCLRBuildExample.cs',
         'Assets/Tests/YLFramework/EditMode/ExampleTest.cs',
         'Assets/Editor/YLFrameworkDev/ExampleAuthor.cs',
         'Tools/YLFramework.Analyzers/Analyzer/ExampleAnalyzer.cs'
     )
+    $otherAllowedPaths += @($catalog.packages | ForEach-Object {
+        'PackageSources/' + $_.id + '/' + [IO.Path]::GetDirectoryName($_.assemblies[0].path).Replace('\', '/') + '/CatalogExample.cs'
+    })
     $allowedPaths = @($first, $second, $third) + @($otherAllowedPaths | ForEach-Object { Set-Fixture $_ $bad })
     $protectedPaths = @(
         'Assets/Games/Example.cs',
