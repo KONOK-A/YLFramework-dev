@@ -144,6 +144,15 @@
         "com.unity.ugui": "1.0.0"
       }
     },
+    "com.kano.ylframework.movement2d": {
+      "version": "file:../PackageSources/com.kano.ylframework.movement2d",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.kano.ylframework": "0.1.0-preview.1",
+        "com.unity.modules.physics2d": "1.0.0"
+      }
+    },
     "com.kano.ylframework.save": {
       "version": "file:../PackageSources/com.kano.ylframework.save",
       "depth": 0,

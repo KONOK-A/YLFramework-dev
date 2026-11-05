@@ -50,6 +50,21 @@ function Fixture([string] $Id) {
 }
 try {
     $catalog = Read-YLPackageCatalog
+    Case 'Movement2D owns two independent runtimes and one Editor with explicit physics dependency' {
+        $movement = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.movement2d')
+        Check ($movement.Count -eq 1) 'The combined movement2d package is missing from the maintained catalog.'
+        $root = Join-Path $repository 'PackageSources/com.kano.ylframework.movement2d'
+        $manifest = Read-YLPackageEvidenceJson (Join-Path $root 'package.json')
+        Check ($manifest.dependencies.Count -eq 2 -and $manifest.dependencies['com.kano.ylframework'] -ceq '0.1.0-preview.1' -and
+            $manifest.dependencies['com.unity.modules.physics2d'] -ceq '1.0.0') 'Movement2D must declare its real main and physics2d dependencies.'
+        $character = Read-YLPackageEvidenceJson (Join-Path $root 'Runtime/Utilities/CharacterController2D/YLFramework.Character2D.asmdef')
+        $platform = Read-YLPackageEvidenceJson (Join-Path $root 'Runtime/Utilities/MoveablePlatform/YLFramework.Platform2D.asmdef')
+        Check ($character.name -ceq 'YLFramework.Character2D' -and ($character.references -join ',') -ceq 'YLFramework.Runtime') 'Character2D must not depend on Platform2D or another optional runtime.'
+        Check ($platform.name -ceq 'YLFramework.Platform2D' -and ($platform.references -join ',') -ceq 'YLFramework.Runtime') 'Platform2D must not depend on Character2D or another optional runtime.'
+        $editor = Read-YLPackageEvidenceJson (Join-Path $root 'Editor/YLFramework.Movement2D.Editor.asmdef')
+        Check ($editor.name -ceq 'YLFramework.Movement2D.Editor' -and ($editor.includePlatforms -join ',') -ceq 'Editor' -and
+            ($editor.references -join ',') -ceq 'YLFramework.Character2D,YLFramework.Platform2D,YLFramework.Editor') 'The common movement Editor must reference both independent runtimes and its actual common Editor dependency.'
+    }
     Case 'Configured FSM owns its Runtime, Editor, template and stylesheet without the lightweight FSM' {
         $fsm = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.state-machine')
         Check ($fsm.Count -eq 1) 'The configured FSM package is missing from the maintained catalog.'

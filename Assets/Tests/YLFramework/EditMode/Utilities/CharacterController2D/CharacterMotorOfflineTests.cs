@@ -10,8 +10,31 @@ namespace YLFramework.Tests.Extensions.Behavior
     [Category("YL.Module.Behavior")]
     public class CharacterMotorOfflineTests
     {
-        private static string Root => Environment.GetEnvironmentVariable("YL_BEHAVIOR_ROOT") ?? Directory.GetCurrentDirectory();
-        private static string Runtime => Path.Combine(global::YLFramework.Testing.PackageTestPaths.MainSourceRoot(Root), "Runtime/Utilities/CharacterController2D");
+#if UNITY_EDITOR
+        private static string Runtime => global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework.movement2d/Runtime/Utilities/CharacterController2D");
+#else
+        private static string Runtime => Path.Combine(Environment.GetEnvironmentVariable("YL_BEHAVIOR_ROOT") ?? Directory.GetCurrentDirectory(),
+            "PackageSources/com.kano.ylframework.movement2d/Runtime/Utilities/CharacterController2D");
+#endif
+
+#if UNITY_EDITOR
+        [TestCase(typeof(YLFramework.Character2D.CharacterController2D), "YLFramework.Character2D", "YLFramework.Platform2D")]
+        [TestCase(typeof(YLFramework.Platform2D.Moveable), "YLFramework.Platform2D", "YLFramework.Character2D")]
+        public void MovementRuntimesHaveDistinctOwnersWithoutMutualReferences(Type type, string owner, string unrelatedRuntime)
+        {
+            Assert.That(type.Assembly.GetName().Name, Is.EqualTo(owner));
+            Assert.That(type.Assembly.GetReferencedAssemblies().Any(reference => reference.Name == unrelatedRuntime), Is.False);
+        }
+
+        [TestCase("YLFramework.Editor.Character2D.CharacterController2DInspector", "YLFramework." + "CharacterController2D.CharacterController2DInspector")]
+        [TestCase("YLFramework.Editor.Platform2D.MoveableInspector", "YLFramework." + "MoveablePlatform.MoveableInspector")]
+        public void SharedMovementEditorOwnsItsPublicTypesWithoutOldNamespaceAliases(string name, string legacyName)
+        {
+            var editor = AppDomain.CurrentDomain.GetAssemblies().Single(assembly => assembly.GetName().Name == "YLFramework.Movement2D.Editor");
+            Assert.That(editor.GetType(name), Is.Not.Null);
+            Assert.That(editor.GetType(legacyName), Is.Null);
+        }
+#endif
 
         [Test]
         public void OriginalMotorChecksAndSerializableEventsArePresentWithoutEditorDependencies()
@@ -21,7 +44,8 @@ namespace YLFramework.Tests.Extensions.Behavior
                 Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(Runtime, name + ".cs"))), Is.True, name);
             }
 
-            foreach (var source in Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(Runtime), "*.cs", SearchOption.AllDirectories).Select(File.ReadAllText))
+            foreach (var source in Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(Runtime), "*.cs", SearchOption.AllDirectories)
+                .Where(path => Path.GetFileName(path) != "AssemblyInfo.cs").Select(File.ReadAllText))
             {
                 Assert.That(source.Contains("using UnityEditor"), Is.False);
                 Assert.That(source, Does.Contain("namespace YLFramework.Character2D"));
@@ -42,7 +66,7 @@ namespace YLFramework.Tests.Extensions.Behavior
 
         private static object MathCall(string name, params object[] args)
         {
-            var type = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("YLFramework.Character2D.CharacterMotorMath")).FirstOrDefault(t => t != null);
+            var type = typeof(YLFramework.Character2D.CharacterController2D).Assembly.GetType("YLFramework.Character2D.CharacterMotorMath");
             Assert.That(type, Is.Not.Null, "Managed motor calculations are missing.");
             var method = type.GetMethod(name, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             Assert.That(method, Is.Not.Null, name + " is missing.");

@@ -16,7 +16,7 @@ namespace 为 `YLFramework.Overlap`，实现位于 `Runtime/Utilities/Overlap`�
 
 ## CharacterController2D
 
-namespace 为 `YLFramework.Character2D`，实现位于 `Runtime/Utilities/CharacterController2D`。
+安装 [com.kano.ylframework.movement2d](../../../com.kano.ylframework.movement2d/README.md) 及主包/physics2d。namespace 与 Runtime 程序集均为 `YLFramework.Character2D`，包内实现位于 `Runtime/Utilities/CharacterController2D`；消费方 asmdef 只需引用实际使用的 Runtime，不需要引用 Platform2D。
 
 1. 在同一 Rigidbody2D 下准备非 Trigger 的 Box / Circle / CapsuleCollider2D，允许多个 attached Collider；先配置再启用。
 2. 在调用方 FixedUpdate 使用 `Move(Vector2 delta)` 或 `MoveHorizontal(speed)`，按需要调用 `Jump` / `JumpStart` / `JumpEnd`。接触检查仍在 Update，不另外安装输入系统或第二套更新驱动。
@@ -28,7 +28,7 @@ Box / Capsule 按本地 size、绝对缩放与独立角度查询，不重复旋�
 
 ## MoveablePlatform
 
-namespace 为 `YLFramework.Platform2D`，包括 Moveable、MoveablePlatform2D 与 PlatformCatcher2D，不依赖 CharacterController2D。
+同属 movement2d 包，namespace 与 Runtime 程序集均为 `YLFramework.Platform2D`，包括 Moveable、MoveablePlatform2D 与 PlatformCatcher2D，不依赖 CharacterController2D。公共作者工具属于 `YLFramework.Movement2D.Editor`；原脚本 GUID、Prefab 字段和持久 UnityEvent 保留，不在卸载时删除用户内容。
 
 - 路径为世界坐标 Positions 或初始化时取得的 Transform 快照，按快照总距离插值。支持 PingPong / Loop / Once、delay、scaled / unscaled FixedUpdate、Run / Pause / Stop 与 UnityEvent。
 - 先配置再启用或 Run。`PositionType` / `UpdateMode` 选择模式，节点变更通过正式方法重新初始化；空路径、失效 Transform 或 NaN 会给出节点诊断，单点 / 全重合路径在 delay 后定位并停止。

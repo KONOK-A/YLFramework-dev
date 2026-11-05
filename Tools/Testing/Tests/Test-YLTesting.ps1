@@ -154,6 +154,25 @@ try {
             $excel = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'PackageSources/com.kano.ylframework.excel/package.json')
             Assert-That (-not $excel.dependencies.Contains('com.kano.ylframework.localization')) 'Test-only Localization must not become an Excel product dependency.'
         }
+        Test-Case 'Movement2D standalone declares actual consumers without forcing it into unrelated modules' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $movement = @($configuration.modules | Where-Object name -CEQ 'Movement2D')[0]
+            Assert-That (@($movement.packageInputs).Count -eq 1 -and $movement.packageInputs[0] -ceq 'com.kano.ylframework.movement2d') 'Movement2D must declare only its real product entry.'
+            $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($movement.packageInputs))
+            Assert-That ((@($closure.id | Sort-Object) -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.movement2d') 'Standalone movement acquired an unrelated feature package.'
+            $consumers = @($configuration.modules | Where-Object { $_.Contains('packageInputs') -and @($_.packageInputs) -ccontains 'com.kano.ylframework.movement2d' })
+            Assert-That ((@($consumers.name | Sort-Object) -join ',') -ceq 'Behavior,MigrationFixtures,Movement2D') 'Only actual movement consumers may install the package.'
+            Assert-That ($movement.sortingLayer -ceq '' -and $movement.prepareSessionScene -and $movement.prepareSceneTemplates) 'Movement Player authoring requires a real owned empty scene.'
+            $producer = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/YLFramework.MigrationFixtures.Tests.EditMode.asmdef')
+            foreach ($reference in @('YLFramework.Character2D', 'YLFramework.Platform2D')) {
+                Assert-That (@($producer.references) -ccontains $reference) "Historical producer compilation lost an actual movement consumer: $reference"
+            }
+            $edit = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef')
+            Assert-That (@($edit.references) -cnotcontains 'YLFramework.Movement2D.Acceptance') 'The standalone probe reference cannot leak to every shared test consumer.'
+            $probe = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/Movement2D/Runtime/YLFramework.Movement2D.Acceptance.asmdef')
+            Assert-That (($probe.references -join ',') -ceq 'YLFramework.Character2D,YLFramework.Platform2D') 'The probe must not declare unrelated products or UI dependencies to repair an implicit Unity graph reference.'
+        }
         Test-Case 'Configured FSM standalone keeps its exact two-package closure and real reload scene preconditions' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')

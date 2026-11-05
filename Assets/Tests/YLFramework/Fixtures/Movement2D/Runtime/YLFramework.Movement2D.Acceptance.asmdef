@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Movement2D.Acceptance",
+    "rootNamespace": "YLFramework.Movement2D.Acceptance",
+    "references": ["YLFramework.Character2D", "YLFramework.Platform2D"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

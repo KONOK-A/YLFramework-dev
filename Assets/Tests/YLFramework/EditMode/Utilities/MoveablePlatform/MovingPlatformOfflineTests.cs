@@ -83,8 +83,12 @@ namespace YLFramework.Tests.Extensions.Behavior
         [Test]
         public void AllOriginalPlatformComponentsAreIndependentOfCC2DAndEditor()
         {
-            var root = Environment.GetEnvironmentVariable("YL_BEHAVIOR_ROOT") ?? Directory.GetCurrentDirectory();
-            var directory = Path.Combine(global::YLFramework.Testing.PackageTestPaths.MainSourceRoot(root), "Runtime/Utilities/MoveablePlatform");
+#if UNITY_EDITOR
+            var directory = global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework.movement2d/Runtime/Utilities/MoveablePlatform");
+#else
+            var directory = Path.Combine(Environment.GetEnvironmentVariable("YL_BEHAVIOR_ROOT") ?? Directory.GetCurrentDirectory(),
+                "PackageSources/com.kano.ylframework.movement2d/Runtime/Utilities/MoveablePlatform");
+#endif
             foreach (var name in new[] { "Moveable", "MoveablePlatform2D", "PlatformCatcher2D", "BoolUnityEvent", "Vector3UnityEvent" })
             {
                 Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(directory, name + ".cs"))), Is.True, name);

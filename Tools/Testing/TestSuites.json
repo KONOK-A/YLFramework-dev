@@ -264,6 +264,31 @@
       "sampleInputs": []
     },
     {
+      "name": "Movement2D",
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "category": "YL.Module.Movement2D",
+      "assemblies": [],
+      "nativeAssemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "description": "Character2D and Platform2D independent runtimes plus main only: actual Physics2D, path lifecycle, serialized events and standalone Player.",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "suites": ["Daily", "Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.movement2d/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Movement2D"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Utilities/CharacterController2D", "Assets/Tests/YLFramework/EditMode/Utilities/MoveablePlatform", "Assets/Tests/YLFramework/EditMode/Editor/Movement2D"],
+      "playTests": ["Assets/Tests/YLFramework/PlayMode/Utilities/CharacterController2D", "Assets/Tests/YLFramework/PlayMode/Utilities/MoveablePlatform", "Assets/Tests/YLFramework/PlayMode/Utilities/Movement2D"],
+      "excludedCategories": ["YL.Special.Movement2DPackage"],
+      "specialBackend": "SessionNative",
+      "specialModes": ["EditMode"],
+      "specialCategory": "YL.Special.Movement2DPackage",
+      "assemblyMetadata": ["PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef", "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef", "PackageSources/com.kano.ylframework.movement2d/Runtime/Utilities/CharacterController2D/YLFramework.Character2D.asmdef", "PackageSources/com.kano.ylframework.movement2d/Runtime/Utilities/MoveablePlatform/YLFramework.Platform2D.asmdef", "PackageSources/com.kano.ylframework.movement2d/Editor/YLFramework.Movement2D.Editor.asmdef", "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"],
+      "packageInputs": ["com.kano.ylframework.movement2d"],
+      "sampleInputs": []
+    },
+    {
       "name": "StateMachine",
       "shortHostKey": true,
       "sortingLayer": "",
@@ -313,7 +338,8 @@
       ],
       "runtimeSources": [
         "PackageSources/com.kano.ylframework/Runtime",
-        "PackageSources/com.kano.ylframework.state-machine/Runtime"
+        "PackageSources/com.kano.ylframework.state-machine/Runtime",
+        "PackageSources/com.kano.ylframework.movement2d/Runtime"
       ],
       "sourceEnvironment": [
         "YL_BEHAVIOR_ROOT"
@@ -355,7 +381,8 @@
       ],
       "packageInputs": [
         "com.kano.ylframework",
-        "com.kano.ylframework.state-machine"
+        "com.kano.ylframework.state-machine",
+        "com.kano.ylframework.movement2d"
       ],
       "sampleInputs": []
     },
@@ -680,7 +707,8 @@
       "packageInputs": [
         "com.kano.ylframework",
         "com.kano.ylframework.excel",
-        "com.kano.ylframework.state-machine"
+        "com.kano.ylframework.state-machine",
+        "com.kano.ylframework.movement2d"
       ],
       "sampleInputs": []
     },

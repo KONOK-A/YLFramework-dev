@@ -18,12 +18,12 @@ namespace YLFramework.Tests
         private const string GameRoot = "Assets/Games/MainModule";
         private static readonly string[] _ownedPackageNames =
         {
-            "com.kano.ylframework", "com.kano.ylframework.data-assets", "com.kano.ylframework.localization", "com.kano.ylframework.save", "com.kano.ylframework.state-machine", "com.kano.ylframework.dotween", "com.kano.ylframework.excel",
+            "com.kano.ylframework", "com.kano.ylframework.data-assets", "com.kano.ylframework.localization", "com.kano.ylframework.save", "com.kano.ylframework.state-machine", "com.kano.ylframework.movement2d", "com.kano.ylframework.dotween", "com.kano.ylframework.excel",
             "com.kano.ylframework.domain-excel", "com.kano.ylframework.hybridclr"
         };
         private static readonly string[] _allowedPackageNames =
         {
-            "com.kano.ylframework", "com.kano.ylframework.data-assets", "com.kano.ylframework.localization", "com.kano.ylframework.save", "com.kano.ylframework.state-machine", "com.kano.ylframework.dotween", "com.kano.ylframework.excel",
+            "com.kano.ylframework", "com.kano.ylframework.data-assets", "com.kano.ylframework.localization", "com.kano.ylframework.save", "com.kano.ylframework.state-machine", "com.kano.ylframework.movement2d", "com.kano.ylframework.dotween", "com.kano.ylframework.excel",
             "com.kano.ylframework.domain-excel", "com.kano.ylframework.hybridclr",
             "com.code-philosophy.hybridclr", "com.ivanmurzak.unity.mcp", "com.ivanmurzak.unity.mcp.animation",
             "com.ivanmurzak.unity.mcp.cinemachine", "com.ivanmurzak.unity.mcp.inputsystem", "com.ivanmurzak.unity.mcp.probuilder",
