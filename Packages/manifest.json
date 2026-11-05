@@ -13,6 +13,7 @@
     "com.kano.ylframework.dotween": "file:../PackageSources/com.kano.ylframework.dotween",
     "com.kano.ylframework.excel": "file:../PackageSources/com.kano.ylframework.excel",
     "com.kano.ylframework.hybridclr": "file:../PackageSources/com.kano.ylframework.hybridclr",
+    "com.kano.ylframework.localization": "file:../PackageSources/com.kano.ylframework.localization",
     "com.unity.burst": "1.8.31",
     "com.unity.cinemachine": "3.0.1",
     "com.unity.feature.2d": "2.0.2",

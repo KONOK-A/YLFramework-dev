@@ -13,7 +13,7 @@
 | Excel 字段合同 | `YLFramework.Excel` | Runtime 只定义字段 Attribute、转换器和 `ExcelFieldsType`，不执行 xlsx IO |
 | Excel 作者后端 | `YLFramework.Integrations.Excel.Editor` | 可选 Editor-only 后端，预览后显式提交，依赖和许可证一并安装 |
 
-源码入口：[Localization](../../Runtime/Systems/Localization/) · [DataAssets](../../Runtime/Systems/DataAssets/) · [Excel 字段合同](../../Runtime/Utilities/Excel/) · [独立 Excel 包后端](../../../com.kano.ylframework.excel/Editor/)。
+源码入口：[Localization](../../../com.kano.ylframework.localization/Runtime/Systems/Localization/) · [DataAssets](../../../com.kano.ylframework.data-assets/Runtime/Systems/DataAssets/) · [Excel 字段合同](../../Runtime/Utilities/Excel/) · [独立 Excel 包后端](../../../com.kano.ylframework.excel/Editor/)。
 
 ## 资源准备与生命周期
 
@@ -25,16 +25,14 @@
 
 ## Localization
 
+安装独立 [`com.kano.ylframework.localization`](../../../com.kano.ylframework.localization/README.md)，并在消费方asmdef显式引用。主包不反向依赖该包；UGUI由声明依赖解析，TMP仅保留既有Other反射适配，不新增编译依赖。
+
 `LocalizationManager.AddConfig` 与 `LoadConfigAsync` 返回 `LocalizationConfigHandle`。调用方 Dispose 自己的句柄，不撤销其他 owner 的登记。
 
 - `LocalizeString` / `LocalizeImage` 直接刷新表现，不需要重启业务 GameObject。
 - 回退顺序为请求语言、适用的中文变体、English、登记顺序；不是任意猜测系统语言或扫描其他资产。
 - Other 模式的公开 text 反射成员需由应用在 IL2CPP 中保留。
 - Localization 当前没有 Excel 作者流程，不能将可选后端存在解释为所有配置均支持工作簿导入。
-
-## DataAssets
-
-DataAssets 的 Runtime、作者工具、根/条目字段与登记租约合同已归独立 [`com.kano.ylframework.data-assets`](../../../com.kano.ylframework.data-assets/README.md)。主包不引用或自动启动该包；Excel 是它的可选作者消费者。
 
 当前持久字段是资产协议，不因 C# 整理随意改变：
 
@@ -45,6 +43,10 @@ DataAssets 的 Runtime、作者工具、根/条目字段与登记租约合同已
 | 语言条目 | `id/type/str/image/url/notes` |
 
 资源地址字段 `projectName/imageName/subAsset` 表示 YL ProjectId / Path / SubAsset，不转换为其他资源系统的地址。作者工具生成到 `Assets/YLFrameworkData` 的条目属于使用工程，不是默认框架包源码。
+
+## DataAssets
+
+DataAssets 的 Runtime、作者工具、根/条目字段与登记租约合同已归独立 [`com.kano.ylframework.data-assets`](../../../com.kano.ylframework.data-assets/README.md)。主包不引用或自动启动该包；Excel 是它的可选作者消费者。
 
 ## Excel 作者后端
 

@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Localization.Editor",
+    "rootNamespace": "YLFramework.Editor.Localization",
+    "references": ["YLFramework.Localization", "YLFramework.Editor"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

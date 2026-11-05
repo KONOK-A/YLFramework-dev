@@ -55,6 +55,7 @@ Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎�
 | --- | --- | --- |
 | `com.kano.ylframework` | 无选装包 | 官方依赖由 UPM 解析 |
 | `com.kano.ylframework.data-assets` | 主包 | ScriptableObject 根、登记与作者窗口 |
+| `com.kano.ylframework.localization` | 主包、UGUI | 显式语言根、文本/ResourceImage 与作者窗口 |
 | `com.kano.ylframework.excel` | 主包、DataAssets | MiniExcel 与许可随 Excel 包携带 |
 | `com.kano.ylframework.domain-excel` | 主包、DataAssets、Excel | 不需要全局 `YL_DOMAIN_EXCEL` |
 | `com.kano.ylframework.dotween` | 主包 | SDK 独立准备；无 SDK 的门控检查不是正向集成 |
@@ -81,6 +82,7 @@ Unity 不支持在 `package.json` 中声明 Git URL 传递依赖。自有包虽�
 | 主包 | `com.kano.ylframework` | UGUI / Json.NET 等 Registry 依赖自动解析 |
 | DOTween | 主包 + `com.kano.ylframework.dotween` | 独立安装官方 DOTween Standard `1.2.825`，完成 SDK Setup 和 `DOTWEEN` |
 | DataAssets | 主包 + `com.kano.ylframework.data-assets` | 不要求安装 Excel |
+| Localization | 主包 + `com.kano.ylframework.localization` | 不要求安装 DataAssets/Excel/TMP |
 | Excel | 主包 + DataAssets + `com.kano.ylframework.excel` | MiniExcel `1.31.2` 与 Apache-2.0 许可随 Excel 包携带 |
 | Domain Excel | 主包 + DataAssets + Excel + `com.kano.ylframework.domain-excel` | 安装即可启用，不要求全局 `YL_DOMAIN_EXCEL` |
 | HybridCLR | 主包 + `com.kano.ylframework.hybridclr` | 官方 SDK `9.0.3` 也需单独声明其 Git 来源，匹配 native / 平台门禁 |
@@ -130,7 +132,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 | Catalog、AssetBundle、场景、lease、构建发布 | [Resource](Modules/Resource.md) |
 | Music / Voice / Sound、命名 Provider、句柄与 Mixer | [Audio](Modules/Audio.md) |
 | Action、Observable、组合动作与音频桥接 | [Action](Modules/Action.md) |
-| Localization、Excel 字段与作者流程 | [Data](Modules/Data.md) |
+| Localization、Excel 字段与作者流程 | [Data](Modules/Data.md)，[Localization 包](../../com.kano.ylframework.localization/README.md) |
 | DataAssets 根、租约与作者窗口 | [DataAssets 包](../../com.kano.ylframework.data-assets/README.md) |
 | 存档槽、SaveStore、序列化与故障恢复 | [Save](Modules/Save.md) |
 | Skill、Buff、Mission、Equipment、Reddot、Logging | [Domain](Modules/Domain.md) |
@@ -156,6 +158,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 | --- | --- |
 | DOTween | [`com.kano.ylframework.dotween`](../../com.kano.ylframework.dotween/README.md)，外部 DOTween.dll 与 `DOTWEEN`；[Action 接入](Modules/Action.md#扩展方式) |
 | DataAssets | [`com.kano.ylframework.data-assets`](../../com.kano.ylframework.data-assets/README.md)，独立配置根、登记与Editor作者工具 |
+| Localization | [`com.kano.ylframework.localization`](../../com.kano.ylframework.localization/README.md)，独立语言根、显示绑定和Editor作者工具 |
 | Excel | [`com.kano.ylframework.excel`](../../com.kano.ylframework.excel/README.md)，复用DataAssets并携带完整 MiniExcel 后端及许可；[配置作者流程](Modules/Data.md#excel-作者后端) |
 | DomainExcel | [`com.kano.ylframework.domain-excel`](../../com.kano.ylframework.domain-excel/README.md)，复用 Excel，安装即可启用；[领域导入](Modules/Domain.md#domainexcel) |
 | HybridCLR | [`com.kano.ylframework.hybridclr`](../../com.kano.ylframework.hybridclr/README.md)，使用外置官方 SDK 并复用 Resource；[架构边界](Architecture.md#hybridclr-可选接入) |

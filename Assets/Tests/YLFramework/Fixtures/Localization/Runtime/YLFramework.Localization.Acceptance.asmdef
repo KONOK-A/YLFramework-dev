@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Localization.Acceptance",
+    "rootNamespace": "YLFramework.Tests.Localization",
+    "references": ["YLFramework.Runtime", "YLFramework.Localization"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -4,6 +4,7 @@
   "references": [
     "YLFramework.Runtime",
     "YLFramework.DataAssets",
+    "YLFramework.Localization",
     "YLFramework.Tests.Fixtures"
   ],
   "includePlatforms": [],

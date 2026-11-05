@@ -175,13 +175,22 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(asset, Is.Not.Null, "Freeze explicit assembly ownership before moving any functional source.");
             var table = JsonUtility.FromJson<AssemblyMoveTable>(asset.text);
             Assert.That(table.schemaVersion, Is.EqualTo(1));
-            Assert.That(table.moves, Has.Length.EqualTo(16), "Keep all original identity anchors and the three migrated DataAssets types.");
+            Assert.That(table.moves, Has.Length.EqualTo(21), "Keep all original anchors and the migrated DataAssets/Localization identities.");
             Assert.That(table.moves.Select(move => move.fullName).Distinct().Count(), Is.EqualTo(table.moves.Length));
             Assert.That(table.moves.Select(move => move.scriptGuid).Distinct().Count(), Is.EqualTo(table.moves.Length));
             foreach (var move in table.moves)
             {
                 Assert.That(move.sourceAssembly, Is.EqualTo("YLFramework.Runtime"));
                 Assert.That(move.targetAssembly, Is.Not.Null.And.Not.Empty);
+                string currentPackage = move.currentAssembly == "YLFramework.Runtime" ? "com.kano.ylframework" : move.package;
+                bool installed = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Any(package => package.name == currentPackage);
+                if (!installed)
+                {
+                    Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(move.fullName) != null), Is.False,
+                        "An absent feature must not survive in the main package or a compatibility assembly.");
+                    Assert.That(AssetDatabase.GUIDToAssetPath(move.scriptGuid), Is.Empty, move.fullName);
+                    continue;
+                }
                 var owner = System.Reflection.Assembly.Load(move.currentAssembly);
                 Assert.That(owner.GetType(move.fullName)?.IsPublic, Is.True, move.fullName);
                 Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(assembly => assembly.GetType(move.fullName) != null), Is.EqualTo(1), move.fullName);
@@ -190,7 +199,6 @@ namespace YLFramework.Core.Editor.Tests
                     Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(move.legacyName) != null), Is.False, move.legacyName);
                 }
                 string script = AssetDatabase.GUIDToAssetPath(move.scriptGuid);
-                string currentPackage = move.currentAssembly == "YLFramework.Runtime" ? "com.kano.ylframework" : move.package;
                 Assert.That(script, Does.StartWith("Packages/" + currentPackage + "/"), move.fullName);
                 string definition = CompilationPipeline.GetAssemblyDefinitionFilePathFromScriptPath(script);
                 Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(definition)), Does.Contain('"' + move.currentAssembly + '"'), script);

@@ -42,6 +42,7 @@ namespace YLFramework.Tests.Resource
             public string fullName;
             public string legacyName;
             public string currentAssembly;
+            public string package;
         }
 
         private static IEnumerable<TestCaseData> PublicAssemblyMoves()
@@ -53,14 +54,21 @@ namespace YLFramework.Tests.Resource
             Assert.That(table.moves, Is.Not.Empty);
             foreach (var move in table.moves)
             {
-                yield return new TestCaseData(move.fullName, move.legacyName, move.currentAssembly);
+                string currentPackage = move.currentAssembly == "YLFramework.Runtime" ? "com.kano.ylframework" : move.package;
+                yield return new TestCaseData(move.fullName, move.legacyName, move.currentAssembly, currentPackage);
             }
         }
 
         [TestCaseSource(nameof(PublicAssemblyMoves))]
-        public void FunctionalDomainsKeepOneDeclaredAssemblyIdentity(string fullName, string legacyName, string expectedAssembly)
+        public void FunctionalDomainsKeepOneDeclaredAssemblyIdentity(string fullName, string legacyName, string expectedAssembly, string currentPackage)
         {
             var runtime = typeof(ResourceSystem).Assembly;
+            if (!UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Any(package => package.name == currentPackage))
+            {
+                Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(fullName) != null), Is.False,
+                    "An uninstalled feature cannot be supplied by the main assembly or an alias.");
+                return;
+            }
             var owner = System.Reflection.Assembly.Load(expectedAssembly);
             var type = owner.GetType(fullName);
             Assert.That(type, Is.Not.Null, fullName);

@@ -12,7 +12,7 @@ YLFramework 按需交付与使用。主包有 `YLFramework.Runtime` 与 `YLFrame
 | --- | --- |
 | `Runtime` | Foundation、Core、Systems、Utilities 四个职责区，共用 Runtime 主体 |
 | `Editor` | 作者工具、公共支撑与 Help，共用 Editor-only 主体 |
-| 独立选装 UPM 包 | DataAssets、DOTween、Excel、DomainExcel、HybridCLR 的可选编译与交付边界，不在主包内 |
+| 独立选装 UPM 包 | DataAssets、Localization、DOTween、Excel、DomainExcel、HybridCLR 的可选编译与交付边界，不在主包内 |
 | `Prefabs`、`Samples~`、`Documentation~` | 正式模板、显式导入后才编译的接入样例、按文件路径打开的产品指南 |
 | `Plugins/BouncyCastle` | 随包的批准依赖及完整来源许可；不递归整个宿主 Plugins |
 | `Assets/Tests/YLFramework` | 源仓库测试与夹具，不在任何产品包内 |
@@ -31,6 +31,7 @@ PackageSources/
     Samples~/ResourceStartup/  Documentation~/
     package.json  README.md  CHANGELOG.md  LICENSE.md
   com.kano.ylframework.data-assets/
+  com.kano.ylframework.localization/
   com.kano.ylframework.dotween/
   com.kano.ylframework.excel/
   com.kano.ylframework.domain-excel/
@@ -45,6 +46,7 @@ Assets/Tests/YLFramework/          # repository only
 | `YLFramework.Runtime` | true | Unity / UGUI、Json.NET、随包 BouncyCastle；不引用框架 Editor 或已退休宿主扩展 |
 | `YLFramework.Editor` | true | Runtime、UGUI、Json.NET，仅 Editor；Help 不另建主体 DLL |
 | `YLFramework.DataAssets` / `.Editor` | true | Runtime 引用主 Runtime；Editor 引用自身 Runtime 与主 Editor，不引用 Excel/MiniExcel |
+| `YLFramework.Localization` / `.Editor` | true | Runtime 引用主 Runtime 与 UGUI；Editor 引用自身 Runtime 与主 Editor，不引用 DataAssets/Excel |
 | `YLFramework.Actions.DOTween` | false | Runtime + 外部 DOTween.dll，受 `DOTWEEN` 约束 |
 | `YLFramework.Excel.Editor` | true | 主 Runtime/Editor、DataAssets Runtime/Editor、MiniExcel、Json.NET，仅 Editor |
 | `YLFramework.Domain.Excel.Editor` | true | Excel 后端与主体，仅 Editor；安装 Domain Excel 包即可启用，不再要求全局宏 |
@@ -93,7 +95,7 @@ TimerObject 属于 Foundation Timing；物理、动画和 Unity 生命周期监�
 - Core 经自身资源合同接入，Resource 提供适配；UI / Module 不静态绑定具体资源实现。
 - Resource → Audio 的内建装配在 `Systems/Resource/Integration/Audio`。命名 Clip Provider 用独立 AssetLease 保活或受控闲置缓存，资源服务仍是资产 / Bundle 的唯一释放权威。
 - `Systems/Audio/Actions/PlaySoundAction` 是同一 Runtime 内的 Action / Audio 协作，不是假装可拆卸的第三方集成；DOTween 才是独立可选边界。
-- Localization 与领域配置，以及独立 DataAssets 包，都可借用 ResourceSystem，不再建立第二套地址、下载或资源释放权威；主包不反向引用 DataAssets。
+- 独立 Localization/DataAssets 与领域配置都可借用 ResourceSystem，不再建立第二套地址、下载或资源释放权威；主包不反向引用选装包。
 
 ### HTTP / AsyncOperation 边界
 

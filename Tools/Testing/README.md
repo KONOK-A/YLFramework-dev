@@ -90,6 +90,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Behavior | Quick / Daily / Special | 日常Overlap / CharacterMotor / MovingPlatform / 两套FSM；Special在显式自有Desktop宿主执行两个原生窗口事件合同。 |
 | Save | Special | 真实 NUnit 执行 BCL 合同；不会执行需要 Unity JsonUtility 的叶子来伪造 native 验收。 |
 | Data | Daily / Special | Save native JSON、Localization、DataAssets 作者和资源生命周期；会话前置不能由主工程代替。 |
+| DataAssets | Daily / Special | 仅主包+DataAssets：身份、作者、请求与租约、双Play、旧资产副本重建及真实Mono Player；不是完整Data组合。 |
+| Localization | Daily / Special | 仅主包+Localization：回退、显示、ResourceImage责任、作者、双Play及正式内容Player；不借DataAssets/Excel依赖。 |
 | Excel | Daily | 显式安装现有可选适配与 MiniExcel，执行真实 XLSX、AssetDatabase 和预览合同；只声明 EditMode。 |
 | Action | Daily | Action / Observable 的真实取消、释放、池化复用、场景结束与屏幕过渡；共享依赖检查不借用其他测试类。 |
 | Audio | Daily / Special | 日常 AudioKit / source / owner / 作者与资源生命周期；Special执行连续Play、authority/provider与无输出采样的Bundle会话，真实音频输出/DSP仍独立。 |

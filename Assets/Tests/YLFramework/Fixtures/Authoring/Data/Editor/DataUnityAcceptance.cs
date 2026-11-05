@@ -173,7 +173,8 @@ namespace YLFramework.Tests.DataBatch
                 receipt["compiler"] = PlayerSettings.GetIl2CppCompilerConfiguration(target).ToString();
                 receipt["projectPath"] = Project;
                 receipt["pid"] = System.Diagnostics.Process.GetCurrentProcess().Id;
-                DataMainAcceptance.Write(Path.Combine(Output(), "source-binding.json"), Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical("Assets/YLFramework"), "*.cs", SearchOption.AllDirectories).Where(IsBPath).Select(p => new { path = p, sha256 = DataMainAcceptance.Hash(p) }));
+                var sourceRoots = new[] { "Packages/com.kano.ylframework", "Packages/com.kano.ylframework.data-assets", "Packages/com.kano.ylframework.localization" };
+                DataMainAcceptance.Write(Path.Combine(Output(), "source-binding.json"), sourceRoots.SelectMany(root => Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(root), "*.cs", SearchOption.AllDirectories)).Where(IsBPath).Select(p => new { path = p, sha256 = DataMainAcceptance.Hash(p) }));
                 var built = BuildPipeline.BuildPlayer(new BuildPlayerOptions { scenes = new[] { scenePath }, target = BuildTarget.StandaloneWindows64, locationPathName = output, options = BuildOptions.None });
                 receipt["result"] = built.summary.result.ToString();
                 receipt["errors"] = built.summary.totalErrors;
@@ -188,7 +189,7 @@ namespace YLFramework.Tests.DataBatch
                 {
                     Require(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(Path.GetDirectoryName(output), "GameAssembly.dll"))), "Missing native IL2CPP output.");
                     Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(Output(), "managed-stripped")));
-                    foreach (string assembly in new[] { "YLFramework.Runtime", typeof(DataPlayerProbe).Assembly.GetName().Name })
+                    foreach (string assembly in new[] { "YLFramework.Runtime", "YLFramework.DataAssets", "YLFramework.Localization", typeof(DataPlayerProbe).Assembly.GetName().Name })
                     {
                         File.Copy(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(stripped, assembly + ".dll")), global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(Output(), "managed-stripped", assembly + ".dll")));
                     }
@@ -278,11 +279,12 @@ namespace YLFramework.Tests.DataBatch
                 Require(!runtime.GetReferencedAssemblies().Any(a => a.Name.Contains("MiniExcel")) && !editor.GetReferencedAssemblies().Any(a => a.Name.Contains("MiniExcel")), "Ordinary YL assemblies must not require MiniExcel.");
                 var player = CompilationPipeline.GetAssemblies(AssembliesType.Player);
                 report["playerYlAssemblies"] = player.Where(a => a.name.StartsWith("YLFramework", StringComparison.Ordinal)).Select(a => a.name).ToArray();
-                Require(!player.Any(a => a.name == "YLFramework.Excel.Editor" || a.name == "YLFramework.Editor"), "Editor assembly entered the Player graph.");
+                Require(!player.Any(a => a.name == "YLFramework.Excel.Editor" || a.name == "YLFramework.Editor" || a.name == "YLFramework.DataAssets.Editor" || a.name == "YLFramework.Localization.Editor"), "Editor assembly entered the Player graph.");
+                Require(player.Any(a => a.name == "YLFramework.DataAssets") && player.Any(a => a.name == "YLFramework.Localization"), "The Data combination lost a required runtime assembly.");
                 var playerRuntime = player.Single(a => a.name == "YLFramework.Runtime");
                 report["playerRuntimeReferences"] = playerRuntime.compiledAssemblyReferences.Select(Path.GetFileName).ToArray();
                 Require(!playerRuntime.compiledAssemblyReferences.Any(p => Path.GetFileName(p).StartsWith("UnityEditor", StringComparison.Ordinal) || Path.GetFileName(p).Contains("MiniExcel")), "Player Runtime has an Editor/backend reference.");
-                var paths = AssetDatabase.GetAllAssetPaths().Where(path => path.StartsWith("Assets/", StringComparison.Ordinal)).Select(path => new { path, guid = AssetDatabase.AssetPathToGUID(path) }).Where(p => !string.IsNullOrEmpty(p.guid)).ToArray();
+                var paths = AssetDatabase.GetAllAssetPaths().Where(path => path.StartsWith("Assets/", StringComparison.Ordinal) || path.StartsWith("Packages/com.kano.ylframework", StringComparison.Ordinal)).Select(path => new { path, guid = AssetDatabase.AssetPathToGUID(path) }).Where(p => !string.IsNullOrEmpty(p.guid)).ToArray();
                 var collisions = paths.GroupBy(p => p.guid).Where(g => g.Count() > 1 && g.Any(p => IsBPath(p.path))).Select(g => g.Select(p => p.path).ToArray()).ToArray();
                 var own = paths.Where(p => IsBPath(p.path)).ToArray();
                 foreach (var asset in own)
