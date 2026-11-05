@@ -678,7 +678,7 @@ namespace YLFramework.Core.Editor.Tests
             foreach (var package in new[]
             {
                 (name: "com.kano.ylframework", notices: new[] { "LICENSE.md" }),
-                (name: "com.kano.ylframework.excel", notices: new[] { "LICENSE.md", "Editor/Licenses/MiniExcel-LICENSE.txt" })
+                (name: "com.kano.ylframework.excel", notices: new[] { "LICENSE.md", "Editor/Gameplay/LICENSE.md", "Editor/Licenses/MiniExcel-LICENSE.txt" })
             })
             {
                 string root = global::YLFramework.Testing.PackageTestPaths.Physical("Packages/" + package.name).Replace('\\', '/');
