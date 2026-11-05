@@ -10,6 +10,7 @@ $entry = Join-Path $PSScriptRoot 'Test-YLIntegrationPackages.ps1'
 $sandbox = Join-Path (Get-YLTestPath $TemporaryRoot) ('yl-integration-git-' + [Guid]::NewGuid().ToString('N'))
 $null = [IO.Directory]::CreateDirectory($sandbox)
 $checks = 0
+$passed = $false
 function Check([bool] $Condition, [string] $Reason) { if (-not $Condition) { throw $Reason }; $script:checks++ }
 function Reject([scriptblock] $Action, [string] $Reason) {
     try { & $Action | Out-Null } catch {
@@ -29,6 +30,12 @@ try {
     $binding = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n" + '(Get-Variable PackageSource -ValueOnly -ErrorAction SilentlyContinue)')
     Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -Integration Excel) -ceq 'File') 'Omitting PackageSource must preserve File, not silently choose Git.'
     Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -PackageId 'com.kano.ylframework') -ceq 'File') 'PackageId must be an explicit minimal-install entry.'
+    foreach ($options in @(@{ Integration = 'DomainExcel' }, @{ IntegrationDomainExcel = $true })) {
+        $refused = $false
+        try { $null = & $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' @options }
+        catch [Management.Automation.ParameterBindingException] { $refused = $true }
+        Check $refused 'The retired DomainExcel CLI must be rejected instead of aliasing ExcelGameplay.'
+    }
     foreach ($options in @(@{ Integration = 'Excel'; PackageId = 'com.kano.ylframework' },
         @{ PackageId = 'com.kano.ylframework'; DOTweenSdkMode = 'Required' }, @{ PackageId = 'com.kano.ylframework'; DOTweenArchive = 'unused.zip' })) {
         $refused = $false
@@ -111,9 +118,8 @@ try {
             Save (Join-Path $fixtureRepository "$prefix/packages-lock.json") '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.1"}}}'
         }
         Save (Join-Path $fixtureRepository 'Unity.exe') 'metadata fixture'
-        foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.excel', 'com.kano.ylframework.domain-excel')) {
-            $dependencies = @{}; if ($id -cne 'com.kano.ylframework') { $dependencies['com.kano.ylframework'] = '0.1.0-preview.1' }
-            if ($id -ceq 'com.kano.ylframework.domain-excel') { $dependencies['com.kano.ylframework.excel'] = '0.1.0-preview.1' }
+        foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')) {
+            $dependencies = Get-YLFixtureInternalDependencies -PackageId $id -Version '0.1.0-preview.1'
             $p = Join-Path $fixtureRepository "PackageSources/$id"
             Save (Join-Path $p 'package.json') (ConvertTo-Json -Depth 5 -InputObject @{ name = $id; version = '0.1.0-preview.1'; dependencies = $dependencies })
             Save (Join-Path $p 'LICENSE.md') 'fixture license'
@@ -162,7 +168,7 @@ try {
             }
             $report = @{ schemaVersion = 1; purpose = $request.purpose; integration = $request.integration; hostId = $request.hostId; resultId = $request.resultId; inputHash = $request.inputHash
                 unityVersion = $EditorVersion; packageOrigin = $(if ($FixtureSource -ceq 'Git') { 'GitRemote' } else { 'File' }); expectedTemplateHash = $request.expectedTemplateHash
-                entryPackage = $request.entryPackage; catalogSha256 = $request.catalogSha256
+                entryPackage = $request.entryPackage; entryPackages = @($request.entryPackages); catalogSha256 = $request.catalogSha256
                 status = 'Completed'; pid = 42; isBatchMode = $true; scriptCompilationFailed = $false; packages = $packages; assemblies = $assemblies }
             switch ($Fault) {
                 'source' { $packages[0].source = 'Local' }
@@ -174,7 +180,14 @@ try {
                 'lock-hash' { $locked[$packages[0].name].hash = 'c' * 40 }
                 'lock-version' { $locked[$packages[0].name].version = 'https://different.invalid/p.git#' + $Revision }
                 'lock-source' { $locked[$packages[0].name].source = 'local' }
-                'lock-dependency' { $locked['com.kano.ylframework.domain-excel'].dependencies = @{} }
+                'lock-dependency' { $locked['com.kano.ylframework.excel'].dependencies = @{} }
+                'missing-entry-packages' { $report.Remove('entryPackages') }
+                'scalar-entry-packages' { $report.entryPackages = $request.entryPackage }
+                'typed-entry-packages' { $report.entryPackages = @($true) }
+                'single-entry-packages' { $report.entryPackages = @($request.entryPackage) }
+                'reversed-entry-packages' { $report.entryPackages = @($request.entryPackages[1], $request.entryPackages[0]) }
+                'duplicate-entry-packages' { $report.entryPackages = @($request.entryPackage, $request.entryPackage) }
+                'joined-entry-packages' { $report.entryPackages = @(($request.entryPackages -join ',')) }
                 'origin' { $report.packageOrigin = 'File' }
                 'content' { [IO.File]::AppendAllText((Join-Path $packages[0].resolvedPath 'LICENSE.md'), 'tampered') }
                 'extra-file' { Save (Join-Path $packages[0].resolvedPath 'extra.cs') '// extra' }
@@ -201,7 +214,7 @@ try {
             $statement.Extent.Text -replace '\bexit ([12])\b', '$state.exitCode = $1'
         }
         $controller = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n" + ($statements -join "`n"))
-        $options = @{ WorkspaceRoot = (Join-Path $root 'Workspace'); Unity = (Join-Path $fixtureRepository 'Unity.exe'); Integration = 'DomainExcel'; PackageSource = $FixtureSource }
+        $options = @{ WorkspaceRoot = (Join-Path $root 'Workspace'); Unity = (Join-Path $fixtureRepository 'Unity.exe'); Integration = 'ExcelGameplay'; PackageSource = $FixtureSource }
         if ($EntryPackage) { $options.Remove('Integration'); $options.PackageId = $EntryPackage }
         if ($FixtureSource -ceq 'Git') { $options.GitRepository = $RemoteRepository; $options.GitRevision = $Revision }
         $null = & $controller @options
@@ -216,9 +229,19 @@ try {
             $fixture = Invoke-ControllerFixture -EditorVersion $version
             Check ($fixture.summary.status -ceq 'Completed' -and $fixture.summary.packageOrigin -ceq 'GitRemote') ('Valid remote boundary fixture failed: ' + $fixture.summary.reason)
             Check (-not [IO.Directory]::Exists((Join-Path $fixture.state.project 'PackageSources'))) 'Git host staged workspace product source.'
-            Check ($fixture.state.request.packages.Count -eq 3) 'Git did not install the whole owned dependency closure.'
+            Check (($fixture.state.request.packages.name -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel,com.kano.ylframework.gameplay') 'Git did not install the exact four-package dependency closure.'
+            Check ($fixture.state.request.entryPackage -ceq 'com.kano.ylframework.excel' -and
+                ($fixture.state.request.entryPackages -join ',') -ceq 'com.kano.ylframework.excel,com.kano.ylframework.gameplay' -and
+                ($fixture.summary.entryPackages -join ',') -ceq 'com.kano.ylframework.excel,com.kano.ylframework.gameplay') 'The composite request/summary lost its primary entry or ordered roots.'
             $manifest = [IO.File]::ReadAllText((Join-Path $fixture.state.project 'Packages/manifest.json')) | ConvertFrom-Json -AsHashtable
-            Check ($manifest.dependencies['com.kano.ylframework.domain-excel'] -ceq ('https://example.invalid/product.git?path=/PackageSources/com.kano.ylframework.domain-excel#' + $sha)) 'Wrong actual Git subfolder locator.'
+            $lock = [IO.File]::ReadAllText((Join-Path $fixture.state.project 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable
+            foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')) {
+                Check ($manifest.dependencies[$id] -ceq ('https://example.invalid/product.git?path=/PackageSources/' + $id + '#' + $sha) -and
+                    $lock.dependencies[$id].depth -eq 0) 'Git must directly declare every package in the complete closure at depth zero.'
+            }
+            Check ((@($lock.dependencies['com.kano.ylframework.excel'].dependencies.Keys | Sort-Object) -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets' -and
+                (@($lock.dependencies['com.kano.ylframework.gameplay'].dependencies.Keys) -join ',') -ceq 'com.kano.ylframework') 'Excel must not depend on Gameplay, and Gameplay must depend only on main.'
+            Check (@($fixture.state.request.assemblies | Where-Object name -CEQ 'YLFramework.Domain.Excel.Editor').Count -eq 1) 'Both roots did not enable the retained Excel Gameplay adapter identity.'
             Check (@($fixture.summary.inputIdentity.files | Where-Object { $_.path.StartsWith('PackageSources/') -and -not $_.path.EndsWith('/Dependencies.json') }).Count -eq 0) 'Local product bytes were presented as observed remote inputs.'
             Check ($fixture.summary.expectedTemplate.purpose -ceq 'LocalReleaseExpectedTemplateNotInstallSource') 'The local comparison template was not disclosed separately.'
             Check (@($fixture.summary.inputIdentity.files | Where-Object path -CEQ 'Tools/Packaging/PackageCatalog.json').Count -eq 1) 'The package catalog was omitted from the source input identity.'
@@ -242,20 +265,32 @@ try {
     } finally { foreach ($key in $keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) } }
     $file = Invoke-ControllerFixture -Source File
     Check ($file.summary.status -ceq 'Completed' -and $file.summary.packageOrigin -ceq 'File' -and [IO.Directory]::Exists((Join-Path $file.state.project 'PackageSources'))) 'File no longer keeps complete staging.'
+    $fileManifest = [IO.File]::ReadAllText((Join-Path $file.state.project 'Packages/manifest.json')) | ConvertFrom-Json -AsHashtable
+    $fileLock = [IO.File]::ReadAllText((Join-Path $file.state.project 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable
+    foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')) {
+        Check ($fileManifest.dependencies[$id] -ceq ('file:../PackageSources/' + $id) -and $fileLock.dependencies[$id].depth -eq 0) 'File must directly stage the full four-package closure at depth zero.'
+    }
     foreach ($version in @('2022.3.62f3', '6000.3.27f1')) {
         $minimal = Invoke-ControllerFixture -Source File -EditorVersion $version -EntryPackage 'com.kano.ylframework'
         Check ($minimal.summary.status -ceq 'Completed' -and $minimal.summary.integration -ceq 'Package') 'The known minimum-compilation profile was not selected.'
         Check ($minimal.state.request.packages.Count -eq 1 -and $minimal.state.request.entryPackage -ceq 'com.kano.ylframework') 'Minimum installation silently added optional packages.'
         Check (-not $minimal.state.request.ContainsKey('dotweenSdkMode')) 'PackageId accepted an implicit SDK request.'
         Check ($minimal.state.request.resultRoot.Contains('-main-File-')) 'Result rotation must not erase another minimum entry package or origin under the same generic Package profile.'
+        $excelOnly = Invoke-ControllerFixture -Source File -EditorVersion $version -EntryPackage 'com.kano.ylframework.excel'
+        Check ($excelOnly.summary.status -ceq 'Completed' -and $excelOnly.summary.integration -ceq 'Excel' -and
+            ($excelOnly.state.request.entryPackages -join ',') -ceq 'com.kano.ylframework.excel' -and
+            ($excelOnly.state.request.packages.name -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel' -and
+            @($excelOnly.state.request.assemblies | Where-Object name -CEQ 'YLFramework.Domain.Excel.Editor').Count -eq 0) 'PackageId Excel must not acquire Gameplay or compile its gated adapter.'
     }
     $fixture = Invoke-ControllerFixture -RemoteRepository 'https://example.invalid/@git+product.git' -Fault locator-path
     Check ($fixture.summary.status -ceq 'Failed') 'Only the UPM git+ scheme marker may be normalized; repository path bytes must match exactly.'
-    foreach ($fault in @('source', 'locator', 'revision', 'api-hash', 'api-revision', 'lock-hash', 'lock-version', 'lock-source', 'lock-dependency', 'origin', 'content', 'extra-file', 'missing-file', 'public-manifest', 'sources', 'escape', 'input-drift', 'catalog-drift', 'template-drift', 'imported-sample', 'cache-owner-drift')) {
+    foreach ($fault in @('source', 'locator', 'revision', 'api-hash', 'api-revision', 'lock-hash', 'lock-version', 'lock-source', 'lock-dependency', 'missing-entry-packages', 'scalar-entry-packages', 'typed-entry-packages', 'single-entry-packages', 'reversed-entry-packages', 'duplicate-entry-packages', 'joined-entry-packages', 'origin', 'content', 'extra-file', 'missing-file', 'public-manifest', 'sources', 'escape', 'input-drift', 'catalog-drift', 'template-drift', 'imported-sample', 'cache-owner-drift')) {
         $fixture = Invoke-ControllerFixture -Fault $fault
         Check ($fixture.summary.status -ceq 'Failed' -and $fixture.state.exitCode -eq 1) "Remote controller accepted $fault."
     }
     "PASS: $checks NoUnity Git parameter/content/controller/cache contracts. Simulated Unity boundary only, NOT remote or Unity acceptance."
+    $passed = $true
 } finally {
-    if ([IO.Directory]::Exists($sandbox)) { $null = @(Get-YLTestTreeFiles $sandbox); [IO.Directory]::Delete($sandbox, $true) }
+    if ($passed -and [IO.Directory]::Exists($sandbox)) { $null = @(Get-YLTestTreeFiles $sandbox); [IO.Directory]::Delete($sandbox, $true) }
+    elseif ([IO.Directory]::Exists($sandbox)) { "Artifacts retained: $sandbox" }
 }

@@ -20,13 +20,19 @@
   ],
   "defineConstraints": [
     "UNITY_INCLUDE_TESTS",
+    "YL_EXCEL_PACKAGE",
     "YL_DOMAIN_EXCEL_PACKAGE"
   ],
   "versionDefines": [
     {
-      "expression": "0.1.0-preview.1",
-      "name": "com.kano.ylframework.domain-excel",
+      "expression": "0.0.0",
+      "name": "com.kano.ylframework.gameplay",
       "define": "YL_DOMAIN_EXCEL_PACKAGE"
+    },
+    {
+      "expression": "0.0.0",
+      "name": "com.kano.ylframework.excel",
+      "define": "YL_EXCEL_PACKAGE"
     }
   ]
 }

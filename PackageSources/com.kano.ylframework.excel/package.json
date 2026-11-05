@@ -2,7 +2,7 @@
   "name": "com.kano.ylframework.excel",
   "version": "0.1.0-preview.1",
   "displayName": "YLFramework Excel Authoring",
-  "description": "Editor-only Excel authoring with the licensed MiniExcel backend.",
+  "description": "Complete Editor-only Excel authoring, DataAssets workbook tools and a Gameplay-conditional domain adapter with the licensed MiniExcel backend.",
   "unity": "2022.3",
   "unityRelease": "62f3",
   "license": "MIT AND Apache-2.0",

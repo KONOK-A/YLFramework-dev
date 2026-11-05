@@ -111,6 +111,7 @@ namespace YLFramework.Tests.Extensions.Data
             Assert.That(row["not_a_workbook_column"], Is.Null);
         }
 
+#if YL_GAMEPLAY_PACKAGE
         [Test]
         public void EveryExistingDomainColumnHasAnExplicitAssemblyIndependentName()
         {
@@ -132,12 +133,15 @@ namespace YLFramework.Tests.Extensions.Data
             }
             Assert.That(count, Is.EqualTo(32), "All pre-split shipped workbook aliases must remain explicit.");
         }
+#endif
 
+#if YL_GAMEPLAY_PACKAGE
         [TestCase("skills.xlsx", typeof(YLFramework.Skill.SkillConfigData))]
         [TestCase("buffs.xlsx", typeof(YLFramework.Buff.BuffConfigData))]
         [TestCase("missions.xlsx", typeof(YLFramework.Mission.MissionConfigData))]
         [TestCase("mission-parameters.xlsx", typeof(YLFramework.Mission.MissionParameter))]
         [TestCase("equipments.xlsx", typeof(YLFramework.Equipment.EquipmentConfigData))]
+#endif
         [TestCase("dataassets.xlsx", typeof(YLFramework.DataAssets.ScriptableObjectData))]
         public void FrozenPreSplitWorkbooksImportAndCurrentExporterKeepsTheirActualColumns(string file, Type type)
         {
@@ -253,6 +257,7 @@ namespace YLFramework.Tests.Extensions.Data
             Assert.That(target[0].Name, Is.EqualTo("old"));
         }
 
+#if YL_GAMEPLAY_PACKAGE
         [TestCase(typeof(YLFramework.Buff.BuffConfigData), "buff_id", "id", "buff_name", "buffName")]
         [TestCase(typeof(YLFramework.Skill.SkillConfigData), "id", "id", "skill_name", "skillName")]
         [TestCase(typeof(YLFramework.Equipment.EquipmentConfigData), "id", "id", "equipment_name", "equipmentName")]
@@ -289,6 +294,7 @@ namespace YLFramework.Tests.Extensions.Data
             }
         }
 
+#endif
         [Test]
         public void InvalidNumberAndJsonGiveCoordinatesAndPreserveEntireList()
         {

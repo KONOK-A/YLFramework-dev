@@ -55,35 +55,68 @@ namespace UnityEditor.PackageManager
     }
     public static class Client
     {
-        private static string manifest, lockPath, target;
+        private static string manifest, lockPath;
+        private static string[] additions, removals;
+        private static Dictionary<string, PackageInfo> available;
         private static bool fail, retain;
         private static Requests.RemoveRequest pending;
-        public static int RemoveCalls;
+        private static Requests.AddAndRemoveRequest changing;
+        public static int RemoveCalls, AddAndRemoveCalls;
+        public static bool FakeRestore;
+        public static string PreserveRemoval = "";
         public static void Configure(string manifestPath, string packagesLock, bool failure, bool retainIndirect)
         {
-            manifest = manifestPath; lockPath = packagesLock; fail = failure; retain = retainIndirect; RemoveCalls = 0; pending = null;
+            if (manifest != manifestPath) available = PackageInfo.Registered.ToDictionary(p => p.name, StringComparer.Ordinal);
+            manifest = manifestPath; lockPath = packagesLock; fail = failure; retain = retainIndirect; RemoveCalls = 0; AddAndRemoveCalls = 0; pending = null; changing = null; FakeRestore = false;
         }
         public static Requests.ListRequest List(bool offlineMode, bool includeIndirectDependencies) => new Requests.ListRequest { Result = PackageInfo.Registered };
         public static Requests.RemoveRequest Remove(string packageName)
         {
-            RemoveCalls++; target = packageName;
+            RemoveCalls++; additions = Array.Empty<string>(); removals = new[] { packageName };
             pending = new Requests.RemoveRequest();
             EditorApplication.delayCall += () => EditorApplication.delayCall += CompleteRemoval;
             return pending;
         }
+        public static Requests.AddAndRemoveRequest AddAndRemove(string[] packagesToAdd, string[] packagesToRemove)
+        {
+            AddAndRemoveCalls++; additions = packagesToAdd; removals = packagesToRemove;
+            changing = new Requests.AddAndRemoveRequest();
+            EditorApplication.delayCall += () => EditorApplication.delayCall += CompleteRemoval;
+            return changing;
+        }
         public static void CompleteRemoval()
         {
-            if (pending == null || pending.IsCompleted) return;
-            pending.IsCompleted = true;
-            pending.Status = fail ? StatusCode.Failure : StatusCode.Success;
-            if (fail) { pending.Error = new Error { message = "controlled UPM failure" }; return; }
+            if ((pending == null || pending.IsCompleted) && (changing == null || changing.IsCompleted)) return;
+            if (pending != null) { pending.IsCompleted = true; pending.Status = fail ? StatusCode.Failure : StatusCode.Success; pending.Error = fail ? new Error { message = "controlled UPM failure" } : null; }
+            if (changing != null) { changing.IsCompleted = true; changing.Status = fail ? StatusCode.Failure : StatusCode.Success; changing.Error = fail ? new Error { message = "controlled UPM failure" } : null; }
+            if (fail || (FakeRestore && additions.Length != 0)) return;
             var input = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(manifest));
-            input["dependencies"].AsObject().Remove(target);
+            foreach (var id in removals.Where(id => id != PreserveRemoval)) input["dependencies"].AsObject().Remove(id);
+            foreach (var locator in additions)
+            {
+                var id = locator.StartsWith("file:", StringComparison.Ordinal) ? available.Keys.Single(key => Path.GetFileName(locator.Substring(5)).StartsWith(key + "-", StringComparison.Ordinal)) : locator.Substring(0, locator.IndexOf('@'));
+                input["dependencies"][id] = locator.StartsWith("file:", StringComparison.Ordinal) ? locator : locator.Substring(locator.IndexOf('@') + 1);
+            }
             File.WriteAllText(manifest, input.ToJsonString());
-            PackageInfo.Registered = retain ? PackageInfo.Registered.Where(p => p.name != target).ToArray() : Array.Empty<PackageInfo>();
+            var direct = input["dependencies"].AsObject().ToDictionary(p => p.Key, p => p.Value.GetValue<string>(), StringComparer.Ordinal);
+            var depths = direct.Keys.ToDictionary(id => id, id => 0, StringComparer.Ordinal);
+            var queue = new Queue<string>(direct.Keys);
+            while (queue.Count != 0)
+            {
+                var id = queue.Dequeue();
+                foreach (var dep in available[id].dependencies)
+                    if (!depths.ContainsKey(dep.name)) { depths[dep.name] = depths[id] + 1; queue.Enqueue(dep.name); }
+            }
+            var kept = new HashSet<string>(depths.Keys, StringComparer.Ordinal);
+            if (retain) foreach (var p in PackageInfo.Registered.Where(p => !removals.Contains(p.name) || p.name == "com.kano.ylframework.data-assets")) kept.Add(p.name);
+            PackageInfo.Registered = kept.OrderBy(id => id, StringComparer.Ordinal).Select(id => available[id]).ToArray();
             var locked = new Dictionary<string, object>();
             foreach (var p in PackageInfo.Registered)
-                locked[p.name] = new { version = p.version, source = "registry", url = p.registry.url, depth = 1, dependencies = p.dependencies.ToDictionary(d => d.name, d => d.version) };
+            {
+                p.isDirectDependency = direct.ContainsKey(p.name);
+                locked[p.name] = new { version = p.source == PackageSource.LocalTarball ? (direct.TryGetValue(p.name, out var locator) ? locator : p.packageId.Substring(p.name.Length + 1)) : p.version, source = p.source == PackageSource.LocalTarball ? "local-tarball" : p.source.ToString().ToLowerInvariant(), url = p.registry?.url,
+                    depth = depths.TryGetValue(p.name, out var depth) ? depth : 1, dependencies = p.dependencies.ToDictionary(d => d.name, d => d.version) };
+            }
             File.WriteAllText(lockPath, JsonSerializer.Serialize(new { dependencies = locked }));
         }
     }
@@ -103,5 +136,39 @@ namespace UnityEditor.PackageManager.Requests
         public UnityEditor.PackageManager.StatusCode Status = UnityEditor.PackageManager.StatusCode.InProgress;
         public UnityEditor.PackageManager.Error Error;
         public string Result => "removed";
+    }
+    public sealed class AddAndRemoveRequest
+    {
+        public bool IsCompleted;
+        public UnityEditor.PackageManager.StatusCode Status = UnityEditor.PackageManager.StatusCode.InProgress;
+        public UnityEditor.PackageManager.Error Error;
+    }
+}
+
+namespace UnityEditor.Compilation
+{
+    public enum AssembliesType { Editor, Player }
+    public sealed class Assembly
+    {
+        public string name;
+        public string[] sourceFiles = Array.Empty<string>(), compiledAssemblyReferences = Array.Empty<string>();
+        public Assembly[] assemblyReferences = Array.Empty<Assembly>();
+    }
+    public static class CompilationPipeline
+    {
+        public static Assembly[] GetAssemblies(AssembliesType mode)
+        {
+            var ids = new HashSet<string>(UnityEditor.PackageManager.PackageInfo.Registered.Select(p => p.name), StringComparer.Ordinal);
+            var result = new List<Assembly>();
+            if (ids.Contains("com.kano.ylframework.gameplay"))
+                foreach (var name in new[] { "Skill", "Buff", "Mission", "Equipment" }) result.Add(new Assembly { name = "YLFramework." + name, sourceFiles = new[] { "Packages/com.kano.ylframework.gameplay/Runtime/" + name + "/Product.cs" } });
+            if (mode == AssembliesType.Editor && ids.Contains("com.kano.ylframework.excel"))
+            {
+                var excel = new Assembly { name = "YLFramework.Excel.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework.excel/Editor/Excel.cs" }, compiledAssemblyReferences = new[] { "Library/PackageCache/com.kano.ylframework.excel/Editor/Plugins/MiniExcel.dll" } };
+                result.Add(excel);
+                if (ids.Contains("com.kano.ylframework.gameplay")) result.Add(new Assembly { name = "YLFramework.Domain.Excel.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework.excel/Editor/Gameplay/Adapter.cs" }, assemblyReferences = result.ToArray() });
+            }
+            return result.ToArray();
+        }
     }
 }

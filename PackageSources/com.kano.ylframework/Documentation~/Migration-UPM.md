@@ -38,9 +38,14 @@ package upgrade. A changed SDK/native, AOT API or stripping input may require a
 new explicitly built and validated base Player, never an in-place rewrite of
 an existing baseline.
 
-Domain Excel now enables its Editor assembly on installation and no longer
-requires the global `YL_DOMAIN_EXCEL` define. Review project-owned `#if` code
-that used it; the package does not edit global scripting symbols for you.
+Excel contains the original `YLFramework.Domain.Excel.Editor` assembly under
+`Editor/Gameplay`, enabled by the actual Gameplay package Version Define.
+Remove the unpublished standalone DomainExcel package declaration and install
+Excel plus Gameplay instead. Git consumers explicitly declare main, DataAssets,
+Excel and Gameplay at one accepted full SHA. Generic Excel does not depend on
+Gameplay. Review project-owned `#if YL_DOMAIN_EXCEL`; no global symbol is set.
+Workbook memory and its panel now belong to Excel, retaining the same
+asset-GUID EditorPrefs keys and leaving runtime data/ordinary Inspectors intact.
 
 Package-local templates, style sheets and documentation are located by the
 installed package identity. External scripts hardcoding `Assets/YLFramework`

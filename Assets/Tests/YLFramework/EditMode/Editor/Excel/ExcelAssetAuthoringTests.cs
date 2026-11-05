@@ -182,6 +182,7 @@ namespace YLFramework.Tests.Extensions.Data
             Assert.That(_owner.rows.Select(r => r.Id), Is.EqualTo(new[] { 1, 9 }));
         }
 
+#if YL_GAMEPLAY_PACKAGE
         [Test]
         public void LegacyBuffIdWorkbookUpdatesTheSameOwnedSubassetWithoutChangingItsIdentity()
         {
@@ -227,6 +228,7 @@ namespace YLFramework.Tests.Extensions.Data
             CollectionAssert.AreEqual(meta, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(ownerPath + ".meta")));
         }
 
+#endif
         [Test]
         public void DomainInitializationFailureAndDirtyOwnerNeverWriteAssets()
         {

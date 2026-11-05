@@ -3,6 +3,11 @@
     "rootNamespace": "YLFramework.Integrations.DomainExcel.Editor",
     "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.Excel.Editor", "YLFramework.Skill", "YLFramework.Buff", "YLFramework.Mission", "YLFramework.Equipment", "YLFramework.Gameplay.Editor"],
     "includePlatforms": ["Editor"],
-    "defineConstraints": [],
+    "overrideReferences": true,
+    "precompiledReferences": ["Newtonsoft.Json.dll"],
+    "defineConstraints": ["YL_GAMEPLAY_PACKAGE"],
+    "versionDefines": [
+        { "name": "com.kano.ylframework.gameplay", "expression": "0.0.0", "define": "YL_GAMEPLAY_PACKAGE" }
+    ],
     "autoReferenced": true
 }

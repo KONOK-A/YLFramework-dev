@@ -163,7 +163,7 @@ try {
                 $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($module.packageInputs))
                 Assert-That ((@($closure.id | Sort-Object) -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.gameplay') "$name acquired an unrelated optional feature."
             }
-            foreach ($name in @('Data', 'Excel', 'Domain', 'MigrationFixtures')) {
+            foreach ($name in @('Data', 'ExcelGameplay', 'Domain', 'MigrationFixtures')) {
                 $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
                 Assert-That (@($module.packageInputs) -ccontains 'com.kano.ylframework.gameplay') "$name copies actual Gameplay consumers without declaring their package."
             }
@@ -171,7 +171,7 @@ try {
             Assert-That (@($domain.editTests) -cnotcontains 'Assets/Tests/YLFramework/EditMode/Editor/Equipment') 'Quick must not compile native-only Equipment authoring sources.'
             Assert-That (@($domain.nativeSources) -ccontains 'Assets/Tests/YLFramework/EditMode/Editor/Equipment') 'Original Equipment native authoring/admission contracts must remain selected.'
             Assert-That (@($domain.excludedCategories) -ccontains 'YL.Package.GameplayStandalone') 'A full authoring combination cannot execute an only-main-plus-Gameplay precondition.'
-            foreach ($name in @('Core', 'Save', 'Localization', 'Movement2D', 'StateMachine')) {
+            foreach ($name in @('Core', 'Save', 'Localization', 'Movement2D', 'StateMachine', 'Excel')) {
                 $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
                 Assert-That (@($module.packageInputs) -cnotcontains 'com.kano.ylframework.gameplay') "$name must not acquire Gameplay to retain a moved identity anchor."
             }

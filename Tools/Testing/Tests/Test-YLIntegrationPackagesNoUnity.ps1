@@ -10,6 +10,7 @@ if (-not [IO.File]::Exists($entry)) { throw 'Integration prerequisite verifier h
 $root = Join-Path (Get-YLTestPath $TemporaryRoot) ('yl-integration-contracts-' + [Guid]::NewGuid().ToString('N'))
 $null = [IO.Directory]::CreateDirectory($root)
 $count = 0
+$passed = $false
 function Reject([scriptblock] $Action, [string] $Reason) {
     try { & $Action | Out-Null } catch {
         if (-not $_.Exception.Message.Contains($Reason, [StringComparison]::OrdinalIgnoreCase)) { throw }
@@ -24,14 +25,30 @@ function Json([string] $Relative, [object] $Value) {
     [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $Value -Depth 15), [Text.UTF8Encoding]::new($false))
 }
 try {
-    foreach ($name in @('DOTween', 'Excel', 'DomainExcel', 'HybridCLR')) {
+    foreach ($name in @('DOTween', 'Excel', 'ExcelGameplay', 'HybridCLR')) {
         $definition = Get-YLIntegrationDefinition $name
         if ($definition.id -cne @{
             DOTween = 'com.kano.ylframework.dotween'; Excel = 'com.kano.ylframework.excel'
-            DomainExcel = 'com.kano.ylframework.domain-excel'; HybridCLR = 'com.kano.ylframework.hybridclr'
+            ExcelGameplay = 'com.kano.ylframework.excel'; HybridCLR = 'com.kano.ylframework.hybridclr'
         }[$name] -or $definition.assemblies.Count -lt 3) { throw 'The selected integration lost its mandatory compilation closure.' }
+        $roots = @($definition.id); if ($name -ceq 'ExcelGameplay') { $roots += 'com.kano.ylframework.gameplay' }
+        if (($definition.roots -join ',') -cne ($roots -join ',')) { throw 'The integration roots differ from the explicit profile.' }
+        if ($name -cin @('Excel', 'ExcelGameplay')) {
+            $ids = @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel')
+            if ($name -ceq 'ExcelGameplay') { $ids += 'com.kano.ylframework.gameplay' }
+            if ((@($definition.assemblies.package | Sort-Object -Unique) -join ',') -cne ($ids -join ',') -or
+                (@($definition.assemblies | Where-Object name -CEQ 'YLFramework.Domain.Excel.Editor').Count -eq 1) -ne ($name -ceq 'ExcelGameplay')) {
+                throw 'Excel must retain its exact dependency closure and enable the Gameplay adapter only with both roots.'
+            }
+        }
         $count++
     }
+    $definition = Get-YLIntegrationDefinition Package -PackageId 'com.kano.ylframework.excel'
+    if (($definition.roots -join ',') -cne 'com.kano.ylframework.excel' -or
+        (@($definition.assemblies.package | Sort-Object -Unique) -join ',') -cne 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel' -or
+        @($definition.assemblies | Where-Object name -CEQ 'YLFramework.Domain.Excel.Editor').Count -ne 0) { throw 'PackageId Excel must remain ordinary Excel without Gameplay.' }
+    $count++
+    Reject { Get-YLIntegrationDefinition DomainExcel } 'DomainExcel'
     $sdkUrl = 'https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3'
     $sdkHash = '6cadd24d101f4cbd00cd80190106f6621132d24d'
     $sdkId = 'com.code-philosophy.hybridclr'
@@ -87,6 +104,8 @@ try {
         & (Join-Path $PSHOME 'pwsh.exe') -NoLogo -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot $test) -TemporaryRoot $TemporaryRoot
         if ($LASTEXITCODE -ne 0) { throw "Integration contract child failed: $test ($LASTEXITCODE)." }
     }
+    $passed = $true
 } finally {
-    if ([IO.Directory]::Exists($root)) { $null = @(Get-YLTestTreeFiles $root); [IO.Directory]::Delete($root, $true) }
+    if ($passed -and [IO.Directory]::Exists($root)) { $null = @(Get-YLTestTreeFiles $root); [IO.Directory]::Delete($root, $true) }
+    elseif ([IO.Directory]::Exists($root)) { "Artifacts retained: $root" }
 }

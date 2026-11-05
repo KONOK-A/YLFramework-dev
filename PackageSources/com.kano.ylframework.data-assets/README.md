@@ -37,9 +37,10 @@ Unity aliases and explicit Excel column names are preserved, rather than adding
 an Excel file path to runtime data.
 
 Excel import/export is an optional consumer in `com.kano.ylframework.excel`.
-DataAssets does not reference Excel or MiniExcel. During the package migration,
-recent-workbook memory remains in this package's Editor assembly and retains its
-asset-GUID-based EditorPrefs keys; it is not serialized into runtime roots.
+DataAssets does not reference Excel or MiniExcel. Recent-workbook memory and
+the workbook panel belong to the Excel Editor assembly, retaining the original
+asset-GUID-based EditorPrefs keys. They are not serialized into runtime roots;
+the ordinary Inspector works when Excel is absent.
 
 Existing Resource catalogs persist the asset assembly name. After migrating a
 DataAssets project from `YLFramework.Runtime`, rebuild content and its catalog

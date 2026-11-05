@@ -50,7 +50,7 @@ DataAssets 的 Runtime、作者工具、根/条目字段与登记租约合同已
 
 ## Excel 作者后端
 
-Runtime 不要求安装 MiniExcel。需要 xlsx 时显式安装 `com.kano.ylframework.excel`；Git 消费方同时声明主包、DataAssets 与 Excel 包。Excel 包携带 MiniExcel `1.31.2`、Apache-2.0 完整许可和归属说明，Json.NET Registry 依赖由 UPM 解析，不在安装时执行 NuGet 下载。领域菜单另需 [DomainExcel](Domain.md#domainexcel)。
+Runtime不要求MiniExcel。需要xlsx时显式安装`com.kano.ylframework.excel`；Git消费方声明main/DataAssets/Excel三包同SHA。Excel携带唯一Editor MiniExcel1.31.2及Apache-2.0许可，Json.NET由UPM解析，不执行NuGet下载。工作簿路径记忆与预览/导入面板在Excel，原GUID EditorPrefs保留；领域菜单在同装Gameplay后由[内置适配](Domain.md#domainexcel)启用，不另装DomainExcel。
 
 - `ExcelAuthoring` / `ExcelImportPlan` 先产生 `Errors/Changes/CanCommit` 预览，再显式 `Commit(true)`；取消不写入，过期输入或引用失效拒绝提交或按合同回滚。
 - 支持 SO / List / JSON 的导出与导入预览；保留 `boolean → Bool`、`int64 → Long` 字段合同。

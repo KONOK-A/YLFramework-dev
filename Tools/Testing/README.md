@@ -98,7 +98,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | DataAssets | Daily / Special | 仅主包+DataAssets：身份、作者、请求与租约、双Play、旧资产副本重建及真实Mono Player；不是完整Data组合。 |
 | Localization | Daily / Special | 仅主包+Localization：回退、显示、ResourceImage责任、作者、双Play及正式内容Player；不借DataAssets/Excel依赖。 |
 | Excel | Daily | 显式安装现有可选适配与 MiniExcel，执行真实 XLSX、AssetDatabase 和预览合同；只声明 EditMode。 |
-| DomainExcel | Daily | 当前独立领域Excel适配的完整实际调用方；产品前向依赖Gameplay，测试显式引用四Runtime/统一Editor，不提前实施后续Excel合包。 |
+| ExcelGameplay | Daily | Excel+Gameplay的显式组合，保原Domain.Excel.Tests与全部32领域列/旧XLSX/Undo协议；普通Excel模块不装Gameplay。 |
 | Action | Daily | Action / Observable 的真实取消、释放、池化复用、场景结束与屏幕过渡；共享依赖检查不借用其他测试类。 |
 | Audio | Daily / Special | 日常 AudioKit / source / owner / 作者与资源生命周期；Special执行连续Play、authority/provider与无输出采样的Bundle会话，真实音频输出/DSP仍独立。 |
 | Resource | Daily / Special | 有界真实Catalog / Codec / Bundle构建；Special保留原场景安全、双次Play及租约隔离断言，使用碰撞拒绝的短宿主名。 |
@@ -134,7 +134,7 @@ Daily 的类别排除必须出现在发现摘要的 `excludedCategories` / `excl
 | Audio DSP / 原生音频输出 | 原生测量断言保留，需要真实设备；AudioSession与日常集都不能替代DSP/可听输出验收。 |
 | OS / IDE / 插件与物理输入设备 | 真实操作系统或外部宿主为独立前置；两个已声明NativeInput窗口用例不能替代这些专项，不创建替身或控制用户Editor。 |
 | Domain / Data / Equipment 作者支撑 | `Assets/Tests/YLFramework/Fixtures/Authoring` 由当前模块显式装入；保留被测试反射使用的类型与程序集，不恢复旧安装脚本或接收工程，不进入生产包。 |
-| DomainExcel / DOTween 等可选适配 | 当前源码与宏前置保留，只有存在对应声明和可用依赖时才执行；旧复合归档脚本的历史结果不等于当前可选集成验收。 |
+| ExcelGameplay / DOTween 等可选适配 | 使用实际包存在性/依赖前置，原Domain.Excel.Editor身份保留但不再独立安装；旧归档结果不等于当前验收。 |
 
 这些边界不是Skip白名单，不能用于把已选择的失败改报通过。
 当前自动化范围以模块声明、真实发现及结果为准；专项未执行须在交付中单列。
@@ -222,7 +222,7 @@ Formatter 与 Analyzer 保留独立入口，不并入 UTF，也不改变默认�
 
 `Tools/Packaging/PackageCatalog.json` 是正式包 ID、程序集归属、显式门控及特殊负载的维护入口，版本和依赖仍读取各包的 `package.json`。清单不注册空包；未知包、未知程序集、缺失负载和没有明确前置的宏都必须失败。完整负载包括默认不编译的适配源码，默认 Runtime 的精确源码集合不包括嵌套 asmdef 所有的源码。
 
-`Test-YLIntegrationPackages.ps1 -PackageId <精确包ID>` 从真实 manifest 计算最小自有依赖闭包，检查实际 UPM 来源、完整内容、Editor/Player 编译图和加载的程序集。`-PackageId` 与原 `-Integration DOTween|Excel|DomainExcel|HybridCLR` 互斥，不接受 SDK 专属参数。Excel/DomainExcel/HybridCLR 使用已知前置检查；普通包使用固定编译 profile，不接受任意类型或方法探针。DOTween 的 SDK 正向仍用显式 `-Integration DOTween -DOTweenSdkMode Required`，最小安装本身不是 SDK 正向证明。
+`Test-YLIntegrationPackages.ps1 -PackageId <精确包ID>`从真实manifest计算最小自有闭包，检查实际UPM来源、完整内容与Editor/Player编译图。它与`-Integration DOTween|Excel|ExcelGameplay|HybridCLR`互斥，不接受SDK专属参数；ExcelGameplay明确Excel+Gameplay双根，普通PackageIdExcel不强装Gameplay。普通包使用固定编译profile，不接受任意类型/方法探针；DOTween SDK正向仍须Required模式，最小安装不替代SDK验收。
 
 ```powershell
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackages.ps1 `
@@ -262,8 +262,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Packaging/Build-YLRegistryPa
 
 | 来源 | 必需参数 | 自有包直接声明 | 证据边界 |
 | --- | --- | --- | --- |
-| `LocalTarball` | `-ReleaseManifest` | 从回执同目录取五个固定文件名；所选自有闭包全部使用真实 `file:<绝对tgz>` locator | `ArtifactPreflight`，不是 Registry 或自动间接依赖证明 |
-| `Registry` | `-RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest` | 只声明所选唯一入口；主包、Excel、官方依赖与 SDK 均由 UPM 解析 | 联合核验 Registry metadata、下载字节、冻结 Release、PackageInfo 和 generated lock |
+| `LocalTarball` | `-ReleaseManifest` | 从冻结回执取已校验tgz；所选自有闭包全部使用真实`file:<绝对tgz>` locator | `ArtifactPreflight`，不是Registry或自动间接依赖证明 |
+| `Registry` | `-RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest` | 只声明显式roots；ExcelGameplay为Excel和Gameplay双根，其余普通入口单根，间接依赖由UPM解析 | 联合核验Registry metadata、下载字节、冻结Release、PackageInfo和generated lock |
 
 `File` / `Git` 拒绝以上 Registry 参数；新来源拒绝 Git 参数。`LocalTarball` 不接受 Registry URL/version 来混淆身份。Registry scope 仅覆盖 `com.kano.ylframework`；HybridCLR 额外覆盖 `com.code-philosophy.hybridclr`，不将 `com.unity` 路由到 OpenUPM。
 
@@ -277,11 +277,13 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistrib
   -Unity $unity -WorkspaceRoot $workspace -PackageSource Registry -RegistryUrl https://package.openupm.com `
   -RegistryVersion 0.1.0-preview.1 -ReleaseManifest $releaseManifest -RunPlayer
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackages.ps1 `
-  -Unity $unity -WorkspaceRoot $workspace -Integration DomainExcel -PackageSource Registry `
+  -Unity $unity -WorkspaceRoot $workspace -Integration ExcelGameplay -PackageSource Registry `
   -RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest $releaseManifest
 ```
 
-分别指定标准版 `2022.3.62f3` 与 `6000.3.27f1`，各执行主包、Excel、DomainExcel、DOTween、HybridCLR 五个入口；China `2022.3.62f3c1` 是独立 profile，不能按同样 FileVersion 前缀冒用。`-Integration` 可选 `Excel`、`DomainExcel`、`DOTween`、`HybridCLR`。主包还须真实 Windows64 Mono 构建与运行，默认资源、GUID、Prefab 和现有行为断言不减少。
+分别使用标准版`2022.3.62f3`与`6000.3.27f1`；China版是独立profile，不按共享FileVersion前缀冒用。`-Integration`可选`Excel`、`ExcelGameplay`、`DOTween`、`HybridCLR`，旧DomainExcel明确拒绝。`-PackageId com.kano.ylframework.excel`仍是普通Excel，不强装Gameplay。主包还需真实Windows64 Mono构建/运行。
+
+ExcelGameplay的LocalTarball验收复用中立生命周期宿主实际执行10阶段：Inspect/Reopen、移除Gameplay并验证Excel-only、恢复Gameplay、移除Excel及无用DataAssets并验证Gameplay-only、恢复Excel、最后移除全部并验证。每阶段读取真实UPM/manifest/lock与Editor/Player编译图，保留哨兵数据/meta；恢复必须回到原声明语义，不以UPM重排JSON字节视为失败。它不是公开Registry安装，Registry仍受原CI producer/HTTPS/metadata校验约束；单根调用保原4阶段。
 
 每次正向首次安装使用新 host/cache；先记录空 cache，再比对实际 Editor 进程的三项 UPM cache 环境。独立 Registry metadata / tarball 检查下载在结果目录中，不预热 UPM cache。重开、卸载、暖缓存重复解析和阴性重试均不计为另一轮冷安装。报告联合检查 name/version/source/packageId/resolvedPath/isDirectDependency/registryUrl/dependencies、完整锁图及合法受管 `_fingerprint`，不从包版本字符串推断来源。
 

@@ -647,16 +647,16 @@
       "packageInputs": [
         "com.kano.ylframework",
         "com.kano.ylframework.excel",
-        "com.kano.ylframework.localization",
-        "com.kano.ylframework.gameplay"
+        "com.kano.ylframework.localization"
       ],
       "sampleInputs": []
     },
     {
-      "name": "DomainExcel",
+      "name": "ExcelGameplay",
       "category": "",
       "assemblies": [
-        "YLFramework.Domain.Excel.Tests"
+        "YLFramework.Domain.Excel.Tests",
+        "YLFramework.Tests.EditMode"
       ],
       "modes": [
         "EditMode"
@@ -667,7 +667,7 @@
       "shortHostKey": true,
       "excludedCategories": [],
       "specialCategory": "",
-      "description": "Execute the current DomainExcel NUnit authoring contracts, not only its compilation probe; replaced explicitly by the future Excel/Gameplay combination.",
+      "description": "Execute the original domain adapter and complete workbook protocol contracts with Excel+Gameplay; the generic Excel product remains Gameplay-independent.",
       "suites": [
         "Daily"
       ],
@@ -675,20 +675,22 @@
         "PackageSources/com.kano.ylframework/Runtime",
         "PackageSources/com.kano.ylframework.data-assets/Runtime"
       ],
-      "nativeSources": [],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/NamespaceMigration", "Assets/Tests/YLFramework/EditMode/Systems/DataAssets", "Assets/Editor/YLFrameworkDev"],
       "editTests": [
-        "Assets/Tests/YLFramework/Integrations/DomainExcel/EditMode"
+        "Assets/Tests/YLFramework/Integrations/DomainExcel/EditMode",
+        "Assets/Tests/YLFramework/EditMode/Editor/Excel"
       ],
       "playTests": [],
       "assemblyMetadata": [
         "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
         "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
-        "Assets/Tests/YLFramework/Integrations/DomainExcel/EditMode/YLFramework.Domain.Excel.Tests.asmdef"
+        "Assets/Tests/YLFramework/Integrations/DomainExcel/EditMode/YLFramework.Domain.Excel.Tests.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef"
       ],
       "packageInputs": [
-        "com.kano.ylframework",
         "com.kano.ylframework.excel",
-        "com.kano.ylframework.domain-excel"
+        "com.kano.ylframework.gameplay",
+        "com.kano.ylframework.localization"
       ],
       "sampleInputs": []
     },

@@ -298,14 +298,35 @@ function Get-YLRegistrySource {
     return @{ packageOrigin = $PackageSource; registryUrl = 'https://package.openupm.com'; registryVersion = $release.packages[0].version; release = $release; gitRepository = $null; gitRevision = $null }
 }
 
+function Assert-YLPackageStringArray {
+    param([object] $Actual, [string[]] $Expected, [string] $Label)
+    if ($Actual -isnot [array] -or $Actual.Count -ne $Expected.Count) { throw "Exact string array length/type mismatch: $Label" }
+    for ($index = 0; $index -lt $Expected.Count; $index++) {
+        if ($Actual[$index] -isnot [string] -or -not [string]::Equals($Actual[$index], $Expected[$index], [StringComparison]::Ordinal)) {
+            throw "Exact string array value/type mismatch: $Label"
+        }
+    }
+}
+
 function Get-YLRegistryRequestFields {
-    param([Collections.IDictionary] $Source, [string] $EntryPackage)
-    $ids = @((Read-YLPackageCatalog)['packages'] | ForEach-Object { $_['id'] })
-    if ($Source['packageOrigin'] -cnotin @('Registry', 'LocalTarball') -or
-        $EntryPackage -cnotin $ids) { throw 'Invalid artifact request source/entry.' }
+    param([Collections.IDictionary] $Source, [string] $EntryPackage, [string[]] $EntryPackages = @($EntryPackage))
+    $roots = @(Get-YLRegistryEntryPackages -EntryPackage $EntryPackage -EntryPackages $EntryPackages)
+    if ($Source['packageOrigin'] -cnotin @('Registry', 'LocalTarball')) { throw 'Invalid artifact request source/entry.' }
     $registry = $Source['packageOrigin'] -ceq 'Registry'
-    return @{ entryPackage = $EntryPackage; releaseManifestSha256 = $Source.release.sha256; gitRepository = $null; gitRevision = $null
+    return @{ entryPackage = $EntryPackage; entryPackages = $roots; releaseManifestSha256 = $Source.release.sha256; gitRepository = $null; gitRevision = $null
         registryUrl = $(if ($registry) { $Source.registryUrl } else { $null }); registryVersion = $(if ($registry) { $Source.registryVersion } else { $null }) }
+}
+
+function Get-YLRegistryEntryPackages {
+    param([string] $EntryPackage, [string[]] $EntryPackages = @($EntryPackage))
+    $known = @((Read-YLPackageCatalog).packages.id)
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if ($null -eq $EntryPackages -or $EntryPackages.Count -eq 0 -or $EntryPackage -cne $EntryPackages[0]) { throw 'Artifact roots require a nonempty list with primary entry first.' }
+    foreach ($id in $EntryPackages) {
+        if ([string]::IsNullOrWhiteSpace($id) -or $id -cnotin $known -or -not $seen.Add($id)) { throw 'Invalid/unknown/duplicate artifact entry roots.' }
+    }
+    if ($EntryPackages.Count -gt 1 -and ($EntryPackages.Count -ne 2 -or -not $seen.SetEquals([string[]]@('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')))) { throw 'Only the explicit ExcelGameplay composite roots are supported.' }
+    return $EntryPackages
 }
 
 function Assert-YLRegistryStageCompleted {
@@ -320,8 +341,9 @@ function Assert-YLRegistryStageCompleted {
 }
 
 function Get-YLRegistryClosure {
-    param([Collections.IDictionary] $Release, [string] $EntryPackage)
-    $pending = [Collections.Generic.Queue[string]]::new(); $pending.Enqueue($EntryPackage)
+    param([Collections.IDictionary] $Release, [string] $EntryPackage, [string[]] $EntryPackages = @($EntryPackage))
+    $pending = [Collections.Generic.Queue[string]]::new()
+    foreach ($id in @(Get-YLRegistryEntryPackages -EntryPackage $EntryPackage -EntryPackages $EntryPackages)) { $pending.Enqueue($id) }
     $result = [Collections.Generic.SortedDictionary[string, object]]::new([StringComparer]::Ordinal)
     while ($pending.Count -gt 0) {
         $id = $pending.Dequeue(); if ($result.ContainsKey($id)) { continue }
@@ -334,13 +356,13 @@ function Get-YLRegistryClosure {
 }
 
 function New-YLRegistryHostManifest {
-    param([ValidateSet('Registry', 'LocalTarball')][string] $PackageSource, [Collections.IDictionary] $Release, [string] $EntryPackage, [string] $RegistryUrl = 'https://package.openupm.com')
+    param([ValidateSet('Registry', 'LocalTarball')][string] $PackageSource, [Collections.IDictionary] $Release, [string] $EntryPackage, [string] $RegistryUrl = 'https://package.openupm.com', [string[]] $EntryPackages = @($EntryPackage))
     if ($RegistryUrl -cne 'https://package.openupm.com') { throw 'Only the approved OpenUPM RegistryUrl is supported.' }
-    $packages = @(Get-YLRegistryClosure -Release $Release -EntryPackage $EntryPackage)
+    $packages = @(Get-YLRegistryClosure -Release $Release -EntryPackage $EntryPackage -EntryPackages $EntryPackages)
     $dependencies = [ordered]@{}
     foreach ($package in $packages) {
         if ($PackageSource -ceq 'LocalTarball') { $dependencies[$package.id] = 'file:' + $package.path.Replace('\', '/') }
-        elseif ($package.id -ceq $EntryPackage) { $dependencies[$package.id] = $package.version }
+        elseif ($package.id -cin $EntryPackages) { $dependencies[$package.id] = $package.version }
     }
     $scopes = @('com.kano.ylframework')
     if ($EntryPackage -ceq 'com.kano.ylframework.hybridclr') { $scopes += 'com.code-philosophy.hybridclr' }
@@ -350,14 +372,14 @@ function New-YLRegistryHostManifest {
 function Assert-YLRegistryResolvedGraph {
     param([Collections.IDictionary] $Manifest, [Collections.IDictionary] $Lock, [object[]] $Rows, [Collections.IDictionary] $Release,
         [string] $EntryPackage, [ValidateSet('Registry', 'LocalTarball')][string] $PackageSource, [string] $RegistryUrl,
-        [string] $EditorVersion, [string] $HostRoot, [string] $CacheRoot, [Collections.IDictionary] $SdkDependencies = @{})
-    $expectedManifest = New-YLRegistryHostManifest -PackageSource $PackageSource -Release $Release -EntryPackage $EntryPackage -RegistryUrl $RegistryUrl
+        [string] $EditorVersion, [string] $HostRoot, [string] $CacheRoot, [Collections.IDictionary] $SdkDependencies = @{}, [string[]] $EntryPackages = @($EntryPackage))
+    $expectedManifest = New-YLRegistryHostManifest -PackageSource $PackageSource -Release $Release -EntryPackage $EntryPackage -EntryPackages $EntryPackages -RegistryUrl $RegistryUrl
     Assert-YLPackageDependencies $Manifest['dependencies'] $expectedManifest.dependencies
     if ($Manifest['scopedRegistries'] -isnot [array] -or $Manifest['scopedRegistries'].Count -ne 1) { throw 'Consumer manifest Registry scope changed.' }
     $scope = $Manifest['scopedRegistries'][0]
     if ($scope['url'] -isnot [string] -or $scope['url'] -cne $RegistryUrl -or $scope['scopes'] -isnot [array] -or
         ($scope['scopes'] -join '|') -cne ($expectedManifest.scopedRegistries[0].scopes -join '|')) { throw 'Consumer manifest Registry URL/scopes changed.' }
-    $expected = @{}; foreach ($package in @(Get-YLRegistryClosure -Release $Release -EntryPackage $EntryPackage)) { $expected[$package.id] = $package }
+    $expected = @{}; foreach ($package in @(Get-YLRegistryClosure -Release $Release -EntryPackage $EntryPackage -EntryPackages $EntryPackages)) { $expected[$package.id] = $package }
     $actual = @{}
     if ($Lock['dependencies'] -isnot [Collections.IDictionary] -or $Lock['dependencies'].Count -ne $Rows.Count) { throw 'Observed PackageInfo and lock graph differ.' }
     foreach ($row in $Rows) {

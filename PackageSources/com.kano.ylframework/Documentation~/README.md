@@ -59,7 +59,7 @@ Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎�
 | `com.kano.ylframework.save` | Newtonsoft UPM，无主包依赖 | 槽位、同步/异步JSON、原子单文件和显式恢复 |
 | `com.kano.ylframework.gameplay` | 主包、Newtonsoft UPM | Skill/Buff/Mission/Equipment四Runtime与统一作者工具，不要求Excel |
 | `com.kano.ylframework.excel` | 主包、DataAssets | MiniExcel 与许可随 Excel 包携带 |
-| `com.kano.ylframework.domain-excel` | 主包、DataAssets、Excel、Gameplay | 不需要全局 `YL_DOMAIN_EXCEL` |
+| Excel Gameplay 条件适配 | 包含在Excel中，另安装Gameplay | 无独立DomainExcel包，不需要全局宏 |
 | `com.kano.ylframework.dotween` | 主包 | SDK 独立准备；无 SDK 的门控检查不是正向集成 |
 | `com.kano.ylframework.hybridclr` | 主包 | 额外添加窄 scope `com.code-philosophy.hybridclr`，官方 SDK `9.0.3` 间接解析，不随适配包捆绑 |
 
@@ -90,7 +90,7 @@ Unity 不支持在 `package.json` 中声明 Git URL 传递依赖。自有包虽�
 | Character2D / Platform2D | 主包 + `com.kano.ylframework.movement2d` + physics2d | 一个安装包、两个互不引用的Runtime及一个公共Editor，Overlap不随它迁移 |
 | Gameplay | 主包 + `com.kano.ylframework.gameplay` | 四个独立Runtime，消费方asmdef只引用所用领域，不要求Excel/Save |
 | Excel | 主包 + DataAssets + `com.kano.ylframework.excel` | MiniExcel `1.31.2` 与 Apache-2.0 许可随 Excel 包携带 |
-| Domain Excel | 主包 + DataAssets + Excel + Gameplay + `com.kano.ylframework.domain-excel` | 安装即可启用，不要求全局 `YL_DOMAIN_EXCEL` |
+| Excel Gameplay | 主包 + DataAssets + Excel + Gameplay | Excel内的原Domain.Excel.Editor随Gameplay存在性启用，无全局宏 |
 | HybridCLR | 主包 + `com.kano.ylframework.hybridclr` | 官方 SDK `9.0.3` 也需单独声明其 Git 来源，匹配 native / 平台门禁 |
 
 本地源码开发可从每个包根的 `package.json` 使用本地安装，或在开发宿主 manifest 使用 `file:../PackageSources/<包ID>`。本地连接不代表 Git 包已完成安装验收，也不将宿主 SDK、测试或配置纳入产品依赖。
@@ -169,7 +169,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 | 配置式 StateMachine | [`com.kano.ylframework.state-machine`](../../com.kano.ylframework.state-machine/README.md)，图作者工具、原模板/样式与真实编译后的脚本绑定 |
 | 二维角色与平台 | [`com.kano.ylframework.movement2d`](../../com.kano.ylframework.movement2d/README.md)，独立Runtime、原Prefab/UnityEvent及实际Physics2D生命周期 |
 | Excel | [`com.kano.ylframework.excel`](../../com.kano.ylframework.excel/README.md)，复用DataAssets并携带完整 MiniExcel 后端及许可；[配置作者流程](Modules/Data.md#excel-作者后端) |
-| DomainExcel | [`com.kano.ylframework.domain-excel`](../../com.kano.ylframework.domain-excel/README.md)，复用 Excel，安装即可启用；[领域导入](Modules/Domain.md#domainexcel) |
+| Excel Gameplay | [Excel内置领域适配](../../com.kano.ylframework.excel/Editor/Gameplay/README.md)，同装Gameplay启用；[领域导入](Modules/Domain.md#domainexcel) |
 | HybridCLR | [`com.kano.ylframework.hybridclr`](../../com.kano.ylframework.hybridclr/README.md)，使用外置官方 SDK 并复用 Resource；[架构边界](Architecture.md#hybridclr-可选接入) |
 
 跨包链接按源码仓库兄弟目录组织；安装后各包的物理缓存目录可能不同，应从对应包的实际磁盘根打开其 README / LICENSE，不把兄弟目录名硬编码为 PackageCache 路径。
