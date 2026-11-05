@@ -8,6 +8,10 @@
     "YLFramework.StateMachine",
     "YLFramework.Character2D",
     "YLFramework.Platform2D",
+    "YLFramework.Skill",
+    "YLFramework.Buff",
+    "YLFramework.Mission",
+    "YLFramework.Equipment",
     "UnityEngine.UI",
     "UnityEngine.TestRunner",
     "YLFramework.Tests.Fixtures"

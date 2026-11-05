@@ -34,11 +34,11 @@ Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎�
 | Json.NET：`com.unity.nuget.newtonsoft-json` | 包声明 `3.2.1`，由 UPM 自动解析，不需手动拷 DLL；不可用同名替身 DLL 代替 |
 | `BouncyCastle.Cryptography 2.7.0` | netstandard2.0 DLL 与许可已随框架携带，用于 HKDF-SHA256；不要再导入冲突副本 |
 
-主包还显式声明所用 Unity 内置模块。默认产品不包含或要求可选宿主扩展、Odin、MCP、DOTween、MiniExcel 或 HybridCLR。可选依赖只在实际安装相应集成时需要，四个适配包不混入主包。
+主包还显式声明所用Unity内置模块。默认产品不包含或要求可选宿主扩展、Odin、MCP、DOTween、MiniExcel或HybridCLR。选装功能与集成包独立交付，可选SDK只在实际安装对应集成时需要，不混入主包。
 
 ### Registry 与自动依赖
 
-计划的主发行渠道为 `https://package.openupm.com`，采用 GitHub Release asset tracking，不跟踪开发仓库根目录。五包同步版本为 `0.1.0-preview.1`。完成发布及实际 Registry 验收后，主包的最小工程 manifest 为：
+计划的主发行渠道为`https://package.openupm.com`，采用GitHub Release asset tracking，不跟踪开发仓库根目录。当前维护包声明版本为`0.1.0-preview.1`，实际集合见源码目录及维护Catalog，不以历史五包候选代表当前全部产品。完成发布及实际Registry验收后，主包的最小工程manifest为：
 
 ```json
 {
@@ -57,8 +57,9 @@ Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎�
 | `com.kano.ylframework.data-assets` | 主包 | ScriptableObject 根、登记与作者窗口 |
 | `com.kano.ylframework.localization` | 主包、UGUI | 显式语言根、文本/ResourceImage 与作者窗口 |
 | `com.kano.ylframework.save` | Newtonsoft UPM，无主包依赖 | 槽位、同步/异步JSON、原子单文件和显式恢复 |
+| `com.kano.ylframework.gameplay` | 主包、Newtonsoft UPM | Skill/Buff/Mission/Equipment四Runtime与统一作者工具，不要求Excel |
 | `com.kano.ylframework.excel` | 主包、DataAssets | MiniExcel 与许可随 Excel 包携带 |
-| `com.kano.ylframework.domain-excel` | 主包、DataAssets、Excel | 不需要全局 `YL_DOMAIN_EXCEL` |
+| `com.kano.ylframework.domain-excel` | 主包、DataAssets、Excel、Gameplay | 不需要全局 `YL_DOMAIN_EXCEL` |
 | `com.kano.ylframework.dotween` | 主包 | SDK 独立准备；无 SDK 的门控检查不是正向集成 |
 | `com.kano.ylframework.hybridclr` | 主包 | 额外添加窄 scope `com.code-philosophy.hybridclr`，官方 SDK `9.0.3` 间接解析，不随适配包捆绑 |
 
@@ -87,8 +88,9 @@ Unity 不支持在 `package.json` 中声明 Git URL 传递依赖。自有包虽�
 | Save | 仅 `com.kano.ylframework.save` + Newtonsoft UPM | 不需要主包；若使用主包SerializedDictionary则消费方显式安装两者 |
 | 配置式 StateMachine | 主包 + `com.kano.ylframework.state-machine` | Runtime与图编辑器/状态脚本生成一起交付；轻量FSM不随它迁移 |
 | Character2D / Platform2D | 主包 + `com.kano.ylframework.movement2d` + physics2d | 一个安装包、两个互不引用的Runtime及一个公共Editor，Overlap不随它迁移 |
+| Gameplay | 主包 + `com.kano.ylframework.gameplay` | 四个独立Runtime，消费方asmdef只引用所用领域，不要求Excel/Save |
 | Excel | 主包 + DataAssets + `com.kano.ylframework.excel` | MiniExcel `1.31.2` 与 Apache-2.0 许可随 Excel 包携带 |
-| Domain Excel | 主包 + DataAssets + Excel + `com.kano.ylframework.domain-excel` | 安装即可启用，不要求全局 `YL_DOMAIN_EXCEL` |
+| Domain Excel | 主包 + DataAssets + Excel + Gameplay + `com.kano.ylframework.domain-excel` | 安装即可启用，不要求全局 `YL_DOMAIN_EXCEL` |
 | HybridCLR | 主包 + `com.kano.ylframework.hybridclr` | 官方 SDK `9.0.3` 也需单独声明其 Git 来源，匹配 native / 平台门禁 |
 
 本地源码开发可从每个包根的 `package.json` 使用本地安装，或在开发宿主 manifest 使用 `file:../PackageSources/<包ID>`。本地连接不代表 Git 包已完成安装验收，也不将宿主 SDK、测试或配置纳入产品依赖。
@@ -109,7 +111,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 | `Samples~/ResourceStartup/` | 仅在 Package Manager 的 Samples 中显式 Import 后编译；生成的使用工程数据不属于包源码 |
 | `Documentation~/`、`LICENSE.md` | 产品文档与来源许可；隐藏文档按实际文件路径打开 |
 
-主包不包含 Tests、四个选装包、源仓库 Tools、游戏、测试探针、SDK、MCP、NuGet 缓存或开发宿主配置。Canvas、EventSystem 和 ScreenTransition 等默认 Resources 是正式运行资产，不随样例一起隐藏。Analyzer 以 RoslynAnalyzer 编译器输入交付，不作为 Player 插件；规则、安装与移除只维护在 [Attributes](Modules/Attributes.md#core-使用诊断)。
+主包不包含Tests、选装包源码、源仓库Tools、游戏、测试探针、SDK、MCP、NuGet缓存或开发宿主配置。Canvas、EventSystem和ScreenTransition等默认Resources是正式运行资产，不随样例一起隐藏。Analyzer以RoslynAnalyzer编译器输入交付，不作为Player插件；规则、安装与移除只维护在[Attributes](Modules/Attributes.md#core-使用诊断)。
 
 包目录视为只读输入，生成和升级不覆盖用户数据。Module 生成到 `Assets/YLFrameworkData/Generated/Modules`，SO 创建助手默认写 `Assets/YLFrameworkData/ScriptableObjects`；已有设置、工作簿、样例副本、外置 SDK/native、StreamingAssets 发布与冻结基座不由包安装/升级/卸载自动迁移或清理。旧工程先按 [UPM 迁移](Migration-UPM.md) 备份并核对真实引用，不能把整个旧目录删除当作升级。
 

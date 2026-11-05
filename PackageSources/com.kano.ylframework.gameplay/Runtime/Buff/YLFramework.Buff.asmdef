@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Buff",
+    "rootNamespace": "YLFramework.Buff",
+    "references": ["YLFramework.Runtime"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": ["Newtonsoft.Json.dll"],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

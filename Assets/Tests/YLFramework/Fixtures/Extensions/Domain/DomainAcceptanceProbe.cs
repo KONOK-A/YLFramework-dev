@@ -212,13 +212,13 @@ namespace YLFramework.Tests.DomainAcceptance
             int result = Array.IndexOf(args, "-domainResult"), run = Array.IndexOf(args, "-domainRun");
             Require(result >= 0 && result + 1 < args.Length && run >= 0 && run + 1 < args.Length && args[run + 1] == this.run, "Missing exact runtime Run binding.");
             _resultPath = args[result + 1];
-            Require(Path.IsPathRooted(_resultPath) && Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Path.GetDirectoryName(_resultPath))) && !File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(_resultPath)), "Result path is not a new owned artifact.");
+            Require(Path.IsPathRooted(_resultPath) && Directory.Exists(Path.GetFullPath(Path.GetDirectoryName(_resultPath))) && !File.Exists(Path.GetFullPath(_resultPath)), "Result path is not a new owned artifact.");
             Require(_receipt.backend == expectedBackend && !Application.isBatchMode && !Debug.isDebugBuild, "Actual release backend mismatch.");
             Require(SystemInfo.graphicsDeviceType != GraphicsDeviceType.Null && Screen.width > 0 && Screen.height > 0, "Real graphical Player required.");
             Require(ReferenceEquals(Debug.unityLogger.logHandler, _original), "The fixture must not replace the application's handler before its probe.");
             Require(!LoggerManager.IsEnabled, "YL Logger must remain passive until explicitly enabled.");
             string logger = Path.Combine(Path.GetDirectoryName(_resultPath), "logger-" + this.run);
-            Require(!Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(logger)), "Do not overwrite a prior Logger probe.");
+            Require(!Directory.Exists(Path.GetFullPath(logger)), "Do not overwrite a prior Logger probe.");
             // 保留既有序列化开关；共存分支使用测试自有转发器，不要求外部包或修改应用 handler 的内部状态。
             var forwarding = expectLegacyLogger ? new ForwardingHandler(_original, this.run + "/probe-") : null;
             _predecessor = forwarding ?? _original;
@@ -293,14 +293,14 @@ namespace YLFramework.Tests.DomainAcceptance
             Require(_receipt.resourceReturned, "Owned Resource authority remained active.");
             LoggerManager.Disable();
             Require(ReferenceEquals(Debug.unityLogger.logHandler, _predecessor), "YL replaced its actual predecessor.");
-            using (var file = new FileStream(global::YLFramework.Testing.PackageTestPaths.Physical(session.LogFilePath), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            using (var file = new FileStream(Path.GetFullPath(session.LogFilePath), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
                 Require(file.Length > 0, "Writer remained locked/empty.");
             }
 
             foreach (string marker in new[] { "log", "warning", "error", "assert", "exception" })
             {
-                Require(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(session.LogFilePath)).Contains(this.run + "/probe-" + marker), "Writer did not preserve an expected Debug probe.");
+                Require(File.ReadAllText(Path.GetFullPath(session.LogFilePath)).Contains(this.run + "/probe-" + marker), "Writer did not preserve an expected Debug probe.");
             }
             // 留出真实显示与晚退日志窗口；OS侧仍须独立确认窗口、图形设备和正常退出。
             ScreenCapture.CaptureScreenshot(Path.Combine(Path.GetDirectoryName(_resultPath), this.run + ".png"));
@@ -345,7 +345,7 @@ namespace YLFramework.Tests.DomainAcceptance
             }
         }
 
-        private void WriteReceipt() => File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(_resultPath), JsonUtility.ToJson(_receipt, true));
+        private void WriteReceipt() => File.WriteAllText(Path.GetFullPath(_resultPath), JsonUtility.ToJson(_receipt, true));
         private void OnQuitting()
         {
             _receipt.quitObserved = true;

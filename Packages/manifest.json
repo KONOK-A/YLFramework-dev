@@ -12,6 +12,7 @@
     "com.kano.ylframework.data-assets": "file:../PackageSources/com.kano.ylframework.data-assets",
     "com.kano.ylframework.dotween": "file:../PackageSources/com.kano.ylframework.dotween",
     "com.kano.ylframework.excel": "file:../PackageSources/com.kano.ylframework.excel",
+    "com.kano.ylframework.gameplay": "file:../PackageSources/com.kano.ylframework.gameplay",
     "com.kano.ylframework.hybridclr": "file:../PackageSources/com.kano.ylframework.hybridclr",
     "com.kano.ylframework.localization": "file:../PackageSources/com.kano.ylframework.localization",
     "com.kano.ylframework.movement2d": "file:../PackageSources/com.kano.ylframework.movement2d",

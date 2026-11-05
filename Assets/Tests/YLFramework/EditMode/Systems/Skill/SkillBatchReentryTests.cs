@@ -18,11 +18,7 @@ namespace YLFramework.Tests.Extensions.Domain
         public sealed class Probe : SkillBase
         {
             public Action<Probe> Removed;
-#if UNITY_EDITOR
             protected internal override void OnRemove()
-#else
-            protected override void OnRemove()
-#endif
             {
                 var callback = Removed;
                 Removed = null;

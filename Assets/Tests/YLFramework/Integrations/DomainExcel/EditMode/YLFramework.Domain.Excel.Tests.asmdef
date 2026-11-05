@@ -5,6 +5,11 @@
     "YLFramework.Editor",
     "YLFramework.Domain.Excel.Editor",
     "YLFramework.Excel.Editor",
+    "YLFramework.Skill",
+    "YLFramework.Buff",
+    "YLFramework.Mission",
+    "YLFramework.Equipment",
+    "YLFramework.Gameplay.Editor",
     "YLFramework.Tests.Fixtures"
   ],
   "includePlatforms": [

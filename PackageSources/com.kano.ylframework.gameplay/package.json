@@ -1,0 +1,13 @@
+{
+  "name": "com.kano.ylframework.gameplay",
+  "version": "0.1.0-preview.1",
+  "displayName": "YLFramework Gameplay",
+  "description": "Independent skill, buff, mission and equipment runtimes with their shared authoring and lifecycle support.",
+  "unity": "2022.3",
+  "unityRelease": "62f3",
+  "license": "MIT",
+  "author": { "name": "Kano" },
+  "repository": { "type": "git", "url": "https://github.com/KONOK-A/YLFramework-dev.git", "directory": "PackageSources/com.kano.ylframework.gameplay" },
+  "files": ["package.json", "package.json.meta", "README.md", "README.md.meta", "LICENSE.md", "LICENSE.md.meta", "Runtime", "Runtime.meta", "Editor", "Editor.meta"],
+  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1", "com.unity.nuget.newtonsoft-json": "3.2.1" }
+}

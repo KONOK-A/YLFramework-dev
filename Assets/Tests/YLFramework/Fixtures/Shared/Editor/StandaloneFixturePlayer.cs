@@ -36,7 +36,8 @@ namespace YLFramework.Testing.EditorFixtures
             public int recordCount;
         }
 
-        public static void BuildAndRun(string output, string assetRoot, string expectedRuntime, ResourceRelease release, Action<Scene> populate)
+        public static void BuildAndRun(string output, string assetRoot, string expectedRuntime, ResourceRelease release, Action<Scene> populate,
+            string[] extraScriptingDefines = null)
         {
             Assert.That(Application.isBatchMode && !EditorApplication.isPlaying, Is.True);
             string project = Path.GetFullPath(Directory.GetParent(Application.dataPath).FullName);
@@ -100,7 +101,8 @@ namespace YLFramework.Testing.EditorFixtures
                     scenes = new[] { scene },
                     locationPathName = executable,
                     target = BuildTarget.StandaloneWindows64,
-                    options = BuildOptions.Development
+                    options = BuildOptions.Development,
+                    extraScriptingDefines = extraScriptingDefines ?? Array.Empty<string>()
                 });
                 Assert.That(build.summary.result, Is.EqualTo(UnityEditor.Build.Reporting.BuildResult.Succeeded));
             }

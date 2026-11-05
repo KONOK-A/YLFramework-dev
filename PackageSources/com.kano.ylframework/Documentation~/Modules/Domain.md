@@ -15,7 +15,7 @@ Skill、Buff、Mission、Equipment、Reddot 和 Logging 各自管理领域状态
 | Reddot | `YLFramework.RedDots.ReddotManager` | 路径与独立来源登记，表现组件只控制自己的 Indicator |
 | Logging | `YLFramework.Logging.LoggerManager` | 显式日志会话，默认不接管处理器或写文件 |
 
-实现位于 [`Runtime/Systems/`](../../Runtime/Systems/)，配套作者工具位于 [`Editor/Systems/`](../../Editor/Systems/)。
+Skill/Buff/Mission/Equipment安装 [Gameplay包](../../../com.kano.ylframework.gameplay/README.md)，分别属于`YLFramework.Skill`、`YLFramework.Buff`、`YLFramework.Mission`、`YLFramework.Equipment`四Runtime，源码在该包的`Runtime/各域`，配套作者工具与共享退出逻辑属于`YLFramework.Gameplay.Editor`（`Editor/各域`及`Editor/Shared`）。Reddot/Logging仍位于主包`Runtime/Systems`，不随Gameplay迁移。
 
 ## 配置与资源
 
@@ -81,7 +81,7 @@ Skill / Buff / Mission / Equipment 使用各自的 `SkillsConfig`、`BuffsConfig
 
 ## DomainExcel
 
-选装 `com.kano.ylframework.domain-excel` 复用 `com.kano.ylframework.excel`，仅用于 Editor 领域作者流程，不成为 Runtime 依赖。Git 消费方须显式声明主包、Excel 与 Domain Excel 三项。安装后自动启用，不再要求用户全局定义 `YL_DOMAIN_EXCEL`，也不改写全局 scripting symbols；已有业务 `#if YL_DOMAIN_EXCEL` 由使用工程自行审查迁移。
+选装 `com.kano.ylframework.domain-excel` 复用 `com.kano.ylframework.excel`，仅用于Editor领域作者流程，不成为Gameplay Runtime依赖。Git消费方须显式声明主包、DataAssets、Gameplay、Excel与DomainExcel五项同SHA。安装后自动启用，不再要求用户全局定义`YL_DOMAIN_EXCEL`，也不改写全局scripting symbols；已有业务`#if YL_DOMAIN_EXCEL`由使用工程自行审查迁移。
 
 - `DomainExcelCommands.PreviewImport` 接受显式工作簿路径，预览后确认或取消；不提供 Mission 条目与参数跨 sheet 原子事务，也不导入全局 Buff Effect 库。
 - Skill / Buff / Mission 没有最近工作簿入口。Equipment 的导出、预览 / 确认 / 取消及最近工作簿目录菜单为 `Assets/YLFramework/Domain Excel/`；这是 Project 右键菜单名，不是安装或输出目录。

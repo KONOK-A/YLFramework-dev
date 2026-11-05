@@ -50,6 +50,26 @@ function Fixture([string] $Id) {
 }
 try {
     $catalog = Read-YLPackageCatalog
+    Case 'Gameplay owns four independent runtimes and its shared Editor without an Excel dependency' {
+        $gameplay = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.gameplay')
+        Check ($gameplay.Count -eq 1) 'The complete Gameplay installation unit is missing from the maintained catalog.'
+        $root = Join-Path $repository 'PackageSources/com.kano.ylframework.gameplay'
+        $manifest = Read-YLPackageEvidenceJson (Join-Path $root 'package.json')
+        Check ($manifest.dependencies.Count -eq 2 -and $manifest.dependencies['com.kano.ylframework'] -ceq '0.1.0-preview.1' -and
+            $manifest.dependencies['com.unity.nuget.newtonsoft-json'] -ceq '3.2.1') 'Gameplay must declare only its actual main and Newtonsoft dependencies.'
+        foreach ($domain in @('Skill', 'Buff', 'Mission', 'Equipment')) {
+            $runtime = Read-YLPackageEvidenceJson (Join-Path $root "Runtime/$domain/YLFramework.$domain.asmdef")
+            Check ($runtime.name -ceq "YLFramework.$domain" -and ($runtime.references -join ',') -ceq 'YLFramework.Runtime' -and $runtime.overrideReferences) "$domain must not reference another gameplay runtime or rely on implicit vendor assemblies."
+            $expected = if ($domain -cin @('Buff', 'Mission')) { 'Newtonsoft.Json.dll' } else { '' }
+            Check (($runtime.precompiledReferences -join ',') -ceq $expected) "$domain must declare only its actual JSON binary consumption."
+        }
+        $editor = Read-YLPackageEvidenceJson (Join-Path $root 'Editor/YLFramework.Gameplay.Editor.asmdef')
+        Check ($editor.name -ceq 'YLFramework.Gameplay.Editor' -and ($editor.includePlatforms -join ',') -ceq 'Editor' -and
+            ($editor.references -join ',') -ceq 'YLFramework.Runtime,YLFramework.Editor,YLFramework.Skill,YLFramework.Buff,YLFramework.Mission,YLFramework.Equipment' -and
+            ($editor.precompiledReferences -join ',') -ceq 'Newtonsoft.Json.dll') 'Gameplay authoring must own all four domains, shared helpers and its actual clipboard JSON binary consumption.'
+        $domainExcel = Read-YLPackageEvidenceJson (Join-Path $repository 'PackageSources/com.kano.ylframework.domain-excel/package.json')
+        Check ($domainExcel.dependencies['com.kano.ylframework.gameplay'] -ceq '0.1.0-preview.1') 'The current DomainExcel authoring consumer must declare Gameplay before the later Excel merge.'
+    }
     Case 'Movement2D owns two independent runtimes and one Editor with explicit physics dependency' {
         $movement = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.movement2d')
         Check ($movement.Count -eq 1) 'The combined movement2d package is missing from the maintained catalog.'

@@ -1,6 +1,6 @@
 {
     "name": "YLFramework.Equipment.Acceptance.Player",
-    "references": ["YLFramework.Runtime"],
+    "references": ["YLFramework.Runtime", "YLFramework.Equipment"],
     "includePlatforms": ["Editor", "WindowsStandalone64"],
     "defineConstraints": ["YL_EQUIPMENT_ACCEPTANCE"],
     "autoReferenced": true

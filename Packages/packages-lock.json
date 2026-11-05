@@ -125,6 +125,15 @@
         "com.unity.nuget.newtonsoft-json": "3.2.1"
       }
     },
+    "com.kano.ylframework.gameplay": {
+      "version": "file:../PackageSources/com.kano.ylframework.gameplay",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.kano.ylframework": "0.1.0-preview.1",
+        "com.unity.nuget.newtonsoft-json": "3.2.1"
+      }
+    },
     "com.kano.ylframework.hybridclr": {
       "version": "file:../PackageSources/com.kano.ylframework.hybridclr",
       "depth": 0,

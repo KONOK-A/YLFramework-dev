@@ -69,9 +69,9 @@ try {
             $manifest.scopedRegistries[0].scopes[0] -ceq 'com.kano.ylframework' -and 'com.unity' -cnotin $manifest.scopedRegistries[0].scopes) 'Registry scopes leaked outside the approved names.'
     }
     $domain = @(Get-YLRegistryClosure -Release $release -EntryPackage 'com.kano.ylframework.domain-excel')
-    Check (($domain.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.domain-excel,com.kano.ylframework.excel') 'DomainExcel closure must include the exact DataAssets/Excel backend declarations.'
+    Check (($domain.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.domain-excel,com.kano.ylframework.excel,com.kano.ylframework.gameplay') 'DomainExcel closure must include exact DataAssets/Excel backend and Gameplay declarations.'
     $tarManifest = New-YLRegistryHostManifest -PackageSource LocalTarball -Release $release -EntryPackage 'com.kano.ylframework.domain-excel' -RegistryUrl $url
-    Check ($tarManifest.dependencies.Count -eq 4 -and @($tarManifest.dependencies.Values | Where-Object { $_ -notmatch '^file:.+\.tgz$' }).Count -eq 0) 'ArtifactPreflight must use actual UPM tarball locators for its entire own closure.'
+    Check ($tarManifest.dependencies.Count -eq 5 -and @($tarManifest.dependencies.Values | Where-Object { $_ -notmatch '^file:.+\.tgz$' }).Count -eq 0) 'ArtifactPreflight must use actual UPM tarball locators for its entire own closure.'
     $hybrid = New-YLRegistryHostManifest -PackageSource Registry -Release $release -EntryPackage 'com.kano.ylframework.hybridclr' -RegistryUrl $url
     Check ($hybrid.scopedRegistries[0].scopes.Count -eq 2 -and 'com.code-philosophy.hybridclr' -cin $hybrid.scopedRegistries[0].scopes -and
         -not $hybrid.dependencies.Contains('com.code-philosophy.hybridclr')) 'HybridCLR SDK must be indirect and narrowly routed.'
@@ -177,11 +177,11 @@ try {
             if (-not $depths.ContainsKey($dependency)) { $depths[$dependency] = $depths[$id] + 1; $pending.Enqueue($dependency) }
         }
     }
-    Check ($depths.Count -eq 5 -and $depths['com.kano.ylframework.data-assets'] -eq 2 -and
-        $depths['com.kano.ylframework.excel'] -eq 1 -and $depths['com.unity.ugui'] -eq 2) 'The fixture must represent shortest dependency distances, including the transitive DataAssets backend.'
+    Check ($depths.Count -eq 6 -and $depths['com.kano.ylframework.data-assets'] -eq 2 -and
+        $depths['com.kano.ylframework.excel'] -eq 1 -and $depths['com.kano.ylframework.gameplay'] -eq 1 -and $depths['com.unity.ugui'] -eq 2) 'The fixture must represent shortest dependency distances, including transitive DataAssets and direct Gameplay.'
     $graphArgs = @{ Manifest = $manifest; Lock = $lock; Rows = $actual; Release = $release; EntryPackage = $entry; PackageSource = 'Registry'; RegistryUrl = $url; EditorVersion = '6000.3.27f1'; HostRoot = (Join-Path $root 'Host'); CacheRoot = (Join-Path $root 'Cache') }
     $evidence = Assert-YLRegistryResolvedGraph @graphArgs
-    Check ($evidence.packages.Count -eq 5 -and $evidence.origin -ceq 'Registry') 'The observed graph lost its Registry/Editor baseline distinction.'
+    Check ($evidence.packages.Count -eq 6 -and $evidence.origin -ceq 'Registry') 'The observed graph lost its Registry/Editor baseline distinction.'
     $foreignOfficial = Copy-Value $graphArgs
     $foreignOfficial.Rows[-1].source = 'Registry'; $foreignOfficial.Rows[-1].registryUrl = 'https://packages.unity.com'
     $foreignOfficial.Rows[-1].resolvedPath = 'C:\foreign-global-cache\com.unity.ugui'
@@ -203,7 +203,7 @@ try {
         } else { $tarGraphArgs.Lock.dependencies[$row.name].depth = 1 }
     }
     $tarEvidence = Assert-YLRegistryResolvedGraph @tarGraphArgs
-    Check ($tarEvidence.origin -ceq 'LocalTarball' -and $tarEvidence.directPackages.Count -eq 4) 'Actual tarball graph must preserve direct locator closure, not Registry indirectness.'
+    Check ($tarEvidence.origin -ceq 'LocalTarball' -and $tarEvidence.directPackages.Count -eq 5) 'Actual tarball graph must preserve direct locator closure, not Registry indirectness.'
     foreach ($fault in @('tar-git', 'tar-folder', 'tar-version', 'tar-depth', 'tar-indirect')) {
         $arguments = Copy-Value $tarGraphArgs
         switch ($fault) {

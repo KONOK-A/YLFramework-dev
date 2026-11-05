@@ -6,6 +6,7 @@ Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../Common/Workspace.ps1')
 $checks = 0
+$completed = $false
 function Check([bool] $Condition, [string] $Reason) { if (-not $Condition) { throw $Reason }; $script:checks++ }
 function Reject([scriptblock] $Action, [string] $Pattern) {
     try { & $Action | Out-Null } catch {
@@ -93,7 +94,8 @@ try {
                     'com.kano.ylframework' { @('com.kano.ylframework') }
                     'com.kano.ylframework.data-assets' { @('com.kano.ylframework', 'com.kano.ylframework.data-assets') }
                     'com.kano.ylframework.excel' { @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel') }
-                    'com.kano.ylframework.domain-excel' { @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.excel') }
+                    'com.kano.ylframework.domain-excel' { @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay') }
+                    'com.kano.ylframework.gameplay' { @('com.kano.ylframework', 'com.kano.ylframework.gameplay') }
                     'com.kano.ylframework.dotween' { @('com.kano.ylframework', 'com.kano.ylframework.dotween') }
                     'com.kano.ylframework.hybridclr' { @('com.kano.ylframework', 'com.kano.ylframework.hybridclr', 'com.code-philosophy.hybridclr') }
                     default { throw 'Unknown contract scenario.' }
@@ -125,11 +127,16 @@ try {
                     }
                 }
                 Check ($depths.Count -eq $apis.Count) 'The observed fixture contains a package outside its declared dependency closure.'
-                if ($script:scenarioEntry -ceq 'com.kano.ylframework.domain-excel') { Check ($depths['com.kano.ylframework.data-assets'] -eq 2) 'DomainExcel must reach DataAssets through its Excel backend.' }
+                if ($script:scenarioEntry -ceq 'com.kano.ylframework.domain-excel') {
+                    Check ($depths.Count -eq 5 -and $depths['com.kano.ylframework'] -eq 1 -and $depths['com.kano.ylframework.data-assets'] -eq 2 -and
+                        $depths['com.kano.ylframework.excel'] -eq 1 -and $depths['com.kano.ylframework.gameplay'] -eq 1) 'DomainExcel must reach its full five-package closure at the shortest dependency depths.'
+                }
                 Save $lockPath $lock
                 if ($script:fault -ceq 'lock-depth') { $lock.dependencies[$script:scenarioEntry].depth = 7; Save $lockPath $lock }
                 if ($script:fault -ceq 'transitive-lock-depth') { $lock.dependencies['com.kano.ylframework.data-assets'].depth = 1; Save $lockPath $lock }
                 if ($script:fault -ceq 'missing-backend') { [UnityEditor.PackageManager.PackageInfo]::Registered = @($apis | Where-Object name -cne 'com.kano.ylframework.data-assets'); $lock.dependencies.Remove('com.kano.ylframework.data-assets'); Save $lockPath $lock }
+                if ($script:fault -ceq 'missing-gameplay') { [UnityEditor.PackageManager.PackageInfo]::Registered = @($apis | Where-Object name -cne 'com.kano.ylframework.gameplay'); $lock.dependencies.Remove('com.kano.ylframework.gameplay'); Save $lockPath $lock }
+                if ($script:fault -ceq 'gameplay-lock-depth') { $lock.dependencies['com.kano.ylframework.gameplay'].depth = 2; Save $lockPath $lock }
                 if ($script:fault -ceq 'direct-dependency') { [UnityEditor.PackageManager.PackageInfo]::Registered[0].isDirectDependency = $true }
             }
             if ($script:fault -ceq 'warm-path-drift' -and $request.phase -ceq 'Reopen') { [UnityEditor.PackageManager.PackageInfo]::Registered[0].resolvedPath = Join-Path $request.cacheRoot 'Upm/ChangedIdentity' }
@@ -220,6 +227,23 @@ try {
     $outcome = Invoke-YLRegistryLifecycle @arguments
     Check ($outcome.status -ceq 'Completed' -and $outcome.phases.Count -eq 4) "A complete lifecycle must return four independently observed phase results. $($outcome.error)"
     Check (($outcome.phases.phase -join ',') -ceq 'Inspect,Reopen,Remove,VerifyRemoved') 'Lifecycle phase ordering changed.'
+    Check (@($outcome.phases.output | Sort-Object -Unique).Count -eq 4 -and $outcome.processes.Count -eq 4) 'Each lifecycle phase must have its own output and process observation.'
+    foreach ($phase in $outcome.phases) {
+        $report = Read-YLPackageEvidenceJson $phase.reportPath
+        $lock = Read-YLPackageEvidenceJson (Join-Path $phase.output 'packages-lock.json')
+        Check ($phase.status -ceq 'Completed' -and $phase.process.observedExit -and $phase.process.exitCode -eq 0 -and
+            $report.status -ceq 'Completed' -and $report.phase -ceq $phase.phase -and
+            $report.requestSha256 -ceq (Get-FileHash -LiteralPath (Join-Path $phase.output 'request.json') -Algorithm SHA256).Hash.ToLowerInvariant()) 'A completed lifecycle phase must retain its independently read report, request binding and normal exit.'
+        if ($phase.phase -cin @('Inspect', 'Reopen')) {
+            Check (($phase.graph.packages.name -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.domain-excel,com.kano.ylframework.excel,com.kano.ylframework.gameplay' -and
+                ($report.packages.name -join ',') -ceq ($phase.graph.packages.name -join ',')) 'Initial and warm phase receipts must retain the full observed DomainExcel closure.'
+            Check ($lock.dependencies.Count -eq 5 -and $lock.dependencies['com.kano.ylframework.domain-excel'].depth -eq 0 -and
+                $lock.dependencies['com.kano.ylframework'].depth -eq 1 -and $lock.dependencies['com.kano.ylframework.data-assets'].depth -eq 2 -and
+                $lock.dependencies['com.kano.ylframework.excel'].depth -eq 1 -and $lock.dependencies['com.kano.ylframework.gameplay'].depth -eq 1) 'Initial and warm lock receipts must retain the shortest dependency depths for all five packages.'
+        } else {
+            Check ($phase.graph.packages.Count -eq 0 -and $report.packages.Count -eq 0 -and $lock.dependencies.Count -eq 0) 'Remove and VerifyRemoved receipts must exclude the entry and all four indirect fixture packages, including Gameplay.'
+        }
+    }
     Check (@($starts.host | Sort-Object -Unique).Count -eq 1 -and @($starts.cache | Sort-Object -Unique).Count -eq 1) 'Warm reopen and uninstall must preserve their own host/cache.'
     Check ($outcome.coldInstallCount -eq 1 -and $outcome.neutralInputs.files.Count -gt 4 -and $outcome.sentinels.status -ceq 'Unchanged') 'Neutral producer receipts, sentinel hashes or cold/warm classification are missing.'
     $sentinel = @($outcome.sentinels.files | Where-Object { $_.path -ceq 'Assets/RegistryLifecycleSentinels/user-state.bytes' })
@@ -228,7 +252,7 @@ try {
     Check ([IO.File]::Exists((Join-Path $outcome.host.path 'Library/PackageCache/com.kano.ylframework/cached.bytes'))) 'Cached files were incorrectly deleted to force uninstall success.'
     $asmdef = Read-YLPackageEvidenceJson (Join-Path $outcome.host.path 'Assets/RegistryLifecycle/Editor/RegistryLifecycle.asmdef')
     Check ($asmdef.references.Count -eq 0 -and $asmdef.overrideReferences -and $asmdef.precompiledReferences.Count -eq 0 -and ($asmdef.includePlatforms -join ',') -ceq 'Editor') 'The neutral probe inherited product/SDK/Json.NET references or entered Player compilation.'
-    foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel', 'com.kano.ylframework.dotween', 'com.kano.ylframework.hybridclr')) {
+    foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay', 'com.kano.ylframework.dotween', 'com.kano.ylframework.hybridclr')) {
         $script:scenarioEntry = $id; $caseArguments = $arguments.Clone(); $caseArguments.EntryPackage = $id
         $case = Invoke-YLRegistryLifecycle @caseArguments
         Check ($case.status -ceq 'Completed' -and $case.phases.Count -eq 4) "Frozen entry lifecycle failed for ${id}: $($case.error)"
@@ -241,14 +265,16 @@ try {
     Check ($reloaded.phases[2].report.removal.completion -ceq 'ResolvedAfterReload' -and $reloaded.phases[2].report.removal.requestStatusObserved -is [bool] -and
         -not $reloaded.phases[2].report.removal.requestStatusObserved -and $reloaded.phases[2].report.removal.requestStatus -ceq '') 'A lost RemoveRequest must not be fabricated as observed Success.'
     $script:reload = $false
-    foreach ($faultName in @('compile', 'request-only', 'remove-failed', 'indirect-remains', 'manifest-extra', 'sentinel', 'cache-environment', 'warm-path-drift', 'lock-depth', 'transitive-lock-depth', 'missing-backend', 'direct-dependency', 'report-pid', 'report-cache', 'cancelled', 'forced-cleanup', 'operation-owner-report', 'neutral-receipt-drift', 'input-receipt-drift')) {
+    foreach ($faultName in @('compile', 'request-only', 'remove-failed', 'indirect-remains', 'manifest-extra', 'sentinel', 'cache-environment', 'warm-path-drift', 'lock-depth', 'transitive-lock-depth', 'missing-backend', 'missing-gameplay', 'gameplay-lock-depth', 'direct-dependency', 'report-pid', 'report-cache', 'cancelled', 'forced-cleanup', 'operation-owner-report', 'neutral-receipt-drift', 'input-receipt-drift')) {
         $script:fault = $faultName
         $failed = Invoke-YLRegistryLifecycle @arguments
         Check ($failed.status -ceq 'Failed' -and $failed.error.Length -gt 0) "Lifecycle incorrectly accepted actual $faultName evidence."
         Check ($failed.phases.Count -gt 0 -and $failed.phases[-1].status -ceq 'Failed') "Failed $faultName phase evidence was dropped from the returned outcome."
         if ($faultName -ceq 'sentinel') { Check ($failed.sentinels.status -ceq 'ChangedOrUnavailable') 'A changed sentinel retained a stale Unchanged summary.' }
     }
+    $completed = $true
     "PASS: $checks Registry lifecycle NoUnity behavior contracts. NOT Unity compilation, installation or PassedRegistry."
 } finally {
-    if ([IO.Directory]::Exists($root)) { $null = @(Get-YLTestTreeFiles $root); [IO.Directory]::Delete($root, $true) }
+    if ($completed -and [IO.Directory]::Exists($root)) { $null = @(Get-YLTestTreeFiles $root); [IO.Directory]::Delete($root, $true) }
+    elseif ([IO.Directory]::Exists($root)) { Write-Warning "Failed Registry lifecycle NoUnity fixtures retained: $root" }
 }

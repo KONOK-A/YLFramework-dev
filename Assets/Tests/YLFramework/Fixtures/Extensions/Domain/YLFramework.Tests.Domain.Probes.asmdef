@@ -3,7 +3,10 @@
   "rootNamespace": "YLFramework.Tests.DomainAcceptance",
   "references": [
     "YLFramework.Runtime",
-    "YLFramework.Tests.Fixtures"
+    "YLFramework.Skill",
+    "YLFramework.Buff",
+    "YLFramework.Mission",
+    "YLFramework.Equipment"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
