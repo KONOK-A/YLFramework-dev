@@ -15,6 +15,27 @@ namespace YLFramework.Tests
     // 当前 Unity Test Runner 使用 NUnit 2；同步 EditMode 用例在主线程顺序执行。
     public class SerializedDictionarySaveTests
     {
+        public sealed class SettingsRecord
+        {
+            public SerializedDictionary<string, Payload> Entries = new SerializedDictionary<string, Payload>();
+        }
+
+        [Test]
+        public void NestedRecordUsesActualSaveSettingsWithoutChangingOrCallingSaveManager()
+        {
+            var source = new SettingsRecord();
+            source.Entries.Add("first", new Payload { Number = 1 });
+            source.Entries["first"] = new Payload { Number = 2 };
+            source.Entries["second"] = null;
+            var json = JsonConvert.SerializeObject(source, SaveManager.SerializerSettings);
+            Assert.That(JToken.DeepEquals(JToken.Parse(json), JToken.Parse("{\"Entries\":{\"first\":{\"Number\":2},\"second\":null}}")), Is.True);
+            var restored = JsonConvert.DeserializeObject<SettingsRecord>(json, SaveManager.SerializerSettings);
+            Assert.That(restored.Entries["first"].Number, Is.EqualTo(2));
+            Assert.That(restored.Entries.TryGetValue("second", out var value), Is.True);
+            Assert.That(value, Is.Null);
+            Assert.That(JsonConvert.SerializeObject(restored, SaveManager.SerializerSettings), Is.EqualTo(json));
+        }
+
         [Serializable]
         public class Record
         {

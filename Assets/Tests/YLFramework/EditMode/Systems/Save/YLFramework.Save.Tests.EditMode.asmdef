@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Save.Tests.EditMode",
+    "rootNamespace": "YLFramework.Tests.SavePackage",
+    "references": ["YLFramework.Save", "YLFramework.Tests.Fixtures", "YLFramework.Tests.Infrastructure.Editor", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": ["nunit.framework.dll", "Newtonsoft.Json.dll"],
+    "autoReferenced": false,
+    "defineConstraints": ["UNITY_INCLUDE_TESTS"],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

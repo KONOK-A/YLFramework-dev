@@ -5,6 +5,7 @@
     "YLFramework.Runtime",
     "YLFramework.DataAssets",
     "YLFramework.Localization",
+    "YLFramework.Save",
     "YLFramework.Tests.Fixtures"
   ],
   "includePlatforms": [],

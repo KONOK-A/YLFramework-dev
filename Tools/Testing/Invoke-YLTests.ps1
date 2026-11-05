@@ -233,16 +233,27 @@ try {
             }
             $runtimeReferences = @($core)
             $runtimeFrameworkReferences = @($references)
+            $installedReferenceEvidence = @()
             if ('offlineReferences' -cin $definition.PSObject.Properties.Name) {
                 $runtimeFrameworkReferences = @((Join-Path $data 'NetStandard/ref/2.1.0/netstandard.dll')) +
                     @([IO.Directory]::EnumerateFiles((Join-Path $data 'NetStandard/compat/2.1.0/shims/netstandard'), '*.dll'))
                 $runtimeReferences += @([IO.Directory]::EnumerateFiles($managed, '*.dll'))
                 $runtimeReferences += @($definition.offlineReferences | ForEach-Object { Get-YLTestPath -Path (Join-Path $repository $_) -ReadOnly })
             }
+            if ('offlinePackageReferences' -cin $definition.PSObject.Properties.Name) {
+                foreach ($reference in $definition.offlinePackageReferences) {
+                    $declaredReference = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $reference -Depth 5) -AsHashtable
+                    Assert-YLPackageFields $declaredReference @('package', 'path')
+                    $resolvedReference = Get-YLInstalledPackageReference -Repository $repository -PackageId $declaredReference.package -RelativePath $declaredReference.path -UnityVersion $editor.version
+                    $runtimeReferences += $resolvedReference.path
+                    $installedReferenceEvidence += $resolvedReference.evidence
+                }
+            }
             $runtimeReferences = @($runtimeReferences | Sort-Object -Unique)
             $toolFiles = @($Unity, $Dotnet, $compiler, $mono, $core, $shared, $NUnitAssembly) + $references
             $toolFiles += $runtimeReferences
             $toolFiles += $runtimeFrameworkReferences
+            $toolFiles += $installedReferenceEvidence
             if ($dotnetProfile) {
                 $toolFiles += Join-Path ([IO.Path]::GetDirectoryName($Dotnet)) "shared/Microsoft.NETCore.App/$($definition.offlineRuntime.version)/System.Private.CoreLib.dll"
             }
@@ -273,7 +284,9 @@ try {
             if (-not [IO.Path]::Exists($build)) {
                 $staging = Join-Path $run.path 'Build'
                 $null = [IO.Directory]::CreateDirectory($staging)
-                $runtime = Join-Path $staging 'YLFramework.Runtime.dll'
+                $runtimeName = if ('offlineAssemblyName' -cin $definition.PSObject.Properties.Name) { $definition.offlineAssemblyName } else { 'YLFramework.Runtime' }
+                if ($runtimeName -cnotmatch '^YLFramework\.[A-Za-z0-9_.]+$') { throw 'Invalid declared offline runtime assembly identity.' }
+                $runtime = Join-Path $staging ($runtimeName + '.dll')
                 Compile-OfflineAssembly -Output $runtime -Sources @($sources.runtime | ForEach-Object { Join-Path $repository $_ }) -References ($runtimeFrameworkReferences + $runtimeReferences)
                 $executable = Join-Path $staging 'YLFramework.Tests.EditMode.exe'
                 Compile-OfflineAssembly -Output $executable -Sources (@($sources.tests | ForEach-Object { Join-Path $repository $_ }) + (Join-Path $repository 'Tools/Testing/NUnitHost.cs')) -References ($references + $runtimeReferences + @($runtime, $NUnitAssembly)) -Executable
@@ -288,7 +301,9 @@ try {
             }
             $null = @(Get-YLTestTreeFiles $build)
             $manifest = [IO.File]::ReadAllText((Join-Path $build 'build.json')) | ConvertFrom-Json -DateKind String
-            $expectedBinaries = @(@('YLFramework.Runtime.dll', 'YLFramework.Tests.EditMode.exe') + @(@($NUnitAssembly, $shared) + $runtimeReferences | ForEach-Object { [IO.Path]::GetFileName($_) }) | Sort-Object -Unique)
+            $runtimeName = if ('offlineAssemblyName' -cin $definition.PSObject.Properties.Name) { $definition.offlineAssemblyName } else { 'YLFramework.Runtime' }
+            if ($runtimeName -cnotmatch '^YLFramework\.[A-Za-z0-9_.]+$') { throw 'Invalid declared offline runtime assembly identity.' }
+            $expectedBinaries = @(@(($runtimeName + '.dll'), 'YLFramework.Tests.EditMode.exe') + @(@($NUnitAssembly, $shared) + $runtimeReferences | ForEach-Object { [IO.Path]::GetFileName($_) }) | Sort-Object -Unique)
             if ($dotnetProfile) { $expectedBinaries += 'YLFramework.Tests.EditMode.runtimeconfig.json' }
             $manifestBinaries = [Collections.Generic.HashSet[string]]::new([string[]]@($manifest.files.name), [StringComparer]::OrdinalIgnoreCase)
             if ($manifest.sourceIdentity -cne $baseIdentity.sha256 -or $manifestBinaries.Count -ne $manifest.files.Count -or -not $manifestBinaries.SetEquals([string[]]$expectedBinaries)) { throw 'Owned build cache identity is invalid.' }

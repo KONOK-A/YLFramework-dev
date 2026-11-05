@@ -144,6 +144,14 @@
         "com.unity.ugui": "1.0.0"
       }
     },
+    "com.kano.ylframework.save": {
+      "version": "file:../PackageSources/com.kano.ylframework.save",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.unity.nuget.newtonsoft-json": "3.2.1"
+      }
+    },
     "com.unity.2d.animation": {
       "version": "13.0.6",
       "depth": 1,

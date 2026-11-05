@@ -27,6 +27,7 @@ PowerShell、Node 外部控制器不放在 `Assets` 中。固定接收工程、S
 - 普通离线编译沿用 Analyzer 锁定的 SDK `9.0.312` 和现有 NUnit `3.14.0`，不自动下载或升级。
 - Save 的 BCL 专项明确使用已声明的 SDK `10.0.102` / Runtime `10.0.2`，缺少时直接报告前置不足，不切换到 Mono 冒充同一环境。
 - Framework 模块需要声明中的现有插件、包锁和资产元数据。离线引用包含来源工程已导入的 UGUI 与 Json.NET，必须先完成真实 Unity 导入，工具不会伪造这些 DLL。
+- 离线包 DLL 按来源工程真实 manifest/lock/UPM resolution 精确验证；`-Unity` 必须与该来源导入上下文一致。切换 Native 消费方版本不等于重建来源工程的离线引用，不能拿缺失或另一 Editor 上下文的包缓存冒充已解析前置。
 - Native 宿主只安装模块声明需要的包与源码，不恢复历史游戏或接收工程。图形模块不能使用无图形模式替代。
 
 MCP 仅为开发工程工具，依赖声明与锁定结果保留在 `Packages/manifest.json` / `packages-lock.json`。`Assets/Plugins/NuGet/` 中的 DLL、`.meta`、安装状态及同级 `NuGet.meta` 由 MCP 恢复器生成，只在本机保留，不纳入 Git 或框架测试输入。普通 Editor 首次打开时会自动还原，需能够访问 OpenUPM 和 NuGet。
@@ -88,7 +89,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Core | Daily | 完整 MVC / UI / 资源夹具；不隐式安装旧宿主扩展或原游戏资产。 |
 | Domain | Quick / Daily / Special | Skill / Buff / Mission / Reddot / Logging 逻辑、作者及场景生命周期；无 Domain Reload 会话使用独立宿主。 |
 | Behavior | Quick / Daily / Special | 日常Overlap / CharacterMotor / MovingPlatform / 两套FSM；Special在显式自有Desktop宿主执行两个原生窗口事件合同。 |
-| Save | Special | 真实 NUnit 执行 BCL 合同；不会执行需要 Unity JsonUtility 的叶子来伪造 native 验收。 |
+| Save | Daily / Special | 仅 Save + Newtonsoft，不安装主包。Daily 执行原生门面合同与真实双进程 Mono Player 冷重开/显式备份恢复；Special 以 .NET 执行 BCL 合同，不替代 Unity 或 Player。 |
 | Data | Daily / Special | Save native JSON、Localization、DataAssets 作者和资源生命周期；会话前置不能由主工程代替。 |
 | DataAssets | Daily / Special | 仅主包+DataAssets：身份、作者、请求与租约、双Play、旧资产副本重建及真实Mono Player；不是完整Data组合。 |
 | Localization | Daily / Special | 仅主包+Localization：回退、显示、ResourceImage责任、作者、双Play及正式内容Player；不借DataAssets/Excel依赖。 |
@@ -98,6 +99,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Resource | Daily / Special | 有界真实Catalog / Codec / Bundle构建；Special保留原场景安全、双次Play及租约隔离断言，使用碰撞拒绝的短宿主名。 |
 
 准确范围以当前 `TestSuites.json` 和发现产物为准。模块声明不是所有平台或所有环境已验收的承诺。
+
+Data 组合保留主包字典与 Save 的实际消费者测试和组合 Player，但明确排除要求主包缺席的 `YL.Package.SaveStandalone` 用例；该用例仍由 Save Daily 完整执行，不能通过 Skip 或允许主包存在来替代独立包验收。
 
 Resource原生构建与Audio的原生Bundle会话受Windows Mono路径预算限制，需要足够短的工作根，不要放入深层恢复根；短宿主名只是目录标签，完整key与owner收据仍必须一致，冲突直接拒绝，不能减少归属检查或放宽产品路径限制。
 

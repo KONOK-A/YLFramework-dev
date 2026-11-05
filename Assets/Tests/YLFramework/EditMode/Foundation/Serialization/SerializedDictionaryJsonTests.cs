@@ -6,7 +6,6 @@ using UnityEngine;
 using YLFramework.Foundation;
 using YLFramework.Foundation.Tests;
 using Object = UnityEngine.Object;
-using SaveManager = YLFramework.Save.SaveManager;
 using YLFramework.Serialization;
 
 namespace YLFramework.Tests
@@ -42,23 +41,6 @@ namespace YLFramework.Tests
             var restored = JsonConvert.DeserializeObject<SerializedDictionary<string, int>>(json);
             Assert.That(restored["a"], Is.EqualTo(1));
             Assert.That(JsonConvert.SerializeObject(restored), Is.EqualTo(json));
-        }
-
-        [Test]
-        [Category("YL.Module.SaveBcl")]
-        public void NestedRecordUsesActualSaveSettingsWithoutChangingOrCallingSaveManager()
-        {
-            var source = new Record();
-            source.Entries.Add("first", new Payload { Number = 1 });
-            source.Entries["first"] = new Payload { Number = 2 };
-            source.Entries["second"] = null;
-            var json = JsonConvert.SerializeObject(source, SaveManager.SerializerSettings);
-            Assert.That(JToken.DeepEquals(JToken.Parse(json), JToken.Parse("{\"Entries\":{\"first\":{\"Number\":2},\"second\":null}}")), Is.True);
-            var restored = JsonConvert.DeserializeObject<Record>(json, SaveManager.SerializerSettings);
-            Assert.That(restored.Entries["first"].Number, Is.EqualTo(2));
-            Assert.That(restored.Entries.TryGetValue("second", out var value), Is.True);
-            Assert.That(value, Is.Null);
-            Assert.That(JsonConvert.SerializeObject(restored, SaveManager.SerializerSettings), Is.EqualTo(json));
         }
 
         [Test]

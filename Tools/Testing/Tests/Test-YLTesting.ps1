@@ -104,6 +104,46 @@ function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minut
 
 try {
     if ($Group -in @('All', 'Workspace')) {
+        Test-Case 'Offline references bind the exact real UPM resolution and refuse missing or escaping package files' {
+            $root = Join-Path $sandbox ('InstalledReference-' + [Guid]::NewGuid().ToString('N'))
+            $package = 'com.unity.nuget.newtonsoft-json'
+            $cache = Join-Path $root "Library/PackageCache/$package@fingerprint"
+            $null = [IO.Directory]::CreateDirectory((Join-Path $cache 'Runtime'))
+            $null = [IO.Directory]::CreateDirectory((Join-Path $root 'Packages'))
+            $null = [IO.Directory]::CreateDirectory((Join-Path $root 'Library/PackageManager'))
+            $manifest = Join-Path $root 'Packages/manifest.json'; $lock = Join-Path $root 'Packages/packages-lock.json'
+            $resolution = Join-Path $root 'Library/PackageManager/projectResolution.json'
+            $metadata = Join-Path $cache 'package.json'; $dll = Join-Path $cache 'Runtime/Newtonsoft.Json.dll'
+            [IO.File]::WriteAllText($manifest, '{"dependencies":{"com.unity.nuget.newtonsoft-json":"3.2.2"}}')
+            [IO.File]::WriteAllText($lock, '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.2","source":"registry"}}}')
+            [IO.File]::WriteAllText($metadata, '{"name":"com.unity.nuget.newtonsoft-json","version":"3.2.2"}')
+            [IO.File]::WriteAllBytes($dll, [IO.File]::ReadAllBytes([Newtonsoft.Json.Linq.JObject].Assembly.Location))
+            $record = @{ context = @{ projectPath = (Join-Path $root 'Packages'); unityVersion = '6000.3.27f1' }; outputs = @{
+                "$package@3.2.2" = @{ name = $package; version = '3.2.2'; source = 'registry'; resolvedPath = $cache }
+            } }
+            [IO.File]::WriteAllText($resolution, (ConvertTo-Json -InputObject $record -Depth 10))
+            $resolved = Get-YLInstalledPackageReference -Repository $root -PackageId $package -RelativePath 'Runtime/Newtonsoft.Json.dll' -UnityVersion '6000.3.27f1'
+            Assert-That ($resolved.path -ceq (Get-YLTestPath -Path $dll -ReadOnly) -and $resolved.evidence.Count -eq 4) 'The exact DLL and all resolver declarations must participate in identity.'
+            foreach ($fault in @('missing-resolution', 'wrong-version', 'wrong-name', 'wrong-source', 'escaped-root', 'missing-dll', 'editor-mismatch', 'traversal')) {
+                $saved = [IO.File]::ReadAllBytes($resolution)
+                try {
+                    $options = @{ Repository = $root; PackageId = $package; RelativePath = 'Runtime/Newtonsoft.Json.dll'; UnityVersion = '6000.3.27f1' }
+                    $changed = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $record -Depth 10) -AsHashtable
+                    switch ($fault) {
+                        'missing-resolution' { [IO.File]::Delete($resolution) }
+                        'wrong-version' { $changed.outputs["$package@3.2.2"].version = '3.2.1' }
+                        'wrong-name' { $changed.outputs["$package@3.2.2"].name = 'com.unity.unknown' }
+                        'wrong-source' { $changed.outputs["$package@3.2.2"].source = 'git' }
+                        'escaped-root' { $changed.outputs["$package@3.2.2"].resolvedPath = $sandbox }
+                        'missing-dll' { $options.RelativePath = 'Runtime/Missing.dll' }
+                        'editor-mismatch' { $options.UnityVersion = '2022.3.62f3' }
+                        'traversal' { $options.RelativePath = '../outside.dll' }
+                    }
+                    if ($fault -cne 'missing-resolution') { [IO.File]::WriteAllText($resolution, (ConvertTo-Json -InputObject $changed -Depth 10)) }
+                    Assert-Rejected { Get-YLInstalledPackageReference @options } 'Prerequisite|package|path|resolution|version|Editor|registry'
+                } finally { [IO.File]::WriteAllBytes($resolution, $saved) }
+            }
+        }
         Test-Case 'Localization consumers declare their test closure without adding a product dependency' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
@@ -113,6 +153,28 @@ try {
             }
             $excel = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'PackageSources/com.kano.ylframework.excel/package.json')
             Assert-That (-not $excel.dependencies.Contains('com.kano.ylframework.localization')) 'Test-only Localization must not become an Excel product dependency.'
+        }
+        Test-Case 'Domain authoring tests declare Save without adding it to main-only modules' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $domain = @($configuration.modules | Where-Object name -CEQ 'Domain')[0]
+            Assert-That (@($domain.packageInputs) -ccontains 'com.kano.ylframework.save') 'Domain copies the DataPlayerProbe Save consumer but omits its declared installation input.'
+            foreach ($name in @('Core', 'Foundation', 'Localization', 'DataAssets')) {
+                $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
+                Assert-That (@($module.packageInputs) -cnotcontains 'com.kano.ylframework.save') "$name must not acquire Save to repair a test identity anchor."
+            }
+        }
+        Test-Case 'Save-only executes its standalone Player while the Data combination explicitly excludes it' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $save = @($configuration.modules | Where-Object name -CEQ 'Save')[0]
+            $data = @($configuration.modules | Where-Object name -CEQ 'Data')[0]
+            Assert-That (@($save.packageInputs).Count -eq 1 -and $save.packageInputs[0] -ceq 'com.kano.ylframework.save') 'Standalone Save must install only its own product closure.'
+            Assert-That (@($save.nativeSources) -ccontains 'Assets/Tests/YLFramework/EditMode/Systems/Save/SaveStandalonePlayerTests.cs') 'Save-only lost its actual Player test input.'
+            Assert-That (@($save.excludedCategories) -cnotcontains 'YL.Package.SaveStandalone') 'Save-only must execute the no-main Player case.'
+            Assert-That (@($data.excludedCategories) -ccontains 'YL.Package.SaveStandalone') 'Data installs main, so its selection must exclude the no-main-only Player case.'
+            $excludedBy = @($configuration.modules | Where-Object { $_.Contains('excludedCategories') -and @($_.excludedCategories) -ccontains 'YL.Package.SaveStandalone' })
+            Assert-That ($excludedBy.Count -eq 1 -and $excludedBy[0].name -ceq 'Data') 'The standalone exclusion was applied to the wrong module.'
         }
         Test-Case 'Native test references follow the declared package closure without installing unrelated features' {
             $catalog = Read-YLPackageCatalog

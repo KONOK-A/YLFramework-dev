@@ -409,11 +409,13 @@ namespace YLFramework.Tests.DataBatch
                 return "YLFramework.DataAssets";
             if (value.StartsWith("Packages/com.kano.ylframework.data-assets/Editor/", StringComparison.Ordinal))
                 return "YLFramework.DataAssets.Editor";
-            bool system = value.Contains("/Systems/Localization/") || value.Contains("/Systems/Save/");
-            if (system && value.StartsWith("Packages/com.kano.ylframework/Runtime/", StringComparison.Ordinal))
-                return "YLFramework.Runtime";
-            if (system && value.StartsWith("Packages/com.kano.ylframework/Editor/", StringComparison.Ordinal))
-                return "YLFramework.Editor";
+            if (value.StartsWith("Packages/com.kano.ylframework.save/Runtime/", StringComparison.Ordinal))
+                return "YLFramework.Save";
+            if (value.StartsWith("Assets/Tests/YLFramework/EditMode/Systems/Save/", StringComparison.Ordinal))
+                return "YLFramework.Save.Tests.EditMode";
+            if (value.StartsWith("Assets/Tests/YLFramework/Fixtures/Save/Runtime/", StringComparison.Ordinal))
+                return "YLFramework.Save.Acceptance";
+            bool system = value.Contains("/Systems/Localization/");
             bool dataTest = value.Contains("/Systems/DataAssets/") || system || value.Contains("/Editor/DataAssets/") ||
                 value.Contains("/Editor/Localization/") || value.Contains("/Editor/Excel/") || value.Contains("/Editor/Data/");
             if (dataTest && value.StartsWith("Assets/Tests/YLFramework/EditMode/", StringComparison.Ordinal))
@@ -434,7 +436,7 @@ namespace YLFramework.Tests.DataBatch
             {
                 DataUnityAcceptance.Audit();
                 var graph = CompilationPipeline.GetAssemblies(AssembliesType.Editor);
-                var roots = new[] { "Packages/com.kano.ylframework", "Packages/com.kano.ylframework.data-assets", "Packages/com.kano.ylframework.localization", "Assets/Tests/YLFramework" };
+                var roots = new[] { "Packages/com.kano.ylframework", "Packages/com.kano.ylframework.data-assets", "Packages/com.kano.ylframework.localization", "Packages/com.kano.ylframework.save", "Assets/Tests/YLFramework" };
                 var files = roots.SelectMany(root => Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(root), "*.cs", SearchOption.AllDirectories)
                     .Select(path => root + "/" + Path.GetRelativePath(global::YLFramework.Testing.PackageTestPaths.Physical(root), path).Replace('\\', '/')))
                     .Where(p => ExpectedSourceOwner(p) != null).ToArray();

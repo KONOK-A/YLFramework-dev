@@ -173,7 +173,8 @@
       ],
       "editTests": [
         "Assets/Tests/YLFramework/EditMode/Core",
-        "Assets/Tests/YLFramework/EditMode/Editor/Core"
+        "Assets/Tests/YLFramework/EditMode/Editor/Core",
+        "Assets/Tests/YLFramework/EditMode/Systems/Http/HttpRequestTests.cs"
       ],
       "playTests": [
         "Assets/Tests/YLFramework/PlayMode/Core"
@@ -228,9 +229,9 @@
       ],
       "offlineReferences": [
         "Library/ScriptAssemblies/UnityEngine.UI.dll",
-        "Library/PackageCache/com.unity.nuget.newtonsoft-json@3.2.1/Runtime/Newtonsoft.Json.dll",
         "PackageSources/com.kano.ylframework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
       ],
+      "offlinePackageReferences": [{ "package": "com.unity.nuget.newtonsoft-json", "path": "Runtime/Newtonsoft.Json.dll" }],
       "editTests": [
         "Assets/Tests/YLFramework/EditMode/Systems/Skill",
         "Assets/Tests/YLFramework/EditMode/Systems/Buff",
@@ -257,7 +258,8 @@
       "packageInputs": [
         "com.kano.ylframework",
         "com.kano.ylframework.excel",
-        "com.kano.ylframework.localization"
+        "com.kano.ylframework.localization",
+        "com.kano.ylframework.save"
       ],
       "sampleInputs": []
     },
@@ -295,9 +297,9 @@
       ],
       "offlineReferences": [
         "Library/ScriptAssemblies/UnityEngine.UI.dll",
-        "Library/PackageCache/com.unity.nuget.newtonsoft-json@3.2.1/Runtime/Newtonsoft.Json.dll",
         "PackageSources/com.kano.ylframework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
       ],
+      "offlinePackageReferences": [{ "package": "com.unity.nuget.newtonsoft-json", "path": "Runtime/Newtonsoft.Json.dll" }],
       "nativeSources": [
         "Assets/Tests/YLFramework/Fixtures/Shared",
         "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
@@ -335,10 +337,22 @@
     {
       "name": "Save",
       "category": "YL.Module.SaveBcl",
-      "description": "Real NUnit lifecycle for the existing .NET 10 Save BCL profile; Unity JSON/native cases remain native tests.",
+      "description": "Standalone Save plus Newtonsoft only: explicit-owner BCL contracts and native facade boundaries without the main package.",
       "suites": [
+        "Daily",
         "Special"
       ],
+      "nativeAssemblies": ["YLFramework.Save.Tests.EditMode"],
+      "assemblies": ["YLFramework.Save.Tests.EditMode"],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "specialCategory": "",
+      "offlineAssemblyName": "YLFramework.Save",
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs", "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"],
       "offlineRuntime": {
         "kind": "DotNet",
         "sdk": "10.0.102",
@@ -348,28 +362,24 @@
         "YL_SAVE_TEST_OUTPUT"
       ],
       "runtimeSources": [
-        "PackageSources/com.kano.ylframework/Runtime"
+        "PackageSources/com.kano.ylframework.save/Runtime"
       ],
-      "offlineReferences": [
-        "Library/ScriptAssemblies/UnityEngine.UI.dll",
-        "Library/PackageCache/com.unity.nuget.newtonsoft-json@3.2.1/Runtime/Newtonsoft.Json.dll",
-        "PackageSources/com.kano.ylframework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
-      ],
+      "offlinePackageReferences": [{ "package": "com.unity.nuget.newtonsoft-json", "path": "Runtime/Newtonsoft.Json.dll" }],
       "testSupport": [
-        "Assets/Tests/YLFramework/EditMode/Foundation/SerializedDictionaryTestAsset.cs"
+        "Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs"
       ],
       "editTests": [
         "Assets/Tests/YLFramework/EditMode/Systems/Save/SaveStoreSafetyTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Save/SaveManagerFacadeTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Foundation/Serialization/SerializedDictionaryJsonTests.cs"
+        "Assets/Tests/YLFramework/EditMode/Systems/Save/SaveFacadeContractsTests.cs"
       ],
       "playTests": [],
-      "nativeSources": [],
+      "nativeSources": ["Assets/Tests/YLFramework/EditMode/Systems/Save/SaveMissingSlotNativeTests.cs", "Assets/Tests/YLFramework/EditMode/Systems/Save/SaveStandalonePlayerTests.cs", "Assets/Tests/YLFramework/Fixtures/Save/Runtime"],
       "assemblyMetadata": [
-        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef"
+        "PackageSources/com.kano.ylframework.save/Runtime/YLFramework.Save.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Systems/Save/YLFramework.Save.Tests.EditMode.asmdef"
       ],
       "packageInputs": [
-        "com.kano.ylframework"
+        "com.kano.ylframework.save"
       ],
       "sampleInputs": []
     },
@@ -427,14 +437,16 @@
       "category": "",
       "assemblies": [
         "YLFramework.Tests.EditMode",
-        "YLFramework.Tests.PlayMode"
+        "YLFramework.Tests.PlayMode",
+        "YLFramework.Save.Tests.EditMode"
       ],
       "nativeLayout": "Framework",
       "graphics": true,
       "sortingLayer": "",
       "excludedCategories": [
         "YL.Special.Session",
-        "YL.Special.MainEditor"
+        "YL.Special.MainEditor",
+        "YL.Package.SaveStandalone"
       ],
       "specialCategory": "YL.Special.Session",
       "disableDomainReload": true,
@@ -457,6 +469,7 @@
         "Assets/Tests/YLFramework/Fixtures/Authoring",
         "Assets/Tests/YLFramework/Fixtures/DataAssets/Runtime",
         "Assets/Tests/YLFramework/Fixtures/Localization/Runtime",
+        "Assets/Tests/YLFramework/Fixtures/Save/Runtime",
         "Assets/Editor/YLFrameworkDev"
       ],
       "editTests": [
@@ -480,7 +493,8 @@
       "packageInputs": [
         "com.kano.ylframework",
         "com.kano.ylframework.data-assets",
-        "com.kano.ylframework.localization"
+        "com.kano.ylframework.localization",
+        "com.kano.ylframework.save"
       ],
       "sampleInputs": []
     },

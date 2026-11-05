@@ -50,6 +50,15 @@ function Fixture([string] $Id) {
 }
 try {
     $catalog = Read-YLPackageCatalog
+    Case 'Save is a real standalone package with explicit Newtonsoft and no main-package dependency' {
+        $save = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.save')
+        Check ($save.Count -eq 1) 'The Save package is missing from the maintained catalog.'
+        $manifest = Read-YLPackageEvidenceJson (Join-Path $repository 'PackageSources/com.kano.ylframework.save/package.json')
+        Check ($manifest.dependencies.Count -eq 1 -and $manifest.dependencies['com.unity.nuget.newtonsoft-json'] -ceq '3.2.1') 'Save must declare Newtonsoft directly, not inherit it from the main package.'
+        $definition = Read-YLPackageEvidenceJson (Join-Path $repository 'PackageSources/com.kano.ylframework.save/Runtime/YLFramework.Save.asmdef')
+        Check ($definition.name -ceq 'YLFramework.Save' -and $definition.references.Count -eq 0) 'Save acquired an implicit framework assembly dependency.'
+        Check (($definition.precompiledReferences -join ',') -ceq 'Newtonsoft.Json.dll') 'Save must explicitly reference its actual JSON binary.'
+    }
     $id = 'com.kano.ylframework.catalog-probe'
     $entry = @{ id = $id; assemblies = @(@{ name = 'YLFramework.CatalogProbe'; path = 'Runtime/YLFramework.CatalogProbe.asmdef';
         player = $true; defineConstraints = @(); versionDefines = @() }); requiredFiles = @('Runtime/Probe.cs'); samples = @() }

@@ -77,6 +77,48 @@ function Get-YLPackageAssemblyPlan {
     return (ConvertFrom-Json -InputObject $plan.ToString() -AsHashtable -NoEnumerate)
 }
 
+function Get-YLInstalledPackageReference {
+    param([string] $Repository, [string] $PackageId, [string] $RelativePath, [string] $UnityVersion)
+    $Repository = Get-YLTestPath -Path $Repository -ReadOnly
+    $description = "Prerequisite not met: installed package $PackageId/$RelativePath"
+    if ($PackageId -cnotmatch '^[a-z0-9]+(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$') { throw "$description; invalid package identity." }
+    Assert-YLPackageCatalogPath $RelativePath
+    if ([IO.Path]::GetExtension($RelativePath) -ine '.dll') { throw "$description; an explicit managed DLL is required." }
+    $manifestPath = Join-Path $Repository 'Packages/manifest.json'
+    $lockPath = Join-Path $Repository 'Packages/packages-lock.json'
+    $resolutionPath = Join-Path $Repository 'Library/PackageManager/projectResolution.json'
+    foreach ($path in @($manifestPath, $lockPath, $resolutionPath)) { if (-not [IO.File]::Exists($path)) { throw "$description; missing actual UPM resolution declaration: $path" } }
+    $manifest = Read-YLPackageEvidenceJson $manifestPath
+    $lock = Read-YLPackageEvidenceJson $lockPath
+    $resolution = Read-YLPackageEvidenceJson $resolutionPath
+    $declared = $manifest['dependencies']; $locked = $lock['dependencies']; $context = $resolution['context']; $outputs = $resolution['outputs']
+    if ($declared -isnot [Collections.IDictionary] -or $locked -isnot [Collections.IDictionary] -or $context -isnot [Collections.IDictionary] -or
+        $outputs -isnot [Collections.IDictionary] -or $declared[$PackageId] -isnot [string] -or $locked[$PackageId] -isnot [Collections.IDictionary]) { throw "$description; package is not declared and resolved." }
+    $version = $locked[$PackageId]['version']
+    if ($version -isnot [string] -or $version -cnotmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$' -or
+        $declared[$PackageId] -cne $version -or $locked[$PackageId]['source'] -cne 'registry') { throw "$description; exact registry version differs from the lock." }
+    if ($context['unityVersion'] -cne $UnityVersion -or $context['projectPath'] -isnot [string] -or
+        (Get-YLTestPath -Path $context['projectPath'] -ReadOnly) -ine (Join-Path $Repository 'Packages')) { throw "$description; Editor/project resolution context differs." }
+    $resolved = $outputs["$PackageId@$version"]
+    if ($resolved -isnot [Collections.IDictionary] -or $resolved['name'] -cne $PackageId -or $resolved['version'] -cne $version -or
+        $resolved['source'] -cne 'registry' -or $resolved['resolvedPath'] -isnot [string]) { throw "$description; the exact UPM resolution member differs." }
+    $packageRoot = Get-YLTestPath -Path $resolved['resolvedPath'] -ReadOnly
+    $cache = (Get-YLTestPath -Path (Join-Path $Repository 'Library/PackageCache') -ReadOnly).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    if (-not $packageRoot.StartsWith($cache, [StringComparison]::OrdinalIgnoreCase)) { throw "$description; resolved package root escapes the project cache." }
+    $packagePath = Join-Path $packageRoot 'package.json'
+    $path = Get-YLTestPath -Path (Join-Path $packageRoot $RelativePath) -ReadOnly
+    foreach ($file in @($packagePath, $path)) {
+        if (-not [IO.File]::Exists($file)) { throw "$description; missing resolved package file: $file" }
+        for ($parent = $file; $parent; $parent = [IO.Path]::GetDirectoryName($parent)) {
+            if (([IO.File]::GetAttributes($parent) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "$description; linked package path is refused." }
+        }
+    }
+    $package = Read-YLPackageEvidenceJson $packagePath
+    if ($package['name'] -cne $PackageId -or $package['version'] -cne $version -or
+        [Reflection.AssemblyName]::GetAssemblyName($path).Name -cne [IO.Path]::GetFileNameWithoutExtension($path)) { throw "$description; actual package/DLL identity differs." }
+    return [pscustomobject]@{ path = $path; evidence = @($manifestPath, $lockPath, $resolutionPath, $packagePath) }
+}
+
 function Get-YLUpmPackages {
     param([string] $Repository, [string[]] $Ids = @('com.kano.ylframework'), [Collections.IDictionary] $Catalog = (Read-YLPackageCatalog))
     $known = @($Catalog['packages'] | ForEach-Object { $_['id'] })

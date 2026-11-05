@@ -280,7 +280,7 @@ namespace YLFramework.Tests.DataBatch
                 var player = CompilationPipeline.GetAssemblies(AssembliesType.Player);
                 report["playerYlAssemblies"] = player.Where(a => a.name.StartsWith("YLFramework", StringComparison.Ordinal)).Select(a => a.name).ToArray();
                 Require(!player.Any(a => a.name == "YLFramework.Excel.Editor" || a.name == "YLFramework.Editor" || a.name == "YLFramework.DataAssets.Editor" || a.name == "YLFramework.Localization.Editor"), "Editor assembly entered the Player graph.");
-                Require(player.Any(a => a.name == "YLFramework.DataAssets") && player.Any(a => a.name == "YLFramework.Localization"), "The Data combination lost a required runtime assembly.");
+                Require(player.Any(a => a.name == "YLFramework.DataAssets") && player.Any(a => a.name == "YLFramework.Localization") && player.Any(a => a.name == "YLFramework.Save"), "The Data combination lost a required runtime assembly.");
                 var playerRuntime = player.Single(a => a.name == "YLFramework.Runtime");
                 report["playerRuntimeReferences"] = playerRuntime.compiledAssemblyReferences.Select(Path.GetFileName).ToArray();
                 Require(!playerRuntime.compiledAssemblyReferences.Any(p => Path.GetFileName(p).StartsWith("UnityEditor", StringComparison.Ordinal) || Path.GetFileName(p).Contains("MiniExcel")), "Player Runtime has an Editor/backend reference.");
@@ -295,7 +295,7 @@ namespace YLFramework.Tests.DataBatch
                 report["bMetaCount"] = own.Length;
                 report["bGuidCollisions"] = collisions;
                 Require(collisions.Length == 0, "B GUID collides with another asset.");
-                report["saveManagerGuid"] = AssetDatabase.AssetPathToGUID("Packages/com.kano.ylframework/Runtime/Systems/Save/SaveManager.cs");
+                report["saveManagerGuid"] = AssetDatabase.AssetPathToGUID("Packages/com.kano.ylframework.save/Runtime/Systems/Save/SaveManager.cs");
                 Require((string)report["saveManagerGuid"] == "ff5957d84032533449f21601f372570a", "Existing SaveManager identity changed.");
                 report["subAssetProbe"] = ProbeSubAsset();
                 using (var watcher = new FileSystemWatcher(Output()))
@@ -373,7 +373,8 @@ namespace YLFramework.Tests.DataBatch
             path = path.Replace('\\', '/');
             return path.Contains("/Systems/DataAssets/") || path.Contains("/Systems/Localization/") || path.Contains("/Systems/Save/") || path.Contains("/Integrations/Excel/") || path.Contains("/Extensions/Data/") ||
                 path.Contains("/Tests/EditMode/Editor/DataAssets/") || path.Contains("/Tests/EditMode/Editor/Localization/") ||
-                path.Contains("/Tests/EditMode/Editor/Excel/") || path.Contains("/Tests/EditMode/Editor/Data/");
+                path.Contains("/Tests/EditMode/Editor/Excel/") || path.Contains("/Tests/EditMode/Editor/Data/") ||
+                path.StartsWith("Assets/Tests/YLFramework/Fixtures/Save/", StringComparison.Ordinal);
         }
         private static void EnsureFolder(string path)
         {
