@@ -25,7 +25,7 @@ namespace YLFramework.Tests
         [TestCase("YLFramework.Editor", "YLFramework.Editor.StateMachine.StateMachineEditorTools")]
         [TestCase("YLFramework.Editor", "YLFramework.Editor.StateMachine.StateMachineMenu")]
         [TestCase("YLFramework.Editor", "YLFramework.Editor.StateMachine.ListenerFile")]
-        [TestCase("YLFramework.Editor", "YLFramework.Editor.Localization.LocalizationAuthoring")]
+        [TestCase("YLFramework.Localization.Editor", "YLFramework.Editor.Localization.LocalizationAuthoring")]
         [TestCase("YLFramework.Editor", "YLFramework.Editor.Audio.AudioClipLibraryMigration")]
         public void ImplementationTypesAreNotPartOfThePublicContract(string assemblyName, string fullName)
         {

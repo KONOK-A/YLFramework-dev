@@ -6,6 +6,7 @@
     "YLFramework.Editor",
     "YLFramework.DataAssets",
     "YLFramework.DataAssets.Editor",
+    "YLFramework.Localization",
     "YLFramework.Tests.Data.Probes",
     "YLFramework.Tests.Domain.Probes",
     "UnityEngine.UI",

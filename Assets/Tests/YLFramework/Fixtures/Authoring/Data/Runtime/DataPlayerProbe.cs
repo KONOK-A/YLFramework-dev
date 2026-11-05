@@ -117,6 +117,7 @@ namespace YLFramework.Tests.DataBatch
             Require(_report.persistentDataPath.Contains("YL-MainBData-Player"), "Player persistent data is not isolated.");
             _report.assemblies = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetName().Name).ToArray();
             Require(!_report.assemblies.Any(n => n.StartsWith("UnityEditor", StringComparison.Ordinal) || n.Contains("MiniExcel")), "Editor/backend assembly entered Player.");
+            Require(_report.assemblies.Contains("YLFramework.DataAssets") && _report.assemblies.Contains("YLFramework.Localization"), "The real Data Player lost a moved runtime assembly.");
             _report.playerAssembliesExcluded = true;
             var loc = new ResourceAddress("bplayer", "localization");
             var config = new ResourceAddress("bplayer", "data");

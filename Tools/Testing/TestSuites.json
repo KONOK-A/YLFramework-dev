@@ -256,7 +256,8 @@
       ],
       "packageInputs": [
         "com.kano.ylframework",
-        "com.kano.ylframework.excel"
+        "com.kano.ylframework.excel",
+        "com.kano.ylframework.localization"
       ],
       "sampleInputs": []
     },
@@ -396,6 +397,29 @@
       "sampleInputs": []
     },
     {
+      "name": "Localization",
+      "category": "",
+      "assemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "shortHostKey": true,
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "sortingLayer": "",
+      "excludedCategories": ["YL.Special.Session"],
+      "specialCategory": "YL.Special.Session",
+      "disableDomainReload": true,
+      "description": "Localization-only package authoring, lookup, bindings, ResourceImage ownership and real session contracts; no DataAssets/Excel/Save feature inputs.",
+      "suites": ["Daily", "Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.localization/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/NamespaceMigration", "Assets/Tests/YLFramework/Fixtures/Localization/Runtime", "Assets/Editor/YLFrameworkDev"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Localization", "Assets/Tests/YLFramework/EditMode/Editor/Localization"],
+      "playTests": ["Assets/Tests/YLFramework/PlayMode/Systems/Localization"],
+      "assemblyMetadata": ["PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef", "PackageSources/com.kano.ylframework.localization/Runtime/YLFramework.Localization.asmdef", "PackageSources/com.kano.ylframework.localization/Editor/YLFramework.Localization.Editor.asmdef", "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"],
+      "packageInputs": ["com.kano.ylframework.localization"],
+      "sampleInputs": []
+    },
+    {
       "name": "Data",
       "prepareSceneTemplates": true,
       "prepareSessionScene": true,
@@ -432,6 +456,7 @@
         "Assets/Tests/YLFramework/Fixtures/Extensions/Domain",
         "Assets/Tests/YLFramework/Fixtures/Authoring",
         "Assets/Tests/YLFramework/Fixtures/DataAssets/Runtime",
+        "Assets/Tests/YLFramework/Fixtures/Localization/Runtime",
         "Assets/Editor/YLFrameworkDev"
       ],
       "editTests": [
@@ -454,7 +479,8 @@
       ],
       "packageInputs": [
         "com.kano.ylframework",
-        "com.kano.ylframework.data-assets"
+        "com.kano.ylframework.data-assets",
+        "com.kano.ylframework.localization"
       ],
       "sampleInputs": []
     },
@@ -496,7 +522,8 @@
       ],
       "packageInputs": [
         "com.kano.ylframework",
-        "com.kano.ylframework.excel"
+        "com.kano.ylframework.excel",
+        "com.kano.ylframework.localization"
       ],
       "sampleInputs": []
     },

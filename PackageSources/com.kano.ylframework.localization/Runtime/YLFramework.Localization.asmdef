@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Localization",
+    "rootNamespace": "YLFramework.Localization",
+    "references": ["YLFramework.Runtime", "UnityEngine.UI"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

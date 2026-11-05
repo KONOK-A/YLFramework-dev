@@ -104,6 +104,16 @@ function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minut
 
 try {
     if ($Group -in @('All', 'Workspace')) {
+        Test-Case 'Localization consumers declare their test closure without adding a product dependency' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            foreach ($name in @('Excel', 'Domain')) {
+                $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
+                Assert-That (@($module.packageInputs) -ccontains 'com.kano.ylframework.localization') "$name test sources consume Localization but the declared installation closure omits it."
+            }
+            $excel = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'PackageSources/com.kano.ylframework.excel/package.json')
+            Assert-That (-not $excel.dependencies.Contains('com.kano.ylframework.localization')) 'Test-only Localization must not become an Excel product dependency.'
+        }
         Test-Case 'Native test references follow the declared package closure without installing unrelated features' {
             $catalog = Read-YLPackageCatalog
             $assembly = @{ name = 'YLFramework.Tests.EditMode'; references = @('YLFramework.Runtime', 'YLFramework.DataAssets', 'YLFramework.DataAssets.Editor', 'YLFramework.Tests.Fixtures', 'UnityEngine.TestRunner') }

@@ -56,6 +56,15 @@
       "samples": []
     },
     {
+      "id": "com.kano.ylframework.localization",
+      "assemblies": [
+        { "name": "YLFramework.Localization", "path": "Runtime/YLFramework.Localization.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Localization.Editor", "path": "Editor/YLFramework.Localization.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Runtime/Systems/Localization/LocalizationManager.cs", "Runtime/Systems/Localization/LocalizeImage.cs", "Editor/Systems/Localization/LocalizationConfigsWindow.cs"],
+      "samples": []
+    },
+    {
       "id": "com.kano.ylframework.hybridclr",
       "assemblies": [
         { "name": "YLFramework.HybridCLR", "path": "Runtime/YLFramework.HybridCLR.asmdef", "player": true, "defineConstraints": ["YL_HYBRIDCLR_9_0_3"], "versionDefines": [{ "name": "com.code-philosophy.hybridclr", "expression": "[9.0.3,9.0.4)", "define": "YL_HYBRIDCLR_9_0_3" }] },

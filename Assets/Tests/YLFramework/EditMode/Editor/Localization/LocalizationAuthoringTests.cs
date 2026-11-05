@@ -18,6 +18,33 @@ namespace YLFramework.Tests.Extensions.Data
         private LanguageConfig _chinese;
         private string[] _absentParents = Array.Empty<string>();
 
+        [Test]
+        public void LocalizationOwnsItsRuntimeAndEditorWithoutReverseMainOrDataAssetsDependencies()
+        {
+            var runtime = typeof(LocalizationManager).Assembly;
+            var editor = typeof(LocalizationAuthoring).Assembly;
+            Assert.That(runtime.GetName().Name, Is.EqualTo("YLFramework.Localization"));
+            Assert.That(editor.GetName().Name, Is.EqualTo("YLFramework.Localization.Editor"));
+            Assert.That(typeof(LocalizationAuthoring).IsVisible, Is.False);
+            Assert.That(typeof(LocalizationAuthoring).IsPublic, Is.False);
+            Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(owner => owner.GetType(typeof(LocalizationAuthoring).FullName) != null), Is.EqualTo(1));
+            Assert.That(typeof(YLFramework.Resource.ResourceSystem).Assembly.GetType(typeof(LocalizeImage).FullName), Is.Null);
+            Assert.That(typeof(YLFramework.Editor.Core.CreateModuleCommand).Assembly.GetType(typeof(LocalizationAuthoring).FullName), Is.Null);
+            Assert.That(runtime.GetReferencedAssemblies().Select(reference => reference.Name), Does.Not.Contain("YLFramework.DataAssets").And.Not.Contain("YLFramework.Excel.Editor"));
+            Assert.That(editor.GetReferencedAssemblies().Select(reference => reference.Name), Does.Not.Contain("YLFramework.DataAssets").And.Not.Contain("YLFramework.DataAssets.Editor"));
+            var required = typeof(LocalizeImage).GetCustomAttributes(typeof(RequireComponent), true).Cast<RequireComponent>().Single();
+            Assert.That(required.m_Type0, Is.EqualTo(typeof(YLFramework.Resource.ResourceImage)));
+        }
+
+        [TestCase("48588b1d9a7c5a14b817b732e9568227", "Runtime/Systems/Localization/LocalizationManager.cs")]
+        [TestCase("02373141161f98548927076bb0014367", "Runtime/Systems/Localization/MultiLanguageConfigs.cs")]
+        [TestCase("d5ae76428dc6dc047a8b1d62832313c2", "Runtime/Systems/Localization/LocalizeString.cs")]
+        [TestCase("2345dd753f4b47642becd100e4fb0255", "Runtime/Systems/Localization/LocalizeImage.cs")]
+        public void MovedLocalizationKeepsOriginalScriptIdentity(string guid, string relative)
+        {
+            Assert.That(AssetDatabase.GUIDToAssetPath(guid), Is.EqualTo("Packages/com.kano.ylframework.localization/" + relative));
+        }
+
         [SetUp]
         public void SetUp()
         {

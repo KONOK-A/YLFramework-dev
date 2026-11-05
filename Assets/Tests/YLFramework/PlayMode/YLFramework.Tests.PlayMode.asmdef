@@ -4,6 +4,7 @@
   "references": [
     "YLFramework.Runtime",
     "YLFramework.DataAssets",
+    "YLFramework.Localization",
     "UnityEngine.UI",
     "UnityEngine.TestRunner",
     "YLFramework.Tests.Fixtures"

@@ -401,6 +401,10 @@ namespace YLFramework.Tests.DataBatch
         public static string ExpectedSourceOwner(string path)
         {
             var value = path.Replace('\\', '/');
+            if (value.StartsWith("Packages/com.kano.ylframework.localization/Runtime/", StringComparison.Ordinal))
+                return "YLFramework.Localization";
+            if (value.StartsWith("Packages/com.kano.ylframework.localization/Editor/", StringComparison.Ordinal))
+                return "YLFramework.Localization.Editor";
             if (value.StartsWith("Packages/com.kano.ylframework.data-assets/Runtime/", StringComparison.Ordinal))
                 return "YLFramework.DataAssets";
             if (value.StartsWith("Packages/com.kano.ylframework.data-assets/Editor/", StringComparison.Ordinal))
@@ -430,7 +434,7 @@ namespace YLFramework.Tests.DataBatch
             {
                 DataUnityAcceptance.Audit();
                 var graph = CompilationPipeline.GetAssemblies(AssembliesType.Editor);
-                var roots = new[] { "Packages/com.kano.ylframework", "Packages/com.kano.ylframework.data-assets", "Assets/Tests/YLFramework" };
+                var roots = new[] { "Packages/com.kano.ylframework", "Packages/com.kano.ylframework.data-assets", "Packages/com.kano.ylframework.localization", "Assets/Tests/YLFramework" };
                 var files = roots.SelectMany(root => Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(root), "*.cs", SearchOption.AllDirectories)
                     .Select(path => root + "/" + Path.GetRelativePath(global::YLFramework.Testing.PackageTestPaths.Physical(root), path).Replace('\\', '/')))
                     .Where(p => ExpectedSourceOwner(p) != null).ToArray();
