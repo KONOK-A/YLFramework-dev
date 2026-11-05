@@ -64,6 +64,16 @@
       "samples": []
     },
     {
+      "id": "com.kano.ylframework.movement2d",
+      "assemblies": [
+        { "name": "YLFramework.Character2D", "path": "Runtime/Utilities/CharacterController2D/YLFramework.Character2D.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Platform2D", "path": "Runtime/Utilities/MoveablePlatform/YLFramework.Platform2D.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Movement2D.Editor", "path": "Editor/YLFramework.Movement2D.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Runtime/Utilities/CharacterController2D/csc.rsp", "Runtime/Utilities/MoveablePlatform/csc.rsp", "Runtime/Utilities/CharacterController2D/CharacterController2D.cs", "Runtime/Utilities/MoveablePlatform/Moveable.cs", "Runtime/Utilities/MoveablePlatform/MoveablePlatform2D.cs", "Editor/Utilities/CharacterController2D/CharacterController2DInspector.cs", "Editor/Utilities/MoveablePlatform/MoveableInspector.cs"],
+      "samples": []
+    },
+    {
       "id": "com.kano.ylframework.state-machine",
       "assemblies": [
         { "name": "YLFramework.StateMachine", "path": "Runtime/YLFramework.StateMachine.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },

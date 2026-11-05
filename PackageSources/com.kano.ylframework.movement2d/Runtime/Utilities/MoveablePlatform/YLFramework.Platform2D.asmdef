@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Platform2D",
+    "rootNamespace": "YLFramework.Platform2D",
+    "references": ["YLFramework.Runtime"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

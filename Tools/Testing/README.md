@@ -91,6 +91,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Behavior | Quick / Daily / Special | 日常Overlap / CharacterMotor / MovingPlatform / 两套FSM；Special在显式自有Desktop宿主执行两个原生窗口事件合同。 |
 | Save | Daily / Special | 仅 Save + Newtonsoft，不安装主包。Daily 执行原生门面合同与真实双进程 Mono Player 冷重开/显式备份恢复；Special 以 .NET 执行 BCL 合同，不替代 Unity 或 Player。 |
 | StateMachine | Daily / Special | 仅配置式FSM包及主包。Daily验原生状态/图/生命周期；Special在自有空场景宿主经过两次真实编译重载验Create And Add绑定，再构建运行双进程Mono Player。不是无输入模拟或旧Resource tuple兼容声明。 |
+| Movement2D | Daily / Special | 仅main+movement2d。Daily保原角色/平台Edit与真Physics2D，补公共回调停用/池化/暂停边界；Special序列化17持久UnityEvent并运行两个独立Mono Player，严格核四个YL程序集、角色/路径/乘客指标，不借FSM或旧Behavior夹具。 |
 | Data | Daily / Special | Save native JSON、Localization、DataAssets 作者和资源生命周期；会话前置不能由主工程代替。 |
 | DataAssets | Daily / Special | 仅主包+DataAssets：身份、作者、请求与租约、双Play、旧资产副本重建及真实Mono Player；不是完整Data组合。 |
 | Localization | Daily / Special | 仅主包+Localization：回退、显示、ResourceImage责任、作者、双Play及正式内容Player；不借DataAssets/Excel依赖。 |

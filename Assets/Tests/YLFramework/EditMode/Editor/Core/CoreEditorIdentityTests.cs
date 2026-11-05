@@ -179,7 +179,7 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(asset, Is.Not.Null, "Freeze explicit assembly ownership before moving any functional source.");
             var table = JsonUtility.FromJson<AssemblyMoveTable>(asset.text);
             Assert.That(table.schemaVersion, Is.EqualTo(1));
-            Assert.That(table.moves, Has.Length.EqualTo(23), "Keep all original anchors and the migrated feature identities.");
+            Assert.That(table.moves, Has.Length.EqualTo(24), "Keep all original anchors and the migrated feature identities.");
             Assert.That(table.moves.Select(move => move.fullName).Distinct().Count(), Is.EqualTo(table.moves.Length));
             Assert.That(table.moves.Select(move => move.scriptGuid).Distinct().Count(), Is.EqualTo(table.moves.Length));
             foreach (var move in table.moves)
@@ -302,7 +302,7 @@ namespace YLFramework.Core.Editor.Tests
                 Assert.That(AssetDatabase.AssetPathToGUID(Root + folder.path), Is.EqualTo(folder.guid));
             }
             Assert.That(Directory.GetDirectories(global::YLFramework.Testing.PackageTestPaths.Physical(Root + "Utilities")).Select(Path.GetFileName),
-                Is.EquivalentTo(new[] { "Overlap", "CharacterController2D", "MoveablePlatform" }));
+                Is.EquivalentTo(new[] { "Overlap" }));
         }
 
         [UnityTest]

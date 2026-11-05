@@ -14,6 +14,7 @@
     "com.kano.ylframework.excel": "file:../PackageSources/com.kano.ylframework.excel",
     "com.kano.ylframework.hybridclr": "file:../PackageSources/com.kano.ylframework.hybridclr",
     "com.kano.ylframework.localization": "file:../PackageSources/com.kano.ylframework.localization",
+    "com.kano.ylframework.movement2d": "file:../PackageSources/com.kano.ylframework.movement2d",
     "com.kano.ylframework.save": "file:../PackageSources/com.kano.ylframework.save",
     "com.kano.ylframework.state-machine": "file:../PackageSources/com.kano.ylframework.state-machine",
     "com.unity.burst": "1.8.31",

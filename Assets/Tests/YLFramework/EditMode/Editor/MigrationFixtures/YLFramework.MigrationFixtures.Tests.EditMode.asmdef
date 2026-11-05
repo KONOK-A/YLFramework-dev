@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.MigrationFixtures.Tests.EditMode",
     "rootNamespace": "YLFramework.Tests.MigrationFixtures",
-    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.DataAssets", "YLFramework.DataAssets.Editor", "YLFramework.StateMachine", "YLFramework.StateMachine.Editor", "UnityEngine.UI", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.DataAssets", "YLFramework.DataAssets.Editor", "YLFramework.StateMachine", "YLFramework.StateMachine.Editor", "YLFramework.Character2D", "YLFramework.Platform2D", "UnityEngine.UI", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

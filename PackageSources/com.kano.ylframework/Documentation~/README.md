@@ -86,6 +86,7 @@ Unity 不支持在 `package.json` 中声明 Git URL 传递依赖。自有包虽�
 | Localization | 主包 + `com.kano.ylframework.localization` | 不要求安装 DataAssets/Excel/TMP |
 | Save | 仅 `com.kano.ylframework.save` + Newtonsoft UPM | 不需要主包；若使用主包SerializedDictionary则消费方显式安装两者 |
 | 配置式 StateMachine | 主包 + `com.kano.ylframework.state-machine` | Runtime与图编辑器/状态脚本生成一起交付；轻量FSM不随它迁移 |
+| Character2D / Platform2D | 主包 + `com.kano.ylframework.movement2d` + physics2d | 一个安装包、两个互不引用的Runtime及一个公共Editor，Overlap不随它迁移 |
 | Excel | 主包 + DataAssets + `com.kano.ylframework.excel` | MiniExcel `1.31.2` 与 Apache-2.0 许可随 Excel 包携带 |
 | Domain Excel | 主包 + DataAssets + Excel + `com.kano.ylframework.domain-excel` | 安装即可启用，不要求全局 `YL_DOMAIN_EXCEL` |
 | HybridCLR | 主包 + `com.kano.ylframework.hybridclr` | 官方 SDK `9.0.3` 也需单独声明其 Git 来源，匹配 native / 平台门禁 |
@@ -148,7 +149,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 | --- | --- |
 | 轻量 FSM、网格与索引 | [FSM](Modules/FSM.md) · [Grid](Modules/Grid.md) · [Table](Modules/Table.md) |
 | JSON 树、压缩与通用扩展 | [Json](Modules/Json.md) · [ZipTool](Modules/ZipTool.md) · [Extensions](Modules/Extensions.md) |
-| Overlap、CharacterController2D、MoveablePlatform | [Behavior](Modules/Behavior.md) |
+| Overlap、CharacterController2D、MoveablePlatform | [Behavior](Modules/Behavior.md)，角色/平台安装[Movement2D包](../../com.kano.ylframework.movement2d/README.md) |
 | 取色器与窗口 | [UI](Modules/UI.md#取色控件colorselector) |
 | 作者工具、TreeView、设置与 Editor 迁移 | [Editor](Modules/Editor.md) |
 | 帮助提供方、窗口与 XML | [Help](Modules/Help.md) |
@@ -164,6 +165,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 | Localization | [`com.kano.ylframework.localization`](../../com.kano.ylframework.localization/README.md)，独立语言根、显示绑定和Editor作者工具 |
 | Save | [`com.kano.ylframework.save`](../../com.kano.ylframework.save/README.md)，无主包安装依赖；[详细存储合同](Modules/Save.md) |
 | 配置式 StateMachine | [`com.kano.ylframework.state-machine`](../../com.kano.ylframework.state-machine/README.md)，图作者工具、原模板/样式与真实编译后的脚本绑定 |
+| 二维角色与平台 | [`com.kano.ylframework.movement2d`](../../com.kano.ylframework.movement2d/README.md)，独立Runtime、原Prefab/UnityEvent及实际Physics2D生命周期 |
 | Excel | [`com.kano.ylframework.excel`](../../com.kano.ylframework.excel/README.md)，复用DataAssets并携带完整 MiniExcel 后端及许可；[配置作者流程](Modules/Data.md#excel-作者后端) |
 | DomainExcel | [`com.kano.ylframework.domain-excel`](../../com.kano.ylframework.domain-excel/README.md)，复用 Excel，安装即可启用；[领域导入](Modules/Domain.md#domainexcel) |
 | HybridCLR | [`com.kano.ylframework.hybridclr`](../../com.kano.ylframework.hybridclr/README.md)，使用外置官方 SDK 并复用 Resource；[架构边界](Architecture.md#hybridclr-可选接入) |

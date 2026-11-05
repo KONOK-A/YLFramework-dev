@@ -6,6 +6,8 @@
     "YLFramework.DataAssets",
     "YLFramework.Localization",
     "YLFramework.StateMachine",
+    "YLFramework.Character2D",
+    "YLFramework.Platform2D",
     "UnityEngine.UI",
     "UnityEngine.TestRunner",
     "YLFramework.Tests.Fixtures"

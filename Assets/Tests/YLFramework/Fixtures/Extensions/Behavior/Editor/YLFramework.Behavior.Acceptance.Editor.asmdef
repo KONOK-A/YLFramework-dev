@@ -1,6 +1,6 @@
 {
     "name": "YLFramework.Behavior.Acceptance.Editor",
-    "references": ["YLFramework.Runtime", "YLFramework.StateMachine", "YLFramework.Behavior.Acceptance", "YLFramework.Tests.Fixtures", "UnityEditor.TestRunner"],
+    "references": ["YLFramework.Runtime", "YLFramework.StateMachine", "YLFramework.Character2D", "YLFramework.Platform2D", "YLFramework.Movement2D.Editor", "YLFramework.Behavior.Acceptance", "YLFramework.Tests.Fixtures", "UnityEditor.TestRunner"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
