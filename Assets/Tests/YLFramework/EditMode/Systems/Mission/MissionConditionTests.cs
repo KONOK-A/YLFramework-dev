@@ -1,7 +1,6 @@
 using System;
 using System.Reflection;
 using NUnit.Framework;
-using YLFramework.Events;
 using YLFramework.Mission;
 
 namespace YLFramework.Tests.Extensions.Domain
@@ -11,7 +10,7 @@ namespace YLFramework.Tests.Extensions.Domain
     {
         private Type Find(string name)
         {
-            var type = typeof(EventChannel).Assembly.GetType("YLFramework.Mission." + name);
+            var type = typeof(MissionCondition).Assembly.GetType("YLFramework.Mission." + name);
             Assert.That(type, Is.Not.Null, "任务领域类型缺失: " + name);
             return type;
         }

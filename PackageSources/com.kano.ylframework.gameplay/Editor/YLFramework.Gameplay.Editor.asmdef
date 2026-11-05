@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Gameplay.Editor",
+    "rootNamespace": "YLFramework.Editor",
+    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.Skill", "YLFramework.Buff", "YLFramework.Mission", "YLFramework.Equipment"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": ["Newtonsoft.Json.dll"],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

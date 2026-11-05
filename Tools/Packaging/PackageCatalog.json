@@ -56,6 +56,18 @@
       "samples": []
     },
     {
+      "id": "com.kano.ylframework.gameplay",
+      "assemblies": [
+        { "name": "YLFramework.Skill", "path": "Runtime/Skill/YLFramework.Skill.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Buff", "path": "Runtime/Buff/YLFramework.Buff.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Mission", "path": "Runtime/Mission/YLFramework.Mission.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Equipment", "path": "Runtime/Equipment/YLFramework.Equipment.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Gameplay.Editor", "path": "Editor/YLFramework.Gameplay.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Runtime/Skill/SkillManager.cs", "Runtime/Buff/BuffManager.cs", "Runtime/Mission/MissionManager.cs", "Runtime/Equipment/EquipmentManager.cs", "Runtime/Skill/csc.rsp", "Runtime/Buff/csc.rsp", "Runtime/Mission/csc.rsp", "Runtime/Equipment/csc.rsp", "Editor/Shared/DomainAssetOwnership.cs", "Editor/Shared/DomainResourceIconGui.cs", "Editor/Shared/DomainSessionLifecycle.cs", "Editor/Equipment/EquipmentSessionLifecycle.cs"],
+      "samples": []
+    },
+    {
       "id": "com.kano.ylframework.save",
       "assemblies": [
         { "name": "YLFramework.Save", "path": "Runtime/YLFramework.Save.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] }

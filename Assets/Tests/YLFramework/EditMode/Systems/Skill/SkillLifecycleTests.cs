@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
-using YLFramework.Events;
 using YLFramework.Skill;
 
 namespace YLFramework.Tests.Extensions.Domain
@@ -112,7 +111,7 @@ namespace YLFramework.Tests.Extensions.Domain
         [Test]
         public void SkillMustOfferRealReleaseAndShutdownBoundaries()
         {
-            var assembly = typeof(EventChannel).Assembly;
+            var assembly = typeof(SkillBase).Assembly;
             var skill = assembly.GetType("YLFramework.Skill.SkillBase");
             Assert.That(skill, Is.Not.Null, "领域释放执行器尚未承接。");
             Assert.That(skill.GetMethod("Release"), Is.Not.Null);

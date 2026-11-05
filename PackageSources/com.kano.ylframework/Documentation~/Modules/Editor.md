@@ -49,7 +49,7 @@ Core 设置根仍为 `ProjectSettings/YLFramework/Core`。类型与文件归位�
 | AssetNameTools、EditorAssetTool、SerializedObject / SerializedProperty 扩展、HandlesExtensions、设置基类、TreeView、SplitWindow | `Editor/Common`，namespace `YLFramework.Editor.Common` |
 | ClearLog、OpenFolder | `Editor/Tools`，namespace `YLFramework.Editor.Tools` |
 | ScriptableObjectExtensions | `Editor/Core`，namespace `YLFramework.Editor.Core` |
-| DomainAssetOwnership | `Editor/Systems/Shared`，namespace `YLFramework.Editor.Domain` |
+| DomainAssetOwnership | Gameplay包`Editor/Shared`，namespace `YLFramework.Editor.Domain`，内部归属`YLFramework.Gameplay.Editor` |
 
 外部源码更新 using、全限定名和反射字符串，不依赖旧 namespace 包装或 CLR 别名。SplitWindow、TreeViewStateGroup、TreeViewStateInfo 保留适用的 MovedFrom 以迁移窗口或托管引用，但不提供旧 `Type.GetType` 字符串解析。
 

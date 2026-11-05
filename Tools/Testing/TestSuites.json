@@ -205,7 +205,9 @@
       "sortingLayer": "",
       "excludedCategories": [
         "YL.Special.Session",
-        "YL.Special.MainEditor"
+        "YL.Special.MainEditor",
+        "YL.Special.EquipmentSession",
+        "YL.Package.GameplayStandalone"
       ],
       "specialCategory": "YL.Special.Session",
       "disableDomainReload": true,
@@ -216,7 +218,8 @@
         "Special"
       ],
       "runtimeSources": [
-        "PackageSources/com.kano.ylframework/Runtime"
+        "PackageSources/com.kano.ylframework/Runtime",
+        "PackageSources/com.kano.ylframework.gameplay/Runtime"
       ],
       "nativeSources": [
         "Assets/Tests/YLFramework/Fixtures/Shared",
@@ -224,6 +227,7 @@
         "Assets/Tests/YLFramework/Fixtures/Extensions/Domain",
         "Assets/Tests/YLFramework/Fixtures/Authoring",
         "Assets/Tests/YLFramework/EditMode/Editor/Domain",
+        "Assets/Tests/YLFramework/EditMode/Editor/Equipment",
         "Assets/Tests/YLFramework/EditMode/Editor/Utilities/TreeViews/E0ReorderableTestWindow.cs",
         "Assets/Editor/YLFrameworkDev"
       ],
@@ -259,8 +263,61 @@
         "com.kano.ylframework",
         "com.kano.ylframework.excel",
         "com.kano.ylframework.localization",
-        "com.kano.ylframework.save"
+        "com.kano.ylframework.save",
+        "com.kano.ylframework.gameplay"
       ],
+      "sampleInputs": []
+    },
+    {
+      "name": "Gameplay",
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "category": "YL.Module.Domain",
+      "assemblies": [],
+      "nativeAssemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "description": "Minimal main+Gameplay consumer: four independent domain behavior suites, Runtime/Editor ownership and original shared session cleanup, no Excel/DataAssets/Save installation.",
+      "suites": ["Daily", "Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.gameplay/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/NamespaceMigration", "Assets/Tests/YLFramework/Fixtures/Extensions/Domain/DomainAcceptanceProbe.cs", "Assets/Tests/YLFramework/Fixtures/Extensions/Domain/GameplayResourcePlayerProbe.cs", "Assets/Tests/YLFramework/Fixtures/Extensions/Domain/YLFramework.Tests.Domain.Probes.asmdef", "Assets/Tests/YLFramework/Fixtures/Extensions/Domain/link.xml"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Skill", "Assets/Tests/YLFramework/EditMode/Systems/Buff", "Assets/Tests/YLFramework/EditMode/Systems/Mission", "Assets/Tests/YLFramework/EditMode/Systems/Equipment", "Assets/Tests/YLFramework/EditMode/Editor/Domain/GameplayPackageTests.cs", "Assets/Tests/YLFramework/EditMode/Editor/Domain/DomainTwoPlayTests.cs", "Assets/Tests/YLFramework/EditMode/Editor/Domain/GameplayResourceAcceptanceTests.cs"],
+      "playTests": ["Assets/Tests/YLFramework/PlayMode/Systems/Skill", "Assets/Tests/YLFramework/PlayMode/Systems/Buff", "Assets/Tests/YLFramework/PlayMode/Systems/Mission", "Assets/Tests/YLFramework/PlayMode/Systems/Equipment", "Assets/Tests/YLFramework/PlayMode/Systems/Domain"],
+      "excludedCategories": ["YL.Special.Session", "YL.Special.EquipmentSession", "YL.Special.GameplaySession"],
+      "specialBackend": "SessionNative",
+      "specialModes": ["EditMode"],
+      "specialCategory": "YL.Special.GameplaySession",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "disableDomainReload": true,
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"],
+      "packageInputs": ["com.kano.ylframework.gameplay"],
+      "sampleInputs": []
+    },
+    {
+      "name": "Equipment",
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "category": "YL.Module.Domain",
+      "assemblies": [],
+      "nativeAssemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "description": "Independent Equipment test entry: only main+Gameplay, its original Equipment exit hook and actual owned Resource/host lifecycle, without the combined Domain test suite.",
+      "suites": ["Daily", "Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.gameplay/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Extensions/Equipment"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Equipment", "Assets/Tests/YLFramework/EditMode/Editor/Equipment/EquipmentAuthoringTests.cs", "Assets/Tests/YLFramework/EditMode/Editor/Equipment/EquipmentDerivedData.cs", "Assets/Tests/YLFramework/EditMode/Editor/Equipment/EquipmentTwoPlayTests.cs"],
+      "playTests": ["Assets/Tests/YLFramework/PlayMode/Systems/Equipment"],
+      "excludedCategories": ["YL.Special.EquipmentSession"],
+      "specialBackend": "SessionNative",
+      "specialModes": ["EditMode"],
+      "specialCategory": "YL.Special.EquipmentSession",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "disableDomainReload": true,
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"],
+      "packageInputs": ["com.kano.ylframework.gameplay"],
       "sampleInputs": []
     },
     {
@@ -546,7 +603,8 @@
         "com.kano.ylframework",
         "com.kano.ylframework.data-assets",
         "com.kano.ylframework.localization",
-        "com.kano.ylframework.save"
+        "com.kano.ylframework.save",
+        "com.kano.ylframework.gameplay"
       ],
       "sampleInputs": []
     },
@@ -589,7 +647,8 @@
       "packageInputs": [
         "com.kano.ylframework",
         "com.kano.ylframework.excel",
-        "com.kano.ylframework.localization"
+        "com.kano.ylframework.localization",
+        "com.kano.ylframework.gameplay"
       ],
       "sampleInputs": []
     },
@@ -708,7 +767,8 @@
         "com.kano.ylframework",
         "com.kano.ylframework.excel",
         "com.kano.ylframework.state-machine",
-        "com.kano.ylframework.movement2d"
+        "com.kano.ylframework.movement2d",
+        "com.kano.ylframework.gameplay"
       ],
       "sampleInputs": []
     },

@@ -154,6 +154,32 @@ try {
             $excel = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'PackageSources/com.kano.ylframework.excel/package.json')
             Assert-That (-not $excel.dependencies.Contains('com.kano.ylframework.localization')) 'Test-only Localization must not become an Excel product dependency.'
         }
+        Test-Case 'Gameplay owns the minimal four-domain and independent Equipment gates without Quick Editor leakage' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            foreach ($name in @('Gameplay', 'Equipment')) {
+                $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
+                Assert-That (($module.packageInputs -join ',') -ceq 'com.kano.ylframework.gameplay') "$name must keep its own two-package installation root."
+                $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($module.packageInputs))
+                Assert-That ((@($closure.id | Sort-Object) -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.gameplay') "$name acquired an unrelated optional feature."
+            }
+            foreach ($name in @('Data', 'Excel', 'Domain', 'MigrationFixtures')) {
+                $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
+                Assert-That (@($module.packageInputs) -ccontains 'com.kano.ylframework.gameplay') "$name copies actual Gameplay consumers without declaring their package."
+            }
+            $domain = @($configuration.modules | Where-Object name -CEQ 'Domain')[0]
+            Assert-That (@($domain.editTests) -cnotcontains 'Assets/Tests/YLFramework/EditMode/Editor/Equipment') 'Quick must not compile native-only Equipment authoring sources.'
+            Assert-That (@($domain.nativeSources) -ccontains 'Assets/Tests/YLFramework/EditMode/Editor/Equipment') 'Original Equipment native authoring/admission contracts must remain selected.'
+            Assert-That (@($domain.excludedCategories) -ccontains 'YL.Package.GameplayStandalone') 'A full authoring combination cannot execute an only-main-plus-Gameplay precondition.'
+            foreach ($name in @('Core', 'Save', 'Localization', 'Movement2D', 'StateMachine')) {
+                $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
+                Assert-That (@($module.packageInputs) -cnotcontains 'com.kano.ylframework.gameplay') "$name must not acquire Gameplay to retain a moved identity anchor."
+            }
+            $excel = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'PackageSources/com.kano.ylframework.excel/package.json')
+            Assert-That (-not $excel.dependencies.Contains('com.kano.ylframework.gameplay')) 'Excel test-only Gameplay must not become an Excel product dependency.'
+            $shared = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef')
+            Assert-That (@($shared.references) -cnotcontains 'YLFramework.Tests.Domain.Probes') 'A standalone fixture reference must not leak through shared tests to absent-feature hosts.'
+        }
         Test-Case 'Movement2D standalone declares actual consumers without forcing it into unrelated modules' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')

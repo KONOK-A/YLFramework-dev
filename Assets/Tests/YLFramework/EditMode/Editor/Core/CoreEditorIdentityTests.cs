@@ -126,7 +126,11 @@ namespace YLFramework.Core.Editor.Tests
             }
             foreach (var expected in captured.assets)
             {
-                if (expected.path.StartsWith("Content/Behavior/", StringComparison.Ordinal))
+                if (expected.path.StartsWith("Content/Behavior/", StringComparison.Ordinal) ||
+                    expected.typeFullName.StartsWith("YLFramework.Skill.", StringComparison.Ordinal) ||
+                    expected.typeFullName.StartsWith("YLFramework.Buff.", StringComparison.Ordinal) ||
+                    expected.typeFullName.StartsWith("YLFramework.Mission.", StringComparison.Ordinal) ||
+                    expected.typeFullName.StartsWith("YLFramework.Equipment.", StringComparison.Ordinal))
                 {
                     continue;
                 }
@@ -167,7 +171,8 @@ namespace YLFramework.Core.Editor.Tests
                 Assert.That(migratedData.Assembly.GetName().Name, Is.EqualTo("YLFramework.DataAssets"));
                 var error = Assert.Throws<YLFramework.Resource.ResourceException>(() => snapshot.CreateCatalog(compiledTypes));
                 Assert.That(error.Kind, Is.EqualTo(YLFramework.Resource.ResourceError.TypeMismatch));
-                Assert.That(error.Message, Does.Contain("YLFramework.DataAssets."), "The real old catalog must not silently remap the moved DataAssets assembly tuple.");
+                Assert.That(error.Message, Does.Contain("YLFramework.Skill.SkillConfigData"),
+                    "The actual frozen catalog starts with a moved Skill tuple, which must not survive in main or silently remap.");
             }
         }
 
@@ -214,25 +219,11 @@ namespace YLFramework.Core.Editor.Tests
         [TestCase("YLFramework.Editor.Common.AssetNameTools", "YLFramework.Core." + "Editor.AssetNameTools")]
         [TestCase("YLFramework.Editor.Foundation.DisableEditDrawer", "YLFramework.Core." + "Editor.DisableEditDrawer")]
         [TestCase("YLFramework.Editor.Foundation.SerializedDictionaryDrawer", "YLFramework.Editor." + "SerializedDictionaryDrawer")]
-        [TestCase("YLFramework.Editor.Skill.SkillsConfigController", "YLFramework.Skill." + "SkillsConfigController")]
         public void EditorTypesUseOwnedScopesWithoutRuntimeNamespaceAliases(string fullName, string legacyName)
         {
             var assembly = System.Reflection.Assembly.Load(EditorAssemblyName);
             Assert.That(assembly.GetType(fullName), Is.Not.Null, fullName);
             Assert.That(assembly.GetType(legacyName), Is.Null, legacyName);
-        }
-
-        [TestCase("DomainAssetOwnership", "1ddd9cd019957054cbe3961a7ca6d7b5")]
-        [TestCase("DomainResourceIconGui", "95449e78762f9234296438a98b933042")]
-        [TestCase("DomainSessionLifecycle", "5005498a231ad034cba239967420cf2e")]
-        public void SharedDomainEditorHelpersKeepTheirInternalSingleOwnerAndGuid(string name, string guid)
-        {
-            string path = "Packages/com.kano.ylframework/Editor/Systems/Shared/" + name + ".cs";
-            var type = typeof(CreateModuleCommand).Assembly.GetType("YLFramework.Editor.Domain." + name, true);
-            Assert.That(type.IsNotPublic, Is.True);
-            Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
-            Assert.That(AssetDatabase.LoadAssetAtPath<MonoScript>(path).GetClass(), Is.SameAs(type));
-            Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(assembly => assembly.GetType(type.FullName) != null), Is.EqualTo(1));
         }
 
         [Test]
@@ -254,8 +245,7 @@ namespace YLFramework.Core.Editor.Tests
                 (fullName: "YLFramework.Editor.Common.ProjectSettingsScriptableObject`1", oldPath: "Utilities/Settings/ProjectSettingsScriptableObject.cs", newPath: "Common/Settings/ProjectSettingsScriptableObject.cs", guid: "5c5731fb2ee10ba46b4c302aeb0c3717"),
                 (fullName: "YLFramework.Editor.Tools.ClearLog", oldPath: "Utilities/Menus/ClearLog.cs", newPath: "Tools/ClearLog.cs", guid: "ffda0101de12441d9fb84fa9c264fc81"),
                 (fullName: "YLFramework.Editor.Tools.OpenFolder", oldPath: "Utilities/Menus/OpenFolder.cs", newPath: "Tools/OpenFolder.cs", guid: "93238e2549504f9cac66e1ad2b041515"),
-                (fullName: "YLFramework.Editor.Core.ScriptableObjectExtensions", oldPath: "Utilities/Assets/ScriptableObjectExtensions.cs", newPath: "Core/ScriptableObjectExtensions.cs", guid: "8f36b44478729c34486b79b7b1ce95f0"),
-                (fullName: "YLFramework.Editor.Domain.DomainAssetOwnership", oldPath: "Utilities/Assets/DomainAssetOwnership.cs", newPath: "Systems/Shared/DomainAssetOwnership.cs", guid: "1ddd9cd019957054cbe3961a7ca6d7b5")
+                (fullName: "YLFramework.Editor.Core.ScriptableObjectExtensions", oldPath: "Utilities/Assets/ScriptableObjectExtensions.cs", newPath: "Core/ScriptableObjectExtensions.cs", guid: "8f36b44478729c34486b79b7b1ce95f0")
             };
             var assembly = typeof(CreateModuleCommand).Assembly;
             var player = CompilationPipeline.GetAssemblies(AssembliesType.Player);

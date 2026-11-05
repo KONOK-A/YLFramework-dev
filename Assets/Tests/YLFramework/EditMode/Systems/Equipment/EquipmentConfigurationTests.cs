@@ -7,7 +7,7 @@ using System.Runtime.ExceptionServices;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using YLFramework.Events;
+using YLFramework.Equipment;
 
 namespace YLFramework.Tests.Extensions.Equipment
 {
@@ -21,8 +21,8 @@ namespace YLFramework.Tests.Extensions.Equipment
         [SetUp]
         public void SetUp()
         {
-            _rootType = typeof(EventChannel).Assembly.GetType("YLFramework.Equipment.EquipmentsConfig");
-            _dataType = typeof(EventChannel).Assembly.GetType("YLFramework.Equipment.EquipmentConfigData");
+            _rootType = typeof(EquipmentsConfig).Assembly.GetType("YLFramework.Equipment.EquipmentsConfig");
+            _dataType = typeof(EquipmentsConfig).Assembly.GetType("YLFramework.Equipment.EquipmentConfigData");
             Assert.That(_rootType, Is.Not.Null, "YL equipment definitions have not been migrated.");
             Assert.That(_dataType, Is.Not.Null);
         }

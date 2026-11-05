@@ -12,6 +12,7 @@ using ResourceLocation = YLFramework.Resource.ResourceLocation;
 
 namespace YLFramework.Tests.Extensions.Equipment
 {
+    [Category("YL.Special.EquipmentSession")]
     public class EquipmentTwoPlayTests
     {
         private SceneSetup[] _scenes;

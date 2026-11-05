@@ -18,6 +18,7 @@ using ResourceLocation = YLFramework.Resource.ResourceLocation;
 namespace YLFramework.Tests.Extensions.Domain
 {
     [Category("YL.Special.Session")]
+    [Category("YL.Special.GameplaySession")]
     public class DomainTwoPlayTests
     {
         private static readonly List<string> ShutdownCallbacks = new();

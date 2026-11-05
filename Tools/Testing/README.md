@@ -87,7 +87,9 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Reddot | Quick / Daily | 小型逻辑闭包与真实 UGUI 订阅生命周期。切片不能替代完整 Runtime 编译。 |
 | Foundation | Daily / Special | 完整 Runtime / Editor 加基础测试；双次 Play 会话单独执行。 |
 | Core | Daily | 完整 MVC / UI / 资源夹具；不隐式安装旧宿主扩展或原游戏资产。 |
-| Domain | Quick / Daily / Special | Skill / Buff / Mission / Reddot / Logging 逻辑、作者及场景生命周期；无 Domain Reload 会话使用独立宿主。 |
+| Domain | Quick / Daily / Special | Skill/Buff/Mission/Equipment/Reddot/Logging完整组合，含实际Excel/作者工具消费者；Quick只编译逻辑，原生作者源只在Daily/Special编译。 |
+| Gameplay | Daily / Special | 最小main+Gameplay，四独立Runtime行为/迁移身份；Special原双Play与正式四域新tuple发布、双进程Mono Player，不安装Excel/DataAssets/Save。 |
+| Equipment | Daily / Special | 最小main+Gameplay但只运行原Equipment契约，Special单独运行其原独立退出hook/同域双Play，不让Domain组合掩盖。 |
 | Behavior | Quick / Daily / Special | 日常Overlap / CharacterMotor / MovingPlatform / 两套FSM；Special在显式自有Desktop宿主执行两个原生窗口事件合同。 |
 | Save | Daily / Special | 仅 Save + Newtonsoft，不安装主包。Daily 执行原生门面合同与真实双进程 Mono Player 冷重开/显式备份恢复；Special 以 .NET 执行 BCL 合同，不替代 Unity 或 Player。 |
 | StateMachine | Daily / Special | 仅配置式FSM包及主包。Daily验原生状态/图/生命周期；Special在自有空场景宿主经过两次真实编译重载验Create And Add绑定，再构建运行双进程Mono Player。不是无输入模拟或旧Resource tuple兼容声明。 |
@@ -96,6 +98,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | DataAssets | Daily / Special | 仅主包+DataAssets：身份、作者、请求与租约、双Play、旧资产副本重建及真实Mono Player；不是完整Data组合。 |
 | Localization | Daily / Special | 仅主包+Localization：回退、显示、ResourceImage责任、作者、双Play及正式内容Player；不借DataAssets/Excel依赖。 |
 | Excel | Daily | 显式安装现有可选适配与 MiniExcel，执行真实 XLSX、AssetDatabase 和预览合同；只声明 EditMode。 |
+| DomainExcel | Daily | 当前独立领域Excel适配的完整实际调用方；产品前向依赖Gameplay，测试显式引用四Runtime/统一Editor，不提前实施后续Excel合包。 |
 | Action | Daily | Action / Observable 的真实取消、释放、池化复用、场景结束与屏幕过渡；共享依赖检查不借用其他测试类。 |
 | Audio | Daily / Special | 日常 AudioKit / source / owner / 作者与资源生命周期；Special执行连续Play、authority/provider与无输出采样的Bundle会话，真实音频输出/DSP仍独立。 |
 | Resource | Daily / Special | 有界真实Catalog / Codec / Bundle构建；Special保留原场景安全、双次Play及租约隔离断言，使用碰撞拒绝的短宿主名。 |

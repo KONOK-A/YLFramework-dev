@@ -12,7 +12,7 @@ YLFramework 按需交付与使用。主包有 `YLFramework.Runtime` 与 `YLFrame
 | --- | --- |
 | `Runtime` | Foundation、Core、Systems、Utilities 四个职责区，共用 Runtime 主体 |
 | `Editor` | 作者工具、公共支撑与 Help，共用 Editor-only 主体 |
-| 独立选装 UPM 包 | DataAssets、Localization、Save、StateMachine、Movement2D、DOTween、Excel、DomainExcel、HybridCLR 的可选编译与交付边界；Save可不安装主包 |
+| 独立选装 UPM 包 | DataAssets、Localization、Save、StateMachine、Movement2D、Gameplay、DOTween、Excel、DomainExcel、HybridCLR 的可选编译与交付边界；Save可不安装主包 |
 | `Prefabs`、`Samples~`、`Documentation~` | 正式模板、显式导入后才编译的接入样例、按文件路径打开的产品指南 |
 | `Plugins/BouncyCastle` | 随包的批准依赖及完整来源许可；不递归整个宿主 Plugins |
 | `Assets/Tests/YLFramework` | 源仓库测试与夹具，不在任何产品包内 |
@@ -33,6 +33,7 @@ PackageSources/
   com.kano.ylframework.data-assets/
   com.kano.ylframework.localization/
   com.kano.ylframework.save/
+  com.kano.ylframework.gameplay/    Runtime/{Skill,Buff,Mission,Equipment}/  Editor/
   com.kano.ylframework.dotween/
   com.kano.ylframework.excel/
   com.kano.ylframework.domain-excel/
@@ -51,9 +52,10 @@ Assets/Tests/YLFramework/          # repository only
 | `YLFramework.Save` | true | 只显式引用Newtonsoft.Json与UnityEngine，不引用主包；普通DTO/BCL存储与可选主包字典组合分开验证 |
 | `YLFramework.StateMachine` / `.Editor` | true | Runtime引用主Runtime的Foundation；Editor引用自身Runtime与主Editor的包路径工具，轻量`YLFramework.FSM`仍属主包 |
 | `YLFramework.Character2D` / `YLFramework.Platform2D` | true | 同属movement2d安装单元，各只引用主Runtime，不互相引用；统一`YLFramework.Movement2D.Editor`只在Editor编译 |
+| `YLFramework.Skill` / `YLFramework.Buff` / `YLFramework.Mission` / `YLFramework.Equipment` | true | 同属Gameplay安装单元，各只引用主Runtime，不互相引用；Buff/Mission显式引用Newtonsoft，统一`YLFramework.Gameplay.Editor`拥有共享作者工具与原退出hooks |
 | `YLFramework.Actions.DOTween` | false | Runtime + 外部 DOTween.dll，受 `DOTWEEN` 约束 |
 | `YLFramework.Excel.Editor` | true | 主 Runtime/Editor、DataAssets Runtime/Editor、MiniExcel、Json.NET，仅 Editor |
-| `YLFramework.Domain.Excel.Editor` | true | Excel 后端与主体，仅 Editor；安装 Domain Excel 包即可启用，不再要求全局宏 |
+| `YLFramework.Domain.Excel.Editor` | true | Excel后端、主Runtime/Editor与Gameplay四领域Runtime/Editor，仅Editor；安装DomainExcel即可启用，Gameplay不反向依赖Excel |
 | `YLFramework.HybridCLR` / `.Editor` | false | 主体与声明的官方 HybridCLR SDK；dnlib 仅 Editor，主体不反向依赖 |
 
 ### Namespace 与迁移
@@ -134,7 +136,7 @@ HTTP 独占每笔原生传输并自管稳定终态；Foundation 异步基类只�
 
 ## Editor 工具
 
-Editor 按 Runtime 所有者组织 Foundation / Core / Systems / Utilities；`Common` 只承载中立资产、Inspector、Scene、Settings、TreeView 与 Window 支撑。领域共享生命周期和资源作者策略留在 `Systems/Shared`，不塞回 Core 或 Common。
+Editor按Runtime所有者组织Foundation/Core/Systems/Utilities；`Common`只承载中立资产、Inspector、Scene、Settings、TreeView与Window支撑。四领域共享生命周期和资源作者策略属于Gameplay包的`Editor/Shared`与`YLFramework.Gameplay.Editor`，不塞回主包Core/Common。
 
 Help 提供共享索引与领域提供方；发行与安装只走 UPM，旧 unitypackage Distribution 出口退役。不根据 MenuItem 的存在把模块窗口移入通用 Tools。预览桥由领域侧安装解析器，公共层不主动初始化 Runtime。
 

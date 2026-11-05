@@ -115,7 +115,7 @@ internal static class InventoryHelp
 - Help 优先显式 XML 路径，仅文件缺失时回退 DLL 邻接 XML；格式或访问错误只警告，不掩盖为路径回退。`Library/` 是构建产物，不随产品包交付。
 - Core / Foundation 精选类型与其他 Runtime 类型共用 `Library/YLFramework.Runtime.xml`；XML 是编译产物，可能缺失或过时。提供方不额外生成 XML，缺失时保留元数据声明与人工指南，不根据名称伪造成员说明。文档链接仅在点击时打开本地说明，不执行示例或工具操作。
 - `HelpWindow` 与 `AudioKitDebugEditorWindow` 针对适用的 Unity layout 旧身份保留 `MovedFrom`；没有 namespace / assembly wrapper，也不使 `Type.GetType` 把旧 AQN 当作别名。旧 API 导航身份无法匹配时沿用窗口回退，不另建持久化名字转换系统。
-- 主包包含 Editor 下帮助核心与提供方及 `Documentation~`，不含 Tests 或四个选装包；安装与依赖边界见 [文档首页](../README.md#帮助与包内容)。隐藏文档必须从已解析包的实际文件系统路径打开，不通过 AssetDatabase 加载，不固定 PackageCache 的哈希目录。
+- 主包包含Editor下帮助核心与提供方及`Documentation~`，不含Tests或选装包源码；安装与依赖边界见[文档首页](../README.md#帮助与包内容)。隐藏文档必须从已解析包的实际文件系统路径打开，不通过AssetDatabase加载，不固定PackageCache的哈希目录。
 
 <a id="known-notes"></a>
 

@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
 using YLFramework.Buff;
-using YLFramework.Events;
 
 namespace YLFramework.Tests.Extensions.Domain
 {
@@ -47,7 +46,7 @@ namespace YLFramework.Tests.Extensions.Domain
         [Test]
         public void BuffMustOfferDurationAndExplicitHostShutdown()
         {
-            var assembly = typeof(EventChannel).Assembly;
+            var assembly = typeof(BuffBase).Assembly;
             var buff = assembly.GetType("YLFramework.Buff.BuffBase");
             Assert.That(buff, Is.Not.Null, "Buff持续时间执行器尚未承接。");
             Assert.That(buff.GetProperty("Progress"), Is.Not.Null);

@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Mission",
+    "rootNamespace": "YLFramework.Mission",
+    "references": ["YLFramework.Runtime"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": ["Newtonsoft.Json.dll"],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

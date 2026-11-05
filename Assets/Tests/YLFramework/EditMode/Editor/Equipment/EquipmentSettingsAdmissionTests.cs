@@ -11,7 +11,7 @@ namespace YLFramework.Tests.Extensions.Equipment
 {
     public class EquipmentSettingsAdmissionTests
     {
-        private static Type Helper => AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("YLFramework.Tests.EquipmentAcceptance.EquipmentSettings")).First(t => t != null);
+        private static Type Helper => System.Reflection.Assembly.Load("YLFramework.Tests.Tools.Editor").GetType("YLFramework.Tests.EquipmentAcceptance.EquipmentSettings", true);
         private static object Call(string name, params object[] args)
         {
             try

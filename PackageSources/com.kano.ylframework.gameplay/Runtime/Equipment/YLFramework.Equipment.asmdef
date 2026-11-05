@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Equipment",
+    "rootNamespace": "YLFramework.Equipment",
+    "references": ["YLFramework.Runtime"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
