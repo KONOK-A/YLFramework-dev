@@ -12,7 +12,7 @@ YLFramework 按需交付与使用。主包有 `YLFramework.Runtime` 与 `YLFrame
 | --- | --- |
 | `Runtime` | Foundation、Core、Systems、Utilities 四个职责区，共用 Runtime 主体 |
 | `Editor` | 作者工具、公共支撑与 Help，共用 Editor-only 主体 |
-| 独立选装 UPM 包 | DataAssets、Localization、Save、DOTween、Excel、DomainExcel、HybridCLR 的可选编译与交付边界；Save可不安装主包 |
+| 独立选装 UPM 包 | DataAssets、Localization、Save、StateMachine、DOTween、Excel、DomainExcel、HybridCLR 的可选编译与交付边界；Save可不安装主包 |
 | `Prefabs`、`Samples~`、`Documentation~` | 正式模板、显式导入后才编译的接入样例、按文件路径打开的产品指南 |
 | `Plugins/BouncyCastle` | 随包的批准依赖及完整来源许可；不递归整个宿主 Plugins |
 | `Assets/Tests/YLFramework` | 源仓库测试与夹具，不在任何产品包内 |
@@ -49,6 +49,7 @@ Assets/Tests/YLFramework/          # repository only
 | `YLFramework.DataAssets` / `.Editor` | true | Runtime 引用主 Runtime；Editor 引用自身 Runtime 与主 Editor，不引用 Excel/MiniExcel |
 | `YLFramework.Localization` / `.Editor` | true | Runtime 引用主 Runtime 与 UGUI；Editor 引用自身 Runtime 与主 Editor，不引用 DataAssets/Excel |
 | `YLFramework.Save` | true | 只显式引用Newtonsoft.Json与UnityEngine，不引用主包；普通DTO/BCL存储与可选主包字典组合分开验证 |
+| `YLFramework.StateMachine` / `.Editor` | true | Runtime引用主Runtime的Foundation；Editor引用自身Runtime与主Editor的包路径工具，轻量`YLFramework.FSM`仍属主包 |
 | `YLFramework.Actions.DOTween` | false | Runtime + 外部 DOTween.dll，受 `DOTWEEN` 约束 |
 | `YLFramework.Excel.Editor` | true | 主 Runtime/Editor、DataAssets Runtime/Editor、MiniExcel、Json.NET，仅 Editor |
 | `YLFramework.Domain.Excel.Editor` | true | Excel 后端与主体，仅 Editor；安装 Domain Excel 包即可启用，不再要求全局宏 |
@@ -70,10 +71,10 @@ Editor 的中立支撑归 `YLFramework.Editor.Common`，领域共享策略归 `.
 | --- | --- | --- |
 | Foundation | 不反向消费 Core / Systems / Utilities | 异步、事件、池、计时、更新、注入、序列化及必要 Unity 适配 |
 | Core | Foundation 与自身窄合同，不依赖具体 Systems 实现 | Module / MVC / View / Panel / UI 会话与资源消费合同 |
-| Systems | Foundation、Core 合同及适用 Utilities | Resource、Audio、Save 与领域状态；跨系统协作明确登记 |
+| Systems | Foundation、Core 合同及适用 Utilities | Resource、Audio 与尚未迁出的领域状态；跨系统协作明确登记 |
 | Utilities | 按需组合的基础机制；有明确用途时消费 Core | 数据结构、扩展、检测/移动组件与控件，不升级为全局服务 |
 
-Foundation 的 Unity 挂载 / 销毁直接使用原生 API，不为了便利扩展反向依赖 Utilities。ColorSelector 消费 Core Panel 是明确的控件依赖，Core 不反向依赖取色工具；完整配置 StateMachine 与轻量 FSM 分属 Systems / Utilities。
+Foundation 的 Unity 挂载 / 销毁直接使用原生 API，不为了便利扩展反向依赖 Utilities。ColorSelector 消费 Core Panel 是明确的控件依赖，Core 不反向依赖取色工具；完整配置 StateMachine 属于独立包，轻量 FSM 仍属于主包 Utilities，不共享执行内核。
 
 Runtime 不引用框架 Editor 程序集；其中编辑器专用代码使用 `#if UNITY_EDITOR` 隔离，Player 不因此依赖 UnityEditor。编译图检查与源码边界测试共同约束这条方向，不以“同一个 DLL”取消架构检查。
 

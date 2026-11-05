@@ -40,7 +40,7 @@ namespace YLFramework.Editor.Help
                     new[] { typeof(global::YLFramework.Utilities.StringTools), typeof(FSM.Fsm<>), typeof(Grids.NormalGrid<>), typeof(global::YLFramework.Utilities.Json.JSONObject),
                         typeof(global::YLFramework.UI.ColorSelector), typeof(global::YLFramework.UI.ColorSelectorWindow) },
                     HelpBlock.Paragraph("选用工具", "StringTools/Extensions、FSM、Grid、Json/JSONObject、Table 位于 YLFramework.Runtime；FSM 由调用方驱动及回收，" +
-                         "不替代 Systems/StateMachine 的可视化状态机。ZipTool也归Runtime主体，源码仍BCL-only；Zip/GZip的reader以using管理寿命。" +
+                          "不替代 com.kano.ylframework.state-machine 的可视化状态机。ZipTool也归Runtime主体，源码仍BCL-only；Zip/GZip的reader以using管理寿命。" +
                          "这些工具不强制依赖 Core Module，也不把 Save/HTTP 改为另一套 JSON 内核。"),
                     HelpBlock.Paragraph("取色便利工具", "ColorSelector 的控件、渲染与窗口统一位于 Utilities/UI/ColorSelector，不是 Foundation 基础机制。" +
                         "窗口通过 Module.LoadPanel/LoadPanelAsync 显式打开，按 Prefab 默认、规则快照和本次覆盖合成；控件读取最近 Panel 的 IsLoaded/IsInputBlocked，无 Panel 时沿默认输入行为。" +

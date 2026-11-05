@@ -45,6 +45,8 @@ namespace 为 `YLFramework.Platform2D`，包括 Moveable、MoveablePlatform2D �
 
 两者不共享运行态或自动结束责任，也不把外部状态机的配置、状态脚本或 GUID 自动转换为 YL 资产。
 
+配置式状态机安装 [com.kano.ylframework.state-machine](../../../com.kano.ylframework.state-machine/README.md) 及主包。namespace 保持不变，Runtime 程序集为 `YLFramework.StateMachine`，Editor 作者工具为 `YLFramework.StateMachine.Editor`；轻量 `YLFramework.FSM` 仍随主包交付。自有 asmdef 中的状态脚本须显式引用新的 Runtime 程序集；生成器不会改写消费方 asmdef、覆盖已有脚本或删除卸载后保留的用户配置。
+
 ### 创建与驱动
 
 - 通过 `Assets/Create/YLFramework/Asset FSM/FSMController` / `FSMState` 创建正式资产，窗口为 `Window/YLFramework/Asset FSM/StateMachineWindow`。

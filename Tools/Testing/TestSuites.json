@@ -264,6 +264,31 @@
       "sampleInputs": []
     },
     {
+      "name": "StateMachine",
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "category": "YL.Module.StateMachine",
+      "assemblies": [],
+      "nativeAssemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "description": "Configured FSM plus main only; native lifecycle, generated state compilation and standalone Player are distinct acceptance layers.",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "suites": ["Daily", "Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.state-machine/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/StateMachine"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/StateMachine"],
+      "playTests": ["Assets/Tests/YLFramework/PlayMode/Systems/StateMachine"],
+      "excludedCategories": ["YL.Special.StateMachinePackage"],
+      "specialBackend": "SessionNative",
+      "specialModes": ["EditMode"],
+      "specialCategory": "YL.Special.StateMachinePackage",
+      "assemblyMetadata": ["PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef", "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef", "PackageSources/com.kano.ylframework.state-machine/Runtime/YLFramework.StateMachine.asmdef", "PackageSources/com.kano.ylframework.state-machine/Editor/YLFramework.StateMachine.Editor.asmdef", "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"],
+      "packageInputs": ["com.kano.ylframework.state-machine"],
+      "sampleInputs": []
+    },
+    {
       "name": "Behavior",
       "category": "YL.Module.Behavior",
       "assemblies": [],
@@ -287,13 +312,14 @@
         "Special"
       ],
       "runtimeSources": [
-        "PackageSources/com.kano.ylframework/Runtime"
+        "PackageSources/com.kano.ylframework/Runtime",
+        "PackageSources/com.kano.ylframework.state-machine/Runtime"
       ],
       "sourceEnvironment": [
         "YL_BEHAVIOR_ROOT"
       ],
       "testSupport": [
-        "PackageSources/com.kano.ylframework/Editor/Systems/StateMachine/Creator/FsmStateFileWriter.cs"
+        "PackageSources/com.kano.ylframework.state-machine/Editor/Systems/StateMachine/Creator/FsmStateFileWriter.cs"
       ],
       "offlineReferences": [
         "Library/ScriptAssemblies/UnityEngine.UI.dll",
@@ -314,11 +340,9 @@
         "Assets/Tests/YLFramework/EditMode/Utilities/Overlap/OverlapOfflineTests.cs",
         "Assets/Tests/YLFramework/EditMode/Utilities/CharacterController2D/CharacterMotorOfflineTests.cs",
         "Assets/Tests/YLFramework/EditMode/Utilities/MoveablePlatform/MovingPlatformOfflineTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Editor/StateMachine/AssetFsmOfflineTests.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Behavior/DualFsmLegacyTests.cs"
       ],
       "playTests": [
-        "Assets/Tests/YLFramework/PlayMode/Systems/StateMachine",
         "Assets/Tests/YLFramework/PlayMode/Utilities/Overlap",
         "Assets/Tests/YLFramework/PlayMode/Utilities/CharacterController2D",
         "Assets/Tests/YLFramework/PlayMode/Utilities/MoveablePlatform"
@@ -330,7 +354,8 @@
         "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
       ],
       "packageInputs": [
-        "com.kano.ylframework"
+        "com.kano.ylframework",
+        "com.kano.ylframework.state-machine"
       ],
       "sampleInputs": []
     },
@@ -635,7 +660,7 @@
       "shortHostKey": true,
       "excludedCategories": [],
       "specialCategory": "YL.Special.MigrationFixtures",
-      "description": "Explicit fresh owned host producer for pre-assembly-split Unity assets, formal XLSX exports and a genuine Resource publication. Never overwrites captured input.",
+      "description": "Historical pre-split producer, recreated only from the original sourceCommit recorded in the frozen FixtureIdentity.json. Current sources support compilation/discovery; do not recapture or overwrite the original snapshot.",
       "suites": [
         "Special"
       ],
@@ -654,7 +679,8 @@
       ],
       "packageInputs": [
         "com.kano.ylframework",
-        "com.kano.ylframework.excel"
+        "com.kano.ylframework.excel",
+        "com.kano.ylframework.state-machine"
       ],
       "sampleInputs": []
     },

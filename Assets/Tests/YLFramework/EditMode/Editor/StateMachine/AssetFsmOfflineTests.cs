@@ -11,11 +11,10 @@ using YLFramework.Editor.StateMachine;
 
 namespace YLFramework.Tests.Extensions.Behavior
 {
-    [Category("YL.Module.Behavior")]
+    [Category("YL.Module.StateMachine")]
     public class AssetFsmOfflineTests
     {
-        private static string Root => Environment.GetEnvironmentVariable("YL_BEHAVIOR_ROOT") ?? Directory.GetCurrentDirectory();
-        private static string MainSource => global::YLFramework.Testing.PackageTestPaths.MainSourceRoot(Root);
+        private static string StateMachineSource => global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework.state-machine");
         private static Type Model(string name)
         {
             var type = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("YLFramework.StateMachine." + name)).FirstOrDefault(t => t != null);
@@ -24,9 +23,19 @@ namespace YLFramework.Tests.Extensions.Behavior
         }
 
         [Test]
+        public void ConfiguredRuntimeAndAuthoringHaveTheirOwnAssemblies()
+        {
+            Assert.That(typeof(FsmController).Assembly.GetName().Name, Is.EqualTo("YLFramework.StateMachine"));
+            Assert.That(typeof(FsmStateCreator).Assembly.GetName().Name, Is.EqualTo("YLFramework.StateMachine.Editor"));
+            Assert.That(typeof(FsmController).Assembly, Is.Not.SameAs(typeof(YLFramework.Foundation.AssemblyTool).Assembly));
+            Assert.That(typeof(FsmEditorWindow).Assembly, Is.SameAs(typeof(FsmStateCreator).Assembly));
+            Assert.That(typeof(FsmStateCreator).Assembly.GetType("YLFramework.StateMachine.FsmEditorWindow"), Is.Null);
+        }
+
+        [Test]
         public void RuntimeHasNoEditorOrOriginalFrameworkDependency()
         {
-            var path = Path.Combine(MainSource, "Runtime/Systems/StateMachine");
+            var path = Path.Combine(StateMachineSource, "Runtime/Systems/StateMachine");
             Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Is.True);
             foreach (var file in Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(path), "*.cs", SearchOption.AllDirectories))
             {
@@ -45,7 +54,7 @@ namespace YLFramework.Tests.Extensions.Behavior
         [Test]
         public void GraphUsesPublicManipulatorsAndNoGraphsInternalApi()
         {
-            var path = Path.Combine(MainSource, "Editor/Systems/StateMachine");
+            var path = Path.Combine(StateMachineSource, "Editor/Systems/StateMachine");
             Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Is.True);
             var graph = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(path, "GUI/WindowGraphView/FsmStateGraphView.cs")));
             Assert.That(graph.Contains("new SelectionDragger()"), Is.True);
@@ -62,25 +71,17 @@ namespace YLFramework.Tests.Extensions.Behavior
         [Test]
         public void LayerDrawerDoesNotConsumeAnotherCallersDisabledScope()
         {
-            var source = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(MainSource, "Editor/Systems/StateMachine/GUI/CustomPropertyDrawer/CustomRuntimeFsmControllerLayer.cs")));
+            var source = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(StateMachineSource, "Editor/Systems/StateMachine/GUI/CustomPropertyDrawer/CustomRuntimeFsmControllerLayer.cs")));
             Assert.That(Regex.Matches(source, "BeginDisabledGroup\\(").Count, Is.EqualTo(Regex.Matches(source, "EndDisabledGroup\\(").Count));
         }
 
         [Test]
         public void ReorderUsesSerializedOwnershipAndConditionErrorsDoNotEraseEdges()
         {
-            var source = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(MainSource, "Editor/Systems/StateMachine/GUI/Inspectors/FsmTransitionInspector.cs")));
+            var source = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(StateMachineSource, "Editor/Systems/StateMachine/GUI/Inspectors/FsmTransitionInspector.cs")));
             Assert.That(source.Contains("new ReorderableList(_controllerObject,"), Is.True);
-            source = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(MainSource, "Runtime/Systems/StateMachine/Scriptable/RuntimeFsmController.cs")));
+            source = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(StateMachineSource, "Runtime/Systems/StateMachine/Scriptable/RuntimeFsmController.cs")));
             Assert.That(source.Contains("if (FsmConfigurationValidator.Validate(states, parameters, transitions) != null) return null"), Is.False);
-        }
-
-        [Test]
-        public void FinalPlayerEntryExplicitlySupportsNonDevelopmentBackends()
-        {
-            var source = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(Root, "Assets/Tests/YLFramework/Fixtures/Extensions/Behavior/Editor/BehaviorAcceptanceBuilder.cs")));
-            Assert.That(source.Contains("BuildOptions.None"), Is.True);
-            Assert.That(source.Contains("Build Release Mono Windows64") && source.Contains("Build Release IL2CPP Windows64"), Is.True);
         }
 
         [Test]
