@@ -81,7 +81,7 @@ Skill / Buff / Mission / Equipment 使用各自的 `SkillsConfig`、`BuffsConfig
 
 ## DomainExcel
 
-选装 `com.kano.ylframework.domain-excel` 复用 `com.kano.ylframework.excel`，仅用于Editor领域作者流程，不成为Gameplay Runtime依赖。Git消费方须显式声明主包、DataAssets、Gameplay、Excel与DomainExcel五项同SHA。安装后自动启用，不再要求用户全局定义`YL_DOMAIN_EXCEL`，也不改写全局scripting symbols；已有业务`#if YL_DOMAIN_EXCEL`由使用工程自行审查迁移。
+领域适配已包含在`com.kano.ylframework.excel/Editor/Gameplay`，同时安装Gameplay后由包Version Define启用原`YLFramework.Domain.Excel.Editor`，不再安装独立DomainExcel包。Git消费方显式声明main、DataAssets、Excel、Gameplay四项同SHA。Excel与Gameplay产品不互相依赖，不要求或改写任何全局宏；已有业务`#if YL_DOMAIN_EXCEL`仍由使用工程自行审查，不会自动变成包存在性判断。
 
 - `DomainExcelCommands.PreviewImport` 接受显式工作簿路径，预览后确认或取消；不提供 Mission 条目与参数跨 sheet 原子事务，也不导入全局 Buff Effect 库。
 - Skill / Buff / Mission 没有最近工作簿入口。Equipment 的导出、预览 / 确认 / 取消及最近工作簿目录菜单为 `Assets/YLFramework/Domain Excel/`；这是 Project 右键菜单名，不是安装或输出目录。

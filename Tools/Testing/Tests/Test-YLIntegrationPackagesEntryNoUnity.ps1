@@ -14,6 +14,7 @@ $result = New-YLTestDirectory -Workspace $workspace -Kind Result -Key Entry
 $cache = New-YLTestDirectory -Workspace $workspace -Kind Cache -Key Entry
 $leases = @($hostRecord, $result, $cache | ForEach-Object { Lock-YLTestDirectory -Workspace $workspace -Path $_.path })
 $checks = 0
+$passed = $false
 function Check([bool] $Condition, [string] $Reason) { if (-not $Condition) { throw $Reason }; $script:checks++ }
 function Save([string] $Path, [object] $Value) {
     $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Path))
@@ -48,16 +49,55 @@ function FixtureGraph([string] $Side) {
     }
 }
 try {
+    # Exercise the real inline SDK gate without running Execute or changing production visibility.
+    $integrationSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../IntegrationEntry.cs'))
+    $sdkMiniExcel = [regex]::Matches($integrationSource, '(?s)if \(integration == "Excel" \|\| integration == "ExcelGameplay"\)\s*\{.*?\r?\n                \}\s*(?=if \(integration == "HybridCLR"\))')
+    $globalGate = [regex]::Matches($integrationSource, '(?s)if \(global.Contains\("YL_DOMAIN_EXCEL"\).*?\r?\n                \}')
+    Check ($sdkMiniExcel.Count -eq 1 -and $globalGate.Count -eq 1) 'The maintained MiniExcel/global gates must be exercised, not replaced by a fixture implementation.'
+    $sdkProbe = @'
+using System;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using Newtonsoft.Json.Linq;
+using CompiledAssembly = UnityEditor.Compilation.Assembly;
+namespace YLFramework.Testing
+{
+    public static class SdkMiniExcelFixture
+    {
+        public static JObject Validate(JObject request, CompiledAssembly[] editor, JObject[] selected, string[] global)
+        {
+            var report = new JObject(); string integration = Text(request, "integration");
+            /*GLOBAL_GATE*/
+            /*MINIEXCEL_GATE*/
+            return report;
+        }
+        private static object Call(string name, params object[] arguments) => typeof(IntegrationEntry).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, arguments);
+        private static string Text(JObject value, string field) => (string)Call("Text", value, field);
+        private static JObject ReadJson(string path) => (JObject)Call("ReadJson", path);
+        private static string Hash(string path) => (string)Call("Hash", path);
+        private static bool Inside(string path, string root) => (bool)Call("Inside", path, root);
+        private static string[] References(CompiledAssembly assembly) => (string[])Call("References", assembly);
+    }
+}
+'@
+    $sdkProbe = $sdkProbe.Replace('/*GLOBAL_GATE*/', $globalGate[0].Value).Replace('/*MINIEXCEL_GATE*/', $sdkMiniExcel[0].Value)
+    $sdkProbePath = Join-Path $sandbox 'SdkMiniExcelFixture.cs'
+    [IO.File]::WriteAllText($sdkProbePath, $sdkProbe, [Text.UTF8Encoding]::new($false))
     $references = @([IO.Directory]::EnumerateFiles((Join-Path $PSHOME 'ref'), '*.dll')) + @([Newtonsoft.Json.Linq.JObject].Assembly.Location)
-    Add-Type -Path @((Join-Path $PSScriptRoot '../IntegrationEntry.cs'), (Join-Path $PSScriptRoot '../PackageCatalogContract.cs'), (Join-Path $PSScriptRoot 'Test-YLIntegrationPackagesNoUnityStubs.cs')) -ReferencedAssemblies $references -CompilerOptions @('/define:UNITY_EDITOR', '/langversion:9.0', '/nowarn:1701')
+    Add-Type -Path @((Join-Path $PSScriptRoot '../IntegrationEntry.cs'), (Join-Path $PSScriptRoot '../PackageCatalogContract.cs'), (Join-Path $PSScriptRoot 'Test-YLIntegrationPackagesNoUnityStubs.cs'), $sdkProbePath) -ReferencedAssemblies $references -CompilerOptions @('/define:UNITY_EDITOR', '/langversion:9.0', '/nowarn:1701')
+    function MiniExcel($Request, $Editor, $Selected, [string[]] $Global = @()) {
+        try { return ,([YLFramework.Testing.SdkMiniExcelFixture]::Validate($Request, [UnityEditor.Compilation.Assembly[]]$Editor, [Newtonsoft.Json.Linq.JObject[]]$Selected, $Global)) }
+        catch { throw $_.Exception.GetBaseException() }
+    }
     [UnityEngine.Application]::dataPath = (Join-Path $hostRecord.path 'Assets').Replace('\', '/'); $null = [IO.Directory]::CreateDirectory([UnityEngine.Application]::dataPath)
     $output = Join-Path $result.path 'Compile'; $null = [IO.Directory]::CreateDirectory($output)
     $sha = '0123456789abcdef0123456789abcdef01234567'; $repo = 'https://example.invalid/product.git'
     $fixtureCatalog = Get-YLFixturePackageCatalog
     $packages = @(); $registered = @(); $dependencies = @{}; $locked = @{}
-    foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.excel')) {
+    foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel')) {
         $p = Join-Path $hostRecord.path "Library/PackageCache/$id"
-        $deps = @{}; if ($id -ceq 'com.kano.ylframework.excel') { $deps['com.kano.ylframework'] = '0.1.0-preview.1' }
+        $deps = Get-YLFixtureInternalDependencies -PackageId $id -Version '0.1.0-preview.1'
         Save (Join-Path $p 'package.json') @{ name = $id; version = '0.1.0-preview.1'; dependencies = $deps; extra = @{ date = '2026-01-01T00:00:00Z' } }
         [IO.File]::WriteAllText((Join-Path $p 'LICENSE.md'), 'fixture license')
         Add-YLFixtureAssemblyPayload -Catalog $fixtureCatalog -PackageId $id -Root $p -Sources
@@ -66,6 +106,7 @@ try {
         $locator = $repo + '?path=/PackageSources/' + $id + '#' + $sha
         $dependencies[$id] = $locator; $locked[$id] = @{ source = 'git'; version = $locator; hash = $sha; depth = 0; dependencies = $deps }
         $api = [UnityEditor.PackageManager.PackageInfo]::new(); $api.name = $id; $api.version = '0.1.0-preview.1'; $api.source = [UnityEditor.PackageManager.PackageSource]::Git
+        $api.isDirectDependency = $true
         $api.assetPath = 'Packages/' + $id; $api.resolvedPath = $p; $api.packageId = $id + '@' + $locator; $registered += $api
     }
     $manifest = Join-Path $hostRecord.path 'Packages/manifest.json'; Save $manifest @{ dependencies = $dependencies }
@@ -80,6 +121,9 @@ try {
     [UnityEditor.PackageManager.PackageInfo]::Registered = $registered
     function Request { return ,([Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -Depth 30 -InputObject $valid))) }
     $null = Call ValidateInvocation (Request); $checks++
+    $valid.entryPackages = @('com.kano.ylframework.excel')
+    $null = Call ValidateInvocation (Request); $checks++
+    $r = Request; $r['integration'] = [Newtonsoft.Json.Linq.JValue]::new('DomainExcel'); Reject { Call ValidateInvocation $r } 'The retired DomainExcel profile must not remain accepted by the C# entry'
     foreach ($field in @('schemaVersion', 'catalogSha256', 'entryPackage')) {
         $r = Request; $null = $r.Remove($field); Reject { Call ValidateInvocation $r } "missing mandatory catalog/entry $field"
     }
@@ -116,8 +160,8 @@ try {
     [UnityEditor.PackageManager.PackageInfo]::Registered = @($registered + $ugui + $newtonsoft)
     $fullGraph = @()
     foreach ($api in [UnityEditor.PackageManager.PackageInfo]::GetAllRegisteredPackages()) { $fullGraph += ,(Boundary PackageRow @($api)) }
-    Check ($fullGraph.Count -eq 4 -and [string]$fullGraph[2]['source'] -ceq 'BuiltIn' -and [string]$fullGraph[2]['fingerprint'] -ceq $uguiJson._fingerprint -and
-        [string]$fullGraph[3]['source'] -ceq 'Registry' -and [string]$fullGraph[3]['fingerprint'] -ceq ('a' * 40)) 'The actual full graph rejected Unity 6 built-in UGUI or Registry Newtonsoft fingerprint observations.'
+    Check ($fullGraph.Count -eq 5 -and [string]$fullGraph[3]['source'] -ceq 'BuiltIn' -and [string]$fullGraph[3]['fingerprint'] -ceq $uguiJson._fingerprint -and
+        [string]$fullGraph[4]['source'] -ceq 'Registry' -and [string]$fullGraph[4]['fingerprint'] -ceq ('a' * 40)) 'The actual full graph rejected Unity 6 built-in UGUI or Registry Newtonsoft fingerprint observations.'
     foreach ($invalid in @($true, $null, 40, ('b' * 39), ('b' * 41), ('x' * 40), (('b' * 40) + "`n"), @('b'), @{ value = 'b' })) {
         $j = $uguiJson.Clone(); $j._fingerprint = $invalid; Save $uguiManifest $j
         Reject { foreach ($api in [UnityEditor.PackageManager.PackageInfo]::GetAllRegisteredPackages()) { $null = Boundary PackageRow @($api) } } 'Malformed official built-in fingerprint must fail the full graph'
@@ -219,8 +263,9 @@ try {
         $content = Get-YLIntegrationPackageContent -Root $root -PackageId $id
         $filePackages += @{ name = $id; version = $package.version; root = $root; files = $content.files; contentSha256 = $content.sha256 }
         $fileDependencies[$id] = 'file:../PackageSources/' + $id
-        $fileLocked[$id] = @{ source = 'local'; version = $fileDependencies[$id]; dependencies = $json.dependencies }
+        $fileLocked[$id] = @{ source = 'local'; version = $fileDependencies[$id]; depth = 0; dependencies = $json.dependencies }
         $api = [UnityEditor.PackageManager.PackageInfo]::new(); $api.name = $id; $api.version = $package.version; $api.source = [UnityEditor.PackageManager.PackageSource]::Local
+        $api.isDirectDependency = $true
         $api.assetPath = 'Packages/' + $id; $api.resolvedPath = $root; $api.packageId = $id + '@file:' + $root.Replace('\', '/'); $fileRegistered += $api
     }
     $valid.packages = $filePackages; Save $manifest @{ dependencies = $fileDependencies }; Save $lockPath @{ dependencies = $fileLocked }
@@ -241,21 +286,22 @@ try {
     $path = Join-Path $fileRegistered[0].resolvedPath 'package.json'; $json = [IO.File]::ReadAllText($path) | ConvertFrom-Json -AsHashtable; $json['_fingerprint'] = $sha; Save $path $json
     Reject { Call CapturePackages (Request) } 'File must not accept Git-only package-manager fingerprint normalization'
     [IO.Directory]::Delete((Join-Path $hostRecord.path 'PackageSources'), $true)
-    function New-PublishedFixture([string] $Origin, [string] $Integration = 'DomainExcel') {
+    function New-PublishedFixture([string] $Origin, [string] $Integration = 'ExcelGameplay') {
         $script:valid = $script:valid.Clone(); $script:valid.packageOrigin = $Origin; $script:valid.integration = $Integration
         $script:valid.Remove('gitRepository'); $script:valid.Remove('gitRevision')
         $script:valid.releaseManifestSha256 = 'c' * 64
-        $suffix = switch ($Integration) { DomainExcel { 'domain-excel' } HybridCLR { 'hybridclr' } DOTween { 'dotween' } default { 'excel' } }
+        $suffix = switch ($Integration) { HybridCLR { 'hybridclr' } DOTween { 'dotween' } default { 'excel' } }
         $script:valid.entryPackage = 'com.kano.ylframework.' + $suffix
-        $fields = Get-YLRegistryRequestFields -Source @{ packageOrigin = $Origin; registryUrl = 'https://package.openupm.com'; registryVersion = '0.1.0-preview.1'; release = @{ sha256 = ('c' * 64) } } -EntryPackage $script:valid.entryPackage
+        $script:valid.entryPackages = @($script:valid.entryPackage)
+        if ($Integration -ceq 'ExcelGameplay') { $script:valid.entryPackages += 'com.kano.ylframework.gameplay' }
+        $fields = Get-YLRegistryRequestFields -Source @{ packageOrigin = $Origin; registryUrl = 'https://package.openupm.com'; registryVersion = '0.1.0-preview.1'; release = @{ sha256 = ('c' * 64) } } -EntryPackage $script:valid.entryPackage -EntryPackages $script:valid.entryPackages
         foreach ($field in $fields.GetEnumerator()) { $script:valid[$field.Key] = $field.Value }
         $script:valid.Remove('dotweenSdkMode'); $script:valid.Remove('sdk')
-        $ids = @('com.kano.ylframework'); if ($Integration -ceq 'DomainExcel') { $ids += 'com.kano.ylframework.excel' }; $ids += $script:valid.entryPackage
+        $sourceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+        $ids = @(Get-YLUpmPackages -Repository $sourceRoot -Ids $script:valid.entryPackages -Catalog $fixtureCatalog).id
         $script:publishedApis = @(); $expected = @(); $direct = @{}; $locks = @{}
         foreach ($id in $ids) {
-            $deps = @{}
-            if ($id -cne 'com.kano.ylframework') { $deps['com.kano.ylframework'] = '0.1.0-preview.1' }
-            if ($id -ceq 'com.kano.ylframework.domain-excel') { $deps['com.kano.ylframework.excel'] = '0.1.0-preview.1' }
+            $deps = Get-YLFixtureInternalDependencies -PackageId $id -Version '0.1.0-preview.1'
             if ($id -ceq 'com.kano.ylframework.hybridclr') { $deps['com.code-philosophy.hybridclr'] = '9.0.3' }
             $pairs = @($deps.Keys | Sort-Object -CaseSensitive | ForEach-Object { '"' + $_ + '":"' + $deps[$_] + '"' }) -join ','
             $canonical = '{"dependencies":{' + $pairs + '},"name":"' + $id + '","version":"0.1.0-preview.1"}'
@@ -271,7 +317,7 @@ try {
                 contentSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($lines))).ToLowerInvariant() }
             $api = [UnityEditor.PackageManager.PackageInfo]::new(); $api.name = $id; $api.version = '0.1.0-preview.1'; $api.assetPath = 'Packages/' + $id; $api.resolvedPath = $root
             $api.source = [UnityEditor.PackageManager.PackageSource]::$Origin; $api.packageId = $id + '@' + $locator
-            $api.isDirectDependency = $Origin -ceq 'LocalTarball' -or $id -ceq $script:valid.entryPackage
+            $api.isDirectDependency = $Origin -ceq 'LocalTarball' -or $id -cin $script:valid.entryPackages
             if ($Origin -ceq 'Registry') { $api.registry = [UnityEditor.PackageManager.RegistryInfo]::new(); $api.registry.url = $script:valid.registryUrl }
             $api.dependencies = @($deps.Keys | ForEach-Object { $d = [UnityEditor.PackageManager.DependencyInfo]::new(); $d.name = $_; $d.version = $deps[$_]; $d })
             $script:publishedApis += $api
@@ -287,17 +333,101 @@ try {
         $script:valid.manifestSha256 = (Get-FileHash -LiteralPath $manifest).Hash
         [UnityEditor.PackageManager.PackageInfo]::Registered = $script:publishedApis
     }
+    foreach ($integration in @('ExcelGameplay', 'Excel')) {
+        New-PublishedFixture Registry $integration
+        $excelRoot = @($publishedApis | Where-Object name -CEQ 'com.kano.ylframework.excel')[0].resolvedPath
+        $miniDll = Join-Path $excelRoot 'Editor/Plugins/MiniExcel.dll'
+        $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($miniDll))
+        [IO.File]::WriteAllBytes($miniDll, [IO.File]::ReadAllBytes([Newtonsoft.Json.Linq.JObject].Assembly.Location))
+        $license = Join-Path $excelRoot 'Editor/Licenses/LICENSE.txt'; $notice = Join-Path $excelRoot 'Editor/Licenses/NOTICE.txt'
+        $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($license))
+        [IO.File]::WriteAllText($license, 'NoUnity fixture license, not the MiniExcel SDK'); [IO.File]::WriteAllText($notice, 'NoUnity fixture attribution')
+        $backend = @{ version = '1.31.2'; assemblySha256 = (Get-FileHash -LiteralPath $miniDll).Hash.ToLowerInvariant(); licenseFile = 'Licenses/LICENSE.txt'; attributionFile = 'Licenses/NOTICE.txt'; license = 'Apache-2.0' }
+        $approval = Join-Path $excelRoot 'Editor/Dependencies.json'; Save $approval @{ backend = $backend }
+        $valid.sdk = $backend.Clone()
+        $miniEditor = [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Editor)
+        $excelAssembly = @($miniEditor | Where-Object name -CEQ 'YLFramework.Excel.Editor')[0]; $excelAssembly.compiledAssemblyReferences = @($miniDll)
+        $adapter = @($miniEditor | Where-Object name -CEQ 'YLFramework.Domain.Excel.Editor')
+        Check (($adapter.Count -eq 1) -eq ($integration -ceq 'ExcelGameplay')) 'Ordinary Excel must omit the Gameplay adapter; both roots must enable it.'
+        if ($adapter.Count -eq 1) {
+            $adapter[0].defines = @('YL_GAMEPLAY_PACKAGE'); $adapter[0].assemblyReferences = @($miniEditor | Where-Object name -CEQ 'YLFramework.Gameplay.Editor')
+        }
+        $request = Request
+        $selected = @($request['packages'] | ForEach-Object {
+            $package = $_.DeepClone(); $package['root'] = [Newtonsoft.Json.Linq.JValue]::new(@($publishedApis | Where-Object name -CEQ ([string]$package['name']))[0].resolvedPath); ,$package
+        })
+        $observed = MiniExcel $request $miniEditor $selected
+        Check ([string]$observed['sdk']['sha256'] -ceq $backend.assemblySha256 -and [string]$observed['sdk']['license'] -ceq 'Apache-2.0') "$integration must verify the actual SDK binary identity and license."
+        foreach ($symbol in @('YL_DOMAIN_EXCEL', 'YL_GAMEPLAY_PACKAGE', 'YL_HYBRIDCLR_9_0_3')) {
+            Reject { MiniExcel $request $miniEditor $selected @($symbol) } "global $symbol cannot replace a package gate"
+        }
+        foreach ($fault in @('request-hash', 'request-version', 'metadata-hash', 'license', 'attribution', 'license-escape')) {
+            $r = $request.DeepClone(); $changed = $backend.Clone()
+            try {
+                switch ($fault) {
+                    'request-hash' { $r['sdk']['assemblySha256'] = [Newtonsoft.Json.Linq.JValue]::new(('d' * 64)) }
+                    'request-version' { $r['sdk']['version'] = [Newtonsoft.Json.Linq.JValue]::new('1.31.1') }
+                    'metadata-hash' { $changed.assemblySha256 = 'd' * 64 }
+                    'license' { [IO.File]::Delete($license) }
+                    'attribution' { [IO.File]::Delete($notice) }
+                    'license-escape' { $changed.licenseFile = '../LICENSE.md' }
+                }
+                Save $approval @{ backend = $changed }
+                Reject { MiniExcel $r $miniEditor $selected } "$integration MiniExcel $fault"
+            } finally {
+                Save $approval @{ backend = $backend }; [IO.File]::WriteAllText($license, 'NoUnity fixture license, not the MiniExcel SDK'); [IO.File]::WriteAllText($notice, 'NoUnity fixture attribution')
+            }
+        }
+        if ($integration -ceq 'ExcelGameplay') {
+            Reject { MiniExcel $request @($miniEditor | Where-Object name -CNE 'YLFramework.Domain.Excel.Editor') $selected } 'Both roots require the enabled adapter'
+            $adapter[0].defines = @(); Reject { MiniExcel $request $miniEditor $selected } 'The adapter requires its package-scoped define'; $adapter[0].defines = @('YL_GAMEPLAY_PACKAGE')
+            $adapter[0].assemblyReferences = @(); Reject { MiniExcel $request $miniEditor $selected } 'The adapter requires its actual Gameplay Editor reference'
+        } else {
+            $borrowed = [UnityEditor.Compilation.Assembly]::new(); $borrowed.name = 'YLFramework.Domain.Excel.Editor'
+            Reject { MiniExcel $request @($miniEditor + $borrowed) $selected } 'Ordinary Excel must not load the Gameplay adapter'
+        }
+        foreach ($path in @($miniDll, $license, $notice, $approval)) { [IO.File]::Delete($path) }
+    }
     foreach ($origin in @('Registry', 'LocalTarball')) {
         New-PublishedFixture $origin
         $null = Call ValidateInvocation (Request)
         $rows = Call CapturePackages (Request)
-        Check ($rows.Count -eq 3 -and [bool]$rows[0]['isDirectDependency'] -eq ($origin -ceq 'LocalTarball') -and
+        Check (($valid.packages.name -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel,com.kano.ylframework.gameplay' -and
+            ($valid.entryPackages -join ',') -ceq 'com.kano.ylframework.excel,com.kano.ylframework.gameplay' -and $rows.Count -eq 4 -and [bool]$rows[0]['isDirectDependency'] -eq ($origin -ceq 'LocalTarball') -and
             [string]$rows[0]['contentSha256'] -ceq $valid.packages[0].contentSha256 -and $rows[0]['dependencies'] -is [Newtonsoft.Json.Linq.JObject]) 'Published source/API/directness/semantic evidence is incomplete.'
+        Check ((@($valid.packages[2].dependencies.Keys | Sort-Object) -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets' -and
+            (@($valid.packages[3].dependencies.Keys) -join ',') -ceq 'com.kano.ylframework') 'The published fixture must not make Excel depend on Gameplay.'
+        $depths = Call ArtifactDepths (Request)
+        Check ($depths.Count -eq 4 -and $depths['com.kano.ylframework.excel'] -eq 0 -and $depths['com.kano.ylframework.gameplay'] -eq 0 -and
+            $depths['com.kano.ylframework'] -eq 1 -and $depths['com.kano.ylframework.data-assets'] -eq 1) 'ArtifactDepths must traverse both roots, not put Gameplay behind Excel.'
+        $publishedManifest = [IO.File]::ReadAllText($manifest) | ConvertFrom-Json -AsHashtable
+        $publishedLock = [IO.File]::ReadAllText($lockPath) | ConvertFrom-Json -AsHashtable
+        $expectedDirect = if ($origin -ceq 'Registry') { 'com.kano.ylframework.excel,com.kano.ylframework.gameplay' }
+            else { 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel,com.kano.ylframework.gameplay' }
+        Check ((@($publishedManifest.dependencies.Keys | Sort-Object) -join ',') -ceq $expectedDirect) "$origin must declare exactly its permitted direct roots."
+        foreach ($row in $rows) {
+            $id = [string]$row['name']; $direct = $origin -ceq 'LocalTarball' -or $id -cin @('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')
+            Check ([bool]$row['isDirectDependency'] -eq $direct -and $publishedLock.dependencies[$id].depth -eq $(if ($direct) { 0 } else { 1 })) "$origin API/lock directness and depth differ for $id."
+        }
+        foreach ($fault in @('missing', 'boolean', 'scalar', 'single', 'reversed', 'duplicate', 'extra', 'wrong-primary')) {
+            $r = Request
+            switch ($fault) {
+                'missing' { $null = $r.Remove('entryPackages') }
+                'boolean' { $r['entryPackages'] = [Newtonsoft.Json.Linq.JValue]::new($true) }
+                'scalar' { $r['entryPackages'] = [Newtonsoft.Json.Linq.JValue]::new('com.kano.ylframework.excel') }
+                'single' { $r['entryPackages'] = [Newtonsoft.Json.Linq.JArray]::FromObject(@('com.kano.ylframework.excel')) }
+                'reversed' { $r['entryPackages'] = [Newtonsoft.Json.Linq.JArray]::FromObject(@('com.kano.ylframework.gameplay', 'com.kano.ylframework.excel')) }
+                'duplicate' { $r['entryPackages'] = [Newtonsoft.Json.Linq.JArray]::FromObject(@('com.kano.ylframework.excel', 'com.kano.ylframework.excel')) }
+                'extra' { $r['entryPackages'].Add('com.kano.ylframework') }
+                'wrong-primary' { $r['entryPackage'] = [Newtonsoft.Json.Linq.JValue]::new('com.kano.ylframework.gameplay') }
+            }
+            Reject { Call ValidateInvocation $r } "$origin ExcelGameplay $fault entry roots"
+        }
         if ($origin -ceq 'LocalTarball') {
             $publishedApis[0].packageId = $publishedApis[0].packageId.Replace('/', '\')
             $null = Call CapturePackages (Request); $checks++
         }
-        foreach ($fault in @('source', 'version', 'url', 'package-id', 'direct', 'manifest-direct', 'official-direct', 'sdk-direct', 'lock-source', 'lock-version', 'lock-url', 'lock-depth', 'lock-dependencies', 'api-dependencies', 'expected-dependencies', 'expected-content', 'expected-files', 'outside-root', 'source-copy', 'fingerprint', 'unknown-managed', 'trailing-json', 'duplicate-json', 'comment-json', 'trailing-comma', 'single-quote-json', 'sdk-payload')) {
+        foreach ($fault in @('source', 'version', 'url', 'package-id', 'direct', 'second-root-direct', 'manifest-direct', 'missing-second-root', 'official-direct', 'sdk-direct', 'lock-source', 'lock-version', 'lock-url', 'lock-depth', 'second-root-depth', 'lock-dependencies', 'api-dependencies', 'expected-dependencies', 'expected-content', 'expected-files', 'outside-root', 'source-copy', 'fingerprint', 'unknown-managed', 'trailing-json', 'duplicate-json', 'comment-json', 'trailing-comma', 'single-quote-json', 'sdk-payload')) {
             New-PublishedFixture $origin
             $api = $publishedApis[0]; $path = Join-Path $api.resolvedPath 'package.json'
             switch ($fault) {
@@ -306,7 +436,9 @@ try {
                 'url' { if ($origin -ceq 'Registry') { $api.registry.url += '/wrong' } else { $api.packageId += '.wrong' } }
                 'package-id' { $api.packageId = $api.name + '@file:C:/outside' }
                 'direct' { $api.isDirectDependency = -not $api.isDirectDependency }
+                'second-root-direct' { $publishedApis[3].isDirectDependency = $false }
                 'manifest-direct' { $m = [IO.File]::ReadAllText($manifest) | ConvertFrom-Json -AsHashtable; if ($origin -ceq 'Registry') { $m.dependencies[$api.name] = $api.version } else { $m.dependencies.Remove($api.name) }; Save $manifest $m }
+                'missing-second-root' { $m = [IO.File]::ReadAllText($manifest) | ConvertFrom-Json -AsHashtable; $m.dependencies.Remove('com.kano.ylframework.gameplay'); Save $manifest $m }
                 'official-direct' { $m = [IO.File]::ReadAllText($manifest) | ConvertFrom-Json -AsHashtable; $m.dependencies['com.unity.ugui'] = '1.0.0'; Save $manifest $m }
                 'sdk-direct' { $m = [IO.File]::ReadAllText($manifest) | ConvertFrom-Json -AsHashtable; $m.dependencies['com.code-philosophy.hybridclr'] = '9.0.3'; Save $manifest $m }
                 'api-dependencies' { $publishedApis[2].dependencies = @() }
@@ -325,7 +457,7 @@ try {
                 'sdk-payload' { [IO.File]::WriteAllText((Join-Path $publishedApis[2].resolvedPath 'DOTween.dll'), 'MZsdk') }
                 default {
                     $l = [IO.File]::ReadAllText($lockPath) | ConvertFrom-Json -AsHashtable; $entry = $l.dependencies[$api.name]
-                    switch ($fault) { 'lock-source' { $entry.source = 'local' } 'lock-version' { $entry.version = '0.1.0-preview.2' } 'lock-url' { if ($origin -ceq 'Registry') { $entry.url += '/wrong' } else { $entry.source = 'local' } } 'lock-depth' { $entry.depth = 7 } 'lock-dependencies' { $l.dependencies[$valid.entryPackage].dependencies = @{} } }
+                    switch ($fault) { 'lock-source' { $entry.source = 'local' } 'lock-version' { $entry.version = '0.1.0-preview.2' } 'lock-url' { if ($origin -ceq 'Registry') { $entry.url += '/wrong' } else { $entry.source = 'local' } } 'lock-depth' { $entry.depth = 7 } 'second-root-depth' { $l.dependencies['com.kano.ylframework.gameplay'].depth = 1 } 'lock-dependencies' { $l.dependencies[$valid.entryPackage].dependencies = @{} } }
                     Save $lockPath $l
                 }
             }
@@ -462,13 +594,14 @@ try {
     $assembly = @($editor | Where-Object name -CEQ 'YLFramework.Runtime')[0]
     $null = Boundary ValidateGraph @((Request), $editor, $player); $checks++
     Reject { Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@($editor | Where-Object name -CNE 'YLFramework.Excel.Editor'), $player) } 'a declared product Editor assembly cannot disappear'
-    foreach ($fault in @('Tests', 'Mcp', 'sample', 'player-excel', 'player-miniexcel-reference', 'asset-copy', 'cache-source-escape', 'package-source-escape', 'unknown-package', 'missing-source', 'player-source-drift', 'player-duplicate-source', 'undeclared-product-assembly', 'ordinary-borrowed-runtime', 'ordinary-editor-source-in-player')) {
+    foreach ($fault in @('Tests', 'Mcp', 'sample', 'player-excel', 'player-gameplay-excel', 'player-miniexcel-reference', 'asset-copy', 'cache-source-escape', 'package-source-escape', 'unknown-package', 'missing-source', 'player-source-drift', 'player-duplicate-source', 'undeclared-product-assembly', 'ordinary-borrowed-runtime', 'ordinary-editor-source-in-player')) {
         $bad = [UnityEditor.Compilation.Assembly]::new(); $bad.name = 'Ordinary'; $bad.sourceFiles = @($assembly.sourceFiles)
         switch ($fault) {
             'Tests' { $bad.name = 'YLFramework.Tests' }
             'Mcp' { $bad.compiledAssemblyReferences = @('ReflectorNet.dll') }
             'sample' { $bad.sourceFiles = @('Packages/com.kano.ylframework/Samples~/Example.cs') }
             'player-excel' { $bad.name = 'YLFramework.Excel.Editor' }
+            'player-gameplay-excel' { $bad.name = 'YLFramework.Domain.Excel.Editor' }
             'player-miniexcel-reference' { $bad.compiledAssemblyReferences = @('MiniExcel.dll') }
             'asset-copy' { $bad.sourceFiles = @('Assets/Product/Example.cs') }
             'cache-source-escape' { $bad.sourceFiles = @((Join-Path $repository 'outside.cs')) }
@@ -494,7 +627,9 @@ try {
         foreach ($name in $oldEnvironment.Keys) { Check ([string]$observed[$name] -ceq (Join-Path $cache.path $name)) "Cache environment was not observed from the actual process: $name" }
     } finally { foreach ($name in $oldEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $oldEnvironment[$name]) } }
     "PASS: $checks IntegrationEntry NoUnity typed ownership/API/lock/content/graph/SDK guards. NOT Unity compilation or Registry acceptance."
+    $passed = $true
 } finally {
     foreach ($lease in $leases) { $lease.Dispose() }
-    if ([IO.Directory]::Exists($sandbox)) { $null = @(Get-YLTestTreeFiles $sandbox); [IO.Directory]::Delete($sandbox, $true) }
+    if ($passed -and [IO.Directory]::Exists($sandbox)) { $null = @(Get-YLTestTreeFiles $sandbox); [IO.Directory]::Delete($sandbox, $true) }
+    elseif ([IO.Directory]::Exists($sandbox)) { "Artifacts retained: $sandbox" }
 }

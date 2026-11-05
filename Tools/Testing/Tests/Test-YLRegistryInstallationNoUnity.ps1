@@ -39,6 +39,11 @@ try {
         producer = @{ kind = 'GitHubActions'; repository = 'KONOK-A/YLFramework-dev'; workflow = 'FixtureNotAnApprovedCiRun'; runId = '1'; runAttempt = '1' }; packages = $rows }
     $path = Join-Path $root 'release-manifest.json'; Save $path $receipt
     $release = Read-YLRegistryRelease -Path $path
+    $roots = @('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')
+    $combined = @(Get-YLRegistryClosure -Release $release -EntryPackage $roots[0] -EntryPackages $roots)
+    Check (($combined.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel,com.kano.ylframework.gameplay') 'ExcelGameplay must use its exact four-package closure, not the retired DomainExcel root.'
+    $reversed = @(Get-YLRegistryClosure -Release $release -EntryPackage $roots[1] -EntryPackages @($roots[1], $roots[0]))
+    Check (($reversed.id -join ',') -ceq ($combined.id -join ',')) 'The primary root must be first without changing the composite closure.'
     $controllerSource = Get-YLIntegrationSource -PackageSource Registry -RegistryUrl $url -RegistryVersion $version -ReleaseManifest $path
     Check ($controllerSource.packageOrigin -ceq 'Registry') 'The maintained integration controller did not bind Registry arguments.'
     $requestFields = Get-YLRegistryRequestFields -Source $controllerSource -EntryPackage 'com.kano.ylframework'
@@ -68,10 +73,14 @@ try {
         Check ($manifest.scopedRegistries.Count -eq 1 -and $manifest.scopedRegistries[0].url -ceq $url -and
             $manifest.scopedRegistries[0].scopes[0] -ceq 'com.kano.ylframework' -and 'com.unity' -cnotin $manifest.scopedRegistries[0].scopes) 'Registry scopes leaked outside the approved names.'
     }
-    $domain = @(Get-YLRegistryClosure -Release $release -EntryPackage 'com.kano.ylframework.domain-excel')
-    Check (($domain.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.domain-excel,com.kano.ylframework.excel,com.kano.ylframework.gameplay') 'DomainExcel closure must include exact DataAssets/Excel backend and Gameplay declarations.'
-    $tarManifest = New-YLRegistryHostManifest -PackageSource LocalTarball -Release $release -EntryPackage 'com.kano.ylframework.domain-excel' -RegistryUrl $url
-    Check ($tarManifest.dependencies.Count -eq 5 -and @($tarManifest.dependencies.Values | Where-Object { $_ -notmatch '^file:.+\.tgz$' }).Count -eq 0) 'ArtifactPreflight must use actual UPM tarball locators for its entire own closure.'
+    $domain = $combined
+    $tarManifest = New-YLRegistryHostManifest -PackageSource LocalTarball -Release $release -EntryPackage $roots[0] -EntryPackages $roots -RegistryUrl $url
+    Check ($tarManifest.dependencies.Count -eq 4 -and @($tarManifest.dependencies.Values | Where-Object { $_ -notmatch '^file:.+\.tgz$' }).Count -eq 0) 'ArtifactPreflight must use actual UPM tarball locators for its entire own closure.'
+    foreach ($badRoots in @(@{ roots = @() }, @{ roots = @($roots[0], $roots[0]) }, @{ roots = @($roots[1], $roots[0]) }, @{ roots = @($roots[0], 'unknown') }, @{ roots = @($roots[0], 'com.kano.ylframework') }, @{ roots = @('') })) {
+        Reject { Get-YLRegistryClosure -Release $release -EntryPackage $roots[0] -EntryPackages $badRoots.roots } 'entry|root|primary|composite'
+        Reject { New-YLRegistryHostManifest -PackageSource Registry -Release $release -EntryPackage $roots[0] -EntryPackages $badRoots.roots } 'entry|root|primary|composite'
+        Reject { Get-YLRegistryRequestFields -Source $controllerSource -EntryPackage $roots[0] -EntryPackages $badRoots.roots } 'entry|root|primary|composite'
+    }
     $hybrid = New-YLRegistryHostManifest -PackageSource Registry -Release $release -EntryPackage 'com.kano.ylframework.hybridclr' -RegistryUrl $url
     Check ($hybrid.scopedRegistries[0].scopes.Count -eq 2 -and 'com.code-philosophy.hybridclr' -cin $hybrid.scopedRegistries[0].scopes -and
         -not $hybrid.dependencies.Contains('com.code-philosophy.hybridclr')) 'HybridCLR SDK must be indirect and narrowly routed.'
@@ -114,8 +123,8 @@ try {
     Reject { Get-YLRegistrySource -PackageSource Registry -Arguments @{ ReleaseManifest = $path; RegistryUrl = $url; RegistryVersion = $version; GitRevision = ('a' * 40) } } 'Git'
     Reject { Get-YLRegistrySource -PackageSource Registry -Arguments @{ ReleaseManifest = $path; RegistryUrl = 'https://other.invalid'; RegistryVersion = $version } } 'RegistryUrl|OpenUPM'
     $tarSource = Get-YLRegistrySource -PackageSource LocalTarball -Arguments @{ ReleaseManifest = $path }
-    $tarFields = Get-YLRegistryRequestFields -Source $tarSource -EntryPackage 'com.kano.ylframework.domain-excel'
-    Check ($null -eq $tarFields.registryUrl -and $null -eq $tarFields.registryVersion -and $tarFields.entryPackage -ceq 'com.kano.ylframework.domain-excel') 'Actual LocalTarball entry request must not contain Registry-only fields.'
+    $tarFields = Get-YLRegistryRequestFields -Source $tarSource -EntryPackage $roots[0] -EntryPackages $roots
+    Check ($null -eq $tarFields.registryUrl -and $null -eq $tarFields.registryVersion -and $tarFields.entryPackage -ceq $roots[0] -and ($tarFields.entryPackages -join '|') -ceq ($roots -join '|')) 'Actual LocalTarball entry request must not contain Registry-only fields or lose composite roots.'
     Reject { Initialize-YLRegistryExpectedInputs -Source $tarSource -Output (Join-Path $root 'MissingTarballEvidence') } 'PrerequisiteNotMet:.*tarball'
     $source = Get-YLRegistrySource -PackageSource Registry -Arguments @{ ReleaseManifest = $path; RegistryUrl = $url; RegistryVersion = $version }
     Check ($source.packageOrigin -ceq 'Registry' -and $source.release.sha256 -ceq $release.sha256) 'Registry request lost its frozen release identity.'
@@ -159,29 +168,31 @@ try {
     Reject { Get-YLIntegrationPackageContent -Root $installedRoot -PackageId 'com.kano.ylframework' -NormalizeManifest -AllowManagedFingerprint -FingerprintSource LocalTarball } 'fingerprint'
     Reject { Get-DistributionPackageContent -Root $installedRoot -AllowManagedFingerprint -FingerprintSource LocalTarball } 'fingerprint'
 
-    $entry = 'com.kano.ylframework.domain-excel'
-    $manifest = New-YLRegistryHostManifest -PackageSource Registry -Release $release -EntryPackage $entry -RegistryUrl $url
+    $entry = $roots[0]
+    $manifest = New-YLRegistryHostManifest -PackageSource Registry -Release $release -EntryPackage $entry -EntryPackages $roots -RegistryUrl $url
+    Check ($manifest.dependencies.Count -eq 2 -and $manifest.dependencies[$roots[0]] -ceq $version -and $manifest.dependencies[$roots[1]] -ceq $version) 'Both Registry roots must be direct exact semvers.'
     $actual = @(); $lock = @{ dependencies = @{} }
     foreach ($package in $domain) {
-        $direct = $package.id -ceq $entry
+        $direct = $package.id -cin $roots
         $actual += @{ name = $package.id; version = $version; source = 'Registry'; packageId = $package.id + '@' + $version
             resolvedPath = Join-Path $root ('Host/Library/PackageCache/' + $package.id); isDirectDependency = $direct; registryUrl = $url; dependencies = $package.dependencies }
         $lock.dependencies[$package.id] = @{ version = $version; source = 'registry'; url = $url; dependencies = $package.dependencies }
     }
     $actual += @{ name = 'com.unity.ugui'; version = '2.0.0'; source = 'BuiltIn'; packageId = 'com.unity.ugui@2.0.0'; resolvedPath = 'C:\Editor\BuiltInPackages\com.unity.ugui'; isDirectDependency = $false; registryUrl = $null; dependencies = @{} }
     $lock.dependencies['com.unity.ugui'] = @{ version = '2.0.0'; source = 'builtin'; dependencies = @{} }
-    $depths = @{ $entry = 0 }; $pending = [Collections.Generic.Queue[string]]::new(); $pending.Enqueue($entry)
+    $depths = @{}; $pending = [Collections.Generic.Queue[string]]::new()
+    foreach ($id in $manifest.dependencies.Keys) { $depths[$id] = 0; $pending.Enqueue($id) }
     while ($pending.Count -gt 0) {
         $id = $pending.Dequeue(); $lock.dependencies[$id].depth = $depths[$id]
         foreach ($dependency in $lock.dependencies[$id].dependencies.Keys) {
             if (-not $depths.ContainsKey($dependency)) { $depths[$dependency] = $depths[$id] + 1; $pending.Enqueue($dependency) }
         }
     }
-    Check ($depths.Count -eq 6 -and $depths['com.kano.ylframework.data-assets'] -eq 2 -and
-        $depths['com.kano.ylframework.excel'] -eq 1 -and $depths['com.kano.ylframework.gameplay'] -eq 1 -and $depths['com.unity.ugui'] -eq 2) 'The fixture must represent shortest dependency distances, including transitive DataAssets and direct Gameplay.'
-    $graphArgs = @{ Manifest = $manifest; Lock = $lock; Rows = $actual; Release = $release; EntryPackage = $entry; PackageSource = 'Registry'; RegistryUrl = $url; EditorVersion = '6000.3.27f1'; HostRoot = (Join-Path $root 'Host'); CacheRoot = (Join-Path $root 'Cache') }
+    Check ($depths.Count -eq 5 -and $depths['com.kano.ylframework.data-assets'] -eq 1 -and
+        $depths['com.kano.ylframework.excel'] -eq 0 -and $depths['com.kano.ylframework.gameplay'] -eq 0 -and $depths['com.unity.ugui'] -eq 2) 'The fixture must represent shortest dependency distances from all direct roots.'
+    $graphArgs = @{ Manifest = $manifest; Lock = $lock; Rows = $actual; Release = $release; EntryPackage = $entry; EntryPackages = $roots; PackageSource = 'Registry'; RegistryUrl = $url; EditorVersion = '6000.3.27f1'; HostRoot = (Join-Path $root 'Host'); CacheRoot = (Join-Path $root 'Cache') }
     $evidence = Assert-YLRegistryResolvedGraph @graphArgs
-    Check ($evidence.packages.Count -eq 6 -and $evidence.origin -ceq 'Registry') 'The observed graph lost its Registry/Editor baseline distinction.'
+    Check ($evidence.packages.Count -eq 5 -and $evidence.origin -ceq 'Registry') 'The observed graph lost its Registry/Editor baseline distinction.'
     $foreignOfficial = Copy-Value $graphArgs
     $foreignOfficial.Rows[-1].source = 'Registry'; $foreignOfficial.Rows[-1].registryUrl = 'https://packages.unity.com'
     $foreignOfficial.Rows[-1].resolvedPath = 'C:\foreign-global-cache\com.unity.ugui'
@@ -203,7 +214,7 @@ try {
         } else { $tarGraphArgs.Lock.dependencies[$row.name].depth = 1 }
     }
     $tarEvidence = Assert-YLRegistryResolvedGraph @tarGraphArgs
-    Check ($tarEvidence.origin -ceq 'LocalTarball' -and $tarEvidence.directPackages.Count -eq 5) 'Actual tarball graph must preserve direct locator closure, not Registry indirectness.'
+    Check ($tarEvidence.origin -ceq 'LocalTarball' -and $tarEvidence.directPackages.Count -eq 4) 'Actual tarball graph must preserve direct locator closure, not Registry indirectness.'
     foreach ($fault in @('tar-git', 'tar-folder', 'tar-version', 'tar-depth', 'tar-indirect')) {
         $arguments = Copy-Value $tarGraphArgs
         switch ($fault) {
@@ -215,17 +226,19 @@ try {
         }
         Reject { Assert-YLRegistryResolvedGraph @arguments } 'source|lock|depth|direct|graph|package'
     }
-    foreach ($fault in @('predeclared', 'boolean-scope-url', 'boolean-lock-url', 'wrong-source', 'wrong-direct', 'wrong-url', 'lock-depth', 'transitive-lock-depth', 'missing-backend', 'lock-version', 'lock-deps', 'package-id', 'foreign-cache', 'foreign-package', 'unreachable-official', 'official-version')) {
+    foreach ($fault in @('predeclared', 'missing-root', 'second-root-depth', 'boolean-scope-url', 'boolean-lock-url', 'wrong-source', 'wrong-direct', 'wrong-url', 'lock-depth', 'transitive-lock-depth', 'missing-backend', 'lock-version', 'lock-deps', 'package-id', 'foreign-cache', 'foreign-package', 'unreachable-official', 'official-version')) {
         $arguments = Copy-Value $graphArgs
         switch ($fault) {
             predeclared { $arguments.Manifest.dependencies['com.kano.ylframework'] = $version }
+            'missing-root' { $arguments.Manifest.dependencies.Remove($roots[1]) }
+            'second-root-depth' { $arguments.Lock.dependencies[$roots[1]].depth = 1 }
             'boolean-scope-url' { $arguments.Manifest.scopedRegistries[0].url = $true }
             'boolean-lock-url' { $arguments.Lock.dependencies[$entry].url = $true }
             'wrong-source' { $arguments.Rows[0].source = 'Git' }
             'wrong-direct' { $arguments.Rows[0].isDirectDependency = $true }
             'wrong-url' { $arguments.Rows[0].registryUrl = 'https://other.invalid' }
             'lock-depth' { $arguments.Lock.dependencies[$entry].depth = 1 }
-            'transitive-lock-depth' { $arguments.Lock.dependencies['com.kano.ylframework.data-assets'].depth = 1 }
+            'transitive-lock-depth' { $arguments.Lock.dependencies['com.kano.ylframework.data-assets'].depth = 2 }
             'missing-backend' { $arguments.Rows = @($arguments.Rows | Where-Object name -cne 'com.kano.ylframework.data-assets'); $arguments.Lock.dependencies.Remove('com.kano.ylframework.data-assets') }
             'lock-version' { $arguments.Lock.dependencies[$entry].version = '0.0.1' }
             'lock-deps' { $arguments.Lock.dependencies[$entry].dependencies = @{} }

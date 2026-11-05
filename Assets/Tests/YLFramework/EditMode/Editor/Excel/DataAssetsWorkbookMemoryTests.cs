@@ -8,6 +8,7 @@ using YLFramework.Editor.DataAssets;
 
 namespace YLFramework.Tests.Extensions.Data
 {
+    [Category("YL.Module.Excel")]
     public class DataAssetsWorkbookMemoryTests
     {
         private ScriptableObjectConfigs _root;

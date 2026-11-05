@@ -32,14 +32,6 @@
       "samples": []
     },
     {
-      "id": "com.kano.ylframework.domain-excel",
-      "assemblies": [
-        { "name": "YLFramework.Domain.Excel.Editor", "path": "Editor/YLFramework.Domain.Excel.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
-      ],
-      "requiredFiles": ["Editor/Dependencies.json"],
-      "samples": []
-    },
-    {
       "id": "com.kano.ylframework.dotween",
       "assemblies": [
         { "name": "YLFramework.Actions.DOTween", "path": "Runtime/YLFramework.Actions.DOTween.asmdef", "player": true, "defineConstraints": ["DOTWEEN"], "versionDefines": [] }
@@ -50,9 +42,12 @@
     {
       "id": "com.kano.ylframework.excel",
       "assemblies": [
-        { "name": "YLFramework.Excel.Editor", "path": "Editor/YLFramework.Excel.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+        { "name": "YLFramework.Excel.Editor", "path": "Editor/YLFramework.Excel.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Domain.Excel.Editor", "path": "Editor/Gameplay/YLFramework.Domain.Excel.Editor.asmdef", "player": false, "defineConstraints": ["YL_GAMEPLAY_PACKAGE"], "versionDefines": [
+          { "name": "com.kano.ylframework.gameplay", "expression": "0.0.0", "define": "YL_GAMEPLAY_PACKAGE" }
+        ] }
       ],
-      "requiredFiles": ["Editor/Plugins/MiniExcel.dll", "Editor/Licenses/MiniExcel-LICENSE.txt", "Editor/Licenses/MiniExcel-ATTRIBUTION.txt", "Editor/Dependencies.json"],
+      "requiredFiles": ["Editor/Plugins/MiniExcel.dll", "Editor/Licenses/MiniExcel-LICENSE.txt", "Editor/Licenses/MiniExcel-ATTRIBUTION.txt", "Editor/Dependencies.json", "Editor/DataAssetsWorkbookMemory.cs", "Editor/DataAssetsWorkbookWindow.cs", "Editor/Gameplay/DomainExcelCommands.cs", "Editor/Gameplay/Dependencies.json"],
       "samples": []
     },
     {

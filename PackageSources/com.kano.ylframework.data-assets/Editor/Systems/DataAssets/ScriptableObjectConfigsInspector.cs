@@ -1,4 +1,3 @@
-using System.IO;
 using UnityEditor;
 using UnityEngine;
 using YLFramework.DataAssets;
@@ -9,7 +8,7 @@ namespace YLFramework.Editor.DataAssets
     [CustomEditor(typeof(ScriptableObjectConfigs), true)]
     public sealed class ScriptableObjectConfigsInspector : UnityEditor.Editor
     {
-        /// <summary>编辑根显示字段与类型约束，并提供显式保存及本机工作簿定位入口。</summary>
+        /// <summary>编辑根显示字段与类型约束，并提供显式保存入口；工作簿操作由可选Excel作者面板负责。</summary>
         public override void OnInspectorGUI()
         {
             var root = (ScriptableObjectConfigs)target;
@@ -45,18 +44,6 @@ namespace YLFramework.Editor.DataAssets
             if (GUILayout.Button("Save Root And Owned Entries"))
             {
                 ScriptableObjectConfigsController.Save(root);
-            }
-            // 路径只记在本机EditorPrefs，按资产GUID关联；不写入配置资产，也不随仓库分发。
-            var remembered = DataAssetsWorkbookMemory.TryGetPath(root, out var workbook);
-            var exists = remembered && File.Exists(workbook);
-            using (new EditorGUI.DisabledScope(!exists))
-            {
-                var content = new GUIContent("在文件夹中打开Excel",
-                    !remembered ? "尚未导出过Excel" : exists ? workbook : "最近导出的文件不存在: " + workbook);
-                if (GUILayout.Button(content) && exists)
-                {
-                    DataAssetsWorkbookMemory.Reveal(root);
-                }
             }
         }
 

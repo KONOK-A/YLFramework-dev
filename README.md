@@ -25,8 +25,7 @@ YLFramework 是一个面向 Unity 的开源 C# 游戏开发框架。
 | --- | --- |
 | [`com.kano.ylframework`](PackageSources/com.kano.ylframework/README.md) | Runtime / Editor 主体、正式资源、文档及需显式导入的 Resource Startup 样例 |
 | [`com.kano.ylframework.dotween`](PackageSources/com.kano.ylframework.dotween/README.md) | 可选 Action 适配，DOTween SDK 外置 |
-| [`com.kano.ylframework.excel`](PackageSources/com.kano.ylframework.excel/README.md) | 可选 Editor 作者后端，附 MiniExcel 及 Apache-2.0 许可 |
-| [`com.kano.ylframework.domain-excel`](PackageSources/com.kano.ylframework.domain-excel/README.md) | 可选领域表格作者工具，复用 Excel 包，安装即可启用 |
+| [`com.kano.ylframework.excel`](PackageSources/com.kano.ylframework.excel/README.md) | 完整Editor工作簿作者流程，附MiniExcel/许可；同装Gameplay时启用内置领域适配，无独立DomainExcel包 |
 | [`com.kano.ylframework.hybridclr`](PackageSources/com.kano.ylframework.hybridclr/README.md) | 可选热更适配，官方 SDK `9.0.3` 与匹配的 native 外置 |
 
 主要脚本依赖方向如下（不展开 Unity / Json.NET 等底层引用）；现有程序集名和 namespace 保留，不将每个功能目录拆成 DLL：
@@ -38,9 +37,10 @@ flowchart LR
     DOTween --> DOTweenSDK[DOTween SDK 1.2.825 外置]
     Excel[YLFramework.Excel.Editor] --> Editor
     Excel --> Runtime
-    DomainExcel[YLFramework.Domain.Excel.Editor] --> Excel
+    DomainExcel[YLFramework.Domain.Excel.Editor 条件] --> Excel
     DomainExcel --> Editor
     DomainExcel --> Runtime
+    DomainExcel --> Gameplay[Gameplay Runtime / Editor]
     HybridCLREditor[YLFramework.HybridCLR.Editor] --> HybridCLR[YLFramework.HybridCLR]
     HybridCLREditor --> Editor
     HybridCLREditor --> Runtime

@@ -36,7 +36,9 @@ try {
         $deps = Get-YLFixtureInternalDependencies -PackageId $id -Version $version
         if ($id.EndsWith('.hybridclr')) { $deps['com.code-philosophy.hybridclr'] = '9.0.3' }
         $line = 'package.json' + [char]0 + ('b' * 64) + "`n"
-        @{ id = $id; version = $version; dependencies = $deps; assetName = "$id-$version.tgz"; sha256 = ('a' * 64)
+        $archive = Join-Path $root "$id-$version.tgz"
+        [IO.File]::WriteAllText($archive, 'NoUnity protocol bytes only, not an installable or publishable release.')
+        @{ id = $id; version = $version; dependencies = $deps; assetName = "$id-$version.tgz"; sha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
             integrity = 'sha512-' + [Convert]::ToBase64String([byte[]]::new(64)); files = @(@{ path = 'package.json'; sha256 = ('a' * 64); contentSha256 = ('b' * 64) })
             payloadSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($line))).ToLowerInvariant() }
     })
@@ -49,8 +51,10 @@ try {
     $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
     # Only the external Editor/UPM boundary is substituted. Ownership, files, reports and the entry run for real.
     $editor = [pscustomobject]@{ version = '2022.3.62f3'; productVersion = $info.ProductVersion; fileVersion = "$($info.FileMajorPart).$($info.FileMinorPart).$($info.FileBuildPart)" }
-    $arguments = @{ Workspace = $workspace; Source = $source; Unity = $exe; Editor = $editor; EntryPackage = 'com.kano.ylframework.domain-excel'; Result = $run; TimeoutSeconds = 30 }
-    foreach ($origin in @('File', 'GitRemote', 'LocalTarball')) {
+    $roots = @('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')
+    $arguments = @{ Workspace = $workspace; Source = $source; Unity = $exe; Editor = $editor; EntryPackage = $roots[0]; EntryPackages = $roots; Result = $run; TimeoutSeconds = 30 }
+    Check ((Get-Command Invoke-YLRegistryLifecycle).Parameters.ContainsKey('EntryPackages')) 'Lifecycle must accept the explicit composite roots instead of the retired DomainExcel root.'
+    foreach ($origin in @('File', 'GitRemote')) {
         $bad = $source.Clone(); $bad.packageOrigin = $origin
         $badArguments = $arguments.Clone(); $badArguments.Source = $bad
         Reject { Invoke-YLRegistryLifecycle @badArguments } 'Registry'
@@ -66,13 +70,14 @@ try {
     Reject { [YLFramework.Testing.RegistryLifecycleEntry]::Execute() } 'request|explicit'
     Check ([UnityEditor.EditorApplication]::ExitCodes.Count -eq 0) 'An invocation without a request acquired exit authority.'
 
-    $script:fault = ''; $script:scenarioEntry = 'com.kano.ylframework.domain-excel'; $script:reload = $false; $script:guardsChecked = $false; $script:starts = [Collections.Generic.List[object]]::new()
+    $script:fault = ''; $script:scenarioEntry = $roots[0]; $script:scenarioRoots = $roots; $script:reload = $false; $script:legacy = $false; $script:guardsChecked = $false; $script:starts = [Collections.Generic.List[object]]::new()
     function Invoke-YLTestProcess {
         param([Diagnostics.ProcessStartInfo] $StartInfo, [string] $Log, [int] $TimeoutMilliseconds)
         $argv = [string[]]@($StartInfo.ArgumentList)
         Check ('-quit' -cnotin $argv -and '-batchmode' -cin $argv) 'An asynchronous lifecycle operation must not use -quit or an interactive Editor.'
         $requestPath = $argv[[Array]::IndexOf($argv, '-ylRegistryLifecycleRequest') + 1]
         $request = Read-YLPackageEvidenceJson $requestPath
+        if ($script:legacy) { $request.Remove('entryPackages'); $request.Remove('verifyCombinations'); Save $requestPath $request }
         $script:starts.Add(@{ host = $StartInfo.WorkingDirectory; cache = $StartInfo.Environment['UPM_CACHE_ROOT']; phase = $request.phase })
         [UnityEngine.Application]::dataPath = Join-Path $StartInfo.WorkingDirectory 'Assets'
         [UnityEngine.Application]::isBatchMode = $true
@@ -90,24 +95,26 @@ try {
             $lockPath = Join-Path $hostRoot 'Packages/packages-lock.json'
             if ($request.phase -ceq 'Inspect') {
                 # This literal fixture is independent of the request's expected closure.
-                $ids = switch -CaseSensitive ($script:scenarioEntry) {
-                    'com.kano.ylframework' { @('com.kano.ylframework') }
-                    'com.kano.ylframework.data-assets' { @('com.kano.ylframework', 'com.kano.ylframework.data-assets') }
-                    'com.kano.ylframework.excel' { @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel') }
-                    'com.kano.ylframework.domain-excel' { @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay') }
-                    'com.kano.ylframework.gameplay' { @('com.kano.ylframework', 'com.kano.ylframework.gameplay') }
-                    'com.kano.ylframework.dotween' { @('com.kano.ylframework', 'com.kano.ylframework.dotween') }
-                    'com.kano.ylframework.hybridclr' { @('com.kano.ylframework', 'com.kano.ylframework.hybridclr', 'com.code-philosophy.hybridclr') }
-                    default { throw 'Unknown contract scenario.' }
+                $fixtureIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                $fixturePending = [Collections.Generic.Queue[string]]::new([string[]]$script:scenarioRoots)
+                while ($fixturePending.Count) {
+                    $id = $fixturePending.Dequeue(); if (-not $fixtureIds.Add($id)) { continue }
+                    if ($id -ceq 'com.code-philosophy.hybridclr') { continue }
+                    foreach ($dependency in (Get-YLFixtureInternalDependencies -PackageId $id -Version $version).Keys) { $fixturePending.Enqueue($dependency) }
+                    if ($id -ceq 'com.kano.ylframework.hybridclr') { $fixturePending.Enqueue('com.code-philosophy.hybridclr') }
                 }
+                $ids = @($fixtureIds | Sort-Object -CaseSensitive)
+                $manifest = Read-YLPackageEvidenceJson $manifestPath
                 $apis = @(foreach ($id in $ids) {
                     $api = [UnityEditor.PackageManager.PackageInfo]::new()
-                    $api.name = $id; $api.version = $(if ($id -ceq 'com.code-philosophy.hybridclr') { '9.0.3' } else { '0.1.0-preview.1' }); $api.packageId = $id + '@' + $api.version
-                    $api.source = [UnityEditor.PackageManager.PackageSource]::Registry; $api.isDirectDependency = $id -ceq $script:scenarioEntry
+                    $api.name = $id; $api.version = $(if ($id -ceq 'com.code-philosophy.hybridclr') { '9.0.3' } else { '0.1.0-preview.1' })
+                    $local = $request.packageOrigin -ceq 'LocalTarball' -and $id -cne 'com.code-philosophy.hybridclr'
+                    $api.packageId = $id + '@' + $(if ($local) { $manifest.dependencies[$id] } else { $api.version })
+                    $api.source = if ($local) { [UnityEditor.PackageManager.PackageSource]::LocalTarball } else { [UnityEditor.PackageManager.PackageSource]::Registry }; $api.isDirectDependency = $manifest.dependencies.Contains($id)
                     $api.resolvedPath = Join-Path $hostRoot ('Library/PackageCache/' + $id)
                     $null = [IO.Directory]::CreateDirectory($api.resolvedPath)
                     [IO.File]::WriteAllText((Join-Path $api.resolvedPath 'cached.bytes'), 'cache may survive removal')
-                    $api.registry = [UnityEditor.PackageManager.RegistryInfo]::new(); $api.registry.url = 'https://package.openupm.com'
+                    if (-not $local) { $api.registry = [UnityEditor.PackageManager.RegistryInfo]::new(); $api.registry.url = 'https://package.openupm.com' }
                     $deps = if ($id -ceq 'com.code-philosophy.hybridclr') { @{} } else { Get-YLFixtureInternalDependencies -PackageId $id -Version $version }
                     if ($id -ceq 'com.kano.ylframework.hybridclr') { $deps['com.code-philosophy.hybridclr'] = '9.0.3' }
                     $api.dependencies = @($deps.GetEnumerator() | ForEach-Object { $d = [UnityEditor.PackageManager.DependencyInfo]::new(); $d.name = $_.Key; $d.version = $_.Value; $d })
@@ -117,9 +124,10 @@ try {
                 $lock = @{ dependencies = @{} }
                 foreach ($api in $apis) {
                     $deps = @{}; foreach ($d in $api.dependencies) { $deps[$d.name] = $d.version }
-                    $lock.dependencies[$api.name] = @{ version = $api.version; source = 'registry'; url = 'https://package.openupm.com'; dependencies = $deps }
+                    $lock.dependencies[$api.name] = @{ version = $(if ($api.source -eq [UnityEditor.PackageManager.PackageSource]::LocalTarball) { $manifest.dependencies[$api.name] } else { $api.version }); source = $(if ($api.source -eq [UnityEditor.PackageManager.PackageSource]::LocalTarball) { 'local-tarball' } else { 'registry' }); url = 'https://package.openupm.com'; dependencies = $deps }
                 }
-                $depths = @{ $script:scenarioEntry = 0 }; $pending = [Collections.Generic.Queue[string]]::new(); $pending.Enqueue($script:scenarioEntry)
+                $depths = @{}; $pending = [Collections.Generic.Queue[string]]::new()
+                foreach ($id in $manifest.dependencies.Keys) { $depths[$id] = 0; $pending.Enqueue($id) }
                 while ($pending.Count -gt 0) {
                     $id = $pending.Dequeue(); $lock.dependencies[$id].depth = $depths[$id]
                     foreach ($dependency in $lock.dependencies[$id].dependencies.Keys) {
@@ -127,13 +135,13 @@ try {
                     }
                 }
                 Check ($depths.Count -eq $apis.Count) 'The observed fixture contains a package outside its declared dependency closure.'
-                if ($script:scenarioEntry -ceq 'com.kano.ylframework.domain-excel') {
-                    Check ($depths.Count -eq 5 -and $depths['com.kano.ylframework'] -eq 1 -and $depths['com.kano.ylframework.data-assets'] -eq 2 -and
-                        $depths['com.kano.ylframework.excel'] -eq 1 -and $depths['com.kano.ylframework.gameplay'] -eq 1) 'DomainExcel must reach its full five-package closure at the shortest dependency depths.'
+                if ($script:scenarioRoots.Count -eq 2) {
+                    Check ($depths.Count -eq 4 -and $depths['com.kano.ylframework.excel'] -eq 0 -and $depths['com.kano.ylframework.gameplay'] -eq 0 -and
+                        $depths['com.kano.ylframework.data-assets'] -eq $(if ($request.packageOrigin -ceq 'Registry') { 1 } else { 0 })) 'ExcelGameplay must reach its four-package closure from both direct roots.'
                 }
                 Save $lockPath $lock
                 if ($script:fault -ceq 'lock-depth') { $lock.dependencies[$script:scenarioEntry].depth = 7; Save $lockPath $lock }
-                if ($script:fault -ceq 'transitive-lock-depth') { $lock.dependencies['com.kano.ylframework.data-assets'].depth = 1; Save $lockPath $lock }
+                if ($script:fault -ceq 'transitive-lock-depth') { $lock.dependencies['com.kano.ylframework.data-assets'].depth = 7; Save $lockPath $lock }
                 if ($script:fault -ceq 'missing-backend') { [UnityEditor.PackageManager.PackageInfo]::Registered = @($apis | Where-Object name -cne 'com.kano.ylframework.data-assets'); $lock.dependencies.Remove('com.kano.ylframework.data-assets'); Save $lockPath $lock }
                 if ($script:fault -ceq 'missing-gameplay') { [UnityEditor.PackageManager.PackageInfo]::Registered = @($apis | Where-Object name -cne 'com.kano.ylframework.gameplay'); $lock.dependencies.Remove('com.kano.ylframework.gameplay'); Save $lockPath $lock }
                 if ($script:fault -ceq 'gameplay-lock-depth') { $lock.dependencies['com.kano.ylframework.gameplay'].depth = 2; Save $lockPath $lock }
@@ -143,13 +151,15 @@ try {
             if ($script:fault -ceq 'manifest-extra') { $m = Read-YLPackageEvidenceJson $manifestPath; $m.unapproved = $true; Save $manifestPath $m }
             if ($script:fault -ceq 'cache-environment') { [Environment]::SetEnvironmentVariable('UPM_CACHE_PATH', (Join-Path $root 'foreign-cache')) }
             [UnityEditor.PackageManager.Client]::Configure($manifestPath, $lockPath, ($script:fault -ceq 'remove-failed'), ($script:fault -ceq 'indirect-remains'))
+            [UnityEditor.PackageManager.Client]::FakeRestore = $script:fault -ceq 'fake-restore'
+            [UnityEditor.PackageManager.Client]::PreserveRemoval = $(if ($script:fault -ceq 'incomplete-remove') { 'com.kano.ylframework.data-assets' } else { '' })
             if ($script:fault -ceq 'request-only') { [UnityEditor.PackageManager.PackageInfo]::Registered = @(); Save $lockPath @{ dependencies = @{} } }
             $values = [object[]]::new(1); $values[0] = $argv
             if (-not $script:guardsChecked) {
                 $requestBytes = [IO.File]::ReadAllBytes($requestPath)
                 foreach ($field in $request.Keys) {
-                    $bad = Copy-Value $request; $bad[$field] = $true
-                    try { Save $requestPath $bad; Reject { Call-Entry $begin $values } 'field|schema|string|integer|identity|request' }
+                    $bad = Copy-Value $request; $bad[$field] = $(if ($field -ceq 'verifyCombinations') { 'not-a-boolean' } else { $true })
+                    try { Save $requestPath $bad; Reject { Call-Entry $begin $values } 'field|schema|string|integer|identity|request|array|root' }
                     finally { [IO.File]::WriteAllBytes($requestPath, $requestBytes) }
                 }
                 foreach ($field in @('hostId', 'cacheId', 'resultId', 'workspaceId', 'inputHash', 'releaseManifestSha256', 'inputReceiptSha256', 'neutralReceiptSha256', 'originalManifestSha256')) {
@@ -174,6 +184,14 @@ try {
                     try { [IO.File]::WriteAllText($requestPath, $invalidJson); Reject { Call-Entry $begin $values } 'JSON' }
                     finally { [IO.File]::WriteAllBytes($requestPath, $requestBytes) }
                 }
+                foreach ($invalid in @(@{ roots = @() }, @{ roots = @($roots[0], $roots[0]) }, @{ roots = @($roots[1], $roots[0]) }, @{ roots = @($roots[0], 'unknown') }, @{ roots = @($roots[0], 'com.kano.ylframework') })) {
+                    $bad = Copy-Value $request; $bad.entryPackages = $invalid.roots
+                    try { Save $requestPath $bad; Reject { Call-Entry $begin $values } 'root|entry|primary|composite' }
+                    finally { [IO.File]::WriteAllBytes($requestPath, $requestBytes) }
+                }
+                $bad = Copy-Value $request; $bad.unapproved = 'unknown fields remain forbidden'
+                try { Save $requestPath $bad; Reject { Call-Entry $begin $values } 'field|schema' }
+                finally { [IO.File]::WriteAllBytes($requestPath, $requestBytes) }
                 [UnityEngine.Application]::isBatchMode = $false
                 Reject { Call-Entry $begin $values } 'batch|authority'
                 [UnityEngine.Application]::isBatchMode = $true
@@ -192,20 +210,22 @@ try {
             Call-Entry $begin $values
             for ($i = 0; $i -lt 30 -and [UnityEditor.EditorApplication]::ExitCodes.Count -eq 0; $i++) {
                 [UnityEditor.EditorApplication]::Pump()
-                if ($script:reload -and $request.phase -ceq 'Remove' -and [UnityEditor.PackageManager.Client]::RemoveCalls -gt 0 -and $i -eq 2) {
+                if ($script:reload -and ([UnityEditor.PackageManager.Client]::RemoveCalls + [UnityEditor.PackageManager.Client]::AddAndRemoveCalls) -gt 0 -and $i -eq 2) {
                     $statePath = Join-Path $request.output 'operation.json'; $stateBytes = [IO.File]::ReadAllBytes($statePath)
-                    foreach ($field in @('requestSha256', 'hostId', 'resultId', 'cacheId', 'pid', 'unexpected')) {
+                    foreach ($field in @('requestSha256', 'hostId', 'resultId', 'cacheId', 'pid', 'unexpected', 'phase', 'entryPackages', 'removePackages', 'addPackages')) {
                         $badState = Read-YLPackageEvidenceJson $statePath
-                        $badState[$field] = $(if ($field -ceq 'pid') { 0 } elseif ($field -ceq 'requestSha256') { '0' * 64 } else { '0' * 32 })
-                        try { Save $statePath $badState; Reject { Call-Entry $resume $values } 'state|bound|request|owner|field' }
+                        if ($field -cin @('entryPackages', 'removePackages', 'addPackages')) { $badState[$field] = @('wrong') }
+                        else { $badState[$field] = $(if ($field -ceq 'pid') { 0 } elseif ($field -ceq 'requestSha256') { '0' * 64 } else { '0' * 32 }) }
+                        try { Save $statePath $badState; Reject { Call-Entry $resume $values } 'state|bound|request|owner|field|array|target' }
                         finally { [IO.File]::WriteAllBytes($statePath, $stateBytes) }
                     }
-                    [UnityEditor.PackageManager.Client]::CompleteRemoval()
+                    if ($script:fault -cne 'reload-unapplied') { [UnityEditor.PackageManager.Client]::CompleteRemoval() }
                     [UnityEditor.EditorApplication]::Reset()
                     Call-Entry $resume $values
                 }
             }
             Check ([UnityEditor.EditorApplication]::ExitCodes.Count -eq 1) 'The owned operation did not reach a terminal report/exit.'
+            Check (([UnityEditor.PackageManager.Client]::RemoveCalls + [UnityEditor.PackageManager.Client]::AddAndRemoveCalls) -le 1) 'A lost asynchronous operation was reissued instead of observed.'
             if ($request.phase -ceq 'Inspect' -and $script:fault -cin @('report-pid', 'report-cache')) {
                 $reportPath = Join-Path $request.output 'report.json'; $r = Read-YLPackageEvidenceJson $reportPath
                 if ($script:fault -ceq 'report-pid') { $r.pid = $PID + 1 } else { $r.cacheEnvironment.UPM_CACHE_PATH = Join-Path $root 'not-owned' }
@@ -214,11 +234,29 @@ try {
             if ($request.phase -ceq 'Remove' -and $script:fault -ceq 'operation-owner-report') {
                 $reportPath = Join-Path $request.output 'report.json'; $r = Read-YLPackageEvidenceJson $reportPath; $r.removal.hostId = '0' * 32; Save $reportPath $r
             }
+            if ($request.phase -ceq 'RestoreExcel' -and $script:fault -ceq 'operation-target-report') {
+                $reportPath = Join-Path $request.output 'report.json'; $r = Read-YLPackageEvidenceJson $reportPath; $r.removal.addPackages = @('com.kano.ylframework.excel@wrong'); Save $reportPath $r
+            }
+            if ($request.phase -ceq 'Inspect' -and $script:fault -ceq 'joined-report-roots') {
+                $reportPath = Join-Path $request.output 'report.json'; $r = Read-YLPackageEvidenceJson $reportPath
+                $r.entryPackages = @(($request.entryPackages -join '|')); Save $reportPath $r
+            }
+            if (($request.phase -ceq 'RemoveExcel' -and $script:fault -cin @('joined-operation-roots', 'joined-operation-remove')) -or
+                ($request.phase -ceq 'RestoreExcel' -and $script:fault -ceq 'joined-operation-add')) {
+                $reportPath = Join-Path $request.output 'report.json'; $r = Read-YLPackageEvidenceJson $reportPath
+                $field = if ($script:fault -ceq 'joined-operation-roots') { 'entryPackages' } elseif ($script:fault -ceq 'joined-operation-remove') { 'removePackages' } else { 'addPackages' }
+                $r.removal[$field] = @(($r.removal[$field] -join '|'))
+                Save $reportPath $r; Save (Join-Path $request.output 'operation.json') $r.removal
+            }
+            if ($request.phase -ceq 'VerifyGameplayOnly' -and $script:fault -ceq 'compiled-reference-leak') {
+                $reportPath = Join-Path $request.output 'report.json'; $r = Read-YLPackageEvidenceJson $reportPath; $r.compilation.player[0].compiledAssemblyReferences = @('MiniExcel.dll'); Save $reportPath $r
+            }
             if ($request.phase -ceq 'Inspect' -and $script:fault -cin @('neutral-receipt-drift', 'input-receipt-drift')) {
                 $changedPath = if ($script:fault -ceq 'neutral-receipt-drift') { $request.neutralReceipt } else { Join-Path $request.hostRoot '.yl-inputs.json' }
                 $changedReceipt = Read-YLPackageEvidenceJson $changedPath; $changedReceipt.unregistered = 'must not be adopted by the next request'; Save $changedPath $changedReceipt
             }
             if ($script:fault -ceq 'sentinel' -and $request.phase -ceq 'VerifyRemoved') { [IO.File]::AppendAllText((Join-Path $hostRoot 'Assets/RegistryLifecycleSentinels/user-state.bytes'), 'drift') }
+            if ($script:fault -ceq 'sentinel-meta' -and $request.phase -ceq 'VerifyExcelOnly') { [IO.File]::AppendAllText((Join-Path $hostRoot 'Assets/RegistryLifecycleSentinels/user-state.bytes.meta'), 'drift') }
             $code = [UnityEditor.EditorApplication]::ExitCodes[0]
             return [pscustomobject]@{ status = $(if ($code -eq 0) { 'Exited' } else { 'NonZeroExit' }); pid = $PID; observedExit = $true; exitCode = $code
                 timedOut = $false; cancelled = ($script:fault -ceq 'cancelled'); forcedCleanup = ($script:fault -ceq 'forced-cleanup'); observerError = $null; cleanupError = $null; jobAssigned = $true; activeProcesses = 0; streamsDrained = $true }
@@ -235,13 +273,13 @@ try {
             $report.status -ceq 'Completed' -and $report.phase -ceq $phase.phase -and
             $report.requestSha256 -ceq (Get-FileHash -LiteralPath (Join-Path $phase.output 'request.json') -Algorithm SHA256).Hash.ToLowerInvariant()) 'A completed lifecycle phase must retain its independently read report, request binding and normal exit.'
         if ($phase.phase -cin @('Inspect', 'Reopen')) {
-            Check (($phase.graph.packages.name -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.domain-excel,com.kano.ylframework.excel,com.kano.ylframework.gameplay' -and
-                ($report.packages.name -join ',') -ceq ($phase.graph.packages.name -join ',')) 'Initial and warm phase receipts must retain the full observed DomainExcel closure.'
-            Check ($lock.dependencies.Count -eq 5 -and $lock.dependencies['com.kano.ylframework.domain-excel'].depth -eq 0 -and
-                $lock.dependencies['com.kano.ylframework'].depth -eq 1 -and $lock.dependencies['com.kano.ylframework.data-assets'].depth -eq 2 -and
-                $lock.dependencies['com.kano.ylframework.excel'].depth -eq 1 -and $lock.dependencies['com.kano.ylframework.gameplay'].depth -eq 1) 'Initial and warm lock receipts must retain the shortest dependency depths for all five packages.'
+            Check (($phase.graph.packages.name -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel,com.kano.ylframework.gameplay' -and
+                ($report.packages.name -join ',') -ceq ($phase.graph.packages.name -join ',')) 'Initial and warm phase receipts must retain the full observed ExcelGameplay closure.'
+            Check ($lock.dependencies.Count -eq 4 -and $lock.dependencies['com.kano.ylframework.excel'].depth -eq 0 -and
+                $lock.dependencies['com.kano.ylframework'].depth -eq 1 -and $lock.dependencies['com.kano.ylframework.data-assets'].depth -eq 1 -and
+                $lock.dependencies['com.kano.ylframework.gameplay'].depth -eq 0) 'Initial and warm lock receipts must retain shortest distances from both roots.'
         } else {
-            Check ($phase.graph.packages.Count -eq 0 -and $report.packages.Count -eq 0 -and $lock.dependencies.Count -eq 0) 'Remove and VerifyRemoved receipts must exclude the entry and all four indirect fixture packages, including Gameplay.'
+            Check ($phase.graph.packages.Count -eq 0 -and $report.packages.Count -eq 0 -and $lock.dependencies.Count -eq 0) 'Remove and VerifyRemoved receipts must exclude both roots and their indirect fixture packages.'
         }
     }
     Check (@($starts.host | Sort-Object -Unique).Count -eq 1 -and @($starts.cache | Sort-Object -Unique).Count -eq 1) 'Warm reopen and uninstall must preserve their own host/cache.'
@@ -252,18 +290,24 @@ try {
     Check ([IO.File]::Exists((Join-Path $outcome.host.path 'Library/PackageCache/com.kano.ylframework/cached.bytes'))) 'Cached files were incorrectly deleted to force uninstall success.'
     $asmdef = Read-YLPackageEvidenceJson (Join-Path $outcome.host.path 'Assets/RegistryLifecycle/Editor/RegistryLifecycle.asmdef')
     Check ($asmdef.references.Count -eq 0 -and $asmdef.overrideReferences -and $asmdef.precompiledReferences.Count -eq 0 -and ($asmdef.includePlatforms -join ',') -ceq 'Editor') 'The neutral probe inherited product/SDK/Json.NET references or entered Player compilation.'
-    foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay', 'com.kano.ylframework.dotween', 'com.kano.ylframework.hybridclr')) {
-        $script:scenarioEntry = $id; $caseArguments = $arguments.Clone(); $caseArguments.EntryPackage = $id
+    foreach ($id in $packages.id) {
+        $script:scenarioEntry = $id; $script:scenarioRoots = @($id); $caseArguments = $arguments.Clone(); $caseArguments.EntryPackage = $id; $caseArguments.Remove('EntryPackages')
+        $script:legacy = $id -ceq 'com.kano.ylframework.excel'
         $case = Invoke-YLRegistryLifecycle @caseArguments
         Check ($case.status -ceq 'Completed' -and $case.phases.Count -eq 4) "Frozen entry lifecycle failed for ${id}: $($case.error)"
+        $script:legacy = $false
     }
-    $script:scenarioEntry = 'com.kano.ylframework.domain-excel'
+    $script:scenarioEntry = $roots[0]; $script:scenarioRoots = $roots
     $baselineHost = $outcome.host.id
     $script:reload = $true; $starts.Clear()
     $reloaded = Invoke-YLRegistryLifecycle @arguments
     Check ($reloaded.status -ceq 'Completed' -and $reloaded.host.id -cne $baselineHost) "A second operation must allocate a new uniquely owned host. $($reloaded.error)"
     Check ($reloaded.phases[2].report.removal.completion -ceq 'ResolvedAfterReload' -and $reloaded.phases[2].report.removal.requestStatusObserved -is [bool] -and
         -not $reloaded.phases[2].report.removal.requestStatusObserved -and $reloaded.phases[2].report.removal.requestStatus -ceq '') 'A lost RemoveRequest must not be fabricated as observed Success.'
+    $script:fault = 'reload-unapplied'
+    $unapplied = Invoke-YLRegistryLifecycle @arguments
+    Check ($unapplied.status -ceq 'Failed' -and $unapplied.error.Length -gt 0) 'Losing the request before UPM applied it must fail, not reissue or claim resolution.'
+    $script:fault = ''
     $script:reload = $false
     foreach ($faultName in @('compile', 'request-only', 'remove-failed', 'indirect-remains', 'manifest-extra', 'sentinel', 'cache-environment', 'warm-path-drift', 'lock-depth', 'transitive-lock-depth', 'missing-backend', 'missing-gameplay', 'gameplay-lock-depth', 'direct-dependency', 'report-pid', 'report-cache', 'cancelled', 'forced-cleanup', 'operation-owner-report', 'neutral-receipt-drift', 'input-receipt-drift')) {
         $script:fault = $faultName
@@ -271,6 +315,69 @@ try {
         Check ($failed.status -ceq 'Failed' -and $failed.error.Length -gt 0) "Lifecycle incorrectly accepted actual $faultName evidence."
         Check ($failed.phases.Count -gt 0 -and $failed.phases[-1].status -ceq 'Failed') "Failed $faultName phase evidence was dropped from the returned outcome."
         if ($faultName -ceq 'sentinel') { Check ($failed.sentinels.status -ceq 'ChangedOrUnavailable') 'A changed sentinel retained a stale Unchanged summary.' }
+    }
+    $script:fault = ''
+    $combinationArguments = $arguments.Clone(); $combinationArguments.VerifyCombinations = $true
+    foreach ($origin in @('Registry', 'LocalTarball')) {
+        $combinationArguments.Source = if ($origin -ceq 'Registry') { $source } else { Get-YLRegistrySource -PackageSource LocalTarball -Arguments @{ ReleaseManifest = $releasePath } }
+        $script:reload = $true
+        $combination = Invoke-YLRegistryLifecycle @combinationArguments
+        Check ($combination.status -ceq 'Completed') "Explicit $origin combinations failed: $($combination.error)"
+        Check (($combination.phases.phase -join ',') -ceq 'Inspect,Reopen,RemoveGameplay,VerifyExcelOnly,RestoreGameplay,RemoveExcel,VerifyGameplayOnly,RestoreExcel,Remove,VerifyRemoved') 'Explicit combinations must execute both root removals/restorations and final removal.'
+        $withRuntimeContracts = Copy-Value $combination.phases[0].report
+        foreach ($mode in @('editor', 'player')) {
+            $withRuntimeContracts.compilation[$mode] += @(@{ name = 'YLFramework.Runtime'; sourceFiles = @(
+                'Packages/com.kano.ylframework/Runtime/Utilities/Excel/Attributes/ExcelColumnNameAttribute.cs',
+                'Packages/com.kano.ylframework/Runtime/Utilities/Excel/ExcelFieldsType.cs'); assemblyReferences = @(); compiledAssemblyReferences = @() })
+        }
+        Assert-YLRegistryLifecycleCompilation -Report $withRuntimeContracts -Roots $roots
+        $checks++
+        foreach ($faultName in @('missing-adapter', 'missing-player-gameplay', 'empty-adapter-source', 'empty-gameplay-source', 'adapter-reference', 'player-source-leak', 'precompiled-type', 'extra-compilation-field')) {
+            $badReport = Copy-Value $combination.phases[0].report
+            switch ($faultName) {
+                'missing-adapter' { $badReport.compilation.editor = @($badReport.compilation.editor | Where-Object name -CNE 'YLFramework.Domain.Excel.Editor') }
+                'missing-player-gameplay' { $badReport.compilation.player = @($badReport.compilation.player | Where-Object name -CNE 'YLFramework.Skill') }
+                'empty-adapter-source' { @($badReport.compilation.editor | Where-Object name -CEQ 'YLFramework.Domain.Excel.Editor')[0].sourceFiles = @() }
+                'empty-gameplay-source' { $badReport.compilation.player[0].sourceFiles = @() }
+                'adapter-reference' { @($badReport.compilation.editor | Where-Object name -CEQ 'YLFramework.Domain.Excel.Editor')[0].assemblyReferences = @('YLFramework.Excel.Editor') }
+                'player-source-leak' { $badReport.compilation.player[0].sourceFiles += 'Packages/com.kano.ylframework.excel/Editor/Unexpected.cs' }
+                'precompiled-type' { $badReport.compilation.editor[0].compiledAssemblyReferences = 'MiniExcel.dll' }
+                'extra-compilation-field' { $badReport.compilation.player[0].unobserved = $true }
+            }
+            Reject { Assert-YLRegistryLifecycleCompilation -Report $badReport -Roots $roots } 'compilation|assembly|adapter|source|reference|field'
+        }
+        foreach ($phase in $combination.phases) {
+            $names = @($phase.graph.packages | ForEach-Object name)
+            switch -CaseSensitive ($phase.phase) {
+                { $_ -cin @('RemoveGameplay', 'VerifyExcelOnly') } { Check (($names -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel') 'Excel-only lost its actual backend or retained Gameplay.' }
+                { $_ -cin @('RemoveExcel', 'VerifyGameplayOnly') } { Check (($names -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.gameplay') 'Gameplay-only retained Excel/DataAssets or lost main.' }
+                { $_ -cin @('Remove', 'VerifyRemoved') } { Check ($names.Count -eq 0) 'Final artifact removal retained a direct/indirect package.' }
+                default { Check (($names -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel,com.kano.ylframework.gameplay') 'Restoration did not recover the actual four-package graph.' }
+            }
+            if ($phase.phase -cin @('RestoreExcel', 'RestoreGameplay')) {
+                Check ($phase.report.removal.requestKind -ceq 'AddAndRemove' -and $phase.report.removal.completion -ceq 'ResolvedAfterReload') 'Restore must use a bound actual AddAndRemove, not rewrite or fake request Success after reload.'
+                $restored = Read-YLPackageEvidenceJson (Join-Path $phase.output 'manifest.json')
+                $original = Read-YLPackageEvidenceJson (Join-Path $combination.output 'manifest.before.json')
+                Assert-YLRegistryLifecycleManifest -Actual $restored -Original $original; $checks++
+                Check ((Get-FileHash -LiteralPath (Join-Path $phase.output 'manifest.json') -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath (Join-Path $combination.output 'manifest.before.json') -Algorithm SHA256).Hash) 'The restoration fixture must exercise semantic equality after actual UPM-style byte reserialization.'
+            }
+        }
+        if ($origin -ceq 'LocalTarball') {
+            $removeExcel = @($combination.phases | Where-Object phase -CEQ 'RemoveExcel')[0]
+            $restoreExcel = @($combination.phases | Where-Object phase -CEQ 'RestoreExcel')[0]
+            Check (($removeExcel.report.removal.removePackages -join ',') -ceq 'com.kano.ylframework.data-assets,com.kano.ylframework.excel') 'Tarball Excel removal must remove orphan direct DataAssets together, while preserving main.'
+            Check ($restoreExcel.report.removal.addPackages.Count -eq 2 -and @($restoreExcel.report.removal.addPackages | Where-Object { $_ -notmatch '^file:.+\.tgz$' }).Count -eq 0) 'Tarball restore must add both exact original artifact locators in one operation.'
+        }
+        $script:reload = $false
+        $combinationFaults = @('fake-restore', 'indirect-remains', 'operation-target-report', 'compiled-reference-leak', 'sentinel-meta', 'joined-report-roots', 'joined-operation-roots')
+        if ($origin -ceq 'LocalTarball') { $combinationFaults += @('joined-operation-remove', 'joined-operation-add') }
+        if ($origin -ceq 'LocalTarball') { $combinationFaults += 'incomplete-remove' }
+        foreach ($faultName in $combinationFaults) {
+            $script:fault = $faultName
+            $failed = Invoke-YLRegistryLifecycle @combinationArguments
+            Check ($failed.status -ceq 'Failed' -and $failed.error.Length -gt 0) "Combination accepted $origin $faultName evidence."
+        }
+        $script:fault = ''
     }
     $completed = $true
     "PASS: $checks Registry lifecycle NoUnity behavior contracts. NOT Unity compilation, installation or PassedRegistry."

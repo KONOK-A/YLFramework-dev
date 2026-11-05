@@ -812,7 +812,7 @@ namespace YLFramework.Tests.DomainMain
                 {
                     enabled = excel,
                     backendProductTip = "5dce4f3e39e2f4bd11602e65cabace5f56108cf8",
-                    validatedPin = JObject.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework.domain-excel/Editor/Dependencies.json"))),
+                    validatedPin = JObject.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework.excel/Editor/Gameplay/Dependencies.json"))),
                     sha256 = Hash(PluginPath),
                     editorOnly = true,
                     licenseSha256 = Hash("Packages/com.kano.ylframework.excel/Editor/Licenses/MiniExcel-LICENSE.txt")

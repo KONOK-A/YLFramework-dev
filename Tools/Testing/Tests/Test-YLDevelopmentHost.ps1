@@ -44,7 +44,7 @@ function Get-YLDevelopmentHostInputs([string] $Repository) {
         'PackageSources/com.kano.ylframework.movement2d/package.json',
         'PackageSources/com.kano.ylframework.gameplay/package.json',
         'PackageSources/com.kano.ylframework.dotween/package.json', 'PackageSources/com.kano.ylframework.excel/package.json',
-        'PackageSources/com.kano.ylframework.domain-excel/package.json', 'PackageSources/com.kano.ylframework.hybridclr/package.json')) {
+        'PackageSources/com.kano.ylframework.hybridclr/package.json')) {
         $null = $paths.Add($relative); $null = $paths.Add($relative + '.meta')
     }
     foreach ($relative in @('ProjectSettings/ProjectVersion.txt', 'ProjectSettings/ProjectSettings.asset',

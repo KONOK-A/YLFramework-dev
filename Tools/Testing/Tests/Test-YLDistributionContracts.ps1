@@ -27,14 +27,13 @@ function Invoke-UpmDistributionFixture {
         'Tools/Testing/Profiles/Unity2022/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.1"}}}'
         'Unity.exe' = 'editor-metadata-fixture'
     }
-    $ids = @('com.kano.ylframework', 'com.kano.ylframework.dotween', 'com.kano.ylframework.excel', 'com.kano.ylframework.domain-excel', 'com.kano.ylframework.hybridclr')
+    $ids = @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.dotween', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay', 'com.kano.ylframework.hybridclr')
     foreach ($id in $ids) {
-        $dependencies = @{ 'com.unity.nuget.newtonsoft-json' = '3.2.1' }
-        if ($id -cne 'com.kano.ylframework') { $dependencies['com.kano.ylframework'] = '0.1.0-preview.1' }
-        if ($id -ceq 'com.kano.ylframework.domain-excel') { $dependencies['com.kano.ylframework.excel'] = '0.1.0-preview.1' }
+        $dependencies = Get-YLFixtureInternalDependencies -PackageId $id -Version '0.1.0-preview.1'
+        $dependencies['com.unity.nuget.newtonsoft-json'] = '3.2.1'
         $files["PackageSources/$id/package.json"] = ConvertTo-Json -Depth 8 -InputObject @{ name = $id; version = '0.1.0-preview.1'; dependencies = $dependencies }
         $files["PackageSources/$id/LICENSE.md"] = "MIT License`nCopyright fixture`nPermission is hereby granted, free of charge`n"
-        $folder = if ($id -cin @('com.kano.ylframework.excel', 'com.kano.ylframework.domain-excel')) { 'Editor' } else { 'Runtime' }
+        $folder = if ($id -ceq 'com.kano.ylframework.excel') { 'Editor' } else { 'Runtime' }
         $files["PackageSources/$id/$folder/Product.cs"] = "class Fixture$($id.Replace('.', '').Replace('-', '')) {}"
         $files["PackageSources/$id/$folder/Product.cs.meta"] = "guid: $([Guid]::NewGuid().ToString('N'))`n"
     }
@@ -329,11 +328,18 @@ Test-Case 'UPM Distribution rejects unknown Editors and missing profile locks wi
 Test-Case 'UPM multi-package licenses, metadata and complete Editor dependency closure replace the retired Equipment archive contract' {
     $fixture = Invoke-UpmDistributionFixture
     $source = Join-Path $fixture.root 'Repository'
-    $packages = @(Get-YLUpmPackages -Repository $source -Ids @('com.kano.ylframework.domain-excel'))
-    Assert-That (($packages.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.domain-excel,com.kano.ylframework.excel') 'DomainExcel must select exactly the main/Excel/DomainExcel package closure.'
+    $roots = @('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')
+    $packages = @(Get-YLUpmPackages -Repository $source -Ids $roots)
+    Assert-That (($packages.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel,com.kano.ylframework.gameplay') 'ExcelGameplay must select exactly the main/DataAssets/Excel/Gameplay closure from its two roots.'
+    $excelOnly = @(Get-YLUpmPackages -Repository $source -Ids @('com.kano.ylframework.excel'))
+    Assert-That (($excelOnly.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel') 'Ordinary Excel must not select Gameplay.'
+    $excel = @($packages | Where-Object id -CEQ 'com.kano.ylframework.excel')[0]
+    $gameplay = @($packages | Where-Object id -CEQ 'com.kano.ylframework.gameplay')[0]
+    Assert-That ((@($excel.manifest.dependencies.Keys | Where-Object { $_.StartsWith('com.kano.', [StringComparison]::Ordinal) } | Sort-Object) -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets' -and
+        (@($gameplay.manifest.dependencies.Keys | Where-Object { $_.StartsWith('com.kano.', [StringComparison]::Ordinal) }) -join ',') -ceq 'com.kano.ylframework') 'The composite fixture must not turn Excel into a Gameplay-dependent package.'
     foreach ($package in $packages) {
         $original = Get-DistributionPackageContent -Root $package.root
-        foreach ($relative in @('LICENSE.md', $(if ($package.id -ceq 'com.kano.ylframework') { 'Runtime/Product.cs.meta' } else { 'Editor/Product.cs' }))) {
+        foreach ($relative in @('LICENSE.md', $(if ($package.id -ceq 'com.kano.ylframework') { 'Runtime/Product.cs.meta' } elseif ($package.id -ceq 'com.kano.ylframework.excel') { 'Editor/Product.cs' } else { 'Runtime/Product.cs' }))) {
             $path = Join-Path $package.root $relative; $bytes = [IO.File]::ReadAllBytes($path)
             try {
                 [IO.File]::AppendAllText($path, 'changed exact input bytes')
@@ -344,10 +350,10 @@ Test-Case 'UPM multi-package licenses, metadata and complete Editor dependency c
         try { [IO.File]::Delete($license); Assert-Rejected { Get-DistributionPackageContent -Root $package.root } 'LICENSE' }
         finally { [IO.File]::WriteAllBytes($license, $bytes) }
     }
-    $manifest = Join-Path $source 'PackageSources/com.kano.ylframework.domain-excel/package.json'
-    $document = [IO.File]::ReadAllText($manifest) | ConvertFrom-Json -AsHashtable; $document.dependencies['com.kano.ylframework.excel'] = '0.0.1'
+    $manifest = Join-Path $source 'PackageSources/com.kano.ylframework.excel/package.json'
+    $document = [IO.File]::ReadAllText($manifest) | ConvertFrom-Json -AsHashtable; $document.dependencies['com.kano.ylframework.data-assets'] = '0.0.1'
     [IO.File]::WriteAllText($manifest, (ConvertTo-Json -InputObject $document -Depth 8))
-    Assert-Rejected { Get-YLUpmPackages -Repository $source -Ids @('com.kano.ylframework.domain-excel') } 'Mismatched internal package version'
+    Assert-Rejected { Get-YLUpmPackages -Repository $source -Ids $roots } 'Mismatched internal package version'
 }
 
 Test-Case 'All catalog UPM roots satisfy exact versions, materialized content and the product-only license boundary' {

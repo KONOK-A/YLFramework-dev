@@ -50,6 +50,21 @@ function Fixture([string] $Id) {
 }
 try {
     $catalog = Read-YLPackageCatalog
+    Case 'Excel is one authoring package with a Gameplay-conditional adapter and no retired package identity' {
+        Check (@($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.domain-excel').Count -eq 0) 'The retired DomainExcel package is still advertised as an installation unit.'
+        Check (-not [IO.Directory]::Exists((Join-Path $repository 'PackageSources/com.kano.ylframework.domain-excel'))) 'The unpublished DomainExcel package must not remain as an empty compatibility shell.'
+        $root = Join-Path $repository 'PackageSources/com.kano.ylframework.excel'
+        $manifest = Read-YLPackageEvidenceJson (Join-Path $root 'package.json')
+        Check ($manifest.dependencies['com.kano.ylframework.data-assets'] -ceq '0.1.0-preview.1' -and
+            -not $manifest.dependencies.Contains('com.kano.ylframework.gameplay')) 'Generic Excel must use DataAssets without forcing Gameplay.'
+        $adapter = Read-YLPackageEvidenceJson (Join-Path $root 'Editor/Gameplay/YLFramework.Domain.Excel.Editor.asmdef')
+        Check ($adapter.name -ceq 'YLFramework.Domain.Excel.Editor' -and ($adapter.includePlatforms -join ',') -ceq 'Editor' -and
+            ($adapter.defineConstraints -join ',') -ceq 'YL_GAMEPLAY_PACKAGE' -and $adapter.versionDefines.Count -eq 1 -and
+            $adapter.versionDefines[0].name -ceq 'com.kano.ylframework.gameplay' -and $adapter.versionDefines[0].define -ceq 'YL_GAMEPLAY_PACKAGE') 'The original adapter assembly must be enabled only by the actual Gameplay package version define.'
+        $memory = Join-Path $root 'Editor/DataAssetsWorkbookMemory.cs'
+        Check ([IO.File]::Exists($memory) -and [IO.File]::ReadAllText($memory).Contains('YLFramework.DataAssets.LastWorkbook.')) 'Workbook memory must move to Excel without resetting its existing EditorPrefs keys.'
+        Check (-not [IO.File]::ReadAllText((Join-Path $repository 'PackageSources/com.kano.ylframework.data-assets/Editor/Systems/DataAssets/ScriptableObjectConfigsInspector.cs')).Contains('DataAssetsWorkbookMemory')) 'The ordinary DataAssets Inspector must not call an optional Excel owner.'
+    }
     Case 'Gameplay owns four independent runtimes and its shared Editor without an Excel dependency' {
         $gameplay = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.gameplay')
         Check ($gameplay.Count -eq 1) 'The complete Gameplay installation unit is missing from the maintained catalog.'
@@ -67,8 +82,8 @@ try {
         Check ($editor.name -ceq 'YLFramework.Gameplay.Editor' -and ($editor.includePlatforms -join ',') -ceq 'Editor' -and
             ($editor.references -join ',') -ceq 'YLFramework.Runtime,YLFramework.Editor,YLFramework.Skill,YLFramework.Buff,YLFramework.Mission,YLFramework.Equipment' -and
             ($editor.precompiledReferences -join ',') -ceq 'Newtonsoft.Json.dll') 'Gameplay authoring must own all four domains, shared helpers and its actual clipboard JSON binary consumption.'
-        $domainExcel = Read-YLPackageEvidenceJson (Join-Path $repository 'PackageSources/com.kano.ylframework.domain-excel/package.json')
-        Check ($domainExcel.dependencies['com.kano.ylframework.gameplay'] -ceq '0.1.0-preview.1') 'The current DomainExcel authoring consumer must declare Gameplay before the later Excel merge.'
+        $adapter = Read-YLPackageEvidenceJson (Join-Path $repository 'PackageSources/com.kano.ylframework.excel/Editor/Gameplay/YLFramework.Domain.Excel.Editor.asmdef')
+        Check (@($adapter.references) -ccontains 'YLFramework.Gameplay.Editor') 'The optional ExcelGameplay authoring consumer must declare its real Gameplay Editor dependency.'
     }
     Case 'Movement2D owns two independent runtimes and one Editor with explicit physics dependency' {
         $movement = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.movement2d')

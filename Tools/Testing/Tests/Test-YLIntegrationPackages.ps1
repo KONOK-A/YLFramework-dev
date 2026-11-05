@@ -4,7 +4,7 @@
 param(
     [Parameter(Mandatory)][string] $WorkspaceRoot,
     [Parameter(Mandatory)][string] $Unity,
-    [Parameter(Mandatory, ParameterSetName = 'Integration')][ValidateSet('DOTween', 'Excel', 'DomainExcel', 'HybridCLR')][string] $Integration,
+    [Parameter(Mandatory, ParameterSetName = 'Integration')][ValidateSet('DOTween', 'Excel', 'ExcelGameplay', 'HybridCLR')][string] $Integration,
     [Parameter(Mandatory, ParameterSetName = 'Package')][string] $PackageId,
     [ValidateRange(1, 86400)][int] $TimeoutSeconds = 900,
     [Parameter(ParameterSetName = 'Integration')][string] $DOTweenArchive,
@@ -159,23 +159,25 @@ function Assert-YLIntegrationInstalledPackage([Collections.IDictionary] $Request
 }
 
 function Get-YLIntegrationDefinition {
-    param([ValidateSet('Package', 'DOTween', 'Excel', 'DomainExcel', 'HybridCLR')][string] $Name, [string] $PackageId,
+    param([ValidateSet('Package', 'DOTween', 'Excel', 'ExcelGameplay', 'HybridCLR')][string] $Name, [string] $PackageId,
         [string] $Repository = ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))),
         [Collections.IDictionary] $Catalog = (Read-YLPackageCatalog), [ValidateSet('Required', 'Absent')][string] $DOTweenSdkMode = 'Required')
     $id = switch -CaseSensitive ($Name) {
         Package { $PackageId }
         DOTween { 'com.kano.ylframework.dotween' }
         Excel { 'com.kano.ylframework.excel' }
-        DomainExcel { 'com.kano.ylframework.domain-excel' }
+        ExcelGameplay { 'com.kano.ylframework.excel' }
         HybridCLR { 'com.kano.ylframework.hybridclr' }
         default { throw 'Unknown integration profile.' }
     }
     if ($id -cnotin @($Catalog['packages'] | ForEach-Object { $_['id'] })) { throw "Unknown package ID: $id" }
-    $products = @(Get-YLUpmPackages -Repository $Repository -Ids @($id) -Catalog $Catalog)
+    $roots = @($id)
+    if ($Name -ceq 'ExcelGameplay') { $roots += 'com.kano.ylframework.gameplay' }
+    $products = @(Get-YLUpmPackages -Repository $Repository -Ids $roots -Catalog $Catalog)
     $inputs = @($products | ForEach-Object { @{ name = $_.id; version = $_.version } })
     $mode = if ($Name -ceq 'DOTween') { $DOTweenSdkMode } else { $null }
     $assemblies = @(Get-YLPackageAssemblyPlan -Catalog $Catalog -Packages $inputs -Profile $Name -DOTweenSdkMode $mode -MetadataOnly | Where-Object enabled)
-    return @{ id = $id; assemblies = $assemblies }
+    return @{ id = $id; roots = $roots; assemblies = $assemblies }
 }
 
 function Get-YLIntegrationPackageFiles([string] $Repository, [object[]] $Packages) {
@@ -289,7 +291,6 @@ if ($PSCmdlet.ParameterSetName -ceq 'Package') {
     if ($PackageId -cnotin @($catalog['packages'] | ForEach-Object { $_['id'] })) { throw "Unknown package ID: $PackageId" }
     $profileName = switch ($PackageId) {
         'com.kano.ylframework.excel' { 'Excel' }
-        'com.kano.ylframework.domain-excel' { 'DomainExcel' }
         'com.kano.ylframework.hybridclr' { 'HybridCLR' }
         default { 'Package' }
     }
@@ -315,7 +316,7 @@ $git = $source.packageOrigin -ceq 'GitRemote'
 $artifact = $source.packageOrigin -cin @('LocalTarball', 'Registry')
 $summary = [ordered]@{
     schemaVersion = 1; purpose = 'YLTesting.IntegrationPackages'; ownerId = $run.id; action = 'Check'; status = 'Failed'; reason = $null
-    profile = $profile; integration = $profileName; entryPackage = $definition.id; endUtc = $null; host = $null; processes = @(); report = $null; inputIdentity = $null
+    profile = $profile; integration = $profileName; entryPackage = $definition.id; entryPackages = $definition.roots; endUtc = $null; host = $null; processes = @(); report = $null; inputIdentity = $null
     packageOrigin = $source.packageOrigin; gitRepository = $source.gitRepository; gitRevision = $source.gitRevision; dotweenSdkMode = $DOTweenSdkMode
     unity = @{ executable = $Unity; version = $editor.version; productVersion = $editor.productVersion }
     packages = @(); assemblies = @(); compilation = 'NotVerified'; playerGraph = 'NotVerified'
@@ -332,10 +333,10 @@ try {
     if ($artifact) {
         $artifactInputs = Initialize-YLRegistryExpectedInputs -Source $source -Output (Join-Path $run.path 'ExpectedArtifacts')
         $summary['registryArtifacts'] = @($artifactInputs.packages | ForEach-Object { @{ id = $_.id; sha256 = $_.sha256; integrity = $_.integrity; payloadSha256 = $_.payloadSha256; registry = $_.registryEvidence } })
-        $products = @($artifactInputs.packages | Where-Object { $_.id -cin @(Get-YLRegistryClosure -Release $source.release -EntryPackage $definition.id).id })
+        $products = @($artifactInputs.packages | Where-Object { $_.id -cin @(Get-YLRegistryClosure -Release $source.release -EntryPackage $definition.id -EntryPackages $definition.roots).id })
         $packagePaths = @()
     } else {
-        $products = @(Get-YLUpmPackages -Repository $repository -Ids @($definition.id))
+        $products = @(Get-YLUpmPackages -Repository $repository -Ids $definition.roots)
         $packagePaths = @(Get-YLIntegrationPackageFiles -Repository $repository -Packages $products)
     }
     $inventories = @{}
@@ -352,9 +353,10 @@ try {
         'Tools/Testing/Common/Packages.ps1', 'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/UnityHost.ps1', 'Tools/Testing/TestSuites.json') | Sort-Object -Unique)
     if ($artifact) { $inputPaths += 'Tools/Packaging/Build-YLRegistryPackages.ps1' }
     if ($artifact -and $profileName -ceq 'HybridCLR') { $inputPaths += @('Tools/Testing/RegistryAuthoringEntry.cs', 'Tools/Testing/Common/RegistryAuthoring.ps1') }
-    if ($PackageSource -ceq 'Registry' -and -not ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent')) { $inputPaths += @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1') }
+    if (($PackageSource -ceq 'Registry' -and -not ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent')) -or
+        ($PackageSource -ceq 'LocalTarball' -and $profileName -ceq 'ExcelGameplay')) { $inputPaths += @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1') }
     if ($artifact) {
-        $manifestObject = New-YLRegistryHostManifest -PackageSource $PackageSource -Release $source.release -EntryPackage $definition.id -RegistryUrl $source.registryUrl
+        $manifestObject = New-YLRegistryHostManifest -PackageSource $PackageSource -Release $source.release -EntryPackage $definition.id -EntryPackages $definition.roots -RegistryUrl $source.registryUrl
         $dependencies = $manifestObject.dependencies
         $summary['release'] = @{ sourceCommit = $source.release.sourceCommit; manifestSha256 = $source.release.sha256; producer = $source.release.producer }
         $summary['acceptanceKind'] = if ($PackageSource -ceq 'LocalTarball') { 'ArtifactPreflight' } else { 'RegistryInstallation' }
@@ -392,7 +394,7 @@ try {
         if (-not $artifact) { $inputPaths = @($inputPaths + 'PackageSources/com.kano.ylframework.dotween/Dependencies.json' | Sort-Object -Unique) }
         $summary['approvedSdkArchive'] = @{ version = $sdk.version; archive = $DOTweenArchive; archiveSha256 = $sdk.archiveSha256; assemblySha256 = $sdk.assemblySha256; files = $sdk.files.Count }
     }
-    if ($profileName -cin @('Excel', 'DomainExcel')) {
+    if ($profileName -cin @('Excel', 'ExcelGameplay')) {
         $excel = if ($artifact) { Join-Path @($products | Where-Object id -CEQ 'com.kano.ylframework.excel')[0].root 'Editor' } else { Join-Path $repository 'PackageSources/com.kano.ylframework.excel/Editor' }
         $approval = [IO.File]::ReadAllText((Join-Path $excel 'Dependencies.json')) | ConvertFrom-Json -AsHashtable -DateKind String
         $backend = $approval['backend']; $dll = Join-Path $excel 'Plugins/MiniExcel.dll'
@@ -449,10 +451,10 @@ try {
         packages = $expectedPackages; assemblies = $definition.assemblies; sdk = $sdk
         packageOrigin = $source.packageOrigin; gitRepository = $source.gitRepository; gitRevision = $source.gitRevision
         cacheRoot = $cache.path; cacheId = $cache.id; expectedTemplateHash = $templateIdentity.sha256
-        entryPackage = $definition.id; catalogSha256 = (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        entryPackage = $definition.id; entryPackages = $definition.roots; catalogSha256 = (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     if ($profileName -ceq 'DOTween') { $request.dotweenSdkMode = $DOTweenSdkMode }
-    if ($artifact) { foreach ($field in (Get-YLRegistryRequestFields -Source $source -EntryPackage $definition.id).GetEnumerator()) { $request[$field.Key] = $field.Value } }
+    if ($artifact) { foreach ($field in (Get-YLRegistryRequestFields -Source $source -EntryPackage $definition.id -EntryPackages $definition.roots).GetEnumerator()) { $request[$field.Key] = $field.Value } }
     # The request needs approved SDK identities, not the source project's physical SDK path.
     if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Required') { $request.sdk = @{ version = $sdk.version; assemblySha256 = $sdk.assemblySha256 } }
     Write-YLTestJson -Path $requestPath -Value $request
@@ -476,6 +478,7 @@ try {
     foreach ($field in @('purpose', 'integration', 'hostId', 'resultId', 'unityVersion', 'inputHash', 'packageOrigin', 'expectedTemplateHash', 'entryPackage', 'catalogSha256', 'status')) {
         if ($report[$field] -isnot [string] -or $report[$field] -cne $(if ($field -ceq 'status') { if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent') { 'NegativeNoSdk' } else { 'Completed' } } else { $request[$field] })) { throw "Integration report identity/status mismatch: $field" }
     }
+    Assert-YLPackageStringArray -Actual $report['entryPackages'] -Expected $definition.roots -Label 'Integration report entry roots'
     if ($report['schemaVersion'] -isnot [long] -or $report['schemaVersion'] -ne 1 -or $report['pid'] -isnot [long] -or $report['pid'] -ne $fact.pid -or
         $report['isBatchMode'] -isnot [bool] -or -not $report['isBatchMode'] -or $report['scriptCompilationFailed'] -isnot [bool] -or $report['scriptCompilationFailed'] -or
         $report['assemblies'] -isnot [array] -or $report['assemblies'].Count -ne $definition.assemblies.Count -or
@@ -485,7 +488,7 @@ try {
     if ($artifact) {
         Assert-YLRegistryCacheObservation -Actual $report['cacheEnvironment'] -CacheRoot $cache.path
         $sdkDeps = if ($profileName -ceq 'HybridCLR') { $sdk.dependencies } else { @{} }
-        $summary['resolvedGraph'] = Assert-YLRegistryResolvedGraph -Manifest (Read-YLPackageEvidenceJson (Join-Path $hostRecord.path 'Packages/manifest.json')) -Lock $actualLock -Rows $report['resolvedDependencies'] -Release $source.release -EntryPackage $definition.id -PackageSource $PackageSource -RegistryUrl $source.registryUrl -EditorVersion $editor.version -HostRoot $hostRecord.path -CacheRoot $cache.path -SdkDependencies $sdkDeps
+        $summary['resolvedGraph'] = Assert-YLRegistryResolvedGraph -Manifest (Read-YLPackageEvidenceJson (Join-Path $hostRecord.path 'Packages/manifest.json')) -Lock $actualLock -Rows $report['resolvedDependencies'] -Release $source.release -EntryPackage $definition.id -EntryPackages $definition.roots -PackageSource $PackageSource -RegistryUrl $source.registryUrl -EditorVersion $editor.version -HostRoot $hostRecord.path -CacheRoot $cache.path -SdkDependencies $sdkDeps
         $summary['cacheUse'] = Get-YLRegistryCacheUse -CacheRoot $cache.path -PackageSource $PackageSource
     }
     $lockSnapshot = Join-Path $output 'packages-lock.json'
@@ -541,9 +544,10 @@ try {
         $summary.processes = @($summary.processes) + @($summary.authoring.processes)
         Assert-YLRegistryStageCompleted -Outcome $summary.authoring -Stage Authoring
     }
-    if ($PackageSource -ceq 'Registry' -and -not ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent')) {
+    if (($PackageSource -ceq 'Registry' -and -not ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent')) -or
+        ($PackageSource -ceq 'LocalTarball' -and $profileName -ceq 'ExcelGameplay')) {
         . (Join-Path $PSScriptRoot '../Common/RegistryLifecycle.ps1')
-        $summary['lifecycle'] = Invoke-YLRegistryLifecycle -Workspace $workspace -Source $source -Unity $Unity -Editor $editor -EntryPackage $definition.id -Result $run -TimeoutSeconds $TimeoutSeconds
+        $summary['lifecycle'] = Invoke-YLRegistryLifecycle -Workspace $workspace -Source $source -Unity $Unity -Editor $editor -EntryPackage $definition.id -EntryPackages $definition.roots -VerifyCombinations:($profileName -ceq 'ExcelGameplay') -Result $run -TimeoutSeconds $TimeoutSeconds
         $summary.processes = @($summary.processes) + @($summary.lifecycle.processes)
         Assert-YLRegistryStageCompleted -Outcome $summary.lifecycle -Stage Lifecycle
     }
@@ -565,7 +569,7 @@ try {
                     foreach ($package in $products) { if ((Get-YLIntegrationPackageContent -Root $package.root -PackageId $package.id -NormalizeManifest).sha256 -cne $inventories[$package.id].sha256) { throw 'Frozen expected artifact payload drifted.' } }
                     $fresh = $inputPaths
                 } else {
-                $currentPackages = @(Get-YLUpmPackages -Repository $repository -Ids @($definition.id))
+                $currentPackages = @(Get-YLUpmPackages -Repository $repository -Ids $definition.roots)
                 $freshPackagePaths = @(Get-YLIntegrationPackageFiles -Repository $repository -Packages $currentPackages)
                 $fresh = if ($git) { $inputPaths } else { @($inputPaths | Where-Object { -not $_.StartsWith('PackageSources/', [StringComparison]::Ordinal) }) + $freshPackagePaths }
                 $currentTemplate = Get-YLTestInputIdentity -Repository $repository -Paths $freshPackagePaths -Profile 'LocalReleaseExpectedTemplateNotInstallSource'

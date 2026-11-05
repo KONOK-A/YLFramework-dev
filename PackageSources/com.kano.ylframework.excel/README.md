@@ -31,9 +31,25 @@ The [license](Editor/Licenses/MiniExcel-LICENSE.txt),
 [attribution](Editor/Licenses/MiniExcel-ATTRIBUTION.txt) and
 [dependency provenance](Editor/Dependencies.json) remain with this package.
 
-The assembly remains `YLFramework.Excel.Editor`. Runtime field attributes remain
+The backend assembly remains `YLFramework.Excel.Editor`. Runtime field attributes remain
 part of `YLFramework.Runtime`. Generated configurations belong to the consuming
 project, never to this installed package.
+
+Open `YLFramework/Excel/Data Assets Workbook` to choose a saved DataAssets root,
+restore its existing GUID-keyed workbook preference, preview an import, export
+or reveal the workbook. Preview does not commit assets; confirmation and Undo
+retain the existing import contract. Preferences keep the original
+`YLFramework.DataAssets.LastWorkbook.` keys. The ordinary DataAssets Inspector
+does not require this package. Forgetting a preference does not delete files.
+
+Installing Gameplay alongside Excel enables the included
+`YLFramework.Domain.Excel.Editor` assembly under `Editor/Gameplay` using the
+actual Gameplay package Version Define. No global scripting symbol is required
+or changed. The original `DomainExcelCommands` API, namespace, GUIDs and typed
+context menus remain. Excel does not depend on Gameplay: generic workbook
+operations work without it, and Gameplay works without Excel. A Git consumer
+using both features explicitly declares main, DataAssets, Excel and Gameplay
+at the same validated SHA. There is no separate DomainExcel package.
 
 Use the lightweight `YLFramework.Excel.ExcelColumnNameAttribute` from the main
 package when a CLR field must keep an existing workbook column across renames

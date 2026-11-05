@@ -11,8 +11,9 @@ Authoring for all four domains and its internal shared helpers belongs to
 `YLFramework.Gameplay.Editor`. It includes the existing common session cleanup
 and the separate Equipment lifecycle hook. Namespaces, script GUIDs, asset
 fields, JSON keys, Excel column mappings and manager behavior are unchanged.
-Gameplay does not depend on Excel, DataAssets, Localization or Save. The
-separate DomainExcel package declares Gameplay when installing its adapters.
+Gameplay does not depend on Excel, DataAssets, Localization or Save. Excel
+contains a conditional domain adapter enabled only when Gameplay is installed;
+there is no separate DomainExcel package or reverse product dependency.
 
 Registering direct configuration assets does not transfer their ownership.
 Manager LoadConfig calls hold Resource leases until RemoveConfig or Shutdown;

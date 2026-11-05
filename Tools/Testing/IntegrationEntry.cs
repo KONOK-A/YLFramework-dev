@@ -43,7 +43,7 @@ namespace YLFramework.Testing
                     schemaVersion = 1, purpose = "YLTesting.IntegrationPackages", integration = Text(request, "integration"),
                     hostId = Text(request, "hostId"), resultId = Text(request, "resultId"), inputHash = Text(request, "inputHash"),
                     packageOrigin = Text(request, "packageOrigin"), expectedTemplateHash = Text(request, "expectedTemplateHash"),
-                    entryPackage = Text(request, "entryPackage"), catalogSha256 = Text(request, "catalogSha256"), optionalAdapterScenario = (string)request["optionalAdapterScenario"], registryUrl = (string)request["registryUrl"],
+                    entryPackage = Text(request, "entryPackage"), entryPackages = EntryPackages(request, Catalog(request)), catalogSha256 = Text(request, "catalogSha256"), optionalAdapterScenario = (string)request["optionalAdapterScenario"], registryUrl = (string)request["registryUrl"],
                     registryVersion = (string)request["registryVersion"], releaseManifestSha256 = (string)request["releaseManifestSha256"],
                     cacheEnvironment = Artifact(request) ? CacheEnvironment() : null,
                     unityVersion = Application.unityVersion, pid = System.Diagnostics.Process.GetCurrentProcess().Id,
@@ -109,7 +109,7 @@ namespace YLFramework.Testing
                 report["assemblies"] = required;
                 string[] global = PlayerSettings.GetScriptingDefineSymbols(NamedBuildTarget.Standalone).Split(';');
                 report["globalDefines"] = JArray.FromObject(global);
-                if (global.Contains("YL_DOMAIN_EXCEL") || global.Contains("YL_HYBRIDCLR_9_0_3"))
+                if (global.Contains("YL_DOMAIN_EXCEL") || global.Contains("YL_GAMEPLAY_PACKAGE") || global.Contains("YL_HYBRIDCLR_9_0_3"))
                 {
                     throw new InvalidOperationException("Package presence/version gates must not be replaced by global integration symbols.");
                 }
@@ -133,7 +133,7 @@ namespace YLFramework.Testing
                     report["sdk"] = ValidateDotween(request, editor, player, selected, global);
                     report["dotweenSdkMode"] = (string)request["dotweenSdkMode"] ?? "Required";
                 }
-                if (integration == "Excel" || integration == "DomainExcel")
+                if (integration == "Excel" || integration == "ExcelGameplay")
                 {
                     var excel = editor.Single(assembly => assembly.name == "YLFramework.Excel.Editor");
                     string dll = excel.compiledAssemblyReferences.Single(path => Path.GetFileName(path) == "MiniExcel.dll");
@@ -151,6 +151,12 @@ namespace YLFramework.Testing
                     }
                     report["sdk"] = JObject.FromObject(new { version = Text(backend, "version"), assembly = System.Reflection.AssemblyName.GetAssemblyName(dll).FullName,
                         productVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(dll).ProductVersion, dll, sha256 = Hash(dll), license = Text(backend, "license") });
+                    var adapter = editor.SingleOrDefault(assembly => assembly.name == "YLFramework.Domain.Excel.Editor");
+                    if ((adapter != null) != (integration == "ExcelGameplay") ||
+                        (adapter != null && (!adapter.defines.Contains("YL_GAMEPLAY_PACKAGE") || !References(adapter).Contains("YLFramework.Gameplay.Editor"))))
+                    {
+                        throw new InvalidOperationException("The actual Gameplay package presence did not control the Excel adapter assembly.");
+                    }
                 }
                 if (integration == "HybridCLR")
                 {
@@ -537,7 +543,20 @@ namespace YLFramework.Testing
 
         private static string[] EntryPackages(JObject request, JObject catalog)
         {
-            if (Text(request, "integration") != "OptionalAdapterFixture") { return new[] { Text(request, "entryPackage") }; }
+            if (Text(request, "integration") != "OptionalAdapterFixture")
+            {
+                var roots = Text(request, "integration") == "ExcelGameplay"
+                    ? new[] { "com.kano.ylframework.excel", "com.kano.ylframework.gameplay" }
+                    : new[] { Text(request, "entryPackage") };
+                if (Text(request, "entryPackage") != roots[0] ||
+                    (Text(request, "integration") == "ExcelGameplay" && request.Property("entryPackages") == null) ||
+                    (request.Property("entryPackages") != null && (request["entryPackages"] is not JArray declared ||
+                        declared.Any(value => value.Type != JTokenType.String) || !declared.Values<string>().SequenceEqual(roots))))
+                {
+                    throw new InvalidOperationException("Integration entry roots are invalid, duplicated or differ from the explicit profile.");
+                }
+                return roots;
+            }
             const string main = "com.kano.ylframework", feature = "com.kano.ylframework.fixture-feature", backend = "com.kano.ylframework.fixture-backend";
             string scenario = Text(request, "optionalAdapterScenario");
             if (Text(request, "packageOrigin") != "File" || Text(request, "entryPackage") != main || !new[] { "Neither", "Feature", "Backend", "Both" }.Contains(scenario) ||
@@ -591,10 +610,10 @@ namespace YLFramework.Testing
         private static Dictionary<string, int> ArtifactDepths(JObject request)
         {
             var selected = ((JArray)request["packages"]).Cast<JObject>().ToDictionary(package => Text(package, "name"), StringComparer.Ordinal);
-            string entry = Text(request, "entryPackage");
-            if (!selected.ContainsKey(entry)) { throw new InvalidOperationException("The artifact entry is not in the expected closure."); }
-            var depths = new Dictionary<string, int>(StringComparer.Ordinal) { [entry] = 0 };
-            var pending = new Queue<string>(); pending.Enqueue(entry);
+            var roots = EntryPackages(request, Catalog(request));
+            if (roots.Any(entry => !selected.ContainsKey(entry))) { throw new InvalidOperationException("An artifact root is not in the expected closure."); }
+            var depths = roots.ToDictionary(entry => entry, _ => 0, StringComparer.Ordinal);
+            var pending = new Queue<string>(roots);
             while (pending.Count != 0)
             {
                 string name = pending.Dequeue();
@@ -684,7 +703,8 @@ namespace YLFramework.Testing
             }
             var manifest = ReadJson(Path.Combine(Project(), "Packages/manifest.json"));
             var declared = manifest["dependencies"] as JObject;
-            var direct = selected.Where(package => !registry || Text(package, "name") == Text(request, "entryPackage")).ToArray();
+            var roots = EntryPackages(request, Catalog(request));
+            var direct = selected.Where(package => !registry || roots.Contains(Text(package, "name"))).ToArray();
             if (declared == null || declared.Count != direct.Length || direct.Any(package => (string)declared[Text(package, "name")] != Text(package, "locator")))
             {
                 throw new InvalidOperationException("The host manifest prefilled or omitted dependencies outside the exact artifact entry declarations.");
@@ -854,7 +874,7 @@ namespace YLFramework.Testing
         {
             if (request["schemaVersion"]?.Type != JTokenType.Integer || (long)request["schemaVersion"] != 1 ||
                 Text(request, "purpose") != "YLTesting.IntegrationPackages" || !Application.isBatchMode ||
-                !new[] { "Package", "DOTween", "Excel", "DomainExcel", "HybridCLR", "OptionalAdapterFixture" }.Contains(Text(request, "integration")) ||
+                !new[] { "Package", "DOTween", "Excel", "ExcelGameplay", "HybridCLR", "OptionalAdapterFixture" }.Contains(Text(request, "integration")) ||
                 !new[] { "File", "GitRemote", "Registry", "LocalTarball" }.Contains(Text(request, "packageOrigin")) ||
                 request["packages"] is not JArray packages || packages.Count == 0 || request["assemblies"] is not JArray assemblies || assemblies.Count == 0)
             {
@@ -916,7 +936,7 @@ namespace YLFramework.Testing
             string profileEntry = Text(request, "integration") switch
             {
                 "DOTween" => "com.kano.ylframework.dotween", "Excel" => "com.kano.ylframework.excel",
-                "DomainExcel" => "com.kano.ylframework.domain-excel", "HybridCLR" => "com.kano.ylframework.hybridclr", _ => entryPackage
+                "ExcelGameplay" => "com.kano.ylframework.excel", "HybridCLR" => "com.kano.ylframework.hybridclr", _ => entryPackage
             };
             if (!known.Contains(entryPackage) || entryPackage != profileEntry || packages.Any(token => token is not JObject) ||
                 packages.Cast<JObject>().Any(package => !known.Contains(Text(package, "name"))) ||
