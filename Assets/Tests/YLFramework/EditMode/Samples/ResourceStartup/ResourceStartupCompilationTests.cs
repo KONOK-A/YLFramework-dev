@@ -60,6 +60,21 @@ namespace YLFramework.Tests.ResourceBuild
                     var graph = profiles.Single(x => x.name == name);
                     var root = name == "YLFramework.Runtime" ? "Packages/com.kano.ylframework/Runtime" : Path.Combine(importedRoot, "Runtime");
                     var sources = Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(root), "*.cs", SearchOption.AllDirectories);
+                    if (name == "YLFramework.Runtime")
+                    {
+                        const string Adapter = "Packages/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween";
+                        var adapter = global::YLFramework.Testing.PackageTestPaths.Physical(Adapter);
+                        var adapterFiles = Directory.GetFiles(adapter, "*.cs", SearchOption.AllDirectories);
+                        CollectionAssert.AreEquivalent(new[] { "DOTweenAction.cs" }, adapterFiles.Select(Path.GetFileName));
+                        Assert.That(AssetDatabase.AssetPathToGUID(Adapter + "/YLFramework.Actions.DOTween.asmdef"), Is.EqualTo("269cc8620fbed2b4daa22533cd8731d1"));
+                        CollectionAssert.AreEquivalent(new[] { "YLFramework.Runtime.asmdef", "YLFramework.Actions.DOTween.asmdef" },
+                            Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(root), "*.asmdef", SearchOption.AllDirectories).Select(Path.GetFileName));
+                        var definition = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(Path.Combine(adapter, "YLFramework.Actions.DOTween.asmdef")));
+                        Assert.That((string)definition["name"], Is.EqualTo("YLFramework.Actions.DOTween"));
+                        CollectionAssert.AreEqual(new[] { "DOTWEEN" }, ((Newtonsoft.Json.Linq.JArray)definition["defineConstraints"]).Values<string>());
+                        Assert.That(profiles.Any(value => value.name == "YLFramework.Actions.DOTween"), Is.False);
+                        sources = sources.Except(adapterFiles, StringComparer.OrdinalIgnoreCase).ToArray();
+                    }
                     CollectionAssert.AreEquivalent(sources.Select(Path.GetFullPath), graph.sourceFiles.Select(Path.GetFullPath));
                     if (name == "YLFramework.ResourceStartup.Sample")
                     {
