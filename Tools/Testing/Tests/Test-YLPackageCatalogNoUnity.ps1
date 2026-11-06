@@ -50,6 +50,14 @@ function Fixture([string] $Id) {
 }
 try {
     $catalog = Read-YLPackageCatalog
+    Case 'Overlap has its own Runtime and Editor and no reverse main dependency' {
+        $entry = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.overlap')
+        Check ($entry.Count -eq 1 -and $entry[0].assemblies.Count -eq 2) 'Overlap has not moved into its one independent installation unit.'
+        Check (($entry[0].assemblies.name -join ',') -ceq 'YLFramework.Overlap,YLFramework.Overlap.Editor') 'The original Runtime and Editor owners must both move explicitly.'
+        $closure = @(Get-YLUpmPackages -Repository $repository -Ids @('com.kano.ylframework.overlap') -Catalog $catalog)
+        Check (($closure.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.overlap') 'Overlap must not install gameplay, movement2d or another feature.'
+        Check (-not [IO.Directory]::Exists((Join-Path $repository 'PackageSources/com.kano.ylframework/Runtime/Utilities/Overlap'))) 'The old main path must not keep a duplicate implementation.'
+    }
     Case 'RedDots owns the original path core with only its declared main dependency' {
         $entry = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.reddot')
         Check ($entry.Count -eq 1) 'The original RedDots runtime still has no independent package owner.'

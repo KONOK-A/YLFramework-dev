@@ -184,12 +184,24 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(asset, Is.Not.Null, "Freeze explicit assembly ownership before moving any functional source.");
             var table = JsonUtility.FromJson<AssemblyMoveTable>(asset.text);
             Assert.That(table.schemaVersion, Is.EqualTo(1));
-            Assert.That(table.moves, Has.Length.EqualTo(24), "Keep all original anchors and the migrated feature identities.");
+            Assert.That(table.moves, Has.Length.EqualTo(26), "Keep all original anchors and the migrated feature identities.");
             Assert.That(table.moves.Select(move => move.fullName).Distinct().Count(), Is.EqualTo(table.moves.Length));
             Assert.That(table.moves.Select(move => move.scriptGuid).Distinct().Count(), Is.EqualTo(table.moves.Length));
             foreach (var move in table.moves)
             {
-                Assert.That(move.sourceAssembly, Is.EqualTo("YLFramework.Runtime"));
+                if (move.fullName == "YLFramework.Editor.Overlap.OverlapArea2DInspector")
+                {
+                    Assert.That(move.sourceAssembly, Is.EqualTo("YLFramework.Editor"));
+                    Assert.That(move.currentAssembly, Is.EqualTo("YLFramework.Overlap.Editor"));
+                    Assert.That(move.targetAssembly, Is.EqualTo("YLFramework.Overlap.Editor"));
+                    Assert.That(move.package, Is.EqualTo("com.kano.ylframework.overlap"));
+                    Assert.That(move.scriptGuid, Is.EqualTo("eb43a55cda803a04f983f8861a47ee99"));
+                    Assert.That(move.legacyName, Is.Null.Or.Empty);
+                }
+                else
+                {
+                    Assert.That(move.sourceAssembly, Is.EqualTo("YLFramework.Runtime"));
+                }
                 Assert.That(move.targetAssembly, Is.Not.Null.And.Not.Empty);
                 string currentPackage = move.currentAssembly == "YLFramework.Runtime" ? "com.kano.ylframework" : move.package;
                 bool installed = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Any(package => package.name == currentPackage);
@@ -291,8 +303,8 @@ namespace YLFramework.Core.Editor.Tests
                 Assert.That(AssetDatabase.IsValidFolder(Root + folder.path), Is.True, folder.path);
                 Assert.That(AssetDatabase.AssetPathToGUID(Root + folder.path), Is.EqualTo(folder.guid));
             }
-            Assert.That(Directory.GetDirectories(global::YLFramework.Testing.PackageTestPaths.Physical(Root + "Utilities")).Select(Path.GetFileName),
-                Is.EquivalentTo(new[] { "Overlap" }));
+            Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Root + "Utilities")), Is.False);
+            Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Root + "Utilities.meta")), Is.False);
         }
 
         [UnityTest]
@@ -444,7 +456,7 @@ namespace YLFramework.Core.Editor.Tests
                 .Single(type => type != null);
             Assert.That(typeof(CreateModuleCommand).Assembly, Is.SameAs(help.Assembly));
             Assert.That(Directory.GetDirectories(global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework/Editor")).Select(Path.GetFileName),
-                Is.EquivalentTo(new[] { "Foundation", "Core", "Systems", "Utilities", "Common", "Tools", "Help", "Distribution" }));
+                Is.EquivalentTo(new[] { "Foundation", "Core", "Systems", "Common", "Tools", "Help", "Distribution" }));
         }
 
         [Test]

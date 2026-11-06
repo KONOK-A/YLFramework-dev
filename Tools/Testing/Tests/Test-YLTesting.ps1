@@ -199,6 +199,70 @@ try {
             $probe = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/Movement2D/Runtime/YLFramework.Movement2D.Acceptance.asmdef')
             Assert-That (($probe.references -join ',') -ceq 'YLFramework.Character2D,YLFramework.Platform2D') 'The probe must not declare unrelated products or UI dependencies to repair an implicit Unity graph reference.'
         }
+        Test-Case 'Overlap keeps standalone and Behavior native selections while Quick compiles only its managed guard' {
+            $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
+            $overlap = @($configuration.modules | Where-Object name -CEQ 'Overlap')
+            Assert-That ($overlap.Count -eq 1) 'The migrated Overlap tests require an independent module.'
+            $definition = $overlap[0]
+            Assert-That (($definition.packageInputs -join ',') -ceq 'com.kano.ylframework.overlap') 'Standalone Overlap must not force another optional product.'
+            $closure = @(Get-YLUpmPackages -Repository $repository -Ids @($definition.packageInputs))
+            Assert-That (($closure.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.overlap') 'Overlap has lost its exact two-product closure.'
+            Assert-That (($definition.nativeAssemblies -join ',') -ceq 'YLFramework.Overlap.Tests.EditMode,YLFramework.Overlap.Tests.PlayMode') 'Both real native test assemblies must run independently.'
+            Assert-That (($definition.suites -join ',') -ceq 'Quick,Daily' -and $definition.nativeLayout -ceq 'Framework' -and $definition.graphics) 'Quick is logic-only; Daily must retain actual Unity physics.'
+            Assert-That (($definition.runtimeSources -join ',') -ceq 'PackageSources/com.kano.ylframework.overlap/Runtime/Utilities/Overlap/OverlapQueryCycle.cs') 'Do not compile fake physics to run the original managed guard.'
+            $behavior = @($configuration.modules | Where-Object name -CEQ 'Behavior')[0]
+            foreach ($assembly in $definition.nativeAssemblies) {
+                Assert-That (@($behavior.nativeAssemblies) -ccontains $assembly) "Behavior lost original native tests after the asmdef split: $assembly"
+            }
+            foreach ($name in @('Behavior', 'MigrationFixtures')) {
+                $consumer = @($configuration.modules | Where-Object name -CEQ $name)[0]
+                Assert-That (@($consumer.packageInputs) -ccontains 'com.kano.ylframework.overlap') "$name omits its actual Overlap dependency."
+                foreach ($side in @('Runtime/YLFramework.Overlap.asmdef', 'Editor/YLFramework.Overlap.Editor.asmdef')) {
+                    Assert-That (@($consumer.assemblyMetadata) -ccontains ("PackageSources/com.kano.ylframework.overlap/$side")) "$name omits participating Overlap metadata: $side"
+                }
+            }
+            $consumers = @($configuration.modules | Where-Object { 'packageInputs' -cin $_.PSObject.Properties.Name -and @($_.packageInputs) -ccontains 'com.kano.ylframework.overlap' })
+            Assert-That (($consumers.name | Sort-Object) -join ',' -ceq 'Behavior,MigrationFixtures,Overlap') 'Do not install Overlap merely to preserve an absent feature identity.'
+            $tokens = $null; $errors = $null
+            $syntax = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'Tools/Testing/Invoke-YLTests.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'The maintained entry does not parse.'
+            $function = $syntax.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-SelectedSources' }, $true)
+            . ([scriptblock]::Create($function.Extent.Text))
+            $selected = Get-SelectedSources
+            Assert-That (($selected.runtime -join ',') -ceq ($definition.runtimeSources -join ',')) 'Standalone Quick must compile the real managed guard only.'
+            $cycle = $definition.runtimeSources[0]
+            foreach ($input in @($cycle, ($cycle + '.meta'), 'PackageSources/com.kano.ylframework.overlap/package.json', 'PackageSources/com.kano.ylframework.overlap/Runtime/YLFramework.Overlap.asmdef')) {
+                Assert-That (@($selected.inputs) -ccontains $input) "Quick lost its actual package input identity: $input"
+            }
+        }
+        Test-Case 'Overlap consumers and migration anchors name only the actual new owners' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            foreach ($relative in @('EditMode/YLFramework.Tests.EditMode.asmdef', 'PlayMode/YLFramework.Tests.PlayMode.asmdef',
+                'EditMode/Editor/MigrationFixtures/YLFramework.MigrationFixtures.Tests.EditMode.asmdef',
+                'Fixtures/Extensions/Behavior/Player/YLFramework.Behavior.Acceptance.asmdef',
+                'Fixtures/Extensions/Behavior/Editor/YLFramework.Behavior.Acceptance.Editor.asmdef')) {
+                $consumer = Read-YLPackageEvidenceJson (Join-Path $repoRoot "Assets/Tests/YLFramework/$relative")
+                Assert-That (@($consumer.references) -ccontains 'YLFramework.Overlap') "A real consumer omits its direct runtime reference: $relative"
+            }
+            foreach ($side in @('EditMode', 'PlayMode')) {
+                $consumer = Read-YLPackageEvidenceJson (Join-Path $repoRoot "Assets/Tests/YLFramework/$side/Utilities/Overlap/YLFramework.Overlap.Tests.$side.asmdef")
+                Assert-That ($consumer.name -ceq "YLFramework.Overlap.Tests.$side" -and @($consumer.references) -ccontains 'YLFramework.Runtime' -and
+                    @($consumer.references) -ccontains 'YLFramework.Overlap' -and @($consumer.references) -ccontains 'YLFramework.Tests.Fixtures') 'The standalone tests must use real product and fixture owners.'
+            }
+            $table = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblyMoves.json')
+            Assert-That ($table.moves.Count -eq 26) 'Retain the original 24 anchors and add exactly two actual Overlap identities.'
+            foreach ($anchor in @(
+                @{ fullName = 'YLFramework.Overlap.OverlapCircle2D'; source = 'YLFramework.Runtime'; owner = 'YLFramework.Overlap'; guid = 'c08500f745b47234a8b6ef0ff49d0dce' },
+                @{ fullName = 'YLFramework.Editor.Overlap.OverlapArea2DInspector'; source = 'YLFramework.Editor'; owner = 'YLFramework.Overlap.Editor'; guid = 'eb43a55cda803a04f983f8861a47ee99' })) {
+                $moves = @($table.moves | Where-Object fullName -CEQ $anchor.fullName)
+                Assert-That ($moves.Count -eq 1) "Missing unique Overlap anchor: $($anchor.fullName)"
+                $move = $moves[0]
+                Assert-That ($move.sourceAssembly -ceq $anchor.source -and $move.currentAssembly -ceq $anchor.owner -and
+                    $move.targetAssembly -ceq $anchor.owner -and $move.package -ceq 'com.kano.ylframework.overlap' -and
+                    $move.scriptGuid -ceq $anchor.guid -and -not $move.Contains('legacyName')) 'Do not invent namespace changes or rewrite historical source owners.'
+            }
+        }
         Test-Case 'Configured FSM standalone keeps its exact two-package closure and real reload scene preconditions' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')

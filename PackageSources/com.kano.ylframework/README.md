@@ -8,6 +8,14 @@ It includes Runtime and Editor assemblies, production prefabs, BouncyCastle with
 its license, documentation and opt-in samples. Tests, MCP, development settings
 and optional integration SDKs are not included.
 
+Overlap is an optional sibling package, `com.kano.ylframework.overlap`, not part
+of the main Runtime or Editor. Its minimal YL closure is main + overlap; Unity's
+built-in physics/physics2d modules are declared by the package. Consumer asmdefs
+reference `YLFramework.Overlap`, and direct Inspector/Gizmos consumers additionally
+reference `YLFramework.Overlap.Editor` from Editor-only code. Original namespaces,
+script GUIDs and component behavior remain unchanged. See the
+[Overlap package](../com.kano.ylframework.overlap/README.md) for migration boundaries.
+
 ## Registry Installation
 
 The intended release channel is OpenUPM. This preview is still unreleased until

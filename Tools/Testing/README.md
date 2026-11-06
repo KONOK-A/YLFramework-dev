@@ -91,6 +91,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Gameplay | Daily / Special | 最小main+Gameplay，四独立Runtime行为/迁移身份；Special原双Play与正式四域新tuple发布、双进程Mono Player，不安装Excel/DataAssets/Save。 |
 | Equipment | Daily / Special | 最小main+Gameplay但只运行原Equipment契约，Special单独运行其原独立退出hook/同域双Play，不让Domain组合掩盖。 |
 | Behavior | Quick / Daily / Special | 日常Overlap / CharacterMotor / MovingPlatform / 两套FSM；Special在显式自有Desktop宿主执行两个原生窗口事件合同。 |
+| Overlap | Quick / Daily | 自有闭包仅main+overlap。Quick只编译真实`OverlapQueryCycle.cs`并执行原离线守卫/源码边界；完整包输入仍绑定identity。Daily通过独立`YLFramework.Overlap.Tests.EditMode` / `YLFramework.Overlap.Tests.PlayMode`运行原2D/3D形状、100容量、OnDisable无Exit及重入物理回归，不用stub代替物理。 |
 | Save | Daily / Special | 仅 Save + Newtonsoft，不安装主包。Daily 执行原生门面合同与真实双进程 Mono Player 冷重开/显式备份恢复；Special 以 .NET 执行 BCL 合同，不替代 Unity 或 Player。 |
 | StateMachine | Daily / Special | 仅配置式FSM包及主包。Daily验原生状态/图/生命周期；Special在自有空场景宿主经过两次真实编译重载验Create And Add绑定，再构建运行双进程Mono Player。不是无输入模拟或旧Resource tuple兼容声明。 |
 | Movement2D | Daily / Special | 仅main+movement2d。Daily保原角色/平台Edit与真Physics2D，补公共回调停用/池化/暂停边界；Special序列化17持久UnityEvent并运行两个独立Mono Player，严格核四个YL程序集、角色/路径/乘客指标，不借FSM或旧Behavior夹具。 |
@@ -108,6 +109,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 准确范围以当前 `TestSuites.json` 和发现产物为准。模块声明不是所有平台或所有环境已验收的承诺。
 
 `MigrationFixtures` 是历史拆分前快照的 producer，只能在冻结 `FixtureIdentity.json` 所记录的原 `sourceCommit` 检出中重建。当前源码保留真实依赖以支持编译与 `-Action Discover -Suite Special -Module MigrationFixtures`；当前拆包布局运行该 producer 会在输出前拒绝，不得为验证新包重写原 54 份冻结输入或其旧 Catalog tuple。
+
+Behavior继续选择两个独立Overlap测试程序集，并显式安装Overlap包；新增冻结`AssemblySplitV1/Content/Behavior/Components.prefab`冷读回归使用`LoadPrefabContents/UnloadPrefabContents`且不保存，核原Area/Circle脚本GUID、新Runtime、字段/对象引用、原空UnityEvents与无missing script。冻结Prefab还有movement2d/RedDots组件，所以该回归只在真实Behavior组合执行，不为Overlap-only强装其他功能。它不改写历史`typeAssembly`、Catalog或Bundle，也不声明旧Bundle跨Unity版本兼容；记录旧程序集tuple的正式Resource内容仍须重建。
 
 Data 组合保留主包字典与 Save 的实际消费者测试和组合 Player，但明确排除要求主包缺席的 `YL.Package.SaveStandalone` 用例；该用例仍由 Save Daily 完整执行，不能通过 Skip 或允许主包存在来替代独立包验收。
 

@@ -6,7 +6,9 @@ Overlap、CharacterController2D、MoveablePlatform 与配置式 StateMachine 是
 
 ## Overlap
 
-namespace 为 `YLFramework.Overlap`，实现位于 `Runtime/Utilities/Overlap`，配套绘制与 Inspector 位于 Editor。
+安装 [com.kano.ylframework.overlap](../../../com.kano.ylframework.overlap/README.md) 及主包，Unity内置physics/physics2d由包直接声明。最小自有闭包仅main + overlap，不要求movement2d、Gameplay、RedDots或Save。消费方asmdef显式引用`YLFramework.Overlap`；直接使用Inspector/Gizmos类型的Editor程序集另引用`YLFramework.Overlap.Editor`。
+
+namespace仍为`YLFramework.Overlap`，包内实现位于`Runtime/Utilities/Overlap`，配套绘制与Inspector位于`Editor/Utilities/Overlap`，Editor namespace仍为`YLFramework.Editor.Overlap`。原组件/Inspector的脚本GUID和序列化字段保留；主包不再提供这些类型。旧反射/AQN与Resource内容若记录了`YLFramework.Runtime`或`YLFramework.Editor`，须同步真实消费者并重建正式内容，不改写历史Catalog或承诺旧Bundle跨Unity版本兼容。
 
 - 在自有 GameObject 上添加 Point / Circle / Box / Capsule / Area 2D 或 Box / Sphere 3D 检测组件，明确 LayerMask、形状、频率与 scaled / unscaled 模式。
 - 查询排除 Trigger。当前公开结果为 `results`，它是组件复用的可写列表，每次查询清空并逐项填充，不是可长期保留的独立快照；enter 回调中还可能尚未收集完整。调用方不应改写组件列表，需要跨查询保留时自行复制。`OverlapHit<T>.point` 包括 3D 查询也使用 Vector2，不按直觉修改其协议。

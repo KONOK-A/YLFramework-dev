@@ -59,6 +59,7 @@ Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎�
 | `com.kano.ylframework.save` | Newtonsoft UPM，无主包依赖 | 槽位、同步/异步JSON、原子单文件和显式恢复 |
 | `com.kano.ylframework.gameplay` | 主包、Newtonsoft UPM | Skill/Buff/Mission/Equipment四Runtime与统一作者工具，不要求Excel |
 | `com.kano.ylframework.reddot` | 主包 | 独立路径/来源登记和指示组件，不要求Save或Gameplay |
+| `com.kano.ylframework.overlap` | 主包 | 原2D/3D检测组件与Inspector，直接声明内置physics/physics2d，不要求movement2d或其他选装包 |
 | `com.kano.ylframework.excel` | 主包、DataAssets | MiniExcel 与许可随 Excel 包携带 |
 | Excel Gameplay 条件适配 | 包含在Excel中，另安装Gameplay | 无独立DomainExcel包，不需要全局宏 |
 | DOTween 条件适配 | 随主包Action提供，不是独立UPM包 | SDK独立准备且启用`DOTWEEN`；无SDK或宏关闭的门控检查不是正向集成 |
@@ -90,6 +91,7 @@ Unity 不支持在 `package.json` 中声明 Git URL 传递依赖。自有包虽�
 | Save | 仅 `com.kano.ylframework.save` + Newtonsoft UPM | 不需要主包；若使用主包SerializedDictionary则消费方显式安装两者 |
 | 配置式 StateMachine | 主包 + `com.kano.ylframework.state-machine` | Runtime与图编辑器/状态脚本生成一起交付；轻量FSM不随它迁移 |
 | Character2D / Platform2D | 主包 + `com.kano.ylframework.movement2d` + physics2d | 一个安装包、两个互不引用的Runtime及一个公共Editor，Overlap不随它迁移 |
+| Overlap | 主包 + `com.kano.ylframework.overlap` | 内置physics/physics2d由UPM解析；Runtime引用`YLFramework.Overlap`，直接消费作者类型时另引用`YLFramework.Overlap.Editor` |
 | Gameplay | 主包 + `com.kano.ylframework.gameplay` | 四个独立Runtime，消费方asmdef只引用所用领域，不要求Excel/Save |
 | Excel | 主包 + DataAssets + `com.kano.ylframework.excel` | MiniExcel `1.31.2` 与 Apache-2.0 许可随 Excel 包携带 |
 | Excel Gameplay | 主包 + DataAssets + Excel + Gameplay | Excel内的原Domain.Excel.Editor随Gameplay存在性启用，无全局宏 |
@@ -153,7 +155,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 | --- | --- |
 | 轻量 FSM、网格与索引 | [FSM](Modules/FSM.md) · [Grid](Modules/Grid.md) · [Table](Modules/Table.md) |
 | JSON 树、压缩与通用扩展 | [Json](Modules/Json.md) · [ZipTool](Modules/ZipTool.md) · [Extensions](Modules/Extensions.md) |
-| Overlap、CharacterController2D、MoveablePlatform | [Behavior](Modules/Behavior.md)，角色/平台安装[Movement2D包](../../com.kano.ylframework.movement2d/README.md) |
+| Overlap、CharacterController2D、MoveablePlatform | [Behavior](Modules/Behavior.md)，检测安装[Overlap包](../../com.kano.ylframework.overlap/README.md)，角色/平台安装[Movement2D包](../../com.kano.ylframework.movement2d/README.md) |
 | 取色器与窗口 | [UI](Modules/UI.md#取色控件colorselector) |
 | 作者工具、TreeView、设置与 Editor 迁移 | [Editor](Modules/Editor.md) |
 | 帮助提供方、窗口与 XML | [Help](Modules/Help.md) |
@@ -170,6 +172,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 | Save | [`com.kano.ylframework.save`](../../com.kano.ylframework.save/README.md)，无主包安装依赖；[详细存储合同](Modules/Save.md) |
 | 配置式 StateMachine | [`com.kano.ylframework.state-machine`](../../com.kano.ylframework.state-machine/README.md)，图作者工具、原模板/样式与真实编译后的脚本绑定 |
 | 二维角色与平台 | [`com.kano.ylframework.movement2d`](../../com.kano.ylframework.movement2d/README.md)，独立Runtime、原Prefab/UnityEvent及实际Physics2D生命周期 |
+| 重叠检测 | [`com.kano.ylframework.overlap`](../../com.kano.ylframework.overlap/README.md)，独立Runtime/Editor，保留原2D/3D形状、100容量与OnDisable无Exit语义 |
 | Excel | [`com.kano.ylframework.excel`](../../com.kano.ylframework.excel/README.md)，复用DataAssets并携带完整 MiniExcel 后端及许可；[配置作者流程](Modules/Data.md#excel-作者后端) |
 | Excel Gameplay | [Excel内置领域适配](../../com.kano.ylframework.excel/Editor/Gameplay/README.md)，同装Gameplay启用；[领域导入](Modules/Domain.md#domainexcel) |
 | HybridCLR | [`com.kano.ylframework.hybridclr`](../../com.kano.ylframework.hybridclr/README.md)，使用外置官方 SDK 并复用 Resource；[架构边界](Architecture.md#hybridclr-可选接入) |

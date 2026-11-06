@@ -12,7 +12,7 @@ YLFramework 按需交付与使用。主包有 `YLFramework.Runtime` 与 `YLFrame
 | --- | --- |
 | `Runtime` | Foundation、Core、Systems、Utilities 四个职责区，共用 Runtime 主体 |
 | `Editor` | 作者工具、公共支撑与 Help，共用 Editor-only 主体 |
-| 独立选装 UPM 包 | DataAssets、Localization、Save、StateMachine、Movement2D、Gameplay、Excel、HybridCLR的可选边界；Excel内置条件Gameplay适配，Save可不安装主包；DOTween自有适配源码归主包Action条件程序集 |
+| 独立选装 UPM 包 | DataAssets、Localization、Save、StateMachine、Movement2D、Overlap、Gameplay、RedDots、Excel、HybridCLR的可选边界；Excel内置条件Gameplay适配，Save可不安装主包；DOTween自有适配源码归主包Action条件程序集 |
 | `Prefabs`、`Samples~`、`Documentation~` | 正式模板、显式导入后才编译的接入样例、按文件路径打开的产品指南 |
 | `Plugins/BouncyCastle` | 随包的批准依赖及完整来源许可；不递归整个宿主 Plugins |
 | `Assets/Tests/YLFramework` | 源仓库测试与夹具，不在任何产品包内 |
@@ -25,14 +25,17 @@ YLFramework 按需交付与使用。主包有 `YLFramework.Runtime` 与 `YLFrame
 PackageSources/
   com.kano.ylframework/
     Runtime/     Foundation/  Core/  Systems/  Utilities/
-    Editor/      Foundation/  Core/  Systems/  Utilities/
-                 Common/  Tools/  Help/
+    Editor/      Foundation/  Core/  Systems/  Common/
+                 Tools/  Help/  Distribution/
     Prefabs/  Plugins/BouncyCastle/
     Samples~/ResourceStartup/  Documentation~/
     package.json  README.md  CHANGELOG.md  LICENSE.md
   com.kano.ylframework.data-assets/
   com.kano.ylframework.localization/
   com.kano.ylframework.save/
+  com.kano.ylframework.state-machine/
+  com.kano.ylframework.movement2d/
+  com.kano.ylframework.overlap/     Runtime/Utilities/Overlap/  Editor/Utilities/Overlap/
   com.kano.ylframework.gameplay/    Runtime/{Skill,Buff,Mission,Equipment}/  Editor/
   com.kano.ylframework.reddot/      Runtime/Systems/Reddot/
   com.kano.ylframework.excel/
@@ -51,6 +54,7 @@ Assets/Tests/YLFramework/          # repository only
 | `YLFramework.Save` | true | 只显式引用Newtonsoft.Json与UnityEngine，不引用主包；普通DTO/BCL存储与可选主包字典组合分开验证 |
 | `YLFramework.StateMachine` / `.Editor` | true | Runtime引用主Runtime的Foundation；Editor引用自身Runtime与主Editor的包路径工具，轻量`YLFramework.FSM`仍属主包 |
 | `YLFramework.Character2D` / `YLFramework.Platform2D` | true | 同属movement2d安装单元，各只引用主Runtime，不互相引用；统一`YLFramework.Movement2D.Editor`只在Editor编译 |
+| `YLFramework.Overlap` / `.Editor` | true | 独立overlap安装单元；Runtime只引用主Runtime，Editor引用自身Runtime与主Editor；直接声明Unity内置physics/physics2d，不依赖movement2d、Gameplay、RedDots或Save |
 | `YLFramework.Skill` / `YLFramework.Buff` / `YLFramework.Mission` / `YLFramework.Equipment` | true | 同属Gameplay安装单元，各只引用主Runtime，不互相引用；Buff/Mission显式引用Newtonsoft，统一`YLFramework.Gameplay.Editor`拥有共享作者工具与原退出hooks |
 | `YLFramework.Actions.DOTween` | false | 主包`Runtime/Systems/Action/Integration/DOTween`，引用Runtime + 外部DOTween.dll，受`DOTWEEN`约束；不单独发行、不捆绑SDK |
 | `YLFramework.RedDots` | true | 独立reddot安装单元，只引用主Runtime的事件和会话支撑；不强装Save或Gameplay |
@@ -75,7 +79,7 @@ Editor 的中立支撑归 `YLFramework.Editor.Common`，领域共享策略归 `.
 | Foundation | 不反向消费 Core / Systems / Utilities | 异步、事件、池、计时、更新、注入、序列化及必要 Unity 适配 |
 | Core | Foundation 与自身窄合同，不依赖具体 Systems 实现 | Module / MVC / View / Panel / UI 会话与资源消费合同 |
 | Systems | Foundation、Core 合同及适用 Utilities | Resource、Audio 与尚未迁出的领域状态；跨系统协作明确登记 |
-| Utilities | 按需组合的基础机制；有明确用途时消费 Core | 数据结构、扩展、检测/移动组件与控件，不升级为全局服务 |
+| Utilities | 按需组合的基础机制；有明确用途时消费 Core | 数据结构、扩展、轻量FSM与控件，不升级为全局服务；Overlap和角色/平台组件由各自选装包拥有 |
 
 Foundation 的 Unity 挂载 / 销毁直接使用原生 API，不为了便利扩展反向依赖 Utilities。ColorSelector 消费 Core Panel 是明确的控件依赖，Core 不反向依赖取色工具；完整配置 StateMachine 属于独立包，轻量 FSM 仍属于主包 Utilities，不共享执行内核。
 
@@ -136,7 +140,7 @@ HTTP 独占每笔原生传输并自管稳定终态；Foundation 异步基类只�
 
 ## Editor 工具
 
-Editor按Runtime所有者组织Foundation/Core/Systems/Utilities；`Common`只承载中立资产、Inspector、Scene、Settings、TreeView与Window支撑。四领域共享生命周期和资源作者策略属于Gameplay包的`Editor/Shared`与`YLFramework.Gameplay.Editor`，不塞回主包Core/Common。
+Editor按Runtime所有者组织；主包保留Foundation/Core/Systems，原Utilities中的领域Inspector已随功能包迁出，不留空目录兼容壳。`Common`只承载中立资产、Inspector、Scene、Settings、TreeView与Window支撑。Overlap的Inspector/Gizmos属于overlap包的`Editor/Utilities/Overlap`与`YLFramework.Overlap.Editor`；四领域共享生命周期和资源作者策略属于Gameplay包的`Editor/Shared`与`YLFramework.Gameplay.Editor`，不塞回主包Core/Common。
 
 Help 提供共享索引与领域提供方；发行与安装只走 UPM，旧 unitypackage Distribution 出口退役。不根据 MenuItem 的存在把模块窗口移入通用 Tools。预览桥由领域侧安装解析器，公共层不主动初始化 Runtime。
 
