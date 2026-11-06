@@ -74,8 +74,10 @@
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/SubscriptionCleanup.cs"
       ],
       "nativeSources": [
-        "Assets/Editor/YLFrameworkDev"
+        "Assets/Editor/YLFrameworkDev",
+        "Assets/Tests/YLFramework/Fixtures/Shared"
       ],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared"],
       "editTests": [
         "Assets/Tests/YLFramework/EditMode/Systems/Reddot"
       ],
@@ -91,6 +93,38 @@
       "packageInputs": [
         "com.kano.ylframework.reddot"
       ],
+      "sampleInputs": []
+    },
+    {
+      "name": "ReddotPlayer",
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "category": "",
+      "assemblies": [],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "excludedCategories": [],
+      "description": "Main + RedDots only: two real Mono Players, immutable diagnostics, UI/read-state lifetime and measured multilevel updates. No Resource publication or Save.",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "suites": ["Special"],
+      "specialBackend": "PlayerNative",
+      "specialModes": ["EditMode"],
+      "specialCategory": "YL.Special.ReddotPlayer",
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.reddot/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Reddot"],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Reddot"],
+      "editTests": ["Assets/Tests/YLFramework/Fixtures/Reddot/Editor"],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/YLFramework.RedDots.asmdef",
+        "PackageSources/com.kano.ylframework.reddot/Editor/YLFramework.RedDots.Editor.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Reddot/Runtime/YLFramework.RedDots.Acceptance.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Reddot/Editor/YLFramework.RedDots.Tests.Player.Editor.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework.reddot"],
       "sampleInputs": []
     },
     {

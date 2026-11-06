@@ -55,9 +55,17 @@ try {
         Check ($entry.Count -eq 1) 'The original RedDots runtime still has no independent package owner.'
         $core = @($entry[0].assemblies | Where-Object name -CEQ 'YLFramework.RedDots')
         $adapter = @($entry[0].assemblies | Where-Object name -CEQ 'YLFramework.RedDots.Save')
-        Check ($entry[0].assemblies.Count -eq 2 -and $core.Count -eq 1 -and $adapter.Count -eq 1) 'RedDots must have exactly one core and its explicitly gated Save adapter, not arbitrary extra assemblies.'
+        $editor = @($entry[0].assemblies | Where-Object name -CEQ 'YLFramework.RedDots.Editor')
+        Check ($entry[0].assemblies.Count -eq 3 -and $core.Count -eq 1 -and $adapter.Count -eq 1 -and $editor.Count -eq 1) 'RedDots must have exactly one core, its explicitly gated Save adapter and its read-only Editor, not arbitrary extra assemblies.'
         Check ($core[0].path -ceq 'Runtime/YLFramework.RedDots.asmdef' -and $core[0].defineConstraints.Count -eq 0 -and
-            $core[0].versionDefines.Count -eq 0) 'The original core must remain unconditional.'
+            $core[0].versionDefines.Count -eq 0 -and $core[0].player) 'The original core must remain unconditional.'
+        Check ($editor[0].path -ceq 'Editor/YLFramework.RedDots.Editor.asmdef' -and -not $editor[0].player -and
+            $editor[0].defineConstraints.Count -eq 0 -and $editor[0].versionDefines.Count -eq 0) 'Only the declared diagnostic Editor may supplement the core and adapter.'
+        $editorDefinition = Read-YLPackageEvidenceJson (Join-Path $repository ('PackageSources/com.kano.ylframework.reddot/' + $editor[0].path))
+        Check (($editorDefinition.references -join ',') -ceq 'YLFramework.RedDots' -and
+            ($editorDefinition.includePlatforms -join ',') -ceq 'Editor' -and $editorDefinition.excludePlatforms.Count -eq 0 -and
+            $editorDefinition.overrideReferences -and $editorDefinition.precompiledReferences.Count -eq 0 -and
+            $editorDefinition.defineConstraints.Count -eq 0 -and $editorDefinition.versionDefines.Count -eq 0) 'Diagnostics must not force Save, a global define or a Player Editor reference.'
         Check ($adapter[0].path -ceq 'Runtime/Integration/Save/YLFramework.RedDots.Save.asmdef' -and
             ($adapter[0].defineConstraints -join ',') -ceq 'YL_SAVE_PACKAGE' -and $adapter[0].versionDefines.Count -eq 1 -and
             $adapter[0].versionDefines[0].name -ceq 'com.kano.ylframework.save' -and

@@ -102,7 +102,7 @@ namespace YLFramework.Testing
         public static JArray Definitions(JObject catalog, JArray packages, string profile, string dotweenMode)
         {
             Validate(catalog);
-            if (!new[] { "Package", "DOTween", "Excel", "ExcelGameplay", "HybridCLR", "OptionalAdapterFixture" }.Contains(profile) ||
+            if (!new[] { "Package", "DOTween", "Excel", "ExcelGameplay", "ReddotSave", "HybridCLR", "OptionalAdapterFixture" }.Contains(profile) ||
                 (profile != "DOTween" && !string.IsNullOrEmpty(dotweenMode)) || (profile == "DOTween" && !new[] { "Required", "Absent", "SdkOnly", "DefineOnly" }.Contains(dotweenMode))) { throw Error("Unknown/ambiguous package smoke profile."); }
             var declared = ((JArray)catalog["packages"]).Cast<JObject>().ToDictionary(row => Text(row, "id"), StringComparer.Ordinal);
             var versions = new Dictionary<string, string>(StringComparer.Ordinal);

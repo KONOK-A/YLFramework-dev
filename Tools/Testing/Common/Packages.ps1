@@ -383,7 +383,9 @@ function Get-YLRegistryEntryPackages {
     foreach ($id in $EntryPackages) {
         if ([string]::IsNullOrWhiteSpace($id) -or $id -cnotin $known -or -not $seen.Add($id)) { throw 'Invalid/unknown/duplicate artifact entry roots.' }
     }
-    if ($EntryPackages.Count -gt 1 -and ($EntryPackages.Count -ne 2 -or -not $seen.SetEquals([string[]]@('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')))) { throw 'Only the explicit ExcelGameplay composite roots are supported.' }
+    if ($EntryPackages.Count -gt 1 -and ($EntryPackages.Count -ne 2 -or
+        (-not $seen.SetEquals([string[]]@('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')) -and
+            -not ($EntryPackages[0] -ceq 'com.kano.ylframework.reddot' -and $EntryPackages[1] -ceq 'com.kano.ylframework.save')))) { throw 'Only the explicit ExcelGameplay or ordered ReddotSave composite roots are supported.' }
     return $EntryPackages
 }
 

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using NUnit.Framework;
 using YLFramework.RedDots;
 
@@ -98,6 +100,393 @@ namespace YLFramework.Tests.Extensions.Domain
             {
                 display.Unregister();
                 throwing.Unregister();
+            }
+        }
+    }
+
+    [Category("YL.Module.Reddot")]
+    [Category("YL.Module.Domain")]
+    public sealed class ReddotDiagnosticTests
+    {
+        [SetUp]
+        public void Prepare() => ResetSession();
+
+        [TearDown]
+        public void Clean() => ResetSession();
+
+        [Test]
+        public void DiagnosticsCopySortedOwnSourcesAndNeverRegisterAnImplicitRoot()
+        {
+            using var second = ReddotManager.RegisterSource(" /Mail//Gift/ ", "z", 3);
+            using var first = ReddotManager.RegisterSource("Mail/Gift", "a", 2);
+            using var lease = ReddotManager.RegisterPath("Mail/Gift");
+            ReddotManager.AddPath("Mail/Gift");
+            ReddotManager.SetAggregation("Mail", ReddotAggregation.Any);
+            using var listener = ReddotManager.Subscribe("Mail", _ => { }, false);
+            var global = ReddotManager.RegisterChanged(() => { });
+            try
+            {
+                var snapshot = Capture();
+                Assert.That(Nodes(snapshot).Select(node => Read<string>(node, "Path")),
+                    Is.EqualTo(new[] { "Mail/", "Mail/Gift/" }));
+                var parent = Node(snapshot, "Mail/");
+                var child = Node(snapshot, "Mail/Gift/");
+                Assert.That(Read<long>(parent, "Value"), Is.EqualTo(1));
+                Assert.That(Read<ReddotAggregation>(parent, "Aggregation"), Is.EqualTo(ReddotAggregation.Any));
+                Assert.That(Read<int>(parent, "SubscriberCount"), Is.EqualTo(1));
+                Assert.That(Read<long>(parent, "OwnValue"), Is.Zero);
+                Assert.That(Read<long>(child, "OwnValue"), Is.EqualTo(7));
+                Assert.That(Read<long>(child, "LeaseCount"), Is.EqualTo(1));
+                Assert.That(Read<bool>(child, "HasPath"), Is.True);
+                Assert.That(Read<int>(snapshot, "GlobalSubscriberCount"), Is.EqualTo(1));
+                var sources = Items(Read<object>(child, "Sources"));
+                Assert.That(sources.Select(source => Read<string>(source, "SourceId")), Is.EqualTo(new[] { "a", "z" }));
+                Assert.That(sources.Select(source => Read<long>(source, "Value")), Is.EqualTo(new long[] { 2, 3 }));
+                Assert.That(Items(Read<object>(parent, "Sources")), Is.Empty, "Ancestors must not pretend to own descendants' sources.");
+                Assert.That(Read<int>(snapshot, "DirtyNodeCount"), Is.Zero);
+                Assert.That(Read<int>(snapshot, "BatchDepth"), Is.Zero);
+            }
+            finally
+            {
+                global.Unregister();
+            }
+        }
+
+        [Test]
+        public void CapturedCollectionsAndRecordsCannotMutateOrFollowLiveState()
+        {
+            using var source = ReddotManager.RegisterSource("Mail/Gift", "gift", 2);
+            var snapshot = Capture();
+            var child = Node(snapshot, "Mail/Gift/");
+            var sources = Read<object>(child, "Sources");
+            foreach (var collection in new[] { Read<object>(snapshot, "Nodes"), sources })
+            {
+                Assert.That(collection, Is.InstanceOf<System.Collections.IList>());
+                var list = (System.Collections.IList)collection;
+                Assert.That(list.IsReadOnly, Is.True);
+                Assert.Throws<NotSupportedException>(() => list.Clear());
+            }
+            foreach (var record in new[] { snapshot, child, Items(sources)[0] })
+            {
+                Assert.That(record.GetType().IsSealed, Is.True);
+                Assert.That(record.GetType().GetFields(), Is.Empty);
+                Assert.That(record.GetType().GetProperties().All(property => property.GetSetMethod(true) == null), Is.True);
+            }
+            source.SetValue(9);
+            source.Dispose();
+            ReddotManager.Reset();
+            Assert.That(Read<long>(child, "Value"), Is.EqualTo(2));
+            Assert.That(Read<long>(Items(sources)[0], "Value"), Is.EqualTo(2));
+            Assert.That(ReddotManager.GetValue("Mail"), Is.Zero);
+        }
+
+        [Test]
+        public void ExplicitCaptureDoesNotFlushBatchOrPolluteNotificationsAndOrdinaryReadsDoNotCapture()
+        {
+            using var source = ReddotManager.RegisterSource("Mail/Gift", "gift");
+            var values = new List<long>();
+            using var subscription = ReddotManager.Subscribe("Mail", snapshot => values.Add(snapshot.Value), false);
+            var before = Capture();
+            using (ReddotManager.BeginBatch())
+            using (ReddotManager.BeginBatch())
+            {
+                source.SetValue(4);
+                for (var index = 0; index < 100; index++)
+                {
+                    Assert.That(ReddotManager.GetValue("Mail/"), Is.EqualTo(4));
+                    Assert.That(ReddotManager.GetSnapshot("Mail/").Value, Is.EqualTo(4));
+                    source.SetValue(4);
+                }
+                var during = Capture();
+                Assert.That(Read<long>(during, "CaptureSequence"), Is.EqualTo(Read<long>(before, "CaptureSequence") + 1));
+                Assert.That(Read<int>(during, "BatchDepth"), Is.EqualTo(2));
+                Assert.That(Read<int>(during, "DirtyNodeCount"), Is.EqualTo(2));
+                Assert.That(Read<bool>(during, "GlobalPending"), Is.True);
+                Assert.That(Read<bool>(Node(during, "Mail/"), "IsDirty"), Is.True);
+                Assert.That(values, Is.Empty);
+            }
+            Assert.That(values, Is.EqualTo(new long[] { 4 }));
+            var after = Capture();
+            Assert.That(Read<int>(after, "DirtyNodeCount"), Is.Zero);
+            Assert.That(Read<bool>(after, "GlobalPending"), Is.False);
+            Assert.That(Read<int>(after, "BatchDepth"), Is.Zero);
+        }
+
+        [Test]
+        public void CaptureInsideReentrantObserverReportsPendingWaveWithoutRunningIt()
+        {
+            using var source = ReddotManager.RegisterSource("Mail/Gift", "gift");
+            var values = new List<long>();
+            object captured = null;
+            IDisposable queued = null;
+            using var subscription = ReddotManager.Subscribe("Mail", snapshot =>
+            {
+                values.Add(snapshot.Value);
+                if (snapshot.Value == 1)
+                {
+                    source.SetValue(2);
+                    queued = ReddotManager.Subscribe("Queued", _ => { });
+                    captured = Capture();
+                    Assert.That(values.Count, Is.EqualTo(1));
+                }
+            }, false);
+            try
+            {
+                source.SetValue(1);
+                Assert.That(values, Is.EqualTo(new long[] { 1, 2 }));
+                Assert.That(Read<bool>(captured, "IsFlushing"), Is.True);
+                Assert.That(Read<int>(captured, "PendingInitialCount"), Is.EqualTo(1));
+                Assert.That(Read<int>(captured, "DirtyNodeCount"), Is.EqualTo(2));
+                Assert.That(Read<long>(Node(captured, "Mail/"), "Value"), Is.EqualTo(2));
+            }
+            finally
+            {
+                queued?.Dispose();
+            }
+        }
+
+        [Test]
+        public void ResetAdvancesDiagnosticGenerationWithoutChangingOldHandleSemantics()
+        {
+            using var old = ReddotManager.RegisterSource("Mail", "gift", 2);
+            using var listener = ReddotManager.Subscribe("Mail", _ => { }, false);
+            ReddotManager.SetAggregation("Mail", ReddotAggregation.Max);
+            var before = Capture();
+            ReddotManager.Reset();
+            using var current = ReddotManager.RegisterSource("Mail", "gift", 7);
+            old.Dispose();
+            Assert.Throws<ObjectDisposedException>(() => old.SetValue(1));
+            var after = Capture();
+            Assert.That(Read<long>(after, "Generation"), Is.GreaterThan(Read<long>(before, "Generation")));
+            Assert.That(Read<ReddotAggregation>(Node(after, "Mail/"), "Aggregation"), Is.EqualTo(ReddotAggregation.Max));
+            Assert.That(Read<int>(Node(after, "Mail/"), "SubscriberCount"), Is.EqualTo(1));
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(7));
+            ResetSession();
+            var next = Capture();
+            Assert.That(Read<long>(next, "Generation"), Is.GreaterThan(Read<long>(after, "Generation")));
+            Assert.That(Nodes(next), Is.Empty);
+        }
+
+        private static object Capture()
+        {
+            var method = typeof(ReddotManager).GetMethod("CaptureDiagnostics", Type.EmptyTypes);
+            Assert.That(method, Is.Not.Null, "5D requires an explicit read-only diagnostic capture, never a per-frame sampler.");
+            Assert.That(method.ReturnType.FullName, Is.EqualTo("YLFramework.RedDots.ReddotDiagnosticSnapshot"));
+            return method.Invoke(null, null);
+        }
+
+        private static T Read<T>(object record, string name) => (T)record.GetType().GetProperty(name).GetValue(record);
+        private static object[] Items(object collection) => ((System.Collections.IEnumerable)collection).Cast<object>().ToArray();
+        private static object[] Nodes(object snapshot) => Items(Read<object>(snapshot, "Nodes"));
+        private static object Node(object snapshot, string path) => Nodes(snapshot).Single(node => Read<string>(node, "Path") == path);
+        private static void ResetSession() => typeof(ReddotManager)
+            .GetMethod("ResetSession", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).Invoke(null, null);
+    }
+
+    [Category("YL.Module.Reddot")]
+    [Category("YL.Module.Domain")]
+    public sealed class ReddotPerformanceTests
+    {
+        [TestCase("Mail/Gift/", "Mail/Gift/")]
+        [TestCase("Mail/Gift", "Mail/Gift/")]
+        [TestCase("/Mail//Gift/", "Mail/Gift/")]
+        [TestCase("Mail/ \tGift /", "Mail/Gift/")]
+        [TestCase("\u2003Mail\u00a0/Gift/", "Mail/Gift/")]
+        [TestCase("Mail/In side/", "Mail/In side/")]
+        [TestCase("///", "")]
+        [TestCase(null, "")]
+        public void CanonicalFastPathPreservesEverySegmentAndWhitespaceRule(string input, string expected)
+        {
+            Assert.That(ReddotManager.NormalizePath(input), Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void CanonicalPathCanBeReusedWithoutAllocatingAnotherString()
+        {
+            var path = new string("Mail/Gift/".ToCharArray());
+            Assert.That(ReddotManager.NormalizePath(path), Is.SameAs(path));
+        }
+
+        [Test]
+        public void ActualMultilevelUpdatesBatchAndWarmedReadsKeepExactValuesAndNotificationCounts()
+        {
+            var unbatched = Measure(false);
+            var batched = Measure(true);
+            Assert.That(unbatched.FinalValue, Is.EqualTo(24577));
+            Assert.That(batched.FinalValue, Is.EqualTo(unbatched.FinalValue));
+            Assert.That(unbatched.RootNotifications, Is.EqualTo(24577));
+            Assert.That(batched.RootNotifications, Is.EqualTo(129));
+            Assert.That(unbatched.LeafNotifications, Is.EqualTo(24576));
+            Assert.That(batched.LeafNotifications, Is.EqualTo(8192));
+            Assert.That(unbatched.GlobalNotifications, Is.EqualTo(24577));
+            Assert.That(batched.GlobalNotifications, Is.EqualTo(129));
+            Assert.That(unbatched.MaximumCallbackDepth, Is.EqualTo(1));
+            Assert.That(batched.MaximumCallbackDepth, Is.EqualTo(1));
+            TestContext.WriteLine("Real core, not Unity native: machine={0}; OS={1}; CPU={2}; processors={3}; CLR={4}; pointerBits={5}",
+                Environment.MachineName, Environment.OSVersion, Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER"),
+                Environment.ProcessorCount, Environment.Version, IntPtr.Size * 8);
+            foreach (var result in new[] { unbatched, batched })
+            {
+                TestContext.WriteLine("batch={0}; groups=4; branchesPerGroup=4; leavesPerBranch=4; pathDepth=4; leaves=64; sourcesPerLeaf=3; echoSources=1; warmIterations=8; iterations=128; updates=24576; final={1}; rootNotifications={2}; leafNotifications={3}; globalNotifications={4}; maxCallbackDepth={5}; updateMs={6:F3}; updateAllocatedBytes={7}; warmedReadPairs=100000; readChecksum={8}; readMs={9:F3}; readAllocatedBytes={10}; diagnosticNodes={11}; diagnosticSources={12}; diagnosticSubscribers={13}; diagnosticMs={14:F3}; diagnosticAllocatedBytes={15}",
+                    result.Batch, result.FinalValue, result.RootNotifications, result.LeafNotifications, result.GlobalNotifications,
+                    result.MaximumCallbackDepth, result.UpdateMilliseconds, result.UpdateAllocatedBytes, result.ReadChecksum,
+                    result.ReadMilliseconds, result.ReadAllocatedBytes, result.DiagnosticNodes, result.DiagnosticSources,
+                    result.DiagnosticSubscribers, result.DiagnosticMilliseconds, result.DiagnosticAllocatedBytes);
+                Assert.That(result.DiagnosticNodes, Is.EqualTo(86));
+                Assert.That(result.DiagnosticSources, Is.EqualTo(193));
+                Assert.That(result.DiagnosticSubscribers, Is.EqualTo(65));
+            }
+            Assert.That(unbatched.ReadAllocatedBytes, Is.Zero, "Warmed canonical GetValue/GetSnapshot must not allocate normalized path copies.");
+            Assert.That(batched.ReadAllocatedBytes, Is.Zero);
+        }
+
+        private sealed class Measurement
+        {
+            internal bool Batch;
+            internal long FinalValue;
+            internal int RootNotifications;
+            internal int LeafNotifications;
+            internal int GlobalNotifications;
+            internal int MaximumCallbackDepth;
+            internal double UpdateMilliseconds;
+            internal long UpdateAllocatedBytes;
+            internal long ReadChecksum;
+            internal double ReadMilliseconds;
+            internal long ReadAllocatedBytes;
+            internal int DiagnosticNodes;
+            internal int DiagnosticSources;
+            internal int DiagnosticSubscribers;
+            internal double DiagnosticMilliseconds;
+            internal long DiagnosticAllocatedBytes;
+        }
+
+        private static Measurement Measure(bool batch)
+        {
+            ReddotManager.Reset();
+            var allocated = (Func<long>)Delegate.CreateDelegate(typeof(Func<long>), typeof(GC).GetMethod("GetAllocatedBytesForCurrentThread", Type.EmptyTypes)
+                ?? throw new InvalidOperationException("This measurement requires a real per-thread allocation counter."));
+            var result = new Measurement { Batch = batch };
+            var sources = new List<ReddotSource>();
+            var subscriptions = new List<IDisposable>();
+            using var echo = ReddotManager.RegisterSource("Perf/Echo/", "echo");
+            var echoed = false;
+            var depth = 0;
+            using var root = ReddotManager.Subscribe("Perf/", snapshot =>
+            {
+                depth++;
+                result.MaximumCallbackDepth = Math.Max(result.MaximumCallbackDepth, depth);
+                result.RootNotifications++;
+                if (snapshot.Value != ReddotManager.GetValue("Perf/"))
+                {
+                    throw new InvalidOperationException("The representative observer saw an uncommitted root value.");
+                }
+                if (!echoed && snapshot.Value > 0)
+                {
+                    echoed = true;
+                    echo.SetValue(1);
+                }
+                depth--;
+            }, false);
+            var global = ReddotManager.RegisterChanged(() => result.GlobalNotifications++);
+            try
+            {
+                for (var index = 0; index < 64; index++)
+                {
+                    var path = "Perf/G" + index / 16 + "/B" + index / 4 % 4 + "/L" + index % 4 + "/";
+                    for (var source = 0; source < 3; source++)
+                    {
+                        sources.Add(ReddotManager.RegisterSource(path, "s" + source));
+                    }
+                    subscriptions.Add(ReddotManager.Subscribe(path, snapshot =>
+                    {
+                        result.LeafNotifications++;
+                        Assert.That(snapshot.Value, Is.GreaterThan(0));
+                    }, false));
+                }
+                void Update(int iterations)
+                {
+                    for (var iteration = 1; iteration <= iterations; iteration++)
+                    {
+                        using var scope = batch ? ReddotManager.BeginBatch() : null;
+                        foreach (var source in sources)
+                        {
+                            source.SetValue(iteration);
+                        }
+                    }
+                }
+                Update(8);
+                foreach (var subscription in subscriptions)
+                {
+                    subscription.Dispose();
+                }
+                subscriptions.Clear();
+                // Reset values without measuring fixture construction or reset notifications.
+                using (ReddotManager.BeginBatch())
+                {
+                    foreach (var source in sources)
+                    {
+                        source.SetValue(0);
+                    }
+                    echo.SetValue(0);
+                }
+                for (var index = 0; index < 64; index++)
+                {
+                    subscriptions.Add(ReddotManager.Subscribe("Perf/G" + index / 16 + "/B" + index / 4 % 4 + "/L" + index % 4 + "/",
+                        _ => result.LeafNotifications++, false));
+                }
+                result.RootNotifications = result.LeafNotifications = result.GlobalNotifications = result.MaximumCallbackDepth = 0;
+                echoed = false;
+                allocated();
+                var watch = Stopwatch.StartNew();
+                var before = allocated();
+                Update(128);
+                result.UpdateAllocatedBytes = allocated() - before;
+                watch.Stop();
+                result.UpdateMilliseconds = watch.Elapsed.TotalMilliseconds;
+                result.FinalValue = ReddotManager.GetValue("Perf/");
+                const string ReadPath = "Perf/G0/B0/L0/";
+                for (var index = 0; index < 1024; index++)
+                {
+                    ReddotManager.GetValue(ReadPath);
+                    ReddotManager.GetSnapshot(ReadPath);
+                }
+                watch.Restart();
+                before = allocated();
+                for (var index = 0; index < 100000; index++)
+                {
+                    result.ReadChecksum += ReddotManager.GetValue(ReadPath) + ReddotManager.GetSnapshot(ReadPath).Value;
+                }
+                result.ReadAllocatedBytes = allocated() - before;
+                watch.Stop();
+                result.ReadMilliseconds = watch.Elapsed.TotalMilliseconds;
+                watch.Restart();
+                before = allocated();
+                var diagnostic = ReddotManager.CaptureDiagnostics();
+                result.DiagnosticAllocatedBytes = allocated() - before;
+                watch.Stop();
+                result.DiagnosticMilliseconds = watch.Elapsed.TotalMilliseconds;
+                var nodes = diagnostic.Nodes.Where(node => node.Path.StartsWith("Perf/", StringComparison.Ordinal)).ToArray();
+                result.DiagnosticNodes = nodes.Length;
+                result.DiagnosticSources = nodes.Sum(node => node.Sources.Count);
+                result.DiagnosticSubscribers = nodes.Sum(node => node.SubscriberCount);
+                Assert.That(result.ReadChecksum, Is.EqualTo(76800000));
+                Assert.That(sources.All(source => source.Value == 128), Is.True);
+                return result;
+            }
+            finally
+            {
+                global.Unregister();
+                foreach (var subscription in subscriptions)
+                {
+                    subscription.Dispose();
+                }
+                root.Dispose();
+                using var scope = ReddotManager.BeginBatch();
+                foreach (var source in sources)
+                {
+                    source.Dispose();
+                }
+                ReddotManager.Reset();
             }
         }
     }

@@ -22,6 +22,8 @@ namespace YLFramework.RedDots
         private static int _batchDepth;
         private static bool _globalPending;
         private static bool _isFlushing;
+        private static long _diagnosticGeneration = 1;
+        private static long _diagnosticSequence;
 
         /// <summary>注册会话重置，避免关闭 Domain Reload 时沿用上一轮的路径或订阅。</summary>
         static ReddotManager() => SingletonSessionState.RegisterSessionReset(ResetSession);
@@ -61,6 +63,28 @@ namespace YLFramework.RedDots
         {
             path = NormalizePath(path);
             return new ReddotSnapshot(path, _nodes.TryGetValue(path, out var node) ? node.Value : 0);
+        }
+
+        /// <summary>显式复制整棵树的只读诊断数据。仅本入口扫描，不刷新 Batch、不登记订阅或运行采样器。</summary>
+        /// <remarks>主线程串行调用；包含已创建的零值节点，不创建空路径根。来源 ID 没有人为附加标签。</remarks>
+        public static ReddotDiagnosticSnapshot CaptureDiagnostics()
+        {
+            var ordered = new List<Node>(_nodes.Values);
+            ordered.Sort((first, second) => StringComparer.Ordinal.Compare(first.Path, second.Path));
+            var nodes = new List<ReddotDiagnosticNode>(ordered.Count);
+            foreach (var node in ordered)
+            {
+                var sources = new List<ReddotDiagnosticSource>(node.Sources.Count);
+                foreach (var source in node.Sources.Values)
+                {
+                    sources.Add(new ReddotDiagnosticSource(source.SourceId, source.Value));
+                }
+                sources.Sort((first, second) => StringComparer.Ordinal.Compare(first.SourceId, second.SourceId));
+                nodes.Add(new ReddotDiagnosticNode(node.Path, node.Value, node.OwnValue, node.Aggregation,
+                    node.HasPath, node.LeaseCount, node.Listeners.Count, _dirty.Contains(node), sources.AsReadOnly()));
+            }
+            return new ReddotDiagnosticSnapshot(_diagnosticGeneration, ++_diagnosticSequence, _batchDepth,
+                _dirty.Count, _initial.Count, _changed.ListenerCount, _globalPending, _isFlushing, nodes.AsReadOnly());
         }
 
         /// <summary>登记唯一的 path + Ordinal sourceId；initialValue 非负，通知失败时回滚未交付的凭据。</summary>
@@ -173,6 +197,30 @@ namespace YLFramework.RedDots
                 return string.Empty;
             }
 
+            // 高频读使用已规范的凭据路径时，不再 Split/Trim/Join 分配同一字符串。
+            if (path[path.Length - 1] == '/')
+            {
+                var start = 0;
+                var canonical = true;
+                for (var index = 0; index < path.Length; index++)
+                {
+                    if (path[index] != '/')
+                    {
+                        continue;
+                    }
+                    if (index == start || char.IsWhiteSpace(path[start]) || char.IsWhiteSpace(path[index - 1]))
+                    {
+                        canonical = false;
+                        break;
+                    }
+                    start = index + 1;
+                }
+                if (canonical)
+                {
+                    return path;
+                }
+            }
+
             var segments = path.Split('/');
             var result = new List<string>(segments.Length);
             foreach (var segment in segments)
@@ -279,6 +327,7 @@ namespace YLFramework.RedDots
         public static void Reset()
         {
             _generation = new object();
+            _diagnosticGeneration++;
             _batchDepth = 0;
             foreach (var node in _nodes.Values)
             {
@@ -300,6 +349,7 @@ namespace YLFramework.RedDots
         private static void ResetSession()
         {
             _generation = new object();
+            _diagnosticGeneration++;
             _session = new object();
             _batchDepth = 0;
             // 旧租约可能仍持有旧节点；仅丢弃字典会让它们继续保活整棵旧树的观察者。
@@ -706,6 +756,156 @@ namespace YLFramework.RedDots
                 node.OwnValue = ownValue;
                 Publish(changes);
             }
+        }
+    }
+
+    /// <summary>显式采样的不可变诊断副本；数字 Generation 仅作观察，不是来源凭据。</summary>
+    public sealed class ReddotDiagnosticSnapshot
+    {
+        /// <summary>Reset 或会话重置时递增的观察编号，不参与凭据有效性判断。</summary>
+        public long Generation
+        {
+            get;
+        }
+        /// <summary>本次显式 CaptureDiagnostics 的进程内顺序号；普通读写不递增。</summary>
+        public long CaptureSequence
+        {
+            get;
+        }
+        /// <summary>当前代际尚未释放的 Batch 嵌套深度。</summary>
+        public int BatchDepth
+        {
+            get;
+        }
+        /// <summary>等待下一轮通知的脏节点数，不等同于本轮已冻结的通知数。</summary>
+        public int DirtyNodeCount
+        {
+            get;
+        }
+        /// <summary>尚在初始补发队列内的登记项数。</summary>
+        public int PendingInitialCount
+        {
+            get;
+        }
+        /// <summary>旧全局变更通道当前实际订阅数。</summary>
+        public int GlobalSubscriberCount
+        {
+            get;
+        }
+        /// <summary>是否有等待发送的全局变更通知。</summary>
+        public bool GlobalPending
+        {
+            get;
+        }
+        /// <summary>是否正位于迭代通知循环内。</summary>
+        public bool IsFlushing
+        {
+            get;
+        }
+        /// <summary>按 Ordinal 路径排序的只读节点副本，含已创建的零值节点。</summary>
+        public IReadOnlyList<ReddotDiagnosticNode> Nodes
+        {
+            get;
+        }
+
+        internal ReddotDiagnosticSnapshot(long generation, long captureSequence, int batchDepth, int dirtyNodeCount,
+            int pendingInitialCount, int globalSubscriberCount, bool globalPending, bool isFlushing,
+            IReadOnlyList<ReddotDiagnosticNode> nodes)
+        {
+            Generation = generation;
+            CaptureSequence = captureSequence;
+            BatchDepth = batchDepth;
+            DirtyNodeCount = dirtyNodeCount;
+            PendingInitialCount = pendingInitialCount;
+            GlobalSubscriberCount = globalSubscriberCount;
+            GlobalPending = globalPending;
+            IsFlushing = isFlushing;
+            Nodes = nodes;
+        }
+    }
+
+    /// <summary>节点自身与本层来源的值副本；Sources 不含后代来源、委托或可写树引用。</summary>
+    public sealed class ReddotDiagnosticNode
+    {
+        /// <summary>以斜杠结尾的规范路径；没有隐含空路径根。</summary>
+        public string Path
+        {
+            get;
+        }
+        /// <summary>采样时的节点聚合值。</summary>
+        public long Value
+        {
+            get;
+        }
+        /// <summary>本层集合、租约及数值来源之和，不含后代值。</summary>
+        public long OwnValue
+        {
+            get;
+        }
+        /// <summary>本节点组合自身值与直接子节点值的规则。</summary>
+        public ReddotAggregation Aggregation
+        {
+            get;
+        }
+        /// <summary>本节点是否持有 AddPath 的幂等集合来源。</summary>
+        public bool HasPath
+        {
+            get;
+        }
+        /// <summary>本节点仍有效的 RegisterPath 独立来源数。</summary>
+        public long LeaseCount
+        {
+            get;
+        }
+        /// <summary>本节点实际路径订阅数，不暴露回调或目标对象。</summary>
+        public int SubscriberCount
+        {
+            get;
+        }
+        /// <summary>采样时是否在等待通知的脏节点集合中。</summary>
+        public bool IsDirty
+        {
+            get;
+        }
+        /// <summary>仅本节点自有的数值来源副本，按 Ordinal ID 排序。</summary>
+        public IReadOnlyList<ReddotDiagnosticSource> Sources
+        {
+            get;
+        }
+
+        internal ReddotDiagnosticNode(string path, long value, long ownValue, ReddotAggregation aggregation,
+            bool hasPath, long leaseCount, int subscriberCount, bool isDirty, IReadOnlyList<ReddotDiagnosticSource> sources)
+        {
+            Path = path;
+            Value = value;
+            OwnValue = ownValue;
+            Aggregation = aggregation;
+            HasPath = hasPath;
+            LeaseCount = leaseCount;
+            SubscriberCount = subscriberCount;
+            IsDirty = isDirty;
+            Sources = sources;
+        }
+    }
+
+    /// <summary>单个显式数值来源的 ID/值副本，不持有 ReddotSource 凭据。</summary>
+    public sealed class ReddotDiagnosticSource
+    {
+        /// <summary>业务登记的原始、区分大小写来源 ID。</summary>
+        public string SourceId
+        {
+            get;
+        }
+        /// <summary>采样时的数值来源值，与之后的修改或释放独立。</summary>
+        public long Value
+        {
+            get;
+        }
+
+        internal ReddotDiagnosticSource(string sourceId, long value)
+        {
+            SourceId = sourceId;
+            Value = value;
         }
     }
 

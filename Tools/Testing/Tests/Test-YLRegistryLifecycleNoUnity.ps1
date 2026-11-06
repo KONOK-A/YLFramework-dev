@@ -53,6 +53,51 @@ try {
     $editor = [pscustomobject]@{ version = '2022.3.62f3'; productVersion = $info.ProductVersion; fileVersion = "$($info.FileMajorPart).$($info.FileMinorPart).$($info.FileBuildPart)" }
     $roots = @('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')
     $arguments = @{ Workspace = $workspace; Source = $source; Unity = $exe; Editor = $editor; EntryPackage = $roots[0]; EntryPackages = $roots; Result = $run; TimeoutSeconds = 30 }
+    $reddotRoots = @('com.kano.ylframework.reddot', 'com.kano.ylframework.save')
+    $bothGraph = @{ entryPackage = $reddotRoots[0]; compilation = @{ editor = @(); player = @() } }
+    foreach ($mode in @('editor', 'player')) {
+        foreach ($name in @('YLFramework.Runtime', 'YLFramework.RedDots', 'YLFramework.Save', 'YLFramework.RedDots.Save')) {
+            $refs = @(switch ($name) { 'YLFramework.RedDots' { @('YLFramework.Runtime') } 'YLFramework.RedDots.Save' { @('YLFramework.RedDots', 'YLFramework.Save') } default { @() } })
+            $bothGraph.compilation[$mode] += @{ name = $name; sourceFiles = @('Packages/com.kano.ylframework/Runtime/Product.cs'); assemblyReferences = @($refs); compiledAssemblyReferences = @() }
+        }
+    }
+    foreach ($name in @('YLFramework.Editor', 'YLFramework.RedDots.Editor')) {
+        $bothGraph.compilation.editor += @{ name = $name; sourceFiles = @('Packages/com.kano.ylframework/Editor/Product.cs'); assemblyReferences = @(); compiledAssemblyReferences = @() }
+    }
+    Assert-YLRegistryLifecycleCompilation -Report $bothGraph -Roots $reddotRoots; $checks++
+    $missingAdapter = Copy-Value $bothGraph
+    $missingAdapter.compilation.player = @($missingAdapter.compilation.player | Where-Object name -CNE 'YLFramework.RedDots.Save')
+    Reject { Assert-YLRegistryLifecycleCompilation -Report $missingAdapter -Roots $reddotRoots } 'compilation|assembly|adapter'
+    $stateOriginal = @{ dependencies = [ordered]@{ 'com.kano.ylframework' = 'file:C:/main.tgz'; 'com.kano.ylframework.reddot' = 'file:C:/reddot.tgz'; 'com.kano.ylframework.save' = 'file:C:/save.tgz' }; scopedRegistries = @() }
+    foreach ($case in @(
+        @{ phase = 'Inspect'; ids = 'com.kano.ylframework,com.kano.ylframework.reddot,com.kano.ylframework.save'; remove = ''; add = '' },
+        @{ phase = 'Reopen'; ids = 'com.kano.ylframework,com.kano.ylframework.reddot,com.kano.ylframework.save'; remove = ''; add = '' },
+        @{ phase = 'RemoveSave'; ids = 'com.kano.ylframework,com.kano.ylframework.reddot'; remove = 'com.kano.ylframework.save'; add = '' },
+        @{ phase = 'VerifyReddotOnly'; ids = 'com.kano.ylframework,com.kano.ylframework.reddot'; remove = ''; add = '' },
+        @{ phase = 'RestoreSave'; ids = 'com.kano.ylframework,com.kano.ylframework.reddot,com.kano.ylframework.save'; remove = ''; add = 'file:C:/save.tgz' },
+        @{ phase = 'RemoveReddot'; ids = 'com.kano.ylframework.save'; remove = 'com.kano.ylframework,com.kano.ylframework.reddot'; add = '' },
+        @{ phase = 'VerifySaveOnly'; ids = 'com.kano.ylframework.save'; remove = ''; add = '' },
+        @{ phase = 'RestoreReddot'; ids = 'com.kano.ylframework,com.kano.ylframework.reddot,com.kano.ylframework.save'; remove = ''; add = 'file:C:/main.tgz,file:C:/reddot.tgz' },
+        @{ phase = 'Remove'; ids = ''; remove = 'com.kano.ylframework,com.kano.ylframework.reddot,com.kano.ylframework.save'; add = '' },
+        @{ phase = 'VerifyRemoved'; ids = ''; remove = ''; add = '' })) {
+        $stateRequest = @{ entryPackage = $reddotRoots[0]; entryPackages = $reddotRoots; packageOrigin = 'LocalTarball'; verifyCombinations = $true; phase = $case.phase }
+        $state = Get-YLRegistryLifecycleState -Request $stateRequest -Release $source.release -Original $stateOriginal
+        Check ((@($state.after.dependencies.Keys) -join ',') -ceq $case.ids -and ($state.removePackages -join ',') -ceq $case.remove -and ($state.addPackages -join ',') -ceq $case.add) "Incorrect ReddotSave phase state/targets: $($case.phase)"
+    }
+    foreach ($bad in @(@{ entryPackage = $reddotRoots[0]; entryPackages = $reddotRoots; phase = 'RemoveGameplay'; verifyCombinations = $true },
+        @{ entryPackage = $roots[0]; entryPackages = $roots; phase = 'RemoveSave'; verifyCombinations = $true },
+        @{ entryPackage = $reddotRoots[0]; entryPackages = $reddotRoots; phase = 'RemoveSave'; verifyCombinations = $false },
+        @{ entryPackage = $reddotRoots[0]; entryPackages = @($reddotRoots[0], $true); phase = 'Inspect'; verifyCombinations = $true })) {
+        $bad.packageOrigin = 'LocalTarball'
+        Reject { Get-YLRegistryLifecycleState -Request $bad -Release $source.release -Original $stateOriginal } 'phase|root|array|combination'
+    }
+    foreach ($selection in @(@{ entry = $reddotRoots[0]; roots = $reddotRoots; want = 'Inspect,Reopen,RemoveSave,VerifyReddotOnly,RestoreSave,RemoveReddot,VerifySaveOnly,RestoreReddot,Remove,VerifyRemoved' },
+        @{ entry = $roots[0]; roots = $roots; want = 'Inspect,Reopen,RemoveGameplay,VerifyExcelOnly,RestoreGameplay,RemoveExcel,VerifyGameplayOnly,RestoreExcel,Remove,VerifyRemoved' },
+        @{ entry = $roots[1]; roots = @($roots[1], $roots[0]); want = 'Inspect,Reopen,RemoveGameplay,VerifyExcelOnly,RestoreGameplay,RemoveExcel,VerifyGameplayOnly,RestoreExcel,Remove,VerifyRemoved' })) {
+        Check ((@(Get-YLRegistryLifecyclePhases -EntryPackage $selection.entry -EntryPackages $selection.roots -VerifyCombinations) -join ',') -ceq $selection.want) 'Controlled phase sequence or the original Excel primary-order compatibility changed.'
+        Check ((@(Get-YLRegistryLifecyclePhases -EntryPackage $selection.entry -EntryPackages $selection.roots) -join ',') -ceq 'Inspect,Reopen,Remove,VerifyRemoved') 'Composite roots must not silently enable VerifyCombinations.'
+    }
+    Reject { Get-YLRegistryLifecyclePhases -EntryPackage $reddotRoots[0] -VerifyCombinations } 'explicit|root|combination'
     Check ((Get-Command Invoke-YLRegistryLifecycle).Parameters.ContainsKey('EntryPackages')) 'Lifecycle must accept the explicit composite roots instead of the retired DomainExcel root.'
     foreach ($origin in @('File', 'GitRemote')) {
         $bad = $source.Clone(); $bad.packageOrigin = $origin
@@ -135,7 +180,7 @@ try {
                     }
                 }
                 Check ($depths.Count -eq $apis.Count) 'The observed fixture contains a package outside its declared dependency closure.'
-                if ($script:scenarioRoots.Count -eq 2) {
+                if ($script:scenarioRoots.Count -eq 2 -and $script:scenarioEntry -ceq 'com.kano.ylframework.excel') {
                     Check ($depths.Count -eq 4 -and $depths['com.kano.ylframework.excel'] -eq 0 -and $depths['com.kano.ylframework.gameplay'] -eq 0 -and
                         $depths['com.kano.ylframework.data-assets'] -eq $(if ($request.packageOrigin -ceq 'Registry') { 1 } else { 0 })) 'ExcelGameplay must reach its four-package closure from both direct roots.'
                 }
@@ -184,11 +229,18 @@ try {
                     try { [IO.File]::WriteAllText($requestPath, $invalidJson); Reject { Call-Entry $begin $values } 'JSON' }
                     finally { [IO.File]::WriteAllBytes($requestPath, $requestBytes) }
                 }
-                foreach ($invalid in @(@{ roots = @() }, @{ roots = @($roots[0], $roots[0]) }, @{ roots = @($roots[1], $roots[0]) }, @{ roots = @($roots[0], 'unknown') }, @{ roots = @($roots[0], 'com.kano.ylframework') })) {
+                foreach ($invalid in @(@{ roots = @() }, @{ roots = @($request.entryPackage, $request.entryPackage) }, @{ roots = @($script:scenarioRoots[1], $request.entryPackage) }, @{ roots = @($request.entryPackage, 'unknown') }, @{ roots = @($request.entryPackage, 'com.kano.ylframework') }, @{ roots = @($request.entryPackage, $true) }, @{ roots = ($script:scenarioRoots -join '|') })) {
                     $bad = Copy-Value $request; $bad.entryPackages = $invalid.roots
                     try { Save $requestPath $bad; Reject { Call-Entry $begin $values } 'root|entry|primary|composite' }
                     finally { [IO.File]::WriteAllBytes($requestPath, $requestBytes) }
                 }
+                $wrongPhase = if ($request.entryPackage -ceq 'com.kano.ylframework.reddot') { 'RemoveGameplay' } else { 'RemoveSave' }
+                $wrongOutput = Join-Path $request.lifecycleRoot $wrongPhase; $null = [IO.Directory]::CreateDirectory($wrongOutput)
+                $bad = Copy-Value $request; $bad.phase = $wrongPhase; $bad.output = $wrongOutput; $bad.verifyCombinations = $true
+                $wrongPath = Join-Path $wrongOutput 'request.json'; Save $wrongPath $bad
+                $wrongArgv = [string[]]$argv.Clone(); $wrongArgv[[Array]::IndexOf($argv, '-ylRegistryLifecycleRequest') + 1] = $wrongPath
+                $wrongValues = [object[]]::new(1); $wrongValues[0] = $wrongArgv
+                Reject { Call-Entry $begin $wrongValues } 'phase|combination'
                 $bad = Copy-Value $request; $bad.unapproved = 'unknown fields remain forbidden'
                 try { Save $requestPath $bad; Reject { Call-Entry $begin $values } 'field|schema' }
                 finally { [IO.File]::WriteAllBytes($requestPath, $requestBytes) }
@@ -212,12 +264,19 @@ try {
                 [UnityEditor.EditorApplication]::Pump()
                 if ($script:reload -and ([UnityEditor.PackageManager.Client]::RemoveCalls + [UnityEditor.PackageManager.Client]::AddAndRemoveCalls) -gt 0 -and $i -eq 2) {
                     $statePath = Join-Path $request.output 'operation.json'; $stateBytes = [IO.File]::ReadAllBytes($statePath)
-                    foreach ($field in @('requestSha256', 'hostId', 'resultId', 'cacheId', 'pid', 'unexpected', 'phase', 'entryPackages', 'removePackages', 'addPackages')) {
+                    foreach ($field in @('requestSha256', 'hostId', 'resultId', 'cacheId', 'pid', 'unexpected', 'phase', 'entryPackages', 'removePackages', 'addPackages', 'requestKind', 'stage', 'issued', 'requestStatusObserved')) {
                         $badState = Read-YLPackageEvidenceJson $statePath
                         if ($field -cin @('entryPackages', 'removePackages', 'addPackages')) { $badState[$field] = @('wrong') }
                         else { $badState[$field] = $(if ($field -ceq 'pid') { 0 } elseif ($field -ceq 'requestSha256') { '0' * 64 } else { '0' * 32 }) }
-                        try { Save $statePath $badState; Reject { Call-Entry $resume $values } 'state|bound|request|owner|field|array|target' }
+                        try { Save $statePath $badState; Reject { Call-Entry $resume $values } 'state|bound|request|owner|field|array|target|observation|types|status' }
                         finally { [IO.File]::WriteAllBytes($statePath, $stateBytes) }
+                    }
+                    foreach ($field in @('entryPackages', 'removePackages', 'addPackages')) {
+                        foreach ($invalid in @(@{ value = $true }, @{ value = @($true) }, @{ value = @('wrong', $null) })) {
+                            $badState = Read-YLPackageEvidenceJson $statePath; $badState[$field] = $invalid.value
+                            try { Save $statePath $badState; Reject { Call-Entry $resume $values } 'state|bound|request|array|target|string' }
+                            finally { [IO.File]::WriteAllBytes($statePath, $stateBytes) }
+                        }
                     }
                     if ($script:fault -cne 'reload-unapplied') { [UnityEditor.PackageManager.Client]::CompleteRemoval() }
                     [UnityEditor.EditorApplication]::Reset()
@@ -241,8 +300,8 @@ try {
                 $reportPath = Join-Path $request.output 'report.json'; $r = Read-YLPackageEvidenceJson $reportPath
                 $r.entryPackages = @(($request.entryPackages -join '|')); Save $reportPath $r
             }
-            if (($request.phase -ceq 'RemoveExcel' -and $script:fault -cin @('joined-operation-roots', 'joined-operation-remove')) -or
-                ($request.phase -ceq 'RestoreExcel' -and $script:fault -ceq 'joined-operation-add')) {
+            if (($request.phase -cin @('RemoveExcel', 'RemoveReddot') -and $script:fault -cin @('joined-operation-roots', 'joined-operation-remove')) -or
+                ($request.phase -cin @('RestoreExcel', 'RestoreReddot') -and $script:fault -ceq 'joined-operation-add')) {
                 $reportPath = Join-Path $request.output 'report.json'; $r = Read-YLPackageEvidenceJson $reportPath
                 $field = if ($script:fault -ceq 'joined-operation-roots') { 'entryPackages' } elseif ($script:fault -ceq 'joined-operation-remove') { 'removePackages' } else { 'addPackages' }
                 $r.removal[$field] = @(($r.removal[$field] -join '|'))
@@ -257,6 +316,7 @@ try {
             }
             if ($script:fault -ceq 'sentinel' -and $request.phase -ceq 'VerifyRemoved') { [IO.File]::AppendAllText((Join-Path $hostRoot 'Assets/RegistryLifecycleSentinels/user-state.bytes'), 'drift') }
             if ($script:fault -ceq 'sentinel-meta' -and $request.phase -ceq 'VerifyExcelOnly') { [IO.File]::AppendAllText((Join-Path $hostRoot 'Assets/RegistryLifecycleSentinels/user-state.bytes.meta'), 'drift') }
+            if ($script:fault -ceq 'neutral-orphan' -and $request.phase -ceq 'VerifyReddotOnly') { [IO.File]::WriteAllText((Join-Path $hostRoot 'Assets/RegistryLifecycleSentinels/orphan.meta'), 'unregistered') }
             $code = [UnityEditor.EditorApplication]::ExitCodes[0]
             return [pscustomobject]@{ status = $(if ($code -eq 0) { 'Exited' } else { 'NonZeroExit' }); pid = $PID; observedExit = $true; exitCode = $code
                 timedOut = $false; cancelled = ($script:fault -ceq 'cancelled'); forcedCleanup = ($script:fault -ceq 'forced-cleanup'); observerError = $null; cleanupError = $null; jobAssigned = $true; activeProcesses = 0; streamsDrained = $true }
@@ -378,6 +438,76 @@ try {
             Check ($failed.status -ceq 'Failed' -and $failed.error.Length -gt 0) "Combination accepted $origin $faultName evidence."
         }
         $script:fault = ''
+    }
+    $script:scenarioEntry = $reddotRoots[0]; $script:scenarioRoots = $reddotRoots; $script:guardsChecked = $false
+    $reddotArguments = $arguments.Clone(); $reddotArguments.EntryPackage = $reddotRoots[0]; $reddotArguments.EntryPackages = $reddotRoots; $reddotArguments.VerifyCombinations = $true
+    foreach ($origin in @('Registry', 'LocalTarball')) {
+        $reddotArguments.Source = if ($origin -ceq 'Registry') { $source } else { Get-YLRegistrySource -PackageSource LocalTarball -Arguments @{ ReleaseManifest = $releasePath } }
+        foreach ($reload in @($false, $true)) {
+            $script:reload = $reload
+            $combination = Invoke-YLRegistryLifecycle @reddotArguments
+            Check ($combination.status -ceq 'Completed') "ReddotSave $origin reload=$reload failed: $($combination.error)"
+            Check (($combination.phases.phase -join ',') -ceq 'Inspect,Reopen,RemoveSave,VerifyReddotOnly,RestoreSave,RemoveReddot,VerifySaveOnly,RestoreReddot,Remove,VerifyRemoved') 'ReddotSave must use its own ten phases, never Excel phase names.'
+            foreach ($phase in $combination.phases) {
+                $ids = @($phase.graph.packages | ForEach-Object name) -join ','
+                $want = switch ($phase.phase) {
+                    { $_ -cin @('RemoveSave', 'VerifyReddotOnly') } { 'com.kano.ylframework,com.kano.ylframework.reddot' }
+                    { $_ -cin @('RemoveReddot', 'VerifySaveOnly') } { 'com.kano.ylframework.save' }
+                    { $_ -cin @('Remove', 'VerifyRemoved') } { '' }
+                    default { 'com.kano.ylframework,com.kano.ylframework.reddot,com.kano.ylframework.save' }
+                }
+                Check ($ids -ceq $want) "Incorrect observed ReddotSave $origin closure: $($phase.phase)"
+                if ($null -ne $phase.report.removal) {
+                    $operation = $phase.report.removal
+                    Check ($operation.completion -ceq $(if ($reload) { 'ResolvedAfterReload' } else { $operation.requestKind + 'Request' }) -and
+                        $operation.requestStatusObserved -eq (-not $reload) -and $operation.requestStatus -ceq $(if ($reload) { '' } else { 'Success' })) 'ReddotSave must distinguish observed asynchronous Success from resolution after reload.'
+                }
+                if ($phase.phase -cin @('RestoreSave', 'RestoreReddot')) {
+                    Assert-YLRegistryLifecycleManifest -Actual (Read-YLPackageEvidenceJson (Join-Path $phase.output 'manifest.json')) -Original (Read-YLPackageEvidenceJson (Join-Path $combination.output 'manifest.before.json')); $checks++
+                }
+            }
+            $withoutSave = @($combination.phases | Where-Object phase -CEQ 'VerifyReddotOnly')[0].report
+            foreach ($field in @('sourceFiles', 'assemblyReferences', 'compiledAssemblyReferences')) {
+                $badGraph = Copy-Value $withoutSave; $badGraph.compilation.player[0][$field] += 'YLFramework.RedDots.Save'
+                Reject { Assert-YLRegistryLifecycleCompilation -Report $badGraph -Roots @($reddotRoots[0]) } 'compilation|Save|source|reference|adapter'
+            }
+            foreach ($faultName in @('missing-core', 'missing-player-save', 'empty-adapter', 'core-save-reference', 'adapter-reference', 'player-editor', 'foreign-yl', 'test-reference')) {
+                $badGraph = Copy-Value $combination.phases[0].report
+                switch ($faultName) {
+                    'missing-core' { $badGraph.compilation.player = @($badGraph.compilation.player | Where-Object name -CNE 'YLFramework.RedDots') }
+                    'missing-player-save' { $badGraph.compilation.player = @($badGraph.compilation.player | Where-Object name -CNE 'YLFramework.Save') }
+                    'empty-adapter' { @($badGraph.compilation.player | Where-Object name -CEQ 'YLFramework.RedDots.Save')[0].sourceFiles = @() }
+                    'core-save-reference' { @($badGraph.compilation.editor | Where-Object name -CEQ 'YLFramework.RedDots')[0].assemblyReferences += 'YLFramework.Save' }
+                    'adapter-reference' { @($badGraph.compilation.player | Where-Object name -CEQ 'YLFramework.RedDots.Save')[0].assemblyReferences = @('YLFramework.RedDots') }
+                    'player-editor' { $badGraph.compilation.player[0].compiledAssemblyReferences += 'YLFramework.RedDots.Editor.dll' }
+                    'foreign-yl' { $badGraph.compilation.player[0].name = 'YLFramework.Gameplay' }
+                    'test-reference' { $badGraph.compilation.player[0].compiledAssemblyReferences += 'nunit.framework.dll' }
+                }
+                Reject { Assert-YLRegistryLifecycleCompilation -Report $badGraph -Roots $reddotRoots } 'compilation|assembly|adapter|source|reference|Save|core'
+            }
+            if ($origin -ceq 'LocalTarball') {
+                $remove = @($combination.phases | Where-Object phase -CEQ 'RemoveReddot')[0].report.removal
+                Assert-YLPackageStringArray -Actual $remove.removePackages -Expected @('com.kano.ylframework', 'com.kano.ylframework.reddot') -Label 'RemoveReddot removes orphan main'; $checks++
+                $restored = @($combination.phases | Where-Object phase -CEQ 'RestoreReddot')[0].report.removal
+                $before = Read-YLPackageEvidenceJson (Join-Path $combination.output 'manifest.before.json')
+                Assert-YLPackageStringArray -Actual $restored.addPackages -Expected @($before.dependencies['com.kano.ylframework'], $before.dependencies[$reddotRoots[0]]) -Label 'RestoreReddot original file locators'; $checks++
+            }
+        }
+        $script:reload = $false
+        foreach ($faultName in @('fake-restore', 'joined-report-roots', 'joined-operation-roots', 'neutral-orphan', 'operation-owner-report')) {
+            $script:fault = $faultName; $failed = Invoke-YLRegistryLifecycle @reddotArguments
+            Check ($failed.status -ceq 'Failed' -and $failed.error.Length -gt 0) "ReddotSave accepted $origin $faultName"
+        }
+        if ($origin -ceq 'LocalTarball') {
+            foreach ($faultName in @('joined-operation-remove', 'joined-operation-add')) {
+                $script:fault = $faultName; $failed = Invoke-YLRegistryLifecycle @reddotArguments
+                Check ($failed.status -ceq 'Failed' -and $failed.error.Length -gt 0) "ReddotSave accepted $origin $faultName"
+            }
+        }
+        $script:reload = $true; $script:fault = 'reload-unapplied'
+        $unapplied = Invoke-YLRegistryLifecycle @reddotArguments
+        Check ($unapplied.status -ceq 'Failed' -and $unapplied.phases[-1].phase -ceq 'RemoveSave') 'A lost unapplied ReddotSave request must fail without reissue or fabricated success.'
+        $script:reload = $false; $script:fault = ''
     }
     $completed = $true
     "PASS: $checks Registry lifecycle NoUnity behavior contracts. NOT Unity compilation, installation or PassedRegistry."
