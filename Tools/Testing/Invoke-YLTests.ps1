@@ -67,7 +67,8 @@ function Get-SelectedSources([switch] $Native, [object] $EditorProfile) {
         foreach ($file in $paths) {
             if ($file.EndsWith('.cs', [StringComparison]::OrdinalIgnoreCase)) {
                 $source = [IO.Path]::GetRelativePath($repository, $file).Replace('\', '/')
-                if (-not $Native -and $source.StartsWith('PackageSources/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween/', [StringComparison]::Ordinal)) { continue }
+                if (-not $Native -and ($source.StartsWith('PackageSources/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween/', [StringComparison]::Ordinal) -or
+                    $source.StartsWith('PackageSources/com.kano.ylframework.reddot/Runtime/Integration/Save/', [StringComparison]::Ordinal))) { continue }
                 $runtime.Add($source)
             }
         }

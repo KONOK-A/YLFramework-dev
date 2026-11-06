@@ -251,6 +251,9 @@ try {
                 $selected = Get-SelectedSources
                 Assert-That ($selected.runtime -cnotcontains $adapter) "$module Quick unexpectedly compiles a disabled external-SDK adapter."
                 Assert-That ($selected.inputs -ccontains $adapter -and $selected.inputs -ccontains ($adapter + '.meta')) "$module must still hash the full product input."
+                $saveAdapter = 'PackageSources/com.kano.ylframework.reddot/Runtime/Integration/Save/ReddotSaveExtensions.cs'
+                Assert-That ($selected.runtime -cnotcontains $saveAdapter) "$module Quick unexpectedly compiles the conditional Save composition."
+                if ($module -ceq 'Behavior') { Assert-That ($selected.inputs -ccontains $saveAdapter -and $selected.inputs -ccontains ($saveAdapter + '.meta')) "$module must still hash the full optional composition payload." }
             }
         }
         Test-Case 'ReddotSave has one explicit native selector and keeps Save out of core' {
