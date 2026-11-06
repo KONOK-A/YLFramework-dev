@@ -5,7 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using UnityEngine;
-using YLFramework.RedDots;
+using YLFramework.Events;
 using YLFramework.Resource;
 using Debug = UnityEngine.Debug;
 using ResourceLocation = YLFramework.Resource.ResourceLocation;
@@ -92,7 +92,7 @@ namespace YLFramework.Testing
             Check(!Application.isEditor && Application.isPlaying && Application.platform == RuntimePlatform.WindowsPlayer,
                 "A real Windows Player must execute the scene.");
             Check(!string.IsNullOrEmpty(resultId) && !string.IsNullOrEmpty(hostId), "Build identity is missing.");
-            Check(ResourceSystem.Current == null && ReddotManager.ReddotPath.Count == 0, "The Player must start fresh.");
+            Check(ResourceSystem.Current == null, "The Player must start fresh.");
             _stages.Add("Started");
             yield return null;
 
@@ -119,21 +119,23 @@ namespace YLFramework.Testing
                     Check(lease.IsValid && lease.Asset.text.Trim() == "yl-player-smoke-v1", "Real Resources payload did not load.");
                     _stages.Add("ResourceLoaded");
                     int changes = 0;
-                    var subscription = ReddotManager.RegisterChanged(() => changes++);
-                    try
+                    using (var channel = new EventChannel())
                     {
-                        using (ReddotManager.RegisterPath("Smoke/Inbox"))
+                        var subscription = channel.Register(() => changes++);
+                        try
                         {
-                            Check(ReddotManager.ShouldBeDisplayed("Smoke") && !ReddotManager.ShouldBeDisplayed("Smokebox"),
-                                "The representative Reddot workflow did not aggregate exact path segments.");
+                            channel.TriggerAll();
+                            Check(changes == 1, "The core event registration did not receive its notification.");
+                            subscription.Unregister();
+                            channel.TriggerAll();
+                            Check(changes == 1, "The core event registration was not released.");
                         }
-                        Check(changes == 2 && !ReddotManager.ShouldBeDisplayed("Smoke"), "Reddot ownership was not released.");
+                        finally
+                        {
+                            subscription.Unregister();
+                        }
                     }
-                    finally
-                    {
-                        subscription.Unregister();
-                    }
-                    _stages.Add("ReddotLifecycle");
+                    _stages.Add("EventLifecycle");
                     using var busy = _resources.ShutdownAsync();
                     Check(busy.Status == ResourceRequestStatus.Failed && busy.Error.Kind == ResourceError.Busy && lease.IsValid,
                         "Shutdown must preserve a caller's live lease.");

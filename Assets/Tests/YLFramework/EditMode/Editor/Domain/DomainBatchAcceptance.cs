@@ -128,7 +128,8 @@ namespace YLFramework.Tests.Extensions.Domain
                 var modules = new Dictionary<string, string[]>();
                 foreach (var module in _runtimeRoots)
                 {
-                    var files = Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework/Runtime/Systems/" + module), "*.cs", SearchOption.AllDirectories).Select(Normalize).ToArray();
+                    string package = module == "Reddot" ? "com.kano.ylframework.reddot" : "com.kano.ylframework";
+                    var files = Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical("Packages/" + package + "/Runtime/Systems/" + module), "*.cs", SearchOption.AllDirectories).Select(Normalize).ToArray();
                     if (files.Length == 0 || files.Any(file => !covered.Contains(file)))
                     {
                         throw new InvalidOperationException("Missing actual compilation source: " + module);

@@ -60,7 +60,7 @@
         "Daily"
       ],
       "runtimeSources": [
-        "PackageSources/com.kano.ylframework/Runtime/Systems/Reddot/ReddotManager.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/Systems/Reddot/ReddotManager.cs",
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Singleton/Internal/SingletonSessionState.cs",
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/EventChannel.cs",
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/EventChannelBase.cs",
@@ -81,11 +81,12 @@
       ],
       "assemblyMetadata": [
         "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/YLFramework.RedDots.asmdef",
         "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
         "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
       ],
       "packageInputs": [
-        "com.kano.ylframework"
+        "com.kano.ylframework.reddot"
       ],
       "sampleInputs": []
     },
@@ -219,7 +220,8 @@
       ],
       "runtimeSources": [
         "PackageSources/com.kano.ylframework/Runtime",
-        "PackageSources/com.kano.ylframework.gameplay/Runtime"
+        "PackageSources/com.kano.ylframework.gameplay/Runtime",
+        "PackageSources/com.kano.ylframework.reddot/Runtime"
       ],
       "nativeSources": [
         "Assets/Tests/YLFramework/Fixtures/Shared",
@@ -264,7 +266,8 @@
         "com.kano.ylframework.excel",
         "com.kano.ylframework.localization",
         "com.kano.ylframework.save",
-        "com.kano.ylframework.gameplay"
+        "com.kano.ylframework.gameplay",
+        "com.kano.ylframework.reddot"
       ],
       "sampleInputs": []
     },
@@ -396,7 +399,8 @@
       "runtimeSources": [
         "PackageSources/com.kano.ylframework/Runtime",
         "PackageSources/com.kano.ylframework.state-machine/Runtime",
-        "PackageSources/com.kano.ylframework.movement2d/Runtime"
+        "PackageSources/com.kano.ylframework.movement2d/Runtime",
+        "PackageSources/com.kano.ylframework.reddot/Runtime"
       ],
       "sourceEnvironment": [
         "YL_BEHAVIOR_ROOT"
@@ -439,7 +443,8 @@
       "packageInputs": [
         "com.kano.ylframework",
         "com.kano.ylframework.state-machine",
-        "com.kano.ylframework.movement2d"
+        "com.kano.ylframework.movement2d",
+        "com.kano.ylframework.reddot"
       ],
       "sampleInputs": []
     },
@@ -753,7 +758,8 @@
         "Special"
       ],
       "runtimeSources": [
-        "PackageSources/com.kano.ylframework/Runtime"
+        "PackageSources/com.kano.ylframework/Runtime",
+        "PackageSources/com.kano.ylframework.reddot/Runtime"
       ],
       "nativeSources": [],
       "editTests": [
@@ -770,7 +776,8 @@
         "com.kano.ylframework.excel",
         "com.kano.ylframework.state-machine",
         "com.kano.ylframework.movement2d",
-        "com.kano.ylframework.gameplay"
+        "com.kano.ylframework.gameplay",
+        "com.kano.ylframework.reddot"
       ],
       "sampleInputs": []
     },

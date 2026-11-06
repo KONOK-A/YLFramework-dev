@@ -15,7 +15,7 @@ Skill、Buff、Mission、Equipment、Reddot 和 Logging 各自管理领域状态
 | Reddot | `YLFramework.RedDots.ReddotManager` | 路径与独立来源登记，表现组件只控制自己的 Indicator |
 | Logging | `YLFramework.Logging.LoggerManager` | 显式日志会话，默认不接管处理器或写文件 |
 
-Skill/Buff/Mission/Equipment安装 [Gameplay包](../../../com.kano.ylframework.gameplay/README.md)，分别属于`YLFramework.Skill`、`YLFramework.Buff`、`YLFramework.Mission`、`YLFramework.Equipment`四Runtime，源码在该包的`Runtime/各域`，配套作者工具与共享退出逻辑属于`YLFramework.Gameplay.Editor`（`Editor/各域`及`Editor/Shared`）。Reddot/Logging仍位于主包`Runtime/Systems`，不随Gameplay迁移。
+Skill/Buff/Mission/Equipment安装 [Gameplay包](../../../com.kano.ylframework.gameplay/README.md)，分别属于`YLFramework.Skill`、`YLFramework.Buff`、`YLFramework.Mission`、`YLFramework.Equipment`四Runtime，源码在该包的`Runtime/各域`，配套作者工具与共享退出逻辑属于`YLFramework.Gameplay.Editor`（`Editor/各域`及`Editor/Shared`）。Reddot独立安装[红点包](../../../com.kano.ylframework.reddot/README.md)，原namespace保持，程序集改为`YLFramework.RedDots`，consumer asmdef显式引用；Logging仍位于主包`Runtime/Systems`。Gameplay产品不依赖红点。
 
 ## 配置与资源
 

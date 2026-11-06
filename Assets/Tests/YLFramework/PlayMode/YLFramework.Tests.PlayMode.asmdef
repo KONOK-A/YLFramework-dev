@@ -3,6 +3,7 @@
   "rootNamespace": "YLFramework.Tests",
   "references": [
     "YLFramework.Runtime",
+    "YLFramework.RedDots",
     "YLFramework.DataAssets",
     "YLFramework.Localization",
     "YLFramework.StateMachine",

@@ -84,7 +84,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 
 | 模块 | 层级 | 真实边界 |
 | --- | --- | --- |
-| Reddot | Quick / Daily | 小型逻辑闭包与真实 UGUI 订阅生命周期。切片不能替代完整 Runtime 编译。 |
+| Reddot | Quick / Daily | 独立main+reddot闭包的逻辑、原生程序集/GUID与真实指示组件订阅生命周期。切片不能替代完整Runtime编译；主包Player用核心EventChannel验证，不再强装可选红点。 |
 | Foundation | Daily / Special | 完整 Runtime / Editor 加基础测试；双次 Play 会话单独执行。 |
 | Core | Daily | 完整 MVC / UI / 资源夹具；不隐式安装旧宿主扩展或原游戏资产。 |
 | Domain | Quick / Daily / Special | Skill/Buff/Mission/Equipment/Reddot/Logging完整组合，含实际Excel/作者工具消费者；Quick只编译逻辑，原生作者源只在Daily/Special编译。 |

@@ -8,7 +8,9 @@ using UnityEngine.Rendering;
 using YLFramework.Buff;
 using YLFramework.Logging;
 using YLFramework.Mission;
+#if YL_REDDOT_PACKAGE
 using YLFramework.RedDots;
+#endif
 using YLFramework.Resource;
 using YLFramework.Skill;
 using ResourceLocation = YLFramework.Resource.ResourceLocation;
@@ -174,7 +176,9 @@ namespace YLFramework.Tests.DomainAcceptance
                 BuffManager.Shutdown();
                 MissionManager.Shutdown();
                 LoggerManager.Disable();
+#if YL_REDDOT_PACKAGE
                 ReddotManager.Reset();
+#endif
                 Require(ReferenceEquals(Debug.unityLogger.logHandler, _predecessor),
                     "Logger did not restore its actual predecessor; leave an unexpected later owner untouched.");
                 Debug.unityLogger.logHandler = _original;
@@ -238,12 +242,14 @@ namespace YLFramework.Tests.DomainAcceptance
                 Require(forwarding.ProbeKinds.SequenceEqual(kinds), "Five actual Debug kinds must reach the owned predecessor exactly once.");
             }
             _receipt.loggerFile = session.LogFilePath;
+#if YL_REDDOT_PACKAGE
             var source = ReddotManager.RegisterPath("C/Inbox");
             ReddotManager.AddPath("C/Inbox");
             ReddotManager.RemovePath("C/Inbox");
             Require(ReddotManager.ShouldBeDisplayed("C") && !ReddotManager.ShouldBeDisplayed("Ca"), "Independent Reddot source or segment semantics failed.");
             source.Dispose();
             Require(!ReddotManager.ShouldBeDisplayed("C"), "Reddot token was not returned.");
+#endif
 
             var entries = new[]
             {

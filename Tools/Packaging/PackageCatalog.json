@@ -36,6 +36,14 @@
       "samples": []
     },
     {
+      "id": "com.kano.ylframework.reddot",
+      "assemblies": [
+        { "name": "YLFramework.RedDots", "path": "Runtime/YLFramework.RedDots.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Runtime/Systems/Reddot/ReddotManager.cs", "Runtime/Systems/Reddot/ReddotManager.cs.meta", "Runtime/Systems/Reddot/Reddot.cs", "Runtime/Systems/Reddot/Reddot.cs.meta"],
+      "samples": []
+    },
+    {
       "id": "com.kano.ylframework.excel",
       "assemblies": [
         { "name": "YLFramework.Excel.Editor", "path": "Editor/YLFramework.Excel.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] },

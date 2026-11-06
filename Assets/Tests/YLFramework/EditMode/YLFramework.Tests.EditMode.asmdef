@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Tests.EditMode",
     "rootNamespace": "YLFramework.Tests",
-    "references": ["YLFramework.Runtime", "YLFramework.DataAssets", "YLFramework.DataAssets.Editor", "YLFramework.Localization", "YLFramework.Localization.Editor", "YLFramework.Save", "YLFramework.StateMachine", "YLFramework.StateMachine.Editor", "YLFramework.Character2D", "YLFramework.Platform2D", "YLFramework.Movement2D.Editor", "YLFramework.Skill", "YLFramework.Buff", "YLFramework.Mission", "YLFramework.Equipment", "YLFramework.Gameplay.Editor", "YLFramework.Excel.Editor", "YLFramework.Foundation.Tests.EditMode", "YLFramework.Tests.Fixtures", "YLFramework.Tests.Fixtures.Editor", "YLFramework.Tests.Infrastructure.Editor", "YLFramework.Editor", "UnityEngine.UI", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+    "references": ["YLFramework.Runtime", "YLFramework.RedDots", "YLFramework.DataAssets", "YLFramework.DataAssets.Editor", "YLFramework.Localization", "YLFramework.Localization.Editor", "YLFramework.Save", "YLFramework.StateMachine", "YLFramework.StateMachine.Editor", "YLFramework.Character2D", "YLFramework.Platform2D", "YLFramework.Movement2D.Editor", "YLFramework.Skill", "YLFramework.Buff", "YLFramework.Mission", "YLFramework.Equipment", "YLFramework.Gameplay.Editor", "YLFramework.Excel.Editor", "YLFramework.Foundation.Tests.EditMode", "YLFramework.Tests.Fixtures", "YLFramework.Tests.Fixtures.Editor", "YLFramework.Tests.Infrastructure.Editor", "YLFramework.Editor", "UnityEngine.UI", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
@@ -10,7 +10,8 @@
     "autoReferenced": false,
     "defineConstraints": ["UNITY_INCLUDE_TESTS"],
     "versionDefines": [
-        { "name": "com.kano.ylframework.gameplay", "expression": "0.0.0", "define": "YL_GAMEPLAY_PACKAGE" }
+        { "name": "com.kano.ylframework.gameplay", "expression": "0.0.0", "define": "YL_GAMEPLAY_PACKAGE" },
+        { "name": "com.kano.ylframework.reddot", "expression": "0.0.0", "define": "YL_REDDOT_PACKAGE" }
     ],
     "noEngineReferences": false
 }

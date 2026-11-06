@@ -50,6 +50,14 @@ function Fixture([string] $Id) {
 }
 try {
     $catalog = Read-YLPackageCatalog
+    Case 'RedDots owns the original path core with only its declared main dependency' {
+        $entry = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.reddot')
+        Check ($entry.Count -eq 1) 'The original RedDots runtime still has no independent package owner.'
+        Check ($entry[0].assemblies.Count -eq 1 -and $entry[0].assemblies[0].name -ceq 'YLFramework.RedDots') 'The original RedDots identity must have exactly one Runtime assembly.'
+        $packages = @(Get-YLUpmPackages -Repository $repository -Ids @('com.kano.ylframework.reddot') -Catalog $catalog)
+        Check (($packages.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.reddot') 'RedDots core must not force-install Save or another feature.'
+        Check (-not [IO.Directory]::Exists((Join-Path $repository 'PackageSources/com.kano.ylframework/Runtime/Systems/Reddot'))) 'The main product must not retain a duplicate RedDots implementation.'
+    }
     Case 'Action owns the original DOTween adapter without a separate installation unit or SDK dependency' {
         Check (@($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.dotween').Count -eq 0) 'The retired DOTween package is still an installation unit.'
         $main = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework')[0]

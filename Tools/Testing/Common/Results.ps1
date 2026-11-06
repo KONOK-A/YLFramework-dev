@@ -170,7 +170,7 @@ function Read-YLPlayerSmoke {
     foreach ($name in @('purpose', 'status', 'resultId', 'hostId', 'unityVersion', 'backend', 'platform')) {
         if ($report[$name] -isnot [string]) { throw 'Player smoke string identity fields must not use coercible JSON types.' }
     }
-    $stages = @('Started', 'ResourceLoaded', 'ReddotLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown')
+    $stages = @('Started', 'ResourceLoaded', 'EventLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown')
     if ($null -ne $HybridCLR) { $stages = @('Started', 'HybridCLRMetadata', 'HybridCLRModule', 'HybridCLRReflection', 'HybridCLRShutdown') }
     if ($report['schemaVersion'] -isnot [long] -or $report['schemaVersion'] -ne 1 -or $report['purpose'] -cne 'YLTesting.PlayerSmoke' -or
         $report['status'] -cne 'Passed' -or $report['resultId'] -cne $ResultId -or $report['hostId'] -cne $HostId -or
