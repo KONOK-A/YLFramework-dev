@@ -1,5 +1,5 @@
+using System;
 using UnityEngine;
-using YLFramework.Events;
 
 namespace YLFramework.RedDots
 {
@@ -13,21 +13,27 @@ namespace YLFramework.RedDots
         [global::UnityEngine.Serialization.FormerlySerializedAs("_indicator")]
         [SerializeField, Tooltip("只控制此指示器。不能是本物体或其祖先，避免关闭监听宿主。")]
         private GameObject indicator;
-        private IUnregister _subscription;
+        private IDisposable _subscription;
 
         /// <summary>用于查询自身或后代状态的业务路径；设置后立即刷新，空路径不显示。</summary>
         public string Path
         {
-            get => path; set
+            get => path;
+            set
             {
                 path = value;
+                if (isActiveAndEnabled)
+                {
+                    BindSubscription();
+                }
                 Refresh();
             }
         }
         /// <summary>唯一受控的指示器；设置后刷新新对象，不负责复位之前绑定的对象。</summary>
         public GameObject Indicator
         {
-            get => indicator; set
+            get => indicator;
+            set
             {
                 indicator = value;
                 Refresh();
@@ -37,15 +43,20 @@ namespace YLFramework.RedDots
         /// <summary>重新绑定路径变化通知并立即刷新，补上停用期间发生的状态变化。</summary>
         private void OnEnable()
         {
-            _subscription?.Unregister();
-            _subscription = ReddotManager.RegisterChanged(Refresh);
+            BindSubscription();
             Refresh();
+        }
+
+        private void BindSubscription()
+        {
+            _subscription?.Dispose();
+            _subscription = ReddotManager.Subscribe(path, _ => Refresh(), false);
         }
 
         /// <summary>解除路径变化订阅，不主动改变指示器当前显隐状态。</summary>
         private void OnDisable()
         {
-            _subscription?.Unregister();
+            _subscription?.Dispose();
             _subscription = null;
         }
 
