@@ -123,6 +123,54 @@ elliptical/ellipsoidal round shapes are explicitly invalid, not approximate OBBs
 conservative bounds. Orthogonality/equal-scale checks use relative float tolerance
 1e-5. These configurations do not provide compound Cast, polygon overlap or booleans.
 
+## Selected Authoring And Preview
+
+Both Detector Inspectors edit local Union geometry, sampling mode/frequency,
+initial/maximum capacity and bounded growth through `SerializedObject`, including
+Undo and prefab instance overrides. Filter policy is now serialized on the detector:
+native `ContactFilter2D` (layer, trigger, depth/normal policy), or explicit 3D
+layer/Ignore-or-Collide, plus ignored collider/root, grouping and distance sorting.
+The public `Filter` signatures are unchanged. Programmatic assignment immediately
+updates that same backing state; a later sample does not restore an older Inspector
+copy. Invalid serialized values remain visible and are rejected before native queries.
+Ignored references belong to the component/scene or prefab instance, never to the
+shared geometry configuration. Shared prefab asset Inspectors are read-only; use
+Prefab Mode or an instance, and save only when intentionally requested.
+
+Selected-only Gizmos use the runtime Composite world conversion, not approximate
+transform math. The selected child center handle honors the full parent matrix;
+capsule endpoint centers translate together. Unsupported shear/elliptical geometry
+has an explicit diagnostic rather than a misleading wire shape. Multi-edit supports
+serialized settings only; handles and preview require one selected instance.
+
+Runtime diagnostics display actual buffer capacity, unique Count/summed RawCount,
+status/reason, configuration error and separately labeled borrowed last-complete
+contacts. Before the first sample the query struct still has its default value.
+Partial or invalid output never relabels that baseline as a current complete result.
+RawCount minus Count is not a rejected-collider count: it includes Union duplicates
+and body grouping. The Inspector does not construct full contact snapshots.
+
+Editor preview is independent of runtime detector sampling and is not persisted.
+Choose a Union child, caller capacity and explicit **world** Cast direction/distance.
+The trajectory is that child's Cast, never a compound Cast. Only the explicit sample
+button or opt-in, rate-limited selected auto sampling performs physics queries.
+Inspector creation, OnGUI and Gizmo repaint do not query. Preview uses two native
+observations with the same native layer/trigger/depth policy, before/after ignore and
+grouping; green/orange borrowed results do not purport to enumerate colliders excluded
+by native filtering. Closing the Inspector releases these per-inspector references.
+No global debug cache, Resource authority or update service is created. 2D global
+trigger suppression remains a visible prerequisite; no tool toggles it for preview.
+
+The source repository declares `Daily / Overlap` for original and new native physics
+contracts, `Daily / OverlapEditor` for authoring, `Special / OverlapPlayer` for the
+minimal main+overlap dual-process Mono Player and measured native workloads, and
+`Daily / OverlapMovement` for the explicit main+movement2d+overlap coexistence case.
+The Player measurement contract calibrates allocation counting with a real 64 KiB
+allocation; a constant-zero Unity Mono counter is **unsupported**, with bytes `-1`,
+not measured zero allocation. Current unique and repeated/grouped workloads are
+different workloads, not an old-product speedup comparison. Complexity evidence for
+the retired nested `Contains` path is separate from engine timing.
+
 Legacy components now use the same raw native dispatch, retaining default physics
 scene, raw Trigger counts before exclusion, native treatment of old zero/malformed
 dimensions, fixed **per-call** 100 capacity, public mutable results, original GUIDs

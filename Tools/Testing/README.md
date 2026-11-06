@@ -92,6 +92,9 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Equipment | Daily / Special | 最小main+Gameplay但只运行原Equipment契约，Special单独运行其原独立退出hook/同域双Play，不让Domain组合掩盖。 |
 | Behavior | Quick / Daily / Special | 日常Overlap / CharacterMotor / MovingPlatform / 两套FSM；Special在显式自有Desktop宿主执行两个原生窗口事件合同。 |
 | Overlap | Quick / Daily | 自有闭包仅main+overlap。Quick只编译真实`OverlapQueryCycle.cs`并执行原离线守卫/源码边界；完整包输入仍绑定identity。Daily通过独立`YLFramework.Overlap.Tests.EditMode` / `YLFramework.Overlap.Tests.PlayMode`运行原2D/3D形状、100容量、OnDisable无Exit及重入物理回归，不用stub代替物理。 |
+| OverlapEditor | Daily | main+overlap；单选预览不写配置、不推进运行联系人，真实本地中心Handle/Undo/Prefab override与Filter冷重开。多选只编辑序列化配置。 |
+| OverlapPlayer | Special | 仅main+overlap；复用Shared的null-Resource分支，在两个独立Windows64 Mono进程执行真实2D/3D查询/Cast/Union/生命周期和多密度测量。独立PlayerNative选集，不进Daily/Quick；64KiB正控不通过的GC计数明确unsupported/-1。 |
+| OverlapMovement | Daily | 明确main+movement2d+overlap三包；真实角色落地/平台载人及Overlap观察、legacy Box/Sphere与new Detector共存，不调用历史BehaviorMainAcceptance或接管运动算法。 |
 | Save | Daily / Special | 仅 Save + Newtonsoft，不安装主包。Daily 执行原生门面合同与真实双进程 Mono Player 冷重开/显式备份恢复；Special 以 .NET 执行 BCL 合同，不替代 Unity 或 Player。 |
 | StateMachine | Daily / Special | 仅配置式FSM包及主包。Daily验原生状态/图/生命周期；Special在自有空场景宿主经过两次真实编译重载验Create And Add绑定，再构建运行双进程Mono Player。不是无输入模拟或旧Resource tuple兼容声明。 |
 | Movement2D | Daily / Special | 仅main+movement2d。Daily保原角色/平台Edit与真Physics2D，补公共回调停用/池化/暂停边界；Special序列化17持久UnityEvent并运行两个独立Mono Player，严格核四个YL程序集、角色/路径/乘客指标，不借FSM或旧Behavior夹具。 |

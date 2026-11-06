@@ -1,0 +1,17 @@
+{
+    "name": "YLFramework.Overlap.Movement.Tests",
+    "rootNamespace": "YLFramework.Overlap.Tests",
+    "references": ["YLFramework.Runtime", "YLFramework.Overlap", "YLFramework.Character2D", "YLFramework.Platform2D", "UnityEngine.TestRunner"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": ["nunit.framework.dll"],
+    "autoReferenced": false,
+    "defineConstraints": ["UNITY_INCLUDE_TESTS", "YL_OVERLAP_PACKAGE", "YL_MOVEMENT2D_PACKAGE"],
+    "versionDefines": [
+        { "name": "com.kano.ylframework.overlap", "expression": "0.0.0", "define": "YL_OVERLAP_PACKAGE" },
+        { "name": "com.kano.ylframework.movement2d", "expression": "0.0.0", "define": "YL_MOVEMENT2D_PACKAGE" }
+    ],
+    "noEngineReferences": false
+}

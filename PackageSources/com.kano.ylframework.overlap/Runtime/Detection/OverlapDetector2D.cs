@@ -17,11 +17,18 @@ namespace YLFramework.Overlap
         [SerializeField] private int maxCapacity = 256;
         [SerializeField] private bool growBuffer;
         [SerializeField] private bool runOnEnable = true;
+        [SerializeField] private ContactFilter2D contactFilter = new ContactFilter2D { useLayerMask = true, layerMask = ~0 };
+        [SerializeField] private Collider2D ignoredCollider;
+        [SerializeField] private Transform ignoredRoot;
+        [SerializeField] private bool groupByRigidbody;
+        [SerializeField] private bool sortByDistance;
         private Collider2D[] _buffer;
         private OverlapShape2D[] _worldShapes = Array.Empty<OverlapShape2D>();
         private readonly OverlapContactTracker<OverlapContact<Collider2D>> _tracker = new OverlapContactTracker<OverlapContact<Collider2D>>();
         private readonly List<OverlapContact<Collider2D>> _released = new List<OverlapContact<Collider2D>>();
-        private OverlapFilter2D _filter = new OverlapFilter2D(new ContactFilter2D { useLayerMask = true, layerMask = ~0 });
+        // This records the committed policy, not a second source of current configuration.
+        private OverlapFilter2D _committedFilter;
+        private bool _hasCommittedFilter;
         private double _elapsed;
         private long _generation;
         private int _sceneHandle;
@@ -86,11 +93,15 @@ namespace YLFramework.Overlap
         }
         public OverlapFilter2D Filter
         {
-            get => _filter;
+            get => new OverlapFilter2D(contactFilter, ignoredCollider, ignoredRoot, groupByRigidbody, sortByDistance);
             set
             {
                 value.Validate();
-                _filter = value;
+                contactFilter = value.ContactFilter;
+                ignoredCollider = value.IgnoredCollider;
+                ignoredRoot = value.IgnoredRoot;
+                groupByRigidbody = value.GroupByRigidbody;
+                sortByDistance = value.SortByDistance;
                 _filterChanged = true;
                 _generation++;
             }
@@ -257,6 +268,7 @@ namespace YLFramework.Overlap
                     return false;
                 }
                 long generation = _generation;
+                var filter = Filter;
                 var scene = gameObject.scene.GetPhysicsScene2D();
                 while (true)
                 {
@@ -265,7 +277,7 @@ namespace YLFramework.Overlap
                     int rawCount = 0;
                     for (int i = 0; i < composite.Count; i++)
                     {
-                        var query = OverlapQuery2D.Query(scene, _worldShapes[i], _filter, _buffer);
+                        var query = OverlapQuery2D.Query(scene, _worldShapes[i], filter, _buffer);
                         if (query.Status == OverlapQueryStatus.Invalidated)
                         {
                             LastQuery = query;
@@ -277,7 +289,7 @@ namespace YLFramework.Overlap
                         {
                             var collider = _buffer[j];
                             var body = collider.attachedRigidbody;
-                            UnityEngine.Object target = _filter.GroupByRigidbody && body ? (UnityEngine.Object)body : collider;
+                            UnityEngine.Object target = filter.GroupByRigidbody && body ? (UnityEngine.Object)body : collider;
                             int identity = target.GetInstanceID();
                             complete &= _tracker.Add(identity,
                                 new OverlapContact<Collider2D>(collider, target, identity, collider.GetInstanceID()), _buffer.Length);
@@ -297,8 +309,11 @@ namespace YLFramework.Overlap
                     Array.Clear(_buffer, 0, _buffer.Length);
                     _buffer = new Collider2D[size];
                 }
-                var reason = _filterChanged ? OverlapExitReason.FilterChanged :
+                bool serializedFilterChanged = _configurationChanged && _hasCommittedFilter && !filter.Equals(_committedFilter);
+                var reason = _filterChanged || serializedFilterChanged ? OverlapExitReason.FilterChanged :
                     _configurationChanged ? OverlapExitReason.Reconfigured : OverlapExitReason.Separated;
+                _committedFilter = filter;
+                _hasCommittedFilter = true;
                 _filterChanged = _configurationChanged = false;
                 _tracker.Commit();
                 DispatchExits(_tracker.Exits, reason, generation, true);
@@ -325,6 +340,7 @@ namespace YLFramework.Overlap
                 OverlapDetectionGeometry.ValidateFrequency(frequency);
                 OverlapDetectionGeometry.ValidateMode(samplingMode);
                 OverlapDetectionGeometry.ValidateCapacity(initialCapacity, maxCapacity);
+                Filter.Validate();
                 if (composite == null)
                 {
                     throw new InvalidOperationException("Composite cannot be null.");
@@ -403,6 +419,8 @@ namespace YLFramework.Overlap
         {
             _generation++;
             _elapsed = 0;
+            _committedFilter = default;
+            _hasCommittedFilter = false;
             LastQuery = new OverlapQueryResult2D(0, 0, OverlapQueryStatus.Invalidated);
             if (_tracker.View.Count == 0)
             {

@@ -11,10 +11,14 @@ Overlap、CharacterController2D、MoveablePlatform 与配置式 StateMachine 是
 namespace仍为`YLFramework.Overlap`，包内实现位于`Runtime/Utilities/Overlap`，配套绘制与Inspector位于`Editor/Utilities/Overlap`，Editor namespace仍为`YLFramework.Editor.Overlap`。原组件/Inspector的脚本GUID和序列化字段保留；主包不再提供这些类型。旧反射/AQN与Resource内容若记录了`YLFramework.Runtime`或`YLFramework.Editor`，须同步真实消费者并重建正式内容，不改写历史Catalog或承诺旧Bundle跨Unity版本兼容。
 
 - 在自有 GameObject 上添加 Point / Circle / Box / Capsule / Area 2D 或 Box / Sphere 3D 检测组件，明确 LayerMask、形状、频率与 scaled / unscaled 模式。
-- 查询排除 Trigger。当前公开结果为 `results`，它是组件复用的可写列表，每次查询清空并逐项填充，不是可长期保留的独立快照；enter 回调中还可能尚未收集完整。调用方不应改写组件列表，需要跨查询保留时自行复制。`OverlapHit<T>.point` 包括 3D 查询也使用 Vector2，不按直觉修改其协议。
+- 旧组件查询排除 Trigger。公开 `results` 是组件复用的可写展示列表，不是长期快照；完整查询先收集再派发 enter/exit，部分结果只展示、不替换完整差分基准。调用方需要跨查询保留时自行复制。`OverlapHit<T>.point` 包括 3D 查询也使用 Vector2，不按直觉修改其协议。
 - `CheckOverlap()` 可手动调用；同一组件在自身事件中递归查询会拒绝，不影响其他组件查询。
-- 禁用立即清空结果，不补发 exit；重新启用后的首次查询重新 enter，保留显式 `IsRunning` 设置。关闭 `IsRunning` 只停止自动检测，不阻止手动查询，也不取消已经进入的查询。
+- 禁用立即清空结果，不补发 exit；重新启用后的首次完整查询重新 enter，饱和查询不派 enter，保留显式 `IsRunning` 设置。关闭 `IsRunning` 只停止自动检测，不阻止手动查询，也不取消已经进入的查询。
 - 容量为 100。Editor / Development 达到容量时，每次启用周期最多提示一次可能截断，不保证每次都发生实际丢失；Release 不走该日志路径。
+
+新的 `OverlapQuery2D/3D` 提供调用方缓冲查询及原生 Cast 命中；`OverlapDetector2D/3D` 提供局部 Union、Manual/Update/FixedUpdate、实例有界容量和完整结果差分。具体签名、退出原因与几何限制见 [Overlap 包说明](../../../com.kano.ylframework.overlap/README.md)。3D 新 Cast 使用原生 Vector3，不改变上面的旧 XY 协议。
+
+两个 Detector 的 Inspector 可持久编辑几何、采样、容量和 Filter，支持 Undo/Prefab override；世界中心 Handle/Gizmos 直接复用 Runtime 转换。仅单选实例可显式或主动开启限频预览，重绘不查询；Cast 方向/距离为明确选择的世界值，不是对象隐含运动。实际 `Count/RawCount/status` 与借用的 `LastComplete` 分列，partial/invalid 不冒充完整当前集。2D 全局禁 Trigger 的请求明确诊断、不翻全局开关；3D 默认 Ignore，不使用 UseGlobal。共享 Prefab asset 不由预览覆盖，不自动保存用户场景。
 
 ## CharacterController2D
 

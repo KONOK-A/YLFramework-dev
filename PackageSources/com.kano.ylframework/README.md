@@ -13,8 +13,10 @@ of the main Runtime or Editor. Its minimal YL closure is main + overlap; Unity's
 built-in physics/physics2d modules are declared by the package. Consumer asmdefs
 reference `YLFramework.Overlap`, and direct Inspector/Gizmos consumers additionally
 reference `YLFramework.Overlap.Editor` from Editor-only code. Original namespaces,
-script GUIDs and component behavior remain unchanged. See the
-[Overlap package](../com.kano.ylframework.overlap/README.md) for migration boundaries.
+script GUIDs and serialized fields are preserved. Legacy Enter/Exit now use complete
+observations and run after collection; see the
+[Overlap package](../com.kano.ylframework.overlap/README.md) for the intentional
+complete-only notification correction and migration boundaries.
 
 ## Registry Installation
 

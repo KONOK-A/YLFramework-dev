@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Overlap.Acceptance",
+    "rootNamespace": "YLFramework.Overlap.Acceptance",
+    "references": ["YLFramework.Runtime", "YLFramework.Overlap"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

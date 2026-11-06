@@ -188,7 +188,7 @@ try {
             $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($movement.packageInputs))
             Assert-That ((@($closure.id | Sort-Object) -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.movement2d') 'Standalone movement acquired an unrelated feature package.'
             $consumers = @($configuration.modules | Where-Object { $_.Contains('packageInputs') -and @($_.packageInputs) -ccontains 'com.kano.ylframework.movement2d' })
-            Assert-That ((@($consumers.name | Sort-Object) -join ',') -ceq 'Behavior,MigrationFixtures,Movement2D') 'Only actual movement consumers may install the package.'
+            Assert-That ((@($consumers.name | Sort-Object) -join ',') -ceq 'Behavior,MigrationFixtures,Movement2D,OverlapMovement') 'Only actual movement consumers may install the package.'
             Assert-That ($movement.sortingLayer -ceq '' -and $movement.prepareSessionScene -and $movement.prepareSceneTemplates) 'Movement Player authoring requires a real owned empty scene.'
             $producer = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/YLFramework.MigrationFixtures.Tests.EditMode.asmdef')
             foreach ($reference in @('YLFramework.Character2D', 'YLFramework.Platform2D')) {
@@ -223,7 +223,7 @@ try {
                 }
             }
             $consumers = @($configuration.modules | Where-Object { 'packageInputs' -cin $_.PSObject.Properties.Name -and @($_.packageInputs) -ccontains 'com.kano.ylframework.overlap' })
-            Assert-That (($consumers.name | Sort-Object) -join ',' -ceq 'Behavior,MigrationFixtures,Overlap') 'Do not install Overlap merely to preserve an absent feature identity.'
+            Assert-That (($consumers.name | Sort-Object) -join ',' -ceq 'Behavior,MigrationFixtures,Overlap,OverlapEditor,OverlapMovement,OverlapPlayer') 'Do not install Overlap merely to preserve an absent feature identity.'
             $tokens = $null; $errors = $null
             $syntax = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'Tools/Testing/Invoke-YLTests.ps1'), [ref]$tokens, [ref]$errors)
             Assert-That ($errors.Count -eq 0) 'The maintained entry does not parse.'
@@ -234,6 +234,34 @@ try {
             $cycle = $definition.runtimeSources[0]
             foreach ($input in @($cycle, ($cycle + '.meta'), 'PackageSources/com.kano.ylframework.overlap/package.json', 'PackageSources/com.kano.ylframework.overlap/Runtime/YLFramework.Overlap.asmdef')) {
                 Assert-That (@($selected.inputs) -ccontains $input) "Quick lost its actual package input identity: $input"
+            }
+        }
+        Test-Case 'Overlap Player and movement coexistence are explicit isolated native consumers' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $player = @($configuration.modules | Where-Object name -CEQ 'OverlapPlayer')[0]
+            Assert-That (($player.suites -join ',') -ceq 'Special' -and $player.specialBackend -ceq 'PlayerNative' -and
+                ($player.specialModes -join ',') -ceq 'EditMode' -and $player.specialCategory -ceq 'YL.Special.OverlapPlayer' -and
+                @($player.assemblies).Count -eq 0 -and $player.category -ceq '') 'Player must not leak into Daily/Quick or combine category with assembly selectors.'
+            Assert-That ($player.prepareSessionScene -and $player.prepareSceneTemplates -and $player.nativeLayout -ceq 'Framework') 'The maintained shared Player helper requires the real empty owned scene profile.'
+            Assert-That (($player.packageInputs -join ',') -ceq 'com.kano.ylframework.overlap') 'Minimal Player must not force movement or unrelated features.'
+            Assert-That (@($player.nativeSources) -ccontains 'Assets/Tests/YLFramework/Fixtures/Shared' -and
+                @($player.nativeFixtureInputs) -ccontains 'Assets/Tests/YLFramework/Fixtures/Shared') 'Real shared helper sources and metadata must be installed.'
+            Assert-That (@($player.nativeSources + $player.nativeFixtureInputs) -cnotcontains 'Assets/Tests/YLFramework/Fixtures/Overlap') 'Minimal Player cannot recursively copy the optional movement fixture.'
+            $editor = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/Overlap/Editor/YLFramework.Overlap.Tests.Player.Editor.asmdef')
+            Assert-That (@($editor.references) -ccontains 'YLFramework.Editor') 'ResourceRelease in the shared helper signature requires a direct Editor reference even for null Resource.'
+            $probe = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/Overlap/Runtime/YLFramework.Overlap.Acceptance.asmdef')
+            Assert-That (($probe.references -join ',') -ceq 'YLFramework.Runtime,YLFramework.Overlap') 'The actual Player probe has only its two products.'
+            $combination = @($configuration.modules | Where-Object name -CEQ 'OverlapMovement')[0]
+            $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($combination.packageInputs))
+            Assert-That (($closure.id | Sort-Object) -join ',' -ceq 'com.kano.ylframework,com.kano.ylframework.movement2d,com.kano.ylframework.overlap') 'Coexistence must use exactly the real three-package closure.'
+            Assert-That (($combination.suites -join ',') -ceq 'Daily' -and ($combination.modes -join ',') -ceq 'PlayMode' -and
+                ($combination.assemblies -join ',') -ceq 'YLFramework.Overlap.Movement.Tests' -and $combination.category -ceq '') 'Native coexistence must be selected independently of protected historical Behavior acceptance.'
+            $fixture = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/Overlap/IntegrationMovement/YLFramework.Overlap.Movement.Tests.asmdef')
+            Assert-That (($fixture.defineConstraints -join ',') -ceq 'UNITY_INCLUDE_TESTS,YL_OVERLAP_PACKAGE,YL_MOVEMENT2D_PACKAGE') 'Optional presence is package-scoped, never a global macro.'
+            Assert-That (($fixture.versionDefines.name -join ',') -ceq 'com.kano.ylframework.overlap,com.kano.ylframework.movement2d') 'Both actual products must control their own fixture boundary.'
+            foreach ($reference in @('YLFramework.Character2D', 'YLFramework.Platform2D', 'YLFramework.Overlap')) {
+                Assert-That (@($fixture.references) -ccontains $reference) "Missing real combination consumer: $reference"
             }
         }
         Test-Case 'Overlap consumers and migration anchors name only the actual new owners' {

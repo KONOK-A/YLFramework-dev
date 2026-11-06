@@ -113,7 +113,9 @@
         "Editor/Utilities/Overlap/OverlapBase3DInspector.cs", "Editor/Utilities/Overlap/OverlapBase3DInspector.cs.meta",
         "Editor/Utilities/Overlap/OverlapBox2DInspector.cs", "Editor/Utilities/Overlap/OverlapBox2DInspector.cs.meta",
         "Editor/Utilities/Overlap/OverlapCapsule2DInspector.cs", "Editor/Utilities/Overlap/OverlapCapsule2DInspector.cs.meta",
-        "Editor/Utilities/Overlap/OverlapGizmos.cs", "Editor/Utilities/Overlap/OverlapGizmos.cs.meta"
+        "Editor/Utilities/Overlap/OverlapGizmos.cs", "Editor/Utilities/Overlap/OverlapGizmos.cs.meta",
+        "Runtime/OverlapEditorVisibility.cs", "Runtime/OverlapEditorVisibility.cs.meta",
+        "Editor/OverlapDetectorInspector.cs", "Editor/OverlapDetectorInspector.cs.meta"
       ],
       "samples": []
     },
