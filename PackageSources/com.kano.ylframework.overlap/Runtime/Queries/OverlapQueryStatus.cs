@@ -18,6 +18,8 @@ namespace YLFramework.Overlap
         UnsupportedGeometry = 4,
         GeometryBudgetExceeded = 5,
         InvalidGeometry = 6,
-        UnsupportedCast = 7
+        UnsupportedCast = 7,
+        RequiresPlayMode = 8,
+        CookingFailed = 9
     }
 }

@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
@@ -100,6 +101,191 @@ namespace YLFramework.Tests.Extensions.Behavior
             }
             Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
             CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path), "Cold inspection must not rewrite the authored prefab.");
+        }
+
+        [Test]
+        public void CurvedGeometryColdPrefabUndoAndExplicitEditModePreviewBoundary()
+        {
+            Component component;
+            if (_threeD)
+            {
+                var detector = _root.AddComponent<OverlapDetector3D>();
+                detector.Composite = new OverlapComposite3D(OverlapShape3D.Sector(Vector3.zero, 3, 270, 2, 1),
+                    OverlapShape3D.Cone(Vector3.right * 8, Quaternion.Euler(10, 20, 30), 4, 2));
+                detector.ConfigureGeometryWorkspace(0.02f, 192, 192, 24);
+                component = detector;
+            }
+            else
+            {
+                var detector = _root.AddComponent<OverlapDetector2D>();
+                detector.Composite = new OverlapComposite2D(OverlapShape2D.Sector(Vector2.zero, 3, 270, 1),
+                    OverlapShape2D.Sector(Vector2.right * 8, 3, 360, 1));
+                component = detector;
+            }
+            string path = _folder + "/Curved.prefab";
+            var prefab = PrefabUtility.SaveAsPrefabAsset(_root, path);
+            byte[] before = File.ReadAllBytes(path);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            Object.DestroyImmediate(_root);
+            _root = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+            component = _threeD ? (Component)_root.GetComponent<OverlapDetector3D>() : _root.GetComponent<OverlapDetector2D>();
+            if (_threeD)
+            {
+                var detector = (OverlapDetector3D)component;
+                Assert.That(detector.Composite.GetShape(0).InnerRadius, Is.EqualTo(1));
+                Assert.That(detector.Composite.GetShape(1).Height, Is.EqualTo(4));
+                Assert.That(detector.RequestedBoundaryError, Is.EqualTo(0.02f));
+                Undo.IncrementCurrentGroup();
+                OverlapDetectorInspector.SetRoundDimensions(detector, 0, 4, 0.5f, 240, 3);
+                Undo.FlushUndoRecordObjects();
+                Assert.That(detector.Composite.GetShape(0).Radius, Is.EqualTo(4));
+                Undo.PerformUndo();
+                Assert.That(detector.Composite.GetShape(0).Radius, Is.EqualTo(3));
+                Undo.PerformRedo();
+                Assert.That(detector.Composite.GetShape(0).AngleDegrees, Is.EqualTo(240));
+                Assert.That(PrefabUtility.HasPrefabInstanceAnyOverrides(_root, false), Is.True);
+                Assert.That(detector.HasGeometryWorkspace, Is.False);
+                int count = SceneManager.sceneCount;
+                var buffer = new Collider[4];
+                var result = OverlapQuery3D.Query(OverlapDetectorInspector.World3D(detector, 0), new OverlapFilter3D(~0), buffer);
+                Assert.That(result.InvalidationReason, Is.EqualTo(OverlapQueryInvalidationReason.RequiresPlayMode));
+                Assert.Throws<InvalidOperationException>(() => new OverlapQueryWorkspace3D());
+                detector.StartDetection();
+                Assert.That(detector.Sample(), Is.False);
+                Assert.That(detector.LastQuery.InvalidationReason, Is.EqualTo(OverlapQueryInvalidationReason.RequiresPlayMode));
+                Assert.That(detector.BufferCapacity, Is.Zero);
+                Assert.That(SceneManager.sceneCount, Is.EqualTo(count));
+                var previous = Selection.objects;
+                var inspector = (OverlapDetectorInspector)UnityEditor.Editor.CreateEditor(detector);
+                try
+                {
+                    Selection.activeGameObject = _root;
+                    inspector.SamplePreview();
+                    string status = (string)typeof(OverlapDetectorInspector).GetField("_previewStatus", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(inspector);
+                    Assert.That(status, Does.Contain("RequiresPlayMode"));
+                    Assert.That(SceneManager.sceneCount, Is.EqualTo(count));
+                }
+                finally
+                {
+                    Object.DestroyImmediate(inspector);
+                    Selection.objects = previous;
+                }
+            }
+            else
+            {
+                var detector = (OverlapDetector2D)component;
+                Assert.That(detector.Composite.GetShape(0).InnerRadius, Is.EqualTo(1));
+                Assert.That(detector.Composite.GetShape(1).AngleDegrees, Is.EqualTo(360));
+            }
+            Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+        }
+
+        [Test]
+        public void RoundHeightHandlePreservesEveryUneditedSerializedBitAndPrefabOverride()
+        {
+            for (int kind = 0; kind < 3; kind++)
+            {
+                if (_root) Object.DestroyImmediate(_root);
+                _root = new GameObject("Fix1HandleAuthor");
+                _root.transform.SetPositionAndRotation(new Vector3(5, -2, 4), Quaternion.Euler(23, 41, 17));
+                _root.transform.localScale = Vector3.one * 2;
+                var child = new GameObject("Geometry");
+                child.transform.SetParent(_root.transform, false);
+                child.transform.localPosition = new Vector3(0.2f, 0.3f, 0.4f);
+                child.transform.localRotation = Quaternion.Euler(7, 11, 13);
+                var detector = child.AddComponent<OverlapDetector3D>();
+                detector.Composite = new OverlapComposite3D(kind == 2 ? OverlapShape3D.Cone(Vector3.zero, 2, 3) :
+                    OverlapShape3D.Sector(Vector3.zero, 3, kind == 0 ? 0.0001f : 360, 2, 2.99999f));
+                if (kind == 2)
+                {
+                    using var initial = new SerializedObject(detector);
+                    var entry = initial.FindProperty("composite.shapes").GetArrayElementAtIndex(0);
+                    entry.FindPropertyRelative("angleDegrees").floatValue = 42.125f;
+                    entry.FindPropertyRelative("innerRadius").floatValue = 0.1234567f;
+                    initial.ApplyModifiedPropertiesWithoutUndo();
+                }
+                string path = _folder + "/Fix1Handle" + kind + ".prefab";
+                var prefab = PrefabUtility.SaveAsPrefabAsset(_root, path);
+                var bytes = File.ReadAllBytes(path);
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                Object.DestroyImmediate(_root);
+                _root = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+                detector = _root.transform.GetChild(0).GetComponent<OverlapDetector3D>();
+                int[] Bits()
+                {
+                    using var data = new SerializedObject(detector);
+                    data.Update();
+                    var entry = data.FindProperty("composite.shapes").GetArrayElementAtIndex(0);
+                    return new[] { BitConverter.SingleToInt32Bits(entry.FindPropertyRelative("radius").floatValue),
+                        BitConverter.SingleToInt32Bits(entry.FindPropertyRelative("innerRadius").floatValue),
+                        BitConverter.SingleToInt32Bits(entry.FindPropertyRelative("angleDegrees").floatValue),
+                        BitConverter.SingleToInt32Bits(entry.FindPropertyRelative("height").floatValue) };
+                }
+                int[] before = Bits();
+                var world = OverlapDetectorInspector.World3D(detector, 0);
+                Vector3 axis = world.Orientation * (kind == 2 ? Vector3.forward : Vector3.up);
+                Vector3 point = world.Center + axis * (kind == 2 ? 5 : 2.5f);
+                Undo.IncrementCurrentGroup();
+                OverlapDetectorInspector.ApplyRoundHandlePoints(detector, 0, null, point, null, null);
+                Undo.FlushUndoRecordObjects();
+                int[] after = Bits();
+                TestContext.WriteLine("FIX1 M1 kind=" + kind + " before=" + string.Join(",", before) + " after=" + string.Join(",", after));
+                for (int i = 0; i < 3; i++) Assert.That(after[i], Is.EqualTo(before[i]), "height-only kind/field=" + kind + "/" + i);
+                Assert.That(after[3], Is.Not.EqualTo(before[3]));
+                var modifications = PrefabUtility.GetPropertyModifications(_root);
+                var geometry = modifications.Where(value => value.target is OverlapDetector3D && value.propertyPath.StartsWith("composite.shapes.Array.data[0].", StringComparison.Ordinal)).ToArray();
+                Assert.That(geometry.Select(value => value.propertyPath), Is.EquivalentTo(new[] { "composite.shapes.Array.data[0].height" }));
+                Undo.PerformUndo();
+                CollectionAssert.AreEqual(before, Bits());
+                Undo.PerformRedo();
+                CollectionAssert.AreEqual(after, Bits());
+                for (int edited = 0; edited < (kind == 2 ? 1 : 3); edited++)
+                {
+                    int[] previous = Bits();
+                    world = OverlapDetectorInspector.World3D(detector, 0);
+                    Vector3 forward = world.Orientation * Vector3.forward;
+                    Vector3 radial = world.Orientation * (kind == 2 ? Vector3.right : Vector3.forward);
+                    Vector3 baseCenter = kind == 2 ? world.Center + forward * world.Height : world.Center;
+                    Vector3? radiusPoint = edited == 0 ? baseCenter + radial * (world.Radius + 0.5f) : (Vector3?)null;
+                    Vector3? innerPoint = edited == 1 ? world.Center + radial * (world.InnerRadius * 0.5f) : (Vector3?)null;
+                    Vector3? anglePoint = edited == 2 ? world.Center + world.Orientation * Vector3.right * world.Radius : (Vector3?)null;
+                    Undo.IncrementCurrentGroup();
+                    Assert.That(OverlapDetectorInspector.ApplyRoundHandlePoints(detector, 0, radiusPoint, null, innerPoint, anglePoint), Is.True);
+                    Undo.FlushUndoRecordObjects();
+                    int[] changed = Bits();
+                    for (int i = 0; i < 4; i++)
+                        Assert.That(changed[i] == previous[i], Is.EqualTo(i != edited), "independent slider kind/edited/field=" + kind + "/" + edited + "/" + i);
+                    string field = edited == 0 ? "radius" : edited == 1 ? "innerRadius" : "angleDegrees";
+                    var overrides = PrefabUtility.GetPropertyModifications(_root).Where(value => value.target is OverlapDetector3D &&
+                        value.propertyPath.StartsWith("composite.shapes.Array.data[0].", StringComparison.Ordinal)).Select(value => value.propertyPath);
+                    Assert.That(overrides, Is.EquivalentTo(new[] { "composite.shapes.Array.data[0].height", "composite.shapes.Array.data[0]." + field }));
+                    Undo.PerformUndo();
+                    CollectionAssert.AreEqual(previous, Bits());
+                    Undo.PerformRedo();
+                    CollectionAssert.AreEqual(changed, Bits());
+                    Undo.PerformUndo();
+                }
+                int[] untouched = Bits();
+                Assert.That(OverlapDetectorInspector.ApplyRoundHandlePoints(detector, 0, null, null, null, null), Is.False);
+                if (kind != 2)
+                {
+                    world = OverlapDetectorInspector.World3D(detector, 0);
+                    Assert.That(OverlapDetectorInspector.ApplyRoundHandlePoints(detector, 0,
+                        world.Center + world.Orientation * Vector3.forward * (world.InnerRadius * 0.5f), null, null, null), Is.False,
+                        "an actually edited outer/inner conflict is rejected without modifying another dimension");
+                }
+                CollectionAssert.AreEqual(untouched, Bits());
+                Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path), "instance handles must not rewrite cold prefab bytes");
+                var cold = PrefabUtility.LoadPrefabContents(path);
+                try
+                {
+                    Assert.That(cold.transform.GetChild(0).GetComponent<OverlapDetector3D>().Composite.GetShape(0).Height, Is.EqualTo(2));
+                }
+                finally { PrefabUtility.UnloadPrefabContents(cold); }
+                TestContext.WriteLine("FIX1 M1 height-only kind=" + kind + " unchangedBits=" + string.Join(",", before.Take(3)) + " onlyHeightOverride=true");
+            }
         }
 
         [Test]

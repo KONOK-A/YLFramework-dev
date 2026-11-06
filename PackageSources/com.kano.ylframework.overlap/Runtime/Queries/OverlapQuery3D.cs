@@ -11,48 +11,88 @@ namespace YLFramework.Overlap
             Collider[] results) => Query(Physics.defaultPhysicsScene, shape, filter, results);
 
         public static OverlapQueryResult3D Query(PhysicsScene scene, in OverlapShape3D shape,
-            in OverlapFilter3D filter, Collider[] results)
+            in OverlapFilter3D filter, Collider[] results) => Query(scene, shape, filter, results, null);
+
+        public static OverlapQueryResult3D Query(in OverlapShape3D shape, in OverlapFilter3D filter,
+            Collider[] results, OverlapQueryWorkspace3D workspace) => Query(Physics.defaultPhysicsScene, shape, filter, results, workspace);
+
+        public static OverlapQueryResult3D Query(PhysicsScene scene, in OverlapShape3D shape,
+            in OverlapFilter3D filter, Collider[] results, OverlapQueryWorkspace3D workspace)
         {
             ValidateBuffer(results);
             shape.Validate();
-            if (!scene.IsValid())
+            workspace?.Begin();
+            try
             {
-                Array.Clear(results, 0, results.Length);
-                return new OverlapQueryResult3D(0, 0, OverlapQueryStatus.Invalidated, OverlapQueryInvalidationReason.InvalidScene);
-            }
-            int rawCount = QueryRaw(scene, shape, filter, results);
-            var status = rawCount == results.Length ? OverlapQueryStatus.MayBeTruncated : OverlapQueryStatus.Complete;
-            int count = 0;
-            for (int i = 0; i < rawCount; i++)
-            {
-                if (filter.Allows(results[i]))
+                if (!scene.IsValid())
                 {
-                    results[count++] = results[i];
+                    Array.Clear(results, 0, results.Length);
+                    return new OverlapQueryResult3D(0, 0, OverlapQueryStatus.Invalidated, OverlapQueryInvalidationReason.InvalidScene);
                 }
-            }
-            // One native shape returns distinct colliders; only actual rigidbody grouping needs deduplication.
-            if (filter.GroupByRigidbody)
-            {
-                Sort(results, count, new ColliderComparer(shape.Center, true));
-                int unique = 0;
-                int previous = 0;
-                for (int i = 0; i < count; i++)
+                if (shape.NeedsWorkspace && (!Application.isPlaying || workspace == null))
                 {
-                    int identity = Identity(results[i]);
-                    if (unique == 0 || identity != previous)
+                    Array.Clear(results, 0, results.Length);
+                    return new OverlapQueryResult3D(0, 0, OverlapQueryStatus.Invalidated,
+                        Application.isPlaying ? OverlapQueryInvalidationReason.WorkspaceRequired : OverlapQueryInvalidationReason.RequiresPlayMode);
+                }
+                if (shape.NeedsWorkspace)
+                {
+                    var reason = workspace.Prepare(shape);
+                    if (reason != OverlapQueryInvalidationReason.None)
                     {
-                        results[unique++] = results[i];
-                        previous = identity;
+                        Array.Clear(results, 0, results.Length);
+                        return new OverlapQueryResult3D(0, 0, OverlapQueryStatus.Invalidated, reason);
                     }
                 }
-                count = unique;
+                int rawCount = QueryRaw(scene, shape.NeedsWorkspace ? workspace.BroadShape : shape, filter, results);
+                var status = rawCount == results.Length ? OverlapQueryStatus.MayBeTruncated : OverlapQueryStatus.Complete;
+                int count = 0;
+                for (int i = 0; i < rawCount; i++)
+                {
+                    if (filter.Allows(results[i]))
+                    {
+                        if (shape.NeedsWorkspace)
+                        {
+                            var reason = workspace.Intersects(results[i], shape, out bool hit);
+                            if (reason != OverlapQueryInvalidationReason.None)
+                            {
+                                Array.Clear(results, 0, results.Length);
+                                return new OverlapQueryResult3D(0, rawCount, OverlapQueryStatus.Invalidated, reason);
+                            }
+                            if (!hit)
+                                continue;
+                        }
+                        results[count++] = results[i];
+                    }
+                }
+                // One native shape returns distinct colliders; only actual rigidbody grouping needs deduplication.
+                if (filter.GroupByRigidbody)
+                {
+                    Sort(results, count, new ColliderComparer(shape.Center, true));
+                    int unique = 0;
+                    int previous = 0;
+                    for (int i = 0; i < count; i++)
+                    {
+                        int identity = Identity(results[i]);
+                        if (unique == 0 || identity != previous)
+                        {
+                            results[unique++] = results[i];
+                            previous = identity;
+                        }
+                    }
+                    count = unique;
+                }
+                if (filter.SortByDistance)
+                {
+                    Sort(results, count, new ColliderComparer(shape.Center, false));
+                }
+                Array.Clear(results, count, results.Length - count);
+                return new OverlapQueryResult3D(count, rawCount, status);
             }
-            if (filter.SortByDistance)
+            finally
             {
-                Sort(results, count, new ColliderComparer(shape.Center, false));
+                workspace?.End();
             }
-            Array.Clear(results, count, results.Length - count);
-            return new OverlapQueryResult3D(count, rawCount, status);
         }
 
         public static OverlapQueryResult3D Cast(in OverlapShape3D shape, Vector3 direction, float distance,
@@ -66,6 +106,11 @@ namespace YLFramework.Overlap
             ValidateBuffer(results);
             shape.Validate();
             direction = ValidateCast(direction, distance);
+            if (shape.NeedsWorkspace)
+            {
+                Array.Clear(results, 0, results.Length);
+                return new OverlapQueryResult3D(0, 0, OverlapQueryStatus.Invalidated, OverlapQueryInvalidationReason.UnsupportedCast);
+            }
             if (!scene.IsValid())
             {
                 Array.Clear(results, 0, results.Length);

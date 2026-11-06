@@ -79,6 +79,23 @@ namespace YLFramework.Overlap.Tests
                 three.Filter = new OverlapFilter3D(1 << 11, ignoredCollider: ignored3D, ignoredRoot: ignored.transform, sortByDistance: true);
                 three.Frequency = 17;
                 three.ConfigureCapacity(2, 16, true);
+                var curved2D = new GameObject("Curved2D");
+                curved2D.transform.SetParent(author.transform, false);
+                curved2D.transform.localPosition = Vector3.up * 80;
+                var newTwo = curved2D.AddComponent<OverlapDetector2D>();
+                newTwo.Composite = new OverlapComposite2D(OverlapShape2D.Sector(new Vector2(-4, 0), 3, 120, 0.5f),
+                    OverlapShape2D.Sector(new Vector2(4, 0), 3, 360, 1));
+                newTwo.Filter = new OverlapFilter2D(new ContactFilter2D { useLayerMask = true, layerMask = 1 << 11 });
+                newTwo.ConfigureCapacity(16, 16);
+                var curved3D = new GameObject("Curved3D");
+                curved3D.transform.SetParent(author.transform, false);
+                curved3D.transform.localPosition = Vector3.up * 40;
+                var newThree = curved3D.AddComponent<OverlapDetector3D>();
+                newThree.Composite = new OverlapComposite3D(OverlapShape3D.Sector(new Vector3(-5, 0, 0), 3, 120, 2, 0.5f),
+                    OverlapShape3D.Ring(new Vector3(3, 0, 0), 1, 3, 2), OverlapShape3D.Cone(new Vector3(10, 0, 0), 4, 2));
+                newThree.Filter = new OverlapFilter3D(1 << 11);
+                newThree.ConfigureCapacity(16, 16);
+                newThree.ConfigureGeometryWorkspace(0.02f, 192, 192, 16);
                 prefab = PrefabUtility.SaveAsPrefabAsset(author, prefabPath);
                 Assert.That(prefab, Is.Not.Null);
             }
@@ -168,14 +185,24 @@ namespace YLFramework.Overlap.Tests
             Assert.That(report.Value<string>("runtimeAssembly"), Is.EqualTo("YLFramework.Overlap"));
             Assert.That(report.Value<string>("probeAssembly"), Is.EqualTo("YLFramework.Overlap.Acceptance"));
             Assert.That(report.Value<string>("token"), Is.EqualTo(token));
-            foreach (string name in new[] { "resourceWasNull", "serializedPrefab", "queriesAndCasts2D", "queriesAndCasts3D", "partialNoFalseExit", "boundedUnion", "stopPool", "callbackInvalidation", "fakeNull", "legacyBoxSphere", "triggerPrerequisite" })
+            Assert.That(report.Value<bool>("inactiveConvexGate"), Is.False, "Original inactive route stays unsupported.");
+            Assert.That(report.Value<bool>("isolatedConvexGate"), Is.EqualTo(Application.unityVersion.StartsWith("2022.3.", StringComparison.Ordinal)));
+            Assert.That(report.Value<string>("selectedRoute"), Is.EqualTo("IsolatedSceneTargetProxy"));
+            Assert.That(report.Value<int>("targetProxyComparisons"), Is.EqualTo(720));
+            Assert.That(report.Value<bool>("fix1ConeBroad"), Is.True);
+            Assert.That(report.Value<int>("fix1ConeComparisons"), Is.EqualTo(16));
+            Assert.That(report.Value<int>("fix1OldMidpointMisses"), Is.EqualTo(2));
+            Assert.That(report.Value<int>("targetProxyPositives"), Is.GreaterThan(0));
+            Assert.That(report.Value<int>("targetProxyNegatives"), Is.GreaterThan(0));
+            Assert.That(report.Value<float>("targetProxyMaxClosestDelta"), Is.LessThanOrEqualTo(0.00001f));
+            foreach (string name in new[] { "resourceWasNull", "serializedPrefab", "queriesAndCasts2D", "queriesAndCasts3D", "partialNoFalseExit", "boundedUnion", "stopPool", "callbackInvalidation", "fakeNull", "legacyBoxSphere", "triggerPrerequisite", "isolatedScenesReleased", "targetProxyGate", "targetProxyScenesReleased", "targetProxyWorldIsolation", "targetProxyNoContactSimulation", "serializedCurvedGeometry", "sectorRing2D", "sectorRingCone3D", "curvedUnsupportedAndPartial", "curvedWorkspaceRelease" })
             {
                 Assert.That(report[name]?.Type, Is.EqualTo(JTokenType.Boolean), name);
                 Assert.That(report.Value<bool>(name), Is.True, name);
             }
             Assert.That(report["isEditor"]?.Type, Is.EqualTo(JTokenType.Boolean));
             Assert.That(report.Value<bool>("isEditor"), Is.False);
-            foreach (var pair in new[] { ("schemaVersion", 1), ("pointerBits", 64), ("round", round), ("leaseCount", 0), ("recordCount", 0) })
+            foreach (var pair in new[] { ("schemaVersion", 1), ("pointerBits", 64), ("round", round), ("leaseCount", 0), ("recordCount", 0), ("convexGatePositives", 0), ("convexGateContacts", 0) })
             {
                 Assert.That(report[pair.Item1]?.Type, Is.EqualTo(JTokenType.Integer), pair.Item1);
                 Assert.That(report.Value<int>(pair.Item1), Is.EqualTo(pair.Item2), pair.Item1);
@@ -218,6 +245,26 @@ namespace YLFramework.Overlap.Tests
                 Assert.That(double.IsNaN(milliseconds) || double.IsInfinity(milliseconds), Is.False);
                 Assert.That(milliseconds, Is.GreaterThanOrEqualTo(0));
             }
+            var curved = report["curvedMeasurements"] as JArray;
+            Assert.That(curved, Has.Count.EqualTo(2));
+            foreach (JObject value in curved)
+            {
+                Assert.That(value.Value<int>("segments"), Is.GreaterThan(0));
+                Assert.That(value.Value<int>("parts"), Is.GreaterThan(0));
+                Assert.That(value.Value<int>("cooks"), Is.EqualTo(value.Value<int>("parts")));
+                Assert.That(value.Value<int>("steadyAdditionalCooks"), Is.Zero);
+                Assert.That(value.Value<int>("copiedTargets"), Is.GreaterThanOrEqualTo(100));
+                Assert.That(value.Value<int>("sceneCountAfterConstruct"), Is.EqualTo(value.Value<int>("sceneCountBeforeConstruct") + 1));
+                Assert.That(value.Value<float>("generatedError"), Is.LessThanOrEqualTo(value.Value<float>("requestedError")));
+                foreach (string timing in new[] { "constructMilliseconds", "buildMilliseconds", "steady100Milliseconds" })
+                {
+                    double ms = value.Value<double>(timing);
+                    Assert.That(double.IsNaN(ms) || double.IsInfinity(ms) || ms < 0, Is.False);
+                }
+                bool supported = value.Value<bool>("allocationSupported");
+                Assert.That(supported, Is.EqualTo(value.Value<long>("calibrationBytes") >= 65536));
+                Assert.That(value.Value<long>("allocatedBytes"), supported ? Is.GreaterThanOrEqualTo(0) : Is.EqualTo(-1));
+            }
         }
 
         private static void ColdReadPrefab(string path)
@@ -236,6 +283,22 @@ namespace YLFramework.Overlap.Tests
                 Assert.That(two.Filter.IgnoredRoot, Is.SameAs(loaded.transform.GetChild(0)));
                 Assert.That(three.Filter.IgnoredCollider, Is.SameAs(loaded.transform.GetChild(0).GetComponentInChildren<Collider>()));
                 Assert.That(two.BufferCapacity + three.BufferCapacity, Is.Zero, "Cold read must not query or create detector buffers.");
+                var newTwo = loaded.transform.Find("Curved2D").GetComponent<OverlapDetector2D>();
+                var newThree = loaded.transform.Find("Curved3D").GetComponent<OverlapDetector3D>();
+                Assert.That(newTwo.Composite.Count, Is.EqualTo(2));
+                Assert.That(newTwo.Composite.GetShape(0).InnerRadius, Is.EqualTo(0.5f));
+                Assert.That(newTwo.Composite.GetShape(1).AngleDegrees, Is.EqualTo(360));
+                Assert.That(newThree.Composite.Count, Is.EqualTo(3));
+                Assert.That(newThree.Composite.GetShape(0).Height, Is.EqualTo(2));
+                Assert.That(newThree.Composite.GetShape(1).InnerRadius, Is.EqualTo(1));
+                Assert.That(newThree.Composite.GetShape(2).Kind, Is.EqualTo(OverlapShapeKind3D.Cone));
+                Assert.That(newThree.Composite.GetShape(2).Height, Is.EqualTo(4));
+                Assert.That(newThree.RequestedBoundaryError, Is.EqualTo(0.02f));
+                Assert.That(newThree.MaxSegments, Is.EqualTo(192));
+                Assert.That(newThree.MaxParts, Is.EqualTo(192));
+                Assert.That(newThree.MaxHierarchyDepth, Is.EqualTo(16));
+                Assert.That(newTwo.BufferCapacity + newThree.BufferCapacity, Is.Zero);
+                Assert.That(newThree.HasGeometryWorkspace, Is.False, "Cold prefab inspection must not create a private scene.");
             }
             finally
             {

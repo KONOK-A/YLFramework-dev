@@ -6,7 +6,7 @@ using UnityEngine.SceneManagement;
 
 namespace YLFramework.Overlap
 {
-    /// <summary>Main-thread, owner-scene Sphere/Box/Capsule Union detector with complete-only contact diffs.</summary>
+    /// <summary>Main-thread, owner-scene Union detector with complete-only contact diffs.</summary>
     [DisallowMultipleComponent]
     public sealed class OverlapDetector3D : MonoBehaviour
     {
@@ -23,6 +23,11 @@ namespace YLFramework.Overlap
         [SerializeField] private Transform ignoredRoot;
         [SerializeField] private bool groupByRigidbody;
         [SerializeField] private bool sortByDistance;
+        [SerializeField] private float requestedBoundaryError = 0.01f;
+        [SerializeField] private int maxSegments = 128;
+        [SerializeField] private int maxParts = 128;
+        [SerializeField] private int maxHierarchyDepth = 64;
+        private OverlapQueryWorkspace3D _workspace;
         private Collider[] _buffer;
         private OverlapShape3D[] _worldShapes = Array.Empty<OverlapShape3D>();
         private readonly OverlapContactTracker<OverlapContact<Collider>> _tracker = new OverlapContactTracker<OverlapContact<Collider>>();
@@ -136,6 +141,15 @@ namespace YLFramework.Overlap
             get; private set;
         }
         public int BufferCapacity => _buffer == null ? 0 : _buffer.Length;
+        public float RequestedBoundaryError => requestedBoundaryError;
+        public int MaxSegments => maxSegments;
+        public int MaxParts => maxParts;
+        public int MaxHierarchyDepth => maxHierarchyDepth;
+        public bool HasGeometryWorkspace => _workspace != null;
+        public int GeometryPartCount => _workspace?.PartCount ?? 0;
+        public int GeometryCookCount => _workspace?.CookCount ?? 0;
+        public float GeneratedBoundaryError => _workspace?.GeneratedBoundaryError ?? 0;
+        internal OverlapQueryWorkspace3D GeometryWorkspace => _workspace;
         public string ConfigurationError { get; private set; } = string.Empty;
         public OverlapQueryResult3D LastQuery
         {
@@ -165,6 +179,20 @@ namespace YLFramework.Overlap
             }
             IsRunning = true;
             _elapsed = 0;
+            _generation++;
+        }
+
+        public void ConfigureGeometryWorkspace(float requestedBoundaryError = 0.01f, int maxSegments = 128,
+            int maxParts = 128, int maxHierarchyDepth = 64)
+        {
+            OverlapQueryWorkspace3D.ValidateConfiguration(requestedBoundaryError, maxSegments, maxParts, maxHierarchyDepth);
+            this.requestedBoundaryError = requestedBoundaryError;
+            this.maxSegments = maxSegments;
+            this.maxParts = maxParts;
+            this.maxHierarchyDepth = maxHierarchyDepth;
+            _workspace?.Dispose();
+            _workspace = null;
+            _configurationChanged = true;
             _generation++;
         }
 
@@ -259,11 +287,18 @@ namespace YLFramework.Overlap
                         return false;
                     }
                 }
+                long generation = _generation;
                 if (!Prepare())
                 {
                     return false;
                 }
-                long generation = _generation;
+                if (generation != _generation || !IsRunning || !isActiveAndEnabled)
+                {
+                    _workspace?.Dispose();
+                    _workspace = null;
+                    LastQuery = new OverlapQueryResult3D(0, 0, OverlapQueryStatus.Invalidated);
+                    return false;
+                }
                 var filter = Filter;
                 var scene = gameObject.scene.GetPhysicsScene();
                 while (true)
@@ -273,13 +308,13 @@ namespace YLFramework.Overlap
                     int rawCount = 0;
                     for (int i = 0; i < composite.Count; i++)
                     {
-                        var query = OverlapQuery3D.Query(scene, _worldShapes[i], filter, _buffer);
+                        var query = OverlapQuery3D.Query(scene, _worldShapes[i], filter, _buffer, _workspace);
+                        rawCount = rawCount > int.MaxValue - query.RawCount ? int.MaxValue : rawCount + query.RawCount;
                         if (query.Status == OverlapQueryStatus.Invalidated)
                         {
-                            LastQuery = query;
+                            LastQuery = new OverlapQueryResult3D(0, rawCount, OverlapQueryStatus.Invalidated, query.InvalidationReason);
                             return false;
                         }
-                        rawCount = rawCount > int.MaxValue - query.RawCount ? int.MaxValue : rawCount + query.RawCount;
                         complete &= query.Status == OverlapQueryStatus.Complete;
                         for (int j = 0; j < query.Count; j++)
                         {
@@ -336,6 +371,7 @@ namespace YLFramework.Overlap
                 OverlapDetectionGeometry.ValidateFrequency(frequency);
                 OverlapDetectionGeometry.ValidateMode(samplingMode);
                 OverlapDetectionGeometry.ValidateCapacity(initialCapacity, maxCapacity);
+                OverlapQueryWorkspace3D.ValidateConfiguration(requestedBoundaryError, maxSegments, maxParts, maxHierarchyDepth);
                 _ = Filter;
                 if (composite == null)
                 {
@@ -347,10 +383,28 @@ namespace YLFramework.Overlap
                     _worldShapes = new OverlapShape3D[count];
                 }
                 var matrix = transform.localToWorldMatrix;
+                bool needsWorkspace = false;
                 for (int i = 0; i < count; i++)
                 {
                     _worldShapes[i] = composite.ToWorld(i, matrix);
+                    needsWorkspace |= _worldShapes[i].NeedsWorkspace;
                 }
+                if (needsWorkspace && !Application.isPlaying)
+                {
+                    _workspace?.Dispose();
+                    _workspace = null;
+                    ConfigurationError = "RequiresPlayMode: curved 3D sampling does not create Edit-mode physics scenes.";
+                    LastQuery = new OverlapQueryResult3D(0, 0, OverlapQueryStatus.Invalidated, OverlapQueryInvalidationReason.RequiresPlayMode);
+                    return false;
+                }
+                if (!needsWorkspace || _workspace != null && (_workspace.RequestedBoundaryError != requestedBoundaryError ||
+                    _workspace.MaxSegments != maxSegments || _workspace.MaxParts != maxParts || _workspace.MaxHierarchyDepth != maxHierarchyDepth))
+                {
+                    _workspace?.Dispose();
+                    _workspace = null;
+                }
+                if (needsWorkspace && _workspace == null)
+                    _workspace = new OverlapQueryWorkspace3D(requestedBoundaryError, maxSegments, maxParts, maxHierarchyDepth);
             }
             catch (ArgumentException error)
             {
@@ -362,7 +416,8 @@ namespace YLFramework.Overlap
             }
             if (ConfigurationError.Length != 0)
             {
-                LastQuery = new OverlapQueryResult3D(0, 0, OverlapQueryStatus.Invalidated);
+                LastQuery = new OverlapQueryResult3D(0, 0, OverlapQueryStatus.Invalidated,
+                    OverlapQueryInvalidationReason.InvalidGeometry);
                 return false;
             }
             if (_buffer == null || _buffer.Length > maxCapacity || _buffer.Length < initialCapacity)
@@ -414,6 +469,8 @@ namespace YLFramework.Overlap
         private void Release(OverlapExitReason reason)
         {
             _generation++;
+            _workspace?.Dispose();
+            _workspace = null;
             _elapsed = 0;
             _committedFilter = default;
             _hasCommittedFilter = false;

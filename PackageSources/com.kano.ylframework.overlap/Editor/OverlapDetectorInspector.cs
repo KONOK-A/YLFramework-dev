@@ -62,6 +62,7 @@ namespace YLFramework.Editor.Overlap
         private Collider[] _raw3D;
         private Collider[] _accepted3D;
         private RaycastHit[] _hits3D;
+        private OverlapQueryWorkspace3D _workspace3D;
         private int _rawCount;
         private int _acceptedCount;
         private int _hitCount;
@@ -69,14 +70,40 @@ namespace YLFramework.Editor.Overlap
         private bool TwoD => target is OverlapDetector2D;
         private Component Detector => (Component)target;
 
-        private void OnEnable() => EditorApplication.update += AutoSample;
+        private void OnEnable()
+        {
+            EditorApplication.update += AutoSample;
+            Selection.selectionChanged += ReleaseUnselectedWorkspace;
+            EditorApplication.playModeStateChanged += PlayModeChanged;
+        }
 
         private void OnDisable()
         {
             EditorApplication.update -= AutoSample;
+            Selection.selectionChanged -= ReleaseUnselectedWorkspace;
+            EditorApplication.playModeStateChanged -= PlayModeChanged;
             ClearPreview();
             _workspace2D?.Dispose();
             _workspace2D = null;
+            ReleaseWorkspace3D();
+        }
+
+        private void ReleaseWorkspace3D()
+        {
+            _workspace3D?.Dispose();
+            _workspace3D = null;
+        }
+
+        private void ReleaseUnselectedWorkspace()
+        {
+            if (!target || !Selection.Contains(Detector.gameObject))
+                ReleaseWorkspace3D();
+        }
+
+        private void PlayModeChanged(PlayModeStateChange state)
+        {
+            if (state == PlayModeStateChange.ExitingPlayMode)
+                ReleaseWorkspace3D();
         }
 
         internal static Diagnostics ReadDiagnostics(Component detector)
@@ -125,6 +152,7 @@ namespace YLFramework.Editor.Overlap
                 {
                     var three = (OverlapDetector3D)detector;
                     _ = three.Filter;
+                    OverlapQueryWorkspace3D.ValidateConfiguration(three.RequestedBoundaryError, three.MaxSegments, three.MaxParts, three.MaxHierarchyDepth);
                     for (int i = 0; i < three.Composite.Count; i++)
                     {
                         World3D(three, i);
@@ -154,7 +182,8 @@ namespace YLFramework.Editor.Overlap
                 }
                 else
                 {
-                    DrawPropertiesExcluding(serializedObject, "m_Script");
+                    DrawComposite3D();
+                    DrawPropertiesExcluding(serializedObject, "m_Script", "composite");
                 }
                 if (serializedObject.ApplyModifiedProperties())
                 {
@@ -194,6 +223,21 @@ namespace YLFramework.Editor.Overlap
                 EditorGUILayout.HelpBox("Sector workspace: " + two.MaxShapesPerCollider + " shapes/collider, " +
                     two.MaxVerticesPerShape + " vertices/shape, tolerance " + two.GeometryTolerance +
                     " world units. Unsupported geometry or a pre-extraction budget excess invalidates the observation, not a complete miss.", MessageType.Info);
+            }
+            else
+            {
+                var three = (OverlapDetector3D)target;
+                var workspace = three.GeometryWorkspace;
+                EditorGUILayout.HelpBox("3D curved volumes use conservative generated convex parts, not analytic surfaces. Box/Sphere/Capsule targets only; use a business target LayerMask. " +
+                    "Requested tessellation error " + three.RequestedBoundaryError + "; segments/parts limits " + three.MaxSegments + "/" + three.MaxParts +
+                    ". Native cooking/float/tangency errors are not included. New curved queries require Play Mode.", MessageType.Info);
+                if (workspace != null)
+                {
+                    EditorGUILayout.LabelField("Owned geometry: segments / parts / cooks / generated error / reason",
+                        workspace.SegmentCount + " / " + workspace.PartCount + " / " + workspace.CookCount + " / " + workspace.GeneratedBoundaryError + " / " + workspace.GeometryReason);
+                    if (workspace.CookingError.Length != 0)
+                        EditorGUILayout.HelpBox(workspace.CookingError, MessageType.Error);
+                }
             }
             if (!string.IsNullOrEmpty(diagnostic.Error))
             {
@@ -244,6 +288,10 @@ namespace YLFramework.Editor.Overlap
             }
             _direction = EditorGUILayout.Vector3Field("World Cast direction (2D: XY)", _direction);
             _distance = EditorGUILayout.FloatField("World Cast distance", _distance);
+            bool requiresPlayMode = !TwoD && error.Length == 0 && _child >= 0 && _child < ((OverlapDetector3D)target).Composite.Count &&
+                World3D((OverlapDetector3D)target, _child).NeedsWorkspace && !Application.isPlaying;
+            if (requiresPlayMode)
+                EditorGUILayout.HelpBox("RequiresPlayMode: no Edit-mode physics world is created. Geometry, dimensions and Undo handles remain editable. Sector/Cone Cast is unsupported in all modes.", MessageType.Info);
             if (EditorGUI.EndChangeCheck())
             {
                 ClearPreview();
@@ -255,7 +303,7 @@ namespace YLFramework.Editor.Overlap
             {
                 EditorGUILayout.HelpBox("Preview frequency must be finite and positive; auto sampling is suspended.", MessageType.Error);
             }
-            using (new EditorGUI.DisabledScope(error.Length != 0 || !Selection.Contains(Detector.gameObject)))
+            using (new EditorGUI.DisabledScope(error.Length != 0 || requiresPlayMode || !Selection.Contains(Detector.gameObject)))
             {
                 if (GUILayout.Button("Sample Selected Child / Cast Once"))
                 {
@@ -265,7 +313,7 @@ namespace YLFramework.Editor.Overlap
             EditorGUILayout.HelpBox("Last explicit preview (not live runtime state): " + _previewStatus, MessageType.Info);
             EditorGUILayout.LabelField(TwoD ?
                 "Raw uses native layer/trigger/depth policy and the outer circle for sectors; orange can mean outside region, ignored or body-grouped, not an exhaustive scene scan." :
-                "Raw uses native layer/trigger/depth policy; orange means ignored or body-grouped, not an exhaustive scene scan.", EditorStyles.wordWrappedLabel);
+                "Raw uses native policy and the expanded box for curved regions. Orange is unaccepted geometry/ignore/grouping or invalid output; inspect the status. This is not an exhaustive scene scan.", EditorStyles.wordWrappedLabel);
             for (int i = 0; i < _rawCount; i++)
             {
                 UnityEngine.Object item = TwoD ? _raw2D[i] : (UnityEngine.Object)_raw3D[i];
@@ -274,7 +322,7 @@ namespace YLFramework.Editor.Overlap
                 {
                     accepted |= item == (TwoD ? _accepted2D[j] : (UnityEngine.Object)_accepted3D[j]);
                 }
-                EditorGUILayout.ObjectField(accepted ? "Accepted" : TwoD ? "Outside region / ignored / grouped" : "Ignored / grouped", item, typeof(UnityEngine.Object), true);
+                EditorGUILayout.ObjectField(accepted ? "Accepted" : TwoD ? "Outside region / ignored / grouped" : "Unaccepted (see status)", item, typeof(UnityEngine.Object), true);
             }
         }
 
@@ -329,6 +377,55 @@ namespace YLFramework.Editor.Overlap
                         EditorGUILayout.PropertyField(child.FindPropertyRelative("angleDegrees"), new GUIContent("Angle Degrees (Aperture)"));
                         EditorGUILayout.PropertyField(child.FindPropertyRelative("rotationDegrees"));
                         break;
+                }
+            }
+        }
+
+        private void DrawComposite3D()
+        {
+            var composite = serializedObject.FindProperty("composite");
+            EditorGUILayout.PropertyField(composite, new GUIContent("Local Union"), false);
+            if (!composite.isExpanded)
+                return;
+            var shapes = composite.FindPropertyRelative("shapes");
+            EditorGUILayout.PropertyField(shapes.FindPropertyRelative("Array.size"), new GUIContent("Children"));
+            for (int i = 0; i < shapes.arraySize; i++)
+            {
+                using var box = new EditorGUILayout.VerticalScope(EditorStyles.helpBox);
+                var child = shapes.GetArrayElementAtIndex(i);
+                var kind = child.FindPropertyRelative("kind");
+                EditorGUILayout.PropertyField(kind, new GUIContent("Child " + i));
+                var type = (OverlapShapeKind3D)kind.intValue;
+                if (type == OverlapShapeKind3D.Capsule)
+                {
+                    EditorGUILayout.PropertyField(child.FindPropertyRelative("point1"));
+                    EditorGUILayout.PropertyField(child.FindPropertyRelative("point2"));
+                    EditorGUILayout.PropertyField(child.FindPropertyRelative("radius"));
+                    continue;
+                }
+                EditorGUILayout.PropertyField(child.FindPropertyRelative("center"), new GUIContent(type == OverlapShapeKind3D.Cone ? "Apex" : "Center"));
+                if (type == OverlapShapeKind3D.Box)
+                {
+                    EditorGUILayout.PropertyField(child.FindPropertyRelative("size"));
+                    EditorGUILayout.PropertyField(child.FindPropertyRelative("orientation"));
+                }
+                else
+                {
+                    EditorGUILayout.PropertyField(child.FindPropertyRelative("radius"), new GUIContent(type == OverlapShapeKind3D.Cone ? "Base Radius" : type == OverlapShapeKind3D.Sector ? "Outer Radius" : "Radius"));
+                    if (type == OverlapShapeKind3D.Sector || type == OverlapShapeKind3D.Cone)
+                    {
+                        var orientation = child.FindPropertyRelative("orientation");
+                        EditorGUI.BeginChangeCheck();
+                        var euler = EditorGUILayout.Vector3Field("Rotation Degrees", orientation.quaternionValue.eulerAngles);
+                        if (EditorGUI.EndChangeCheck())
+                            orientation.quaternionValue = Quaternion.Euler(euler);
+                        EditorGUILayout.PropertyField(child.FindPropertyRelative("height"), new GUIContent(type == OverlapShapeKind3D.Cone ? "Length (+Z)" : "Thickness (+Y)"));
+                        if (type == OverlapShapeKind3D.Sector)
+                        {
+                            EditorGUILayout.PropertyField(child.FindPropertyRelative("innerRadius"));
+                            EditorGUILayout.PropertyField(child.FindPropertyRelative("angleDegrees"), new GUIContent("Aperture (360 = ring/disk)"));
+                        }
+                    }
                 }
             }
         }
@@ -403,6 +500,12 @@ namespace YLFramework.Editor.Overlap
                     var detector = (OverlapDetector3D)target;
                     var shape = World3D(detector, _child);
                     var filter = detector.Filter;
+                    if (shape.NeedsWorkspace && !Application.isPlaying)
+                    {
+                        ReleaseWorkspace3D();
+                        _previewStatus = "Invalidated: RequiresPlayMode. No Editor physics scene was created.";
+                        return;
+                    }
                     if (_raw3D == null || _raw3D.Length != _previewCapacity)
                     {
                         _raw3D = new Collider[_previewCapacity];
@@ -410,16 +513,34 @@ namespace YLFramework.Editor.Overlap
                         _hits3D = new RaycastHit[_previewCapacity];
                     }
                     var scene = detector.gameObject.scene.GetPhysicsScene();
-                    var raw = OverlapQuery3D.Query(scene, shape, new OverlapFilter3D(filter.LayerMask, filter.TriggerInteraction), _raw3D);
-                    var accepted = OverlapQuery3D.Query(scene, shape, filter, _accepted3D);
+                    var broad = shape;
+                    if (shape.NeedsWorkspace)
+                    {
+                        if (_workspace3D != null && (_workspace3D.RequestedBoundaryError != detector.RequestedBoundaryError ||
+                            _workspace3D.MaxSegments != detector.MaxSegments || _workspace3D.MaxParts != detector.MaxParts ||
+                            _workspace3D.MaxHierarchyDepth != detector.MaxHierarchyDepth))
+                            ReleaseWorkspace3D();
+                        if (_workspace3D == null)
+                            _workspace3D = new OverlapQueryWorkspace3D(detector.RequestedBoundaryError,
+                            detector.MaxSegments, detector.MaxParts, detector.MaxHierarchyDepth);
+                        var reason = _workspace3D.Prepare(shape);
+                        if (reason != OverlapQueryInvalidationReason.None)
+                        {
+                            _previewStatus = "Invalidated: " + reason;
+                            return;
+                        }
+                        broad = _workspace3D.BroadShape;
+                    }
+                    var raw = OverlapQuery3D.Query(scene, broad, new OverlapFilter3D(filter.LayerMask, filter.TriggerInteraction), _raw3D);
+                    var accepted = OverlapQuery3D.Query(scene, shape, filter, _accepted3D, _workspace3D);
                     _rawCount = raw.Count;
                     _acceptedCount = accepted.Count;
-                    _previewStatus = accepted.Status + "; Count/RawCount " + accepted.Count + "/" + accepted.RawCount;
+                    _previewStatus = accepted.Status + " / " + accepted.InvalidationReason + "; Count/RawCount " + accepted.Count + "/" + accepted.RawCount;
                     if (_cast)
                     {
                         var cast = OverlapQuery3D.Cast(scene, shape, _direction, _distance, filter, _hits3D);
                         _hitCount = cast.Count;
-                        _previewStatus += "; Cast " + cast.Status + " " + cast.Count + "/" + cast.RawCount;
+                        _previewStatus += "; Cast " + cast.Status + " / " + cast.InvalidationReason + " " + cast.Count + "/" + cast.RawCount;
                     }
                 }
             }
@@ -489,6 +610,62 @@ namespace YLFramework.Editor.Overlap
             data.ApplyModifiedProperties();
         }
 
+        internal static void SetRoundDimensions(OverlapDetector3D detector, int index, float radius, float innerRadius,
+            float angleDegrees, float height)
+        {
+            if (EditorUtility.IsPersistent(detector))
+                throw new InvalidOperationException("Do not edit shared prefab assets through scene handles.");
+            var old = detector.Composite.GetShape(index);
+            if (old.Kind == OverlapShapeKind3D.Sector)
+                _ = OverlapShape3D.Sector(old.Center, old.Orientation, radius, angleDegrees, height, innerRadius);
+            else if (old.Kind == OverlapShapeKind3D.Cone)
+                _ = OverlapShape3D.Cone(old.Center, old.Orientation, height, radius);
+            else
+                throw new InvalidOperationException("Selected child is not a curved 3D region.");
+            using var data = new SerializedObject(detector);
+            data.Update();
+            var child = data.FindProperty("composite.shapes").GetArrayElementAtIndex(index);
+            child.FindPropertyRelative("radius").floatValue = radius;
+            child.FindPropertyRelative("height").floatValue = height;
+            if (old.Kind == OverlapShapeKind3D.Sector)
+            {
+                child.FindPropertyRelative("innerRadius").floatValue = innerRadius;
+                child.FindPropertyRelative("angleDegrees").floatValue = angleDegrees;
+            }
+            data.ApplyModifiedProperties();
+        }
+
+        internal static bool ApplyRoundHandlePoints(OverlapDetector3D detector, int index, Vector3? radiusPoint,
+            Vector3? heightPoint, Vector3? innerPoint, Vector3? aperturePoint)
+        {
+            if (!radiusPoint.HasValue && !heightPoint.HasValue && !innerPoint.HasValue && !aperturePoint.HasValue)
+                return false;
+            var old = detector.Composite.GetShape(index);
+            var shape = World3D(detector, index);
+            Vector3 forward = shape.Orientation * Vector3.forward, up = shape.Orientation * Vector3.up;
+            Vector3 radial = shape.Kind == OverlapShapeKind3D.Cone ? shape.Orientation * Vector3.right : forward;
+            Vector3 baseCenter = shape.Kind == OverlapShapeKind3D.Cone ? shape.Center + forward * shape.Height : shape.Center;
+            Vector3 heightAxis = shape.Kind == OverlapShapeKind3D.Cone ? forward : up;
+            float heightFactor = shape.Kind == OverlapShapeKind3D.Cone ? 1 : 0.5f;
+            float scale = shape.Radius / old.Radius;
+            float radius = radiusPoint.HasValue ? Vector3.Dot(radiusPoint.Value - baseCenter, radial) / scale : old.Radius;
+            float height = heightPoint.HasValue ? Vector3.Dot(heightPoint.Value - shape.Center, heightAxis) / (heightFactor * scale) : old.Height;
+            float inner = old.InnerRadius, angle = old.AngleDegrees;
+            if (shape.Kind == OverlapShapeKind3D.Sector && innerPoint.HasValue)
+                inner = Vector3.Dot(innerPoint.Value - shape.Center, radial) / scale;
+            if (shape.Kind == OverlapShapeKind3D.Sector && aperturePoint.HasValue)
+            {
+                var local = Quaternion.Inverse(shape.Orientation) * (aperturePoint.Value - shape.Center);
+                angle = Mathf.Abs(Mathf.Atan2(local.x, local.z) * Mathf.Rad2Deg) * 2;
+            }
+            if (!OverlapShape3D.IsFinite(radius) || radius <= 0 || !OverlapShape3D.IsFinite(height) || height <= 0 ||
+                shape.Kind == OverlapShapeKind3D.Sector && (!OverlapShape3D.IsFinite(inner) || inner < 0 || inner >= radius ||
+                    !OverlapShape3D.IsFinite(angle) || angle <= 0 || angle > 360))
+                return false;
+            SetRoundDimensions(detector, index, radius, inner, angle, height);
+            return true;
+        }
+
         private static bool TryLocalCenter2D(Matrix4x4 matrix, Vector2 world, out Vector2 local)
         {
             local = default;
@@ -533,10 +710,48 @@ namespace YLFramework.Editor.Overlap
                 }
             }
             using var scope = new Handles.DrawingScope(Color.cyan);
+            if (!TwoD)
+            {
+                var detector = (OverlapDetector3D)target;
+                var shape = World3D(detector, _child);
+                if (shape.NeedsWorkspace)
+                {
+                    Vector3 forward = shape.Orientation * Vector3.forward, up = shape.Orientation * Vector3.up;
+                    Vector3 radial = shape.Kind == OverlapShapeKind3D.Cone ? shape.Orientation * Vector3.right : forward;
+                    Vector3 baseCenter = shape.Kind == OverlapShapeKind3D.Cone ? shape.Center + forward * shape.Height : shape.Center;
+                    EditorGUI.BeginChangeCheck();
+                    var radiusPoint = Handles.Slider(baseCenter + radial * shape.Radius, radial);
+                    bool radiusChanged = EditorGUI.EndChangeCheck();
+                    var heightAxis = shape.Kind == OverlapShapeKind3D.Cone ? forward : up;
+                    float heightFactor = shape.Kind == OverlapShapeKind3D.Cone ? 1 : 0.5f;
+                    EditorGUI.BeginChangeCheck();
+                    var heightPoint = Handles.Slider(shape.Center + heightAxis * (shape.Height * heightFactor), heightAxis);
+                    bool heightChanged = EditorGUI.EndChangeCheck();
+                    Vector3? innerPoint = null, aperturePoint = null;
+                    if (shape.Kind == OverlapShapeKind3D.Sector)
+                    {
+                        EditorGUI.BeginChangeCheck();
+                        var movedInner = Handles.Slider(shape.Center + radial * shape.InnerRadius, radial);
+                        if (EditorGUI.EndChangeCheck())
+                            innerPoint = movedInner;
+                        Vector3 edge = Quaternion.Euler(0, shape.AngleDegrees * 0.5f, 0) * Vector3.forward;
+                        Vector3 tangent = shape.Orientation * Vector3.Cross(Vector3.up, edge);
+                        EditorGUI.BeginChangeCheck();
+                        var movedAperture = Handles.Slider(shape.Center + shape.Orientation * edge * shape.Radius, tangent);
+                        if (EditorGUI.EndChangeCheck())
+                            aperturePoint = movedAperture;
+                    }
+                    if (ApplyRoundHandlePoints(detector, _child, radiusChanged ? radiusPoint : (Vector3?)null,
+                        heightChanged ? heightPoint : (Vector3?)null, innerPoint, aperturePoint))
+                    {
+                        ClearPreview();
+                    }
+                }
+            }
             Vector3 direction = TwoD ? new Vector3(_direction.x, _direction.y, 0) : _direction;
             if (_cast && OverlapShape3D.IsFinite(_distance) && _distance >= 0 && direction.sqrMagnitude > 0 &&
                 OverlapShape3D.IsFinite(direction.sqrMagnitude) &&
-                (!TwoD || World2D((OverlapDetector2D)target, _child).Kind != OverlapShapeKind2D.Sector))
+                (TwoD ? World2D((OverlapDetector2D)target, _child).Kind != OverlapShapeKind2D.Sector : !World3D((OverlapDetector3D)target, _child).NeedsWorkspace))
             {
                 Vector3 offset = direction.normalized * _distance;
                 Handles.DrawDottedLine(center, center + offset, 4);
@@ -593,7 +808,7 @@ namespace YLFramework.Editor.Overlap
             {
                 var three = (OverlapDetector3D)detector;
                 for (int i = 0; i < three.Composite.Count; i++)
-                    Draw(World3D(three, i), Vector3.zero);
+                    Draw(World3D(three, i), Vector3.zero, three.RequestedBoundaryError);
             }
         }
 
@@ -640,8 +855,53 @@ namespace YLFramework.Editor.Overlap
             }
         }
 
-        private static void Draw(OverlapShape3D shape, Vector3 offset)
+        private static void Draw(OverlapShape3D shape, Vector3 offset, float requestedError = 0)
         {
+            if (shape.NeedsWorkspace)
+            {
+                using var scope = new Handles.DrawingScope(Matrix4x4.TRS(shape.Center + offset, shape.Orientation, Vector3.one));
+                if (shape.Kind == OverlapShapeKind3D.Cone)
+                {
+                    var center = Vector3.forward * shape.Height;
+                    Handles.DrawWireDisc(center, Vector3.forward, shape.Radius);
+                    Handles.DrawDottedLine(Vector3.zero, center, 4);
+                    foreach (var radial in new[] { Vector3.up, Vector3.down, Vector3.left, Vector3.right })
+                        Handles.DrawLine(Vector3.zero, center + radial * shape.Radius);
+                    if (requestedError > 0)
+                        Handles.DrawWireDisc(center, Vector3.forward, shape.Radius + requestedError);
+                }
+                else
+                {
+                    var firstEdge = Quaternion.Euler(0, -shape.AngleDegrees * 0.5f, 0) * Vector3.forward;
+                    var lastEdge = Quaternion.Euler(0, shape.AngleDegrees * 0.5f, 0) * Vector3.forward;
+                    foreach (float y in new[] { -shape.Height * 0.5f, shape.Height * 0.5f })
+                    {
+                        var center = Vector3.up * y;
+                        Handles.DrawWireArc(center, Vector3.up, firstEdge, shape.AngleDegrees, shape.Radius);
+                        if (shape.InnerRadius > 0)
+                            Handles.DrawWireArc(center, Vector3.up, firstEdge, shape.AngleDegrees, shape.InnerRadius);
+                        if (requestedError > 0)
+                        {
+                            Handles.DrawWireArc(center, Vector3.up, firstEdge, shape.AngleDegrees, shape.Radius + requestedError);
+                            if (shape.InnerRadius > requestedError)
+                                Handles.DrawWireArc(center, Vector3.up, firstEdge, shape.AngleDegrees, shape.InnerRadius - requestedError);
+                        }
+                        if (shape.AngleDegrees < 360)
+                        {
+                            Handles.DrawLine(center + firstEdge * shape.InnerRadius, center + firstEdge * shape.Radius);
+                            Handles.DrawLine(center + lastEdge * shape.InnerRadius, center + lastEdge * shape.Radius);
+                        }
+                    }
+                    foreach (var radial in new[] { firstEdge, lastEdge })
+                    {
+                        Handles.DrawLine(radial * shape.Radius - Vector3.up * (shape.Height * 0.5f), radial * shape.Radius + Vector3.up * (shape.Height * 0.5f));
+                        if (shape.InnerRadius > 0)
+                            Handles.DrawLine(radial * shape.InnerRadius - Vector3.up * (shape.Height * 0.5f), radial * shape.InnerRadius + Vector3.up * (shape.Height * 0.5f));
+                    }
+                }
+                Handles.Label(Vector3.zero, "Ideal curved boundary + requested tessellation envelope; not an exact native contact surface");
+                return;
+            }
             if (shape.Kind == OverlapShapeKind3D.Box)
             {
                 using var scope = new Handles.DrawingScope(Matrix4x4.TRS(shape.Center + offset, shape.Orientation, Vector3.one));
