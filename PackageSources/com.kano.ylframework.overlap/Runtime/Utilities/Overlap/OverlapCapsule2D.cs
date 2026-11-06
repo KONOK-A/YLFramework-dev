@@ -51,12 +51,8 @@ namespace YLFramework.Overlap
 
                 s.Set(Mathf.Abs(s.x), Mathf.Abs(s.y));
 
-#if UNITY_6000_0_OR_NEWER
                 ContactFilter2D contactFilter = CreateLegacyFilter(layerMask.value, float.NegativeInfinity, float.PositiveInfinity);
-                int count = Physics2D.defaultPhysicsScene.OverlapCapsule(center, s, direction, transform.eulerAngles.z, contactFilter, ResultBuffer);
-#else
-                int count = Physics2D.OverlapCapsuleNonAlloc(center, s, direction, transform.eulerAngles.z, ResultBuffer, layerMask.value);
-#endif
+                int count = OverlapQuery2D.RawCapsule(Physics2D.defaultPhysicsScene, center, s, direction, transform.eulerAngles.z, contactFilter, ResultBuffer);
 
 
                 CheckCapacity(count);

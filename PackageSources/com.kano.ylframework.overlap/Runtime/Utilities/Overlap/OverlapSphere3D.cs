@@ -44,7 +44,8 @@ namespace YLFramework.Overlap
             {
                 Vector3 scale = transform.lossyScale;
                 float r = Mathf.Max(Mathf.Abs(scale.x), Mathf.Abs(scale.y), Mathf.Abs(scale.z)) * radius;
-                int count = Physics.OverlapSphereNonAlloc(transform.position, r, ResultBuffer, layerMask.value);
+                int count = OverlapQuery3D.RawSphere(Physics.defaultPhysicsScene, transform.position, r, ResultBuffer,
+                    layerMask.value, QueryTriggerInteraction.UseGlobal);
 
                 ClearResults();
 

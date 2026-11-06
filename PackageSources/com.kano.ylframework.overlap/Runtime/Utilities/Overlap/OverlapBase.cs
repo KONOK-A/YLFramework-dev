@@ -44,6 +44,17 @@ namespace YLFramework.Overlap
         /// <summary>本实例复用的物理查询缓冲区，仅本次返回数量内有效，EndCheck 会清空引用。</summary>
         internal protected readonly T[] ResultBuffer = new T[100];
         private readonly OverlapQueryCycle _queryCycle = new OverlapQueryCycle();
+        private readonly HashSet<T> _lastIdentities = new HashSet<T>();
+        private readonly HashSet<T> _currentIdentities = new HashSet<T>();
+        private readonly List<OverlapHit<T>> _enters = new List<OverlapHit<T>>();
+        private readonly List<OverlapHit<T>> _exits = new List<OverlapHit<T>>();
+        private bool _isComplete;
+        private bool _hasPartialPresentation;
+        /// <summary>最近一次查询的完整性；部分 results 不会替换完整差分基准。</summary>
+        public OverlapQueryStatus LastQueryStatus
+        {
+            get; private set;
+        }
         /// <summary>本轮是否因停用而失效；派生查询应据此停止收集结果及发送后续通知。</summary>
         protected bool IsCheckInvalidated => _queryCycle.IsInvalidated;
 
@@ -78,7 +89,7 @@ namespace YLFramework.Overlap
         [Tooltip("默认运行")]
         protected bool runOnAwake = true;
 
-        /// <summary>上轮结果的可写比较列表，用于本轮进入退出判定，不是独立长期快照。</summary>
+        /// <summary>最后完整查询的可写比较列表；部分展示不会替换该基准，不是独立长期快照。</summary>
         protected List<OverlapHit<T>> LastResults = new List<OverlapHit<T>>();
 
         #endregion
@@ -138,7 +149,7 @@ namespace YLFramework.Overlap
         }
 
         /// <summary>直接可写的当前结果列表，下次查询会清空重填，停用时清空，不是只读快照。</summary>
-        /// <remarks>进入回调触发时本轮列表可能尚未填完；外部修改会影响后续去重和进入退出比较。</remarks>
+        /// <remarks>不完整轮只展示、不派差分；完整轮收集结束后才通知。外部修改在下次查询边界重新索引。</remarks>
         [global::UnityEngine.Serialization.FormerlySerializedAs("Results")]
         [Tooltip("检测结果集合")]
         [HideInInspector]
@@ -164,6 +175,10 @@ namespace YLFramework.Overlap
             _timer = 0;
             results.Clear();
             LastResults.Clear();
+            _lastIdentities.Clear();
+            _currentIdentities.Clear();
+            _hasPartialPresentation = false;
+            LastQueryStatus = OverlapQueryStatus.Invalidated;
         }
 
 
@@ -208,6 +223,8 @@ namespace YLFramework.Overlap
         protected void EndCheck()
         {
             Array.Clear(ResultBuffer, 0, ResultBuffer.Length);
+            _enters.Clear();
+            _exits.Clear();
             _queryCycle.End();
         }
 
@@ -215,6 +232,10 @@ namespace YLFramework.Overlap
         /// <param name="count">物理查询实际写入缓冲区的数量，达到容量只表示可能截断。</param>
         protected void CheckCapacity(int count)
         {
+            if (count >= ResultBuffer.Length)
+            {
+                _isComplete = false;
+            }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (_queryCycle.ReportCapacity(count, ResultBuffer.Length))
             {
@@ -249,15 +270,27 @@ namespace YLFramework.Overlap
 
         #region 方法
 
-        /// <summary>将当前结果复制到上轮比较列表，再清空当前结果以开始收集。</summary>
+        /// <summary>在完整展示的可写边界同步比较基准，再清空展示以开始收集。</summary>
         protected void ClearResults()
         {
-            LastResults.Clear();
-            LastResults.AddRange(results);
+            // Public lists are mutable: rebuild identities at the query boundary, never cache them as immutable.
+            if (!_hasPartialPresentation)
+            {
+                LastResults.Clear();
+                LastResults.AddRange(results);
+            }
+            _lastIdentities.Clear();
+            foreach (var hit in LastResults)
+            {
+                _lastIdentities.Add(hit.collider);
+            }
             results.Clear();
+            _currentIdentities.Clear();
+            _isComplete = true;
+            _hasPartialPresentation = true;
         }
 
-        /// <summary>跳过失效查询、已销毁对象和重复项，记录最近点并按需触发进入通知。</summary>
+        /// <summary>跳过失效查询、已销毁对象和重复项，记录最近点；完整性确定后才通知。</summary>
         /// <param name="collider">已经过派生查询过滤的碰撞体。</param>
         /// <param name="origin">世界坐标查询参考点，用于计算碰撞体最近点而非投射命中点。</param>
         protected void AddResults(T collider, Vector3 origin)
@@ -267,7 +300,7 @@ namespace YLFramework.Overlap
                 return;
             }
 
-            if (Contains(results, collider))
+            if (!_currentIdentities.Add(collider))
             {
                 return;
             }
@@ -288,23 +321,45 @@ namespace YLFramework.Overlap
 
             results.Add(hit);
 
-            if (!Contains(LastResults, collider))
-            {
-                onColliderEnter?.Invoke(hit);
-            }
         }
 
 
         /// <summary>比较上轮与本轮结果并发送缺失项的退出通知，停用使查询失效后停止继续通知。</summary>
         protected void OverlapEnd()
         {
-            for (int i = 0; i < LastResults.Count && !IsCheckInvalidated; i++)
+            LastQueryStatus = IsCheckInvalidated ? OverlapQueryStatus.Invalidated :
+                _isComplete ? OverlapQueryStatus.Complete : OverlapQueryStatus.MayBeTruncated;
+            if (LastQueryStatus != OverlapQueryStatus.Complete)
+            {
+                return;
+            }
+            _enters.Clear();
+            _exits.Clear();
+            foreach (var hit in results)
+            {
+                if (!_lastIdentities.Contains(hit.collider))
+                {
+                    _enters.Add(hit);
+                }
+            }
+            for (int i = 0; i < LastResults.Count; i++)
             {
                 var item = LastResults[i];
-                if (!Contains(results, item.collider))
+                if (!_currentIdentities.Contains(item.collider))
                 {
-                    onColliderExit?.Invoke(item);
+                    _exits.Add(item);
                 }
+            }
+            LastResults.Clear();
+            LastResults.AddRange(results);
+            _hasPartialPresentation = false;
+            for (int i = 0; i < _enters.Count && !IsCheckInvalidated; i++)
+            {
+                onColliderEnter?.Invoke(_enters[i]);
+            }
+            for (int i = 0; i < _exits.Count && !IsCheckInvalidated; i++)
+            {
+                onColliderExit?.Invoke(_exits[i]);
             }
         }
 

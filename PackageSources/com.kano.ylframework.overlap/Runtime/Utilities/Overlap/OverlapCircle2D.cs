@@ -46,12 +46,8 @@ namespace YLFramework.Overlap
                 Vector3 s = transform.lossyScale;
                 float scale = Mathf.Abs(s.x) > Mathf.Abs(s.y) ? Mathf.Abs(s.x) : Mathf.Abs(s.y);
 
-#if UNITY_6000_0_OR_NEWER
                 ContactFilter2D contactFilter = CreateLegacyFilter(layerMask.value, float.NegativeInfinity, float.PositiveInfinity);
-                int count = Physics2D.defaultPhysicsScene.OverlapCircle(transform.position, radius * scale, contactFilter, ResultBuffer);
-#else
-                int count = Physics2D.OverlapCircleNonAlloc(transform.position, radius * scale, ResultBuffer, layerMask.value);
-#endif
+                int count = OverlapQuery2D.RawCircle(Physics2D.defaultPhysicsScene, transform.position, radius * scale, contactFilter, ResultBuffer);
 
 
                 ClearResults();

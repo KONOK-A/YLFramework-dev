@@ -18,12 +18,8 @@ namespace YLFramework.Overlap
             {
                 ClearResults();
 
-#if UNITY_6000_0_OR_NEWER
                 ContactFilter2D contactFilter = CreateLegacyFilter(layerMask.value, float.NegativeInfinity, float.PositiveInfinity);
-                int count = Physics2D.defaultPhysicsScene.OverlapPoint(transform.position, contactFilter, ResultBuffer);
-#else
-                int count = Physics2D.OverlapPointNonAlloc(transform.position, ResultBuffer, layerMask.value);
-#endif
+                int count = OverlapQuery2D.RawPoint(Physics2D.defaultPhysicsScene, transform.position, contactFilter, ResultBuffer);
                 CheckCapacity(count);
                 for (int i = 0; i < count && !IsCheckInvalidated; i++)
                 {

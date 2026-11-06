@@ -48,7 +48,8 @@ namespace YLFramework.Overlap
                 Vector3 lossy = transform.lossyScale;
                 Vector3 s = new Vector3(Mathf.Abs(size.x * lossy.x * 0.5f), Mathf.Abs(size.y * lossy.y * 0.5f), Mathf.Abs(size.z * lossy.z * 0.5f));
 
-                int count = Physics.OverlapBoxNonAlloc(transform.position, s, ResultBuffer, transform.rotation, layerMask.value);
+                int count = OverlapQuery3D.RawBox(Physics.defaultPhysicsScene, transform.position, s, ResultBuffer,
+                    transform.rotation, layerMask.value, QueryTriggerInteraction.UseGlobal);
                 ClearResults();
 
                 CheckCapacity(count);

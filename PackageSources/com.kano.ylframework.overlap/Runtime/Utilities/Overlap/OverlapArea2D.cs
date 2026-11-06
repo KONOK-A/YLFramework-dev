@@ -16,7 +16,7 @@ namespace YLFramework.Overlap
     }
 
     /// <summary>将相邻点两两作为轴对齐矩形的对角点，合并二维重叠结果。</summary>
-    /// <remarks>不是多边形轮廓检测，也不会自动闭合首尾；节点集合直接可写，检测回调中修改会影响后续遍历。</remarks>
+    /// <remarks>不是多边形轮廓检测，也不会自动闭合首尾；节点集合直接可写，完整性确定后才派发本轮通知。</remarks>
     public class OverlapArea2D : OverlapBase2D
     {
 
@@ -95,12 +95,8 @@ namespace YLFramework.Overlap
                             Vector3 start = transform.localToWorldMatrix.MultiplyPoint(positions[i]);
                             Vector3 to = transform.localToWorldMatrix.MultiplyPoint(positions[i + 1]);
 
-#if UNITY_6000_0_OR_NEWER
                             ContactFilter2D contactFilter = CreateLegacyFilter(layerMask.value, float.NegativeInfinity, float.PositiveInfinity);
-                            int count = Physics2D.defaultPhysicsScene.OverlapArea(start, to, contactFilter, ResultBuffer);
-#else
-                            int count = Physics2D.OverlapAreaNonAlloc(start, to, ResultBuffer, layerMask.value);
-#endif
+                            int count = OverlapQuery2D.RawArea(Physics2D.defaultPhysicsScene, start, to, contactFilter, ResultBuffer);
 
                             CheckCapacity(count);
                             for (int j = 0; j < count && !IsCheckInvalidated; j++)
@@ -134,13 +130,8 @@ namespace YLFramework.Overlap
                             Vector3 start = transforms[i].position;
                             Vector3 to = transforms[i + 1].position;
 
-#if UNITY_6000_0_OR_NEWER
                             ContactFilter2D contactFilter = CreateLegacyFilter(layerMask.value, float.NegativeInfinity, float.PositiveInfinity);
-                            int count = Physics2D.defaultPhysicsScene.OverlapArea(start, to, contactFilter, ResultBuffer);
-
-#else
-                            int count = Physics2D.OverlapAreaNonAlloc(start, to, ResultBuffer, layerMask.value);
-#endif
+                            int count = OverlapQuery2D.RawArea(Physics2D.defaultPhysicsScene, start, to, contactFilter, ResultBuffer);
 
                             CheckCapacity(count);
                             for (int j = 0; j < count && !IsCheckInvalidated; j++)

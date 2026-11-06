@@ -20,7 +20,8 @@ Legacy 3D hit points remain the existing XY projection; new casts use native `Ra
 Runtime sources live under `Runtime/Utilities/Overlap`; Inspector/Gizmos sources
 live under `Editor/Utilities/Overlap`. Runtime namespaces remain `YLFramework.Overlap`
 and Editor namespaces remain `YLFramework.Editor.Overlap`. New stateless query/Cast
-APIs live under `Runtime/Queries`; continuous detectors and composite areas are separate work.
+APIs live under `Runtime/Queries`; continuous detectors and local Union configurations
+live under `Runtime/Detection`.
 
 ## Caller-Buffer Queries
 
@@ -69,6 +70,70 @@ grouping/sorting uses in-place heapsort, O(n log n) comparisons and O(1) extra
 storage, bounded by the supplied array; it does not promise cross-process order
 or globally nearest results from a truncated buffer. No allocation/timing
 measurement is implied.
+
+## Continuous Detection
+
+`OverlapDetector2D` / `OverlapDetector3D` query their owner's actual physics scene.
+Set `Composite` to `new OverlapComposite2D(localShapes)` or
+`new OverlapComposite3D(localShapes)`, using the corresponding shape factories
+with **local** coordinates. A single child uses the same Union/diff path. Configurations
+copy shape values and contain no Unity object references or runtime state; sharing
+one configuration does not share buffers, contacts or observers. Empty Union is legal.
+`Filter` accepts the existing dimension-specific query filter. Grouping uses actual
+attached bodies across all children; bodyless colliders remain independent. The first
+child's representative is retained for each identity, not a global nearest collider.
+Child order/native query order determines contact order, not cross-process ordering.
+
+The default mode is `OverlapSamplingMode.Manual`, with `runOnEnable` enabled.
+`Sample()` explicitly samples while running and enabled; `StartDetection()` restarts,
+and `Stop()` stops both scheduling and explicit sampling until restarted. `SamplingMode`
+also supports `Update` / `FixedUpdate`, at finite positive `Frequency` in scaled time,
+at most once per engine callback. `ConfigureCapacity(initialCapacity, maxCapacity,
+growBuffer: true)` opts into bounded growth and a full Union rerun. Default capacity
+is 32, maximum 256, growth off. Raw saturation, even exact-full or subsequently
+filtered/grouped output, never commits a diff. All children and the unique Union
+must fit completely. `LastComplete` stays at the last complete baseline on truncation
+or invalidation; `LastQuery` reports unique Count, summed final-attempt RawCount,
+status and the original invalidation reason, including 2D `TriggerQueriesDisabled`.
+Invalid serialized settings or unsupported transforms give `Invalidated` plus
+`ConfigurationError` rather than entering native code; property arguments are validated.
+`LastComplete` is a borrowed read-only view, not a historical copy. Reacquire it after
+state changes. An in-progress callback enumeration remains safe across nested Stop.
+
+`Entered` / `Stayed` carry `OverlapContact<Collider2D>` or `OverlapContact<Collider>`;
+`Exited` also carries `OverlapExitReason`. Contacts contain Collider, Target (collider
+or grouped body), cached Identity and ColliderInstanceId. A complete baseline is
+committed **before** notifications: old departures first, new Enter next, existing
+Stay last; a new contact does not also receive Stay in its Enter sample. Known
+destroyed/disabled targets use `TargetDestroyed` / `TargetDisabled`; other complete
+departures use `FilterChanged`, `Reconfigured` or `Separated`. Stop uses `Stopped`,
+disable/pool return uses `Disabled`. Unity normally disables before owner destruction
+and when moving between local physics scenes, so these paths do not invent a second
+owner-destroyed Exit. A scene change without disable uses `SceneChanged`.
+Callback Stop/disable/destroy/reconfiguration/nested Sample cancels remaining old-cycle
+notifications, including remaining observers. Lifecycle clearing releases all committed
+contacts, even when a prior notification was interrupted. Observer exceptions propagate
+fail-fast; committed state remains consistent and dispatch flags/buffers are finalized.
+
+Offsets and cap centers use the full local-to-world matrix, including mirrors.
+Boxes accept nonuniform scaling only when transformed axes remain orthogonal;
+round shapes require uniform XY (2D) / XYZ (3D) scale. 2D volume axes must remain
+in the XY plane. Singular transforms, rotated nonuniform scale producing shear and
+elliptical/ellipsoidal round shapes are explicitly invalid, not approximate OBBs or
+conservative bounds. Orthogonality/equal-scale checks use relative float tolerance
+1e-5. These configurations do not provide compound Cast, polygon overlap or booleans.
+
+Legacy components now use the same raw native dispatch, retaining default physics
+scene, raw Trigger counts before exclusion, native treatment of old zero/malformed
+dimensions, fixed **per-call** 100 capacity, public mutable results, original GUIDs
+and XY 3D hits. Area may still collect more than 100 unique colliders from several
+individually complete calls. The intentional reliability correction is that incomplete
+observations no longer emit Enter/Exit or replace the complete baseline, including
+the first saturated sample after re-enable. Partial `results` remain visible and
+`LastQueryStatus` exposes completeness; the next complete sample resumes normal
+diffs. Complete legacy notifications retain Enter-before-Exit order, now after all
+children have been collected. Public list edits are re-indexed at the next query
+boundary, not assumed immutable. Legacy OnDisable still clears without Exit.
 
 Update package installation and consumer asmdef references together. GUID
 preservation does not rewrite assembly-qualified type names in external DLLs,

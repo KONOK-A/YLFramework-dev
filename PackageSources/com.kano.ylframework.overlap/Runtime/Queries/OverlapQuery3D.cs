@@ -134,17 +134,29 @@ namespace YLFramework.Overlap
             switch (shape.Kind)
             {
                 case OverlapShapeKind3D.Sphere:
-                    return scene.OverlapSphere(shape.Center, shape.Radius, results, filter.LayerMask, filter.TriggerInteraction);
+                    return RawSphere(scene, shape.Center, shape.Radius, results, filter.LayerMask, filter.TriggerInteraction);
                 case OverlapShapeKind3D.Box:
-                    return scene.OverlapBox(shape.Center, shape.Size * 0.5f, results, shape.Orientation,
+                    return RawBox(scene, shape.Center, shape.Size * 0.5f, results, shape.Orientation,
                         filter.LayerMask, filter.TriggerInteraction);
                 case OverlapShapeKind3D.Capsule:
-                    return scene.OverlapCapsule(shape.Point1, shape.Point2, shape.Radius, results,
+                    return RawCapsule(scene, shape.Point1, shape.Point2, shape.Radius, results,
                         filter.LayerMask, filter.TriggerInteraction);
                 default:
                     throw new ArgumentOutOfRangeException(nameof(shape));
             }
         }
+
+        internal static int RawSphere(PhysicsScene scene, Vector3 center, float radius, Collider[] results,
+            int layerMask, QueryTriggerInteraction triggerInteraction) =>
+            scene.OverlapSphere(center, radius, results, layerMask, triggerInteraction);
+
+        internal static int RawBox(PhysicsScene scene, Vector3 center, Vector3 halfExtents, Collider[] results,
+            Quaternion orientation, int layerMask, QueryTriggerInteraction triggerInteraction) =>
+            scene.OverlapBox(center, halfExtents, results, orientation, layerMask, triggerInteraction);
+
+        internal static int RawCapsule(PhysicsScene scene, Vector3 point1, Vector3 point2, float radius,
+            Collider[] results, int layerMask, QueryTriggerInteraction triggerInteraction) =>
+            scene.OverlapCapsule(point1, point2, radius, results, layerMask, triggerInteraction);
 
         internal static int CastRaw(PhysicsScene scene, in OverlapShape3D shape, Vector3 direction,
             float distance, in OverlapFilter3D filter, RaycastHit[] results)

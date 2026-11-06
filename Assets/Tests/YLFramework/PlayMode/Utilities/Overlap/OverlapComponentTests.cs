@@ -301,7 +301,7 @@ namespace YLFramework.Tests.Extensions.Behavior
 #endif
                 query.CheckOverlap();
                 Assert.That(query.results.Count, Is.EqualTo(100));
-                Assert.That(enters - entersBeforeDisable, Is.EqualTo(100), "Re-enable must start a fresh enter snapshot.");
+                Assert.That(enters - entersBeforeDisable, Is.EqualTo(0), "A saturated re-enable observation cannot commit a fresh enter snapshot.");
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 Assert.That(warnings, Is.EqualTo(2));
 #else

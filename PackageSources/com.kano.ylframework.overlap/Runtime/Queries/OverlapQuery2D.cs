@@ -123,16 +123,38 @@ namespace YLFramework.Overlap
             switch (shape.Kind)
             {
                 case OverlapShapeKind2D.Point:
-                    return scene.OverlapPoint(shape.Center, contactFilter, results);
+                    return RawPoint(scene, shape.Center, contactFilter, results);
                 case OverlapShapeKind2D.Circle:
-                    return scene.OverlapCircle(shape.Center, shape.Radius, contactFilter, results);
+                    return RawCircle(scene, shape.Center, shape.Radius, contactFilter, results);
                 case OverlapShapeKind2D.Box:
-                    return scene.OverlapBox(shape.Center, shape.Size, shape.Angle, contactFilter, results);
+                    return RawBox(scene, shape.Center, shape.Size, shape.Angle, contactFilter, results);
                 case OverlapShapeKind2D.Capsule:
-                    return scene.OverlapCapsule(shape.Center, shape.Size, shape.CapsuleDirection, shape.Angle, contactFilter, results);
+                    return RawCapsule(scene, shape.Center, shape.Size, shape.CapsuleDirection, shape.Angle, contactFilter, results);
                 default:
                     throw new ArgumentOutOfRangeException(nameof(shape));
             }
+        }
+
+        // Raw arguments deliberately bypass the positive-volume factories for legacy serialized geometry.
+        internal static int RawPoint(PhysicsScene2D scene, Vector2 point, ContactFilter2D filter, Collider2D[] results) =>
+            scene.OverlapPoint(point, filter, results);
+
+        internal static int RawCircle(PhysicsScene2D scene, Vector2 point, float radius,
+            ContactFilter2D filter, Collider2D[] results) => scene.OverlapCircle(point, radius, filter, results);
+
+        internal static int RawBox(PhysicsScene2D scene, Vector2 point, Vector2 size, float angle,
+            ContactFilter2D filter, Collider2D[] results) => scene.OverlapBox(point, size, angle, filter, results);
+
+        internal static int RawCapsule(PhysicsScene2D scene, Vector2 point, Vector2 size,
+            CapsuleDirection2D direction, float angle, ContactFilter2D filter, Collider2D[] results) =>
+            scene.OverlapCapsule(point, size, direction, angle, filter, results);
+
+        internal static int RawArea(PhysicsScene2D scene, Vector2 start, Vector2 end,
+            ContactFilter2D filter, Collider2D[] results)
+        {
+            Vector2 min = Vector2.Min(start, end);
+            Vector2 max = Vector2.Max(start, end);
+            return RawBox(scene, (min + max) * 0.5f, max - min, 0, filter, results);
         }
 
         internal static int CastRaw(PhysicsScene2D scene, in OverlapShape2D shape, Vector2 direction,
