@@ -83,6 +83,8 @@ try {
             'Editor/Demo.cs' = 'namespace YLFramework.NoUnity { public class EditorDemo {} }'
             'Runtime/YLFramework.Runtime.asmdef' = '{"name":"YLFramework.Runtime"}'
             'Editor/YLFramework.Editor.asmdef' = '{"name":"YLFramework.Editor","includePlatforms":["Editor"]}'
+            'Runtime/Systems/Action/Integration/DOTween/DOTweenAction.cs' = '// NoUnity conditional source inventory fixture; never compiled without DOTWEEN.'
+            'Runtime/Systems/Action/Integration/DOTween/YLFramework.Actions.DOTween.asmdef' = '{"name":"YLFramework.Actions.DOTween","defineConstraints":["DOTWEEN"]}'
             'Runtime/Core/Resources/YLFramework/Core/Canvas.prefab' = 'NoUnity Canvas prefab fixture'
             'Runtime/Core/Resources/YLFramework/Core/EventSystem.prefab' = 'NoUnity EventSystem prefab fixture'
             'Runtime/Systems/Action/Resources/ActionKit/ScreenTransitionCanvas.prefab' = 'NoUnity transition prefab fixture'
@@ -111,7 +113,7 @@ try {
     $audit = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-DistributionPackageContent' }, $true)
     . ([scriptblock]::Create($audit.Extent.Text))
     $content = Get-DistributionPackageContent -Root $packageRoot; $digest = $content.sha256
-    if ($content.files.Count -ne 20) { throw 'The complete main fixture must contain exactly 20 source/meta/resource/manifest/license files.' }
+    if ($content.files.Count -ne 24) { throw 'The complete main fixture must contain exactly 24 source/meta/resource/manifest/license files including its disabled conditional adapter.' }
     $valid.packages = @(@{ name = 'com.kano.ylframework'; version = '0.1.0-preview.1'; root = $packageRoot; contentSha256 = $digest; files = $content.files })
     $package = [UnityEditor.PackageManager.PackageInfo]::new()
     $package.name = 'com.kano.ylframework'; $package.version = '0.1.0-preview.1'; $package.source = [UnityEditor.PackageManager.PackageSource]::Local
@@ -311,7 +313,7 @@ try {
             [IO.File]::WriteAllText((Join-Path $root 'package.json'), $canonical); [IO.File]::WriteAllText((Join-Path $root 'LICENSE.md'), 'fixture license')
             if ($id -ceq 'com.kano.ylframework') { Add-MainPayload $root }
             $inventory = Get-DistributionPackageContent -Root $root; $files = $inventory.files
-            $expectedCount = if ($id -ceq 'com.kano.ylframework') { 20 } else { 2 }
+            $expectedCount = if ($id -ceq 'com.kano.ylframework') { 24 } else { 2 }
             if ($files.Count -ne $expectedCount) { throw "The $Origin fixture inventory is incomplete: $id" }
             $locator = if ($Origin -ceq 'Registry') { '0.1.0-preview.1' } else { 'file:' + (Join-Path $sandbox ($id + '.tgz')).Replace('\', '/') }
             if ($Origin -ceq 'LocalTarball') { [IO.File]::WriteAllText($locator.Substring(5), 'locator fixture, not a verified tarball') }
@@ -339,7 +341,7 @@ try {
         $rows = Invoke-Capture
         if ($rows.Count -ne 2 -or [bool]$rows[0]['isDirectDependency'] -ne ($origin -ceq 'LocalTarball') -or
             [string]$rows[0]['contentSha256'] -cne $valid.packages[0].contentSha256 -or $rows[0]['dependencies'] -isnot [Newtonsoft.Json.Linq.JObject] -or
-            [int]$rows[0]['verifiedFiles'] -ne 20 -or [int]$rows[1]['verifiedFiles'] -ne 2) { throw 'Published package capture omitted source/directness/content evidence or the complete fixture inventory.' }; $checks++
+            [int]$rows[0]['verifiedFiles'] -ne 24 -or [int]$rows[1]['verifiedFiles'] -ne 2) { throw 'Published package capture omitted source/directness/content evidence or the complete fixture inventory.' }; $checks++
         if ($origin -ceq 'LocalTarball') {
             $publishedApis[0].packageId = $publishedApis[0].packageId.Replace('/', '\')
             $null = Invoke-Capture; $checks++
@@ -405,14 +407,6 @@ try {
             $report.releaseManifestSha256 -cne $valid.releaseManifestSha256 -or $report.entryPackage -cne $valid.entryPackage) { throw 'The report lost published provenance or the actual full PackageInfo graph.' }; $checks++
         foreach ($name in $oldEnvironment.Keys) { if ($report.cacheEnvironment[$name] -cne (Join-Path $cache.path $name)) { throw "The report copied request data rather than actual process environment: $name" }; $checks++ }
     }
-    New-PublishedFixture Registry dotween
-    $dll = Join-Path $publishedApis[1].resolvedPath 'Unapproved.dll'; [IO.File]::WriteAllText($dll, 'MZrenamed SDK fixture')
-    $valid.packages[1].files += @{ path = 'Unapproved.dll'; sha256 = (Get-FileHash -LiteralPath $dll).Hash.ToLowerInvariant() }
-    $ordinalFiles = @($valid.packages[1].files[0], $valid.packages[1].files[2], $valid.packages[1].files[1])
-    $lines = ($ordinalFiles | ForEach-Object { $_.path + "`0" + $_.sha256 + "`n" }) -join ''
-    $valid.packages[1].contentSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($lines))).ToLowerInvariant()
-    Reject { Invoke-Capture } 'A renamed SDK binary in an adapter is forbidden even with an internally consistent expected inventory'
-    [IO.File]::Delete($dll)
     foreach ($origin in @('Registry', 'LocalTarball')) {
         New-PublishedFixture $origin hybridclr
         $valid.hybridCLR = $true
@@ -427,6 +421,20 @@ try {
         $l.dependencies[$sdk.name] = @{ source = 'registry'; version = '9.0.3'; url = $sdk.registry.url; depth = 1; dependencies = @{} }; Save $lockPath $l
         [UnityEditor.PackageManager.PackageInfo]::Registered = @($publishedApis + $sdk)
         Invoke-Validation $valid; $null = Invoke-Capture
+        $dll = Join-Path $publishedApis[1].resolvedPath 'Unapproved.dll'
+        $beforeFiles = $valid.packages[1].files; $beforeDigest = $valid.packages[1].contentSha256
+        try {
+            [IO.File]::WriteAllText($dll, 'MZrenamed SDK fixture')
+            $valid.packages[1].files += @{ path = 'Unapproved.dll'; sha256 = (Get-FileHash -LiteralPath $dll).Hash.ToLowerInvariant() }
+            $ordinalFiles = @($valid.packages[1].files[0], $valid.packages[1].files[2], $valid.packages[1].files[1])
+            $lines = ($ordinalFiles | ForEach-Object { $_.path + "`0" + $_.sha256 + "`n" }) -join ''
+            $valid.packages[1].contentSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($lines))).ToLowerInvariant()
+            Reject { Invoke-Capture } "$origin renamed SDK binary in an external-SDK adapter remains forbidden with a consistent expected inventory"
+        } finally {
+            [IO.File]::Delete($dll)
+            $valid.packages[1].files = $beforeFiles; $valid.packages[1].contentSha256 = $beforeDigest
+        }
+        $null = Invoke-Capture
         $baselineLock = [IO.File]::ReadAllText($lockPath)
         foreach ($fault in @('sdk-source', 'sdk-version', 'sdk-url', 'sdk-id', 'sdk-direct', 'sdk-lock-source', 'sdk-lock-url', 'sdk-lock-version', 'sdk-lock-depth', 'sdk-lock-deps', 'sdk-manifest-direct', 'sdk-request-revision')) {
             try {
@@ -607,7 +615,7 @@ try {
                         $relative = switch ($fault) { 'missing-Canvas' { 'Runtime/Core/Resources/YLFramework/Core/Canvas.prefab' } 'missing-EventSystem' { 'Runtime/Core/Resources/YLFramework/Core/EventSystem.prefab' } 'missing-ScreenTransitionCanvas' { 'Runtime/Systems/Action/Resources/ActionKit/ScreenTransitionCanvas.prefab' } }
                         $missingPrefab = Join-Path $mainApi.resolvedPath $relative; $prefabBytes = [IO.File]::ReadAllBytes($missingPrefab); [IO.File]::Delete($missingPrefab)
                         $inventory = Get-DistributionPackageContent -Root $mainApi.resolvedPath
-                        if ($inventory.files.Count -ne 19) { throw 'The omitted-resource negative must still freeze every other fixture file.' }
+                        if ($inventory.files.Count -ne 23) { throw 'The omitted-resource negative must still freeze every other fixture file including the disabled conditional adapter.' }
                         $partial = $valid.packages[0].Clone(); $partial.files = $inventory.files; $partial.contentSha256 = $inventory.sha256
                         $valid.packages = @($partial) + @($valid.packages | Select-Object -Skip 1)
                     }
