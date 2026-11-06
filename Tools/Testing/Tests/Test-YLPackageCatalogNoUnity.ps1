@@ -53,7 +53,24 @@ try {
     Case 'RedDots owns the original path core with only its declared main dependency' {
         $entry = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.reddot')
         Check ($entry.Count -eq 1) 'The original RedDots runtime still has no independent package owner.'
-        Check ($entry[0].assemblies.Count -eq 1 -and $entry[0].assemblies[0].name -ceq 'YLFramework.RedDots') 'The original RedDots identity must have exactly one Runtime assembly.'
+        $core = @($entry[0].assemblies | Where-Object name -CEQ 'YLFramework.RedDots')
+        $adapter = @($entry[0].assemblies | Where-Object name -CEQ 'YLFramework.RedDots.Save')
+        Check ($entry[0].assemblies.Count -eq 2 -and $core.Count -eq 1 -and $adapter.Count -eq 1) 'RedDots must have exactly one core and its explicitly gated Save adapter, not arbitrary extra assemblies.'
+        Check ($core[0].path -ceq 'Runtime/YLFramework.RedDots.asmdef' -and $core[0].defineConstraints.Count -eq 0 -and
+            $core[0].versionDefines.Count -eq 0) 'The original core must remain unconditional.'
+        Check ($adapter[0].path -ceq 'Runtime/Integration/Save/YLFramework.RedDots.Save.asmdef' -and
+            ($adapter[0].defineConstraints -join ',') -ceq 'YL_SAVE_PACKAGE' -and $adapter[0].versionDefines.Count -eq 1 -and
+            $adapter[0].versionDefines[0].name -ceq 'com.kano.ylframework.save' -and
+            $adapter[0].versionDefines[0].expression -ceq '0.0.0' -and
+            $adapter[0].versionDefines[0].define -ceq 'YL_SAVE_PACKAGE') 'Only the actual Save package may enable the adapter.'
+        $adapterDefinition = Read-YLPackageEvidenceJson (Join-Path $repository ('PackageSources/com.kano.ylframework.reddot/' + $adapter[0].path))
+        Check (($adapterDefinition.references -join ',') -ceq 'YLFramework.RedDots,YLFramework.Save' -and
+            $adapterDefinition.overrideReferences -and $adapterDefinition.precompiledReferences.Count -eq 0 -and
+            ($adapterDefinition.defineConstraints -join ',') -ceq 'YL_SAVE_PACKAGE' -and
+            $adapterDefinition.versionDefines.Count -eq 1 -and
+            $adapterDefinition.versionDefines[0].name -ceq 'com.kano.ylframework.save' -and
+            $adapterDefinition.versionDefines[0].expression -ceq '0.0.0' -and
+            $adapterDefinition.versionDefines[0].define -ceq 'YL_SAVE_PACKAGE') 'The maintained adapter must use only its explicit core/Save references and version gate, not implicit JSON or a global define.'
         $packages = @(Get-YLUpmPackages -Repository $repository -Ids @('com.kano.ylframework.reddot') -Catalog $catalog)
         Check (($packages.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.reddot') 'RedDots core must not force-install Save or another feature.'
         Check (-not [IO.Directory]::Exists((Join-Path $repository 'PackageSources/com.kano.ylframework/Runtime/Systems/Reddot'))) 'The main product must not retain a duplicate RedDots implementation.'

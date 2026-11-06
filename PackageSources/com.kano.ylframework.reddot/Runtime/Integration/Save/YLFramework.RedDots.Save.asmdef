@@ -1,0 +1,16 @@
+{
+    "name": "YLFramework.RedDots.Save",
+    "rootNamespace": "YLFramework.RedDots",
+    "references": ["YLFramework.RedDots", "YLFramework.Save"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": ["YL_SAVE_PACKAGE"],
+    "versionDefines": [
+        { "name": "com.kano.ylframework.save", "expression": "0.0.0", "define": "YL_SAVE_PACKAGE" }
+    ],
+    "noEngineReferences": true
+}

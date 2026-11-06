@@ -104,6 +104,538 @@ namespace YLFramework.Tests.Extensions.Domain
 
     [Category("YL.Module.Reddot")]
     [Category("YL.Module.Domain")]
+    public sealed class ReddotReadStateTests
+    {
+        [SetUp]
+        public void Prepare() => ResetSession();
+
+        [TearDown]
+        public void Clean() => ResetSession();
+
+        [Test]
+        public void SeenVersionOnlySuppressesThatVersion()
+        {
+            using var state = new ReddotReadState("account/slot-0");
+            state.MarkRead(key: "mail", version: "v10");
+            Assert.That(state.IsRead(key: "mail", version: "v10"), Is.True);
+            Assert.That(state.IsRead("mail", "v2"), Is.False);
+            state.MarkRead("mail", "v2");
+            Assert.That(state.IsRead("mail", "v10"), Is.True);
+            Assert.That(state.IsRead("mail", "v2"), Is.True);
+            Assert.That(state.IsRead("Mail", "v2"), Is.False);
+            Assert.That(state.IsRead("mail", "V2"), Is.False);
+            Assert.That(state.Forget(key: "mail", version: "v10"), Is.True);
+            Assert.That(state.Forget("mail", "v10"), Is.False);
+            Assert.That(state.IsRead("mail", "v2"), Is.True, "Forget removes only the specified confirmation.");
+        }
+
+        [Test]
+        public void UnreadSourceTracksVersionWithoutCounterDrift()
+        {
+            using var state = new ReddotReadState("slot-0");
+            using var source = state.BindUnreadSource(path: "Mail/Gift", sourceId: "gift", key: "item", version: "v1");
+            var values = new List<long>();
+            using var firstUi = ReddotManager.Subscribe("Mail", snapshot => values.Add(snapshot.Value), false);
+            using var secondUi = ReddotManager.Subscribe("Mail", _ => { }, false);
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(1));
+            state.MarkRead("item", "v1");
+            state.MarkRead("item", "v1");
+            source.SetVersion(version: "v2");
+            state.MarkRead("item", "v1");
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(1), "Old confirmation cannot clear new content.");
+            source.SetVersion("v1");
+            Assert.That(ReddotManager.GetValue("Mail"), Is.Zero, "Returning to a read version stays read.");
+            source.SetVersion("v2");
+            state.MarkRead("item", "v2");
+            source.SetVersion("v1");
+            Assert.That(ReddotManager.GetValue("Mail"), Is.Zero);
+            Assert.That(state.IsRead("item", "v1"), Is.True);
+            Assert.That(state.IsRead("item", "v2"), Is.True);
+            Assert.That(values, Is.EqualTo(new long[] { 0, 1, 0, 1, 0 }));
+        }
+
+        [Test]
+        public void ReadVersionDoesNotAcknowledgeNewContent()
+        {
+            using var state = new ReddotReadState("slot-0");
+            state.MarkRead("mail", "v1");
+            using var source = state.BindUnreadSource("Mail", "mail", "mail", "v1");
+            Assert.Throws<ArgumentException>(() => source.SetVersion(null));
+            Assert.Throws<ArgumentException>(() => source.SetVersion(""));
+            Assert.Throws<ArgumentException>(() => source.SetVersion(" \t "));
+            Assert.That(ReddotManager.GetValue("Mail"), Is.Zero);
+            source.SetVersion("v2");
+            source.SetVersion("v2");
+            Assert.That(state.IsRead("mail", "v2"), Is.False);
+            Assert.That(state.IsRead("mail", "v1"), Is.True);
+            state.MarkRead("mail", "v1");
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(1));
+            source.SetVersion("v3");
+            state.MarkRead("mail", "v2");
+            Assert.That(state.IsRead("mail", "v2"), Is.True);
+            Assert.That(state.IsRead("mail", "v3"), Is.False);
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(1), "A late first acknowledgement of v2 cannot clear v3.");
+            source.SetVersion("v2");
+            Assert.That(ReddotManager.GetValue("Mail"), Is.Zero);
+        }
+
+        [Test]
+        public void NamespaceIsolationAndExplicitImport()
+        {
+            using var first = new ReddotReadState("account-A/slot-0");
+            using var second = new ReddotReadState("account-B/slot-0");
+            using var reopened = new ReddotReadState("account-A/slot-0");
+            first.MarkRead("mail", "release");
+            using var firstSource = first.BindUnreadSource("Mail/A", "mail", "mail", "release");
+            using var secondSource = second.BindUnreadSource("Mail/B", "mail", "mail", "release");
+            using var reopenedSource = reopened.BindUnreadSource("Mail/Reopened", "mail", "mail", "release");
+            Assert.That(second.IsRead("mail", "release"), Is.False);
+            Assert.That(reopened.IsRead("mail", "release"), Is.False, "Matching namespace does not share global memory.");
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(2));
+            Assert.Throws<System.IO.InvalidDataException>(() => second.Import(first.Export()));
+            reopened.Import(snapshot: first.Export());
+            Assert.That(reopened.Namespace, Is.EqualTo("account-A/slot-0"));
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(1));
+            Assert.That(second.IsRead("mail", "release"), Is.False);
+        }
+
+        [Test]
+        public void SnapshotDeepCopiesBothDirectionsAndDoesNotPersistBindings()
+        {
+            using var state = new ReddotReadState("slot-0");
+            state.MarkRead("z", "v2");
+            state.MarkRead("a", "v2");
+            state.MarkRead("a", "v10");
+            using var source = state.BindUnreadSource("Mail", "not-persisted", "z", "current");
+            var snapshot = state.Export();
+            Assert.That(snapshot.schemaVersion, Is.EqualTo(1));
+            Assert.That(snapshot.readNamespace, Is.EqualTo("slot-0"));
+            Assert.That(snapshot.records, Has.Length.EqualTo(2));
+            Assert.That(snapshot.records[0].key, Is.EqualTo("a"));
+            Assert.That(snapshot.records[0].versions, Is.EqualTo(new[] { "v10", "v2" }));
+            using var imported = new ReddotReadState("slot-0");
+            imported.Import(snapshot);
+            snapshot.records[0].versions[0] = "changed";
+            snapshot.records[1] = new ReddotReadRecord { key = "replacement", versions = new[] { "x" } };
+            Assert.That(imported.IsRead("a", "v10"), Is.True);
+            Assert.That(imported.IsRead("z", "v2"), Is.True);
+            Assert.That(state.IsRead("a", "v10"), Is.True);
+            Assert.That(state.IsRead("z", "v2"), Is.True);
+            imported.Forget("a", "v2");
+            Assert.That(state.IsRead("a", "v2"), Is.True);
+            Assert.That(ReddotManager.ReddotPath, Is.EqualTo(new[] { "Mail/" }));
+            Assert.Throws<System.IO.InvalidDataException>(() => new ReddotReadSnapshot().Validate());
+        }
+
+        [Test]
+        public void SnapshotValidationUsesOrdinalKeysAndVersionsAndAllowsExplicitEmptyImport()
+        {
+            using var state = new ReddotReadState("slot-0");
+            var snapshot = new ReddotReadSnapshot
+            {
+                schemaVersion = 1,
+                readNamespace = "slot-0",
+                records = new[]
+                {
+                    new ReddotReadRecord { key = "mail", versions = new[] { "v1", "V1" } },
+                    new ReddotReadRecord { key = "Mail", versions = new[] { "v1" } }
+                }
+            };
+            Assert.DoesNotThrow(snapshot.Validate);
+            state.Import(snapshot);
+            Assert.That(state.IsRead("mail", "V1"), Is.True);
+            Assert.That(state.IsRead("Mail", "v1"), Is.True);
+            Assert.That(state.IsRead("Mail", "V1"), Is.False);
+            state.Import(new ReddotReadSnapshot
+            {
+                schemaVersion = 1,
+                readNamespace = "slot-0",
+                records = Array.Empty<ReddotReadRecord>()
+            });
+            Assert.That(state.IsRead("mail", "v1"), Is.False);
+            Assert.That(state.Export().records, Is.Empty);
+        }
+
+        [TestCase("schema-missing")]
+        [TestCase("schema-unsupported")]
+        [TestCase("namespace-null")]
+        [TestCase("namespace-blank")]
+        [TestCase("namespace-mismatch")]
+        [TestCase("records-null")]
+        [TestCase("record-null")]
+        [TestCase("key-null")]
+        [TestCase("key-blank")]
+        [TestCase("versions-null")]
+        [TestCase("versions-empty")]
+        [TestCase("version-null")]
+        [TestCase("version-blank")]
+        [TestCase("duplicate-key")]
+        [TestCase("duplicate-version")]
+        public void InvalidImportIsAtomic(string fault)
+        {
+            using var state = new ReddotReadState("slot-0");
+            state.MarkRead("known", "v1");
+            using var source = state.BindUnreadSource("Mail", "mail", "known", "v1");
+            var calls = 0;
+            using var observer = ReddotManager.Subscribe("Mail", _ => calls++, false);
+            var snapshot = Snapshot("slot-0", "new", "v2");
+            switch (fault)
+            {
+                case "schema-missing":
+                    snapshot.schemaVersion = 0;
+                    break;
+                case "schema-unsupported":
+                    snapshot.schemaVersion = 2;
+                    break;
+                case "namespace-null":
+                    snapshot.readNamespace = null;
+                    break;
+                case "namespace-blank":
+                    snapshot.readNamespace = " \t ";
+                    break;
+                case "namespace-mismatch":
+                    snapshot.readNamespace = "Slot-0";
+                    break;
+                case "records-null":
+                    snapshot.records = null;
+                    break;
+                case "record-null":
+                    snapshot.records = new ReddotReadRecord[] { null };
+                    break;
+                case "key-null":
+                    snapshot.records[0].key = null;
+                    break;
+                case "key-blank":
+                    snapshot.records[0].key = " ";
+                    break;
+                case "versions-null":
+                    snapshot.records[0].versions = null;
+                    break;
+                case "versions-empty":
+                    snapshot.records[0].versions = Array.Empty<string>();
+                    break;
+                case "version-null":
+                    snapshot.records[0].versions = new string[] { null };
+                    break;
+                case "version-blank":
+                    snapshot.records[0].versions = new[] { " \t " };
+                    break;
+                case "duplicate-key":
+                    snapshot.records = new[] { snapshot.records[0], snapshot.records[0] };
+                    break;
+                case "duplicate-version":
+                    snapshot.records[0].versions = new[] { "v2", "v2" };
+                    break;
+            }
+            Assert.Throws<System.IO.InvalidDataException>(() => state.Import(snapshot));
+            Assert.That(state.IsRead("known", "v1"), Is.True);
+            Assert.That(state.IsRead("new", "v2"), Is.False);
+            Assert.That(ReddotManager.GetValue("Mail"), Is.Zero);
+            Assert.That(calls, Is.Zero);
+        }
+
+        [Test]
+        public void ImportBatchesBindingsAndCommitsRecordsBeforeObservers()
+        {
+            using var state = new ReddotReadState("slot-0");
+            state.MarkRead("old", "v1");
+            using var first = state.BindUnreadSource("Mail/A", "a", "new", "v2");
+            using var second = state.BindUnreadSource("Mail/B", "b", "new", "v2");
+            var values = new List<long>();
+            using var observer = ReddotManager.Subscribe("Mail", snapshot =>
+            {
+                Assert.That(state.IsRead("new", "v2"), Is.True);
+                Assert.That(state.IsRead("old", "v1"), Is.False);
+                Assert.That(ReddotManager.GetValue("Mail/A"), Is.Zero);
+                Assert.That(ReddotManager.GetValue("Mail/B"), Is.Zero);
+                values.Add(snapshot.Value);
+            }, false);
+            state.Import(Snapshot("slot-0", "new", "v2"));
+            state.Import(Snapshot("slot-0", "new", "v2"));
+            Assert.That(values, Is.EqualTo(new long[] { 0 }));
+        }
+
+        [Test]
+        public void FailedNumericImportRollsBackAllBindingsAndKeepsOldRecords()
+        {
+            using var state = new ReddotReadState("slot-0");
+            state.MarkRead("b", "v1");
+            state.MarkRead("c", "v1");
+            using var large = ReddotManager.RegisterSource("Mail/Large", "large", long.MaxValue - 1);
+            using var a = state.BindUnreadSource("Mail/A", "a", "a", "v1");
+            using var b = state.BindUnreadSource("Mail/B", "b", "b", "v1");
+            using var c = state.BindUnreadSource("Mail/C", "c", "c", "v1");
+            var values = new List<long>();
+            using var observer = ReddotManager.Subscribe("Mail", snapshot => values.Add(snapshot.Value), false);
+            Assert.Throws<OverflowException>(() => state.Import(Snapshot("slot-0", "a", "v1")));
+            Assert.That(state.IsRead("a", "v1"), Is.False);
+            Assert.That(state.IsRead("b", "v1"), Is.True);
+            Assert.That(state.IsRead("c", "v1"), Is.True);
+            Assert.That(ReddotManager.GetValue("Mail/A"), Is.EqualTo(1));
+            Assert.That(ReddotManager.GetValue("Mail/B"), Is.Zero);
+            Assert.That(ReddotManager.GetValue("Mail/C"), Is.Zero);
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(long.MaxValue));
+            Assert.That(values, Is.Empty);
+            state.Import(new ReddotReadSnapshot
+            {
+                schemaVersion = 1,
+                readNamespace = "slot-0",
+                records = new[]
+                {
+                    new ReddotReadRecord { key = "a", versions = new[] { "v1" } },
+                    new ReddotReadRecord { key = "b", versions = new[] { "v1" } }
+                }
+            });
+            Assert.That(ReddotManager.GetValue("Mail/A"), Is.Zero);
+            Assert.That(ReddotManager.GetValue("Mail/C"), Is.EqualTo(1));
+            Assert.That(values, Is.Empty, "A valid redistribution must decrease first and not emit an unchanged parent value.");
+        }
+
+        [Test]
+        public void NumericImportFailureAndRollbackObserverFailureAreBothVisible()
+        {
+            using var state = new ReddotReadState("slot-0");
+            state.MarkRead("b", "v1");
+            state.MarkRead("c", "v1");
+            using var large = ReddotManager.RegisterSource("Mail/Large", "large", long.MaxValue - 1);
+            using var a = state.BindUnreadSource("Mail/A", "a", "a", "v1");
+            using var b = state.BindUnreadSource("Mail/B", "b", "b", "v1");
+            using var c = state.BindUnreadSource("Mail/C", "c", "c", "v1");
+            var legacy = ReddotManager.RegisterChanged(() => throw new InvalidOperationException("rollback-marker"));
+            try
+            {
+                var error = Assert.Throws<AggregateException>(() => state.Import(Snapshot("slot-0", "a", "v1")));
+                var failures = error.Flatten().InnerExceptions;
+                Assert.That(failures, Has.Count.EqualTo(2));
+                Assert.That(failures[0], Is.TypeOf<OverflowException>());
+                Assert.That(failures[1].Message, Is.EqualTo("rollback-marker"));
+                Assert.That(state.IsRead("a", "v1"), Is.False);
+                Assert.That(state.IsRead("b", "v1"), Is.True);
+                Assert.That(state.IsRead("c", "v1"), Is.True);
+                Assert.That(ReddotManager.GetValue("Mail/A"), Is.EqualTo(1));
+                Assert.That(ReddotManager.GetValue("Mail/B"), Is.Zero);
+                Assert.That(ReddotManager.GetValue("Mail/C"), Is.Zero);
+            }
+            finally
+            {
+                legacy.Unregister();
+            }
+        }
+
+        [Test]
+        public void FailedForgetAndVersionChangeDoNotMutateMetadata()
+        {
+            using var state = new ReddotReadState("slot-0");
+            state.MarkRead("mail", "v1");
+            using var large = ReddotManager.RegisterSource("Mail/Large", "large", long.MaxValue);
+            using var source = state.BindUnreadSource("Mail/Item", "mail", "mail", "v1");
+            Assert.Throws<OverflowException>(() => state.Forget("mail", "v1"));
+            Assert.Throws<OverflowException>(() => source.SetVersion("v2"));
+            Assert.That(state.IsRead("mail", "v1"), Is.True);
+            Assert.That(state.IsRead("mail", "v2"), Is.False);
+            large.Dispose();
+            state.MarkRead("mail", "v2");
+            state.Forget("mail", "v1");
+            Assert.That(ReddotManager.GetValue("Mail/Item"), Is.EqualTo(1), "Rejected SetVersion must leave v1 active.");
+        }
+
+        [Test]
+        public void InvalidInputsAreRejectedBeforeMutationAndUnboundStateDoesNotTouchManager()
+        {
+            Assert.Throws<ArgumentException>(() => new ReddotReadState(null));
+            Assert.Throws<ArgumentException>(() => new ReddotReadState(" \t "));
+            using var state = new ReddotReadState("slot-0");
+            var calls = 0;
+            var global = ReddotManager.RegisterChanged(() => calls++);
+            try
+            {
+                Assert.Throws<ArgumentException>(() => state.IsRead(" ", "v1"));
+                Assert.Throws<ArgumentException>(() => state.MarkRead("mail", null));
+                Assert.Throws<ArgumentException>(() => state.Forget(null, "v1"));
+                Assert.Throws<ArgumentNullException>(() => state.Import(null));
+                Assert.Throws<ArgumentException>(() => state.BindUnreadSource("Mail", "id", "mail", " "));
+                Assert.Throws<ArgumentException>(() => state.BindUnreadSource(" / / ", "id", "mail", "v1"));
+                Assert.Throws<ArgumentException>(() => state.BindUnreadSource("Mail", " ", "mail", "v1"));
+                state.MarkRead("mail", "v1");
+                state.Forget("mail", "v1");
+                state.Import(Snapshot("slot-0", "mail", "v2"));
+                state.PruneRemovedKeys(Array.Empty<string>());
+                state.Dispose();
+                Assert.That(ReddotManager.ReddotPath, Is.Empty);
+                Assert.That(calls, Is.Zero);
+            }
+            finally
+            {
+                global.Unregister();
+            }
+        }
+
+        [Test]
+        public void PruneRemovedKeysIsExplicitOrdinalAndValidatesTheWholeInput()
+        {
+            using var state = new ReddotReadState("slot-0");
+            state.MarkRead("keep", "v1");
+            state.MarkRead("removed", "v1");
+            state.MarkRead("removed", "v2");
+            using var source = state.BindUnreadSource("Mail", "removed", "removed", "v2");
+            source.SetVersion("v1");
+            Assert.That(state.Export().records, Has.Length.EqualTo(2), "Version changes never prune records.");
+            Assert.Throws<ArgumentNullException>(() => state.PruneRemovedKeys(null));
+            Assert.Throws<ArgumentException>(() => state.PruneRemovedKeys(new[] { "keep", " " }));
+            Assert.That(state.IsRead("removed", "v2"), Is.True);
+            Assert.That(state.PruneRemovedKeys(liveKeys: new[] { "keep", "REMOVED" }), Is.EqualTo(1));
+            Assert.That(state.IsRead("removed", "v1"), Is.False);
+            Assert.That(state.IsRead("removed", "v2"), Is.False);
+            Assert.That(state.IsRead("keep", "v1"), Is.True);
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(1));
+            Assert.That(state.PruneRemovedKeys(new[] { "keep" }), Is.Zero);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void OldGenerationAndLateStateDisposalCannotStealNewSource(bool newSession)
+        {
+            using var oldState = new ReddotReadState("old-account");
+            var old = oldState.BindUnreadSource("Mail", "same-id", "item", "v1");
+            if (newSession)
+            {
+                ResetSession();
+            }
+            else
+            {
+                ReddotManager.Reset();
+            }
+            using var currentState = new ReddotReadState("new-account");
+            using var current = currentState.BindUnreadSource("Mail", "same-id", "item", "v1");
+            Assert.Throws<ObjectDisposedException>(() => old.SetVersion("v2"));
+            oldState.MarkRead("item", "v1");
+            oldState.Import(Snapshot("old-account", "item", "v2"));
+            old.Dispose();
+            old.Dispose();
+            oldState.Dispose();
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(1));
+            currentState.MarkRead("item", "v1");
+            Assert.That(ReddotManager.GetValue("Mail"), Is.Zero);
+        }
+
+        [Test]
+        public void ReleasedBindingAndOldOwnerNeverReleaseAReplacementInTheSameGeneration()
+        {
+            using var oldState = new ReddotReadState("old-account");
+            var old = oldState.BindUnreadSource("Mail", "same-id", "item", "v1");
+            old.Dispose();
+            using var currentState = new ReddotReadState("new-account");
+            using var current = currentState.BindUnreadSource("Mail", "same-id", "item", "v1");
+            oldState.MarkRead("item", "v1");
+            old.Dispose();
+            oldState.Dispose();
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(1));
+            Assert.Throws<ObjectDisposedException>(() => old.SetVersion("v1"));
+            Assert.Throws<ObjectDisposedException>(() => oldState.MarkRead("item", "v1"));
+        }
+
+        [Test]
+        public void DuplicateBindingAndFailedObserverRegistrationDoNotLeakOwnership()
+        {
+            using var state = new ReddotReadState("slot-0");
+            using var source = state.BindUnreadSource("Mail", "id", "mail", "v1");
+            Assert.Throws<ArgumentException>(() => state.BindUnreadSource("/Mail/", "id", "other", "v2"));
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(1));
+            var throwing = ReddotManager.Subscribe("Other", _ => throw new InvalidOperationException("bind-marker"), false);
+            var error = Assert.Throws<AggregateException>(() => state.BindUnreadSource("Other", "id", "other", "v1"));
+            Assert.That(error.Flatten().InnerExceptions, Has.Count.EqualTo(2));
+            Assert.That(ReddotManager.GetValue("Other"), Is.Zero);
+            Assert.That(ReddotManager.ReddotPath, Is.EqualTo(new[] { "Mail/" }));
+            throwing.Dispose();
+            using var replacement = state.BindUnreadSource("Other", "id", "other", "v1");
+            state.MarkRead("other", "v1");
+            Assert.That(ReddotManager.GetValue("Other"), Is.Zero);
+        }
+
+        [Test]
+        public void ObserverFailureLeavesConsistentReadStateAndVersionMetadata()
+        {
+            using var state = new ReddotReadState("slot-0");
+            using var source = state.BindUnreadSource("Mail", "id", "mail", "v1");
+            var throwing = ReddotManager.Subscribe("Mail", _ => throw new InvalidOperationException("read-marker"), false);
+            Assert.Throws<InvalidOperationException>(() => state.MarkRead("mail", "v1"));
+            Assert.That(state.IsRead("mail", "v1"), Is.True);
+            Assert.That(ReddotManager.GetValue("Mail"), Is.Zero);
+            Assert.DoesNotThrow(() => state.MarkRead("mail", "v1"));
+            Assert.Throws<InvalidOperationException>(() => source.SetVersion("v2"));
+            Assert.That(state.IsRead("mail", "v2"), Is.False, "SetVersion must not acknowledge content.");
+            throwing.Dispose();
+            state.MarkRead("mail", "v2");
+            Assert.That(ReddotManager.GetValue("Mail"), Is.Zero, "Observer failure must not leave v1 in binding metadata.");
+        }
+
+        [Test]
+        public void ReentrantVersionObserverSeesCommittedMetadata()
+        {
+            using var state = new ReddotReadState("slot-0");
+            state.MarkRead("mail", "v1");
+            using var source = state.BindUnreadSource("Mail", "id", "mail", "v1");
+            var values = new List<long>();
+            using var observer = ReddotManager.Subscribe("Mail", snapshot =>
+            {
+                values.Add(snapshot.Value);
+                if (snapshot.Value == 1)
+                {
+                    state.MarkRead("mail", "v2");
+                }
+            }, false);
+            source.SetVersion("v2");
+            Assert.That(values, Is.EqualTo(new long[] { 1, 0 }));
+            Assert.That(ReddotManager.GetValue("Mail"), Is.Zero);
+        }
+
+        [Test]
+        public void ImportObserverFailureReportsTheErrorAfterCommittingAllRecords()
+        {
+            using var state = new ReddotReadState("slot-0");
+            using var a = state.BindUnreadSource("Mail/A", "a", "a", "v1");
+            using var b = state.BindUnreadSource("Mail/B", "b", "a", "v1");
+            using var throwing = ReddotManager.Subscribe("Mail", _ => throw new InvalidOperationException("import-marker"), false);
+            Assert.Throws<InvalidOperationException>(() => state.Import(Snapshot("slot-0", "a", "v1")));
+            Assert.That(state.IsRead("a", "v1"), Is.True);
+            Assert.That(ReddotManager.GetValue("Mail/A"), Is.Zero);
+            Assert.That(ReddotManager.GetValue("Mail/B"), Is.Zero);
+        }
+
+        [Test]
+        public void DisposeReleasesOnlyOwnedBindingsEvenWhenObserversThrow()
+        {
+            var state = new ReddotReadState("slot-0");
+            var a = state.BindUnreadSource("Mail/A", "a", "a", "v1");
+            var b = state.BindUnreadSource("Mail/B", "b", "b", "v1");
+            using var other = ReddotManager.RegisterSource("Mail/C", "other", 3);
+            var throwing = ReddotManager.Subscribe("Mail", _ => throw new InvalidOperationException("dispose-marker"), false);
+            Assert.Throws<InvalidOperationException>(() => state.Dispose());
+            throwing.Dispose();
+            state.Dispose();
+            a.Dispose();
+            b.Dispose();
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(3));
+            Assert.That(ReddotManager.ReddotPath, Is.EqualTo(new[] { "Mail/C/" }));
+            Assert.Throws<ObjectDisposedException>(() => a.SetVersion("v2"));
+            Assert.Throws<ObjectDisposedException>(() => state.Export());
+        }
+
+        private static ReddotReadSnapshot Snapshot(string readNamespace, string key, string version)
+            => new ReddotReadSnapshot
+            {
+                schemaVersion = 1,
+                readNamespace = readNamespace,
+                records = new[] { new ReddotReadRecord { key = key, versions = new[] { version } } }
+            };
+
+        private static void ResetSession() => typeof(ReddotManager)
+            .GetMethod("ResetSession", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            .Invoke(null, null);
+    }
+
+    [Category("YL.Module.Reddot")]
+    [Category("YL.Module.Domain")]
     public sealed class ReddotValueTests
     {
         [SetUp]

@@ -61,6 +61,9 @@
       ],
       "runtimeSources": [
         "PackageSources/com.kano.ylframework.reddot/Runtime/Systems/Reddot/ReddotManager.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotReadState.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotUnreadSource.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotReadSnapshot.cs",
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Singleton/Internal/SingletonSessionState.cs",
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/EventChannel.cs",
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/EventChannelBase.cs",
@@ -88,6 +91,36 @@
       "packageInputs": [
         "com.kano.ylframework.reddot"
       ],
+      "sampleInputs": []
+    },
+    {
+      "name": "ReddotSave",
+      "sortingLayer": "",
+      "category": "",
+      "assemblies": ["YLFramework.RedDots.Save.Tests.EditMode"],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "shortHostKey": true,
+      "excludedCategories": [],
+      "description": "Native optional RedDots/Save snapshot composition with real SaveStore files, cold reopen, backup, invalid data, IO and cancellation.",
+      "suites": ["Daily"],
+      "outputEnvironment": ["YL_REDDOT_SAVE_TEST_OUTPUT"],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework.reddot/Runtime",
+        "PackageSources/com.kano.ylframework.save/Runtime"
+      ],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared"],
+      "nativeFixtureInputs": [],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/ReddotSave"],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework.reddot/Runtime/YLFramework.RedDots.asmdef",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/Integration/Save/YLFramework.RedDots.Save.asmdef",
+        "PackageSources/com.kano.ylframework.save/Runtime/YLFramework.Save.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Systems/ReddotSave/YLFramework.RedDots.Save.Tests.EditMode.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework.reddot", "com.kano.ylframework.save"],
       "sampleInputs": []
     },
     {
@@ -221,7 +254,10 @@
       "runtimeSources": [
         "PackageSources/com.kano.ylframework/Runtime",
         "PackageSources/com.kano.ylframework.gameplay/Runtime",
-        "PackageSources/com.kano.ylframework.reddot/Runtime"
+        "PackageSources/com.kano.ylframework.reddot/Runtime/Systems/Reddot",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotReadState.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotUnreadSource.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotReadSnapshot.cs"
       ],
       "nativeSources": [
         "Assets/Tests/YLFramework/Fixtures/Shared",

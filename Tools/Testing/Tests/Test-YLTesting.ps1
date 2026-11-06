@@ -253,6 +253,16 @@ try {
                 Assert-That ($selected.inputs -ccontains $adapter -and $selected.inputs -ccontains ($adapter + '.meta')) "$module must still hash the full product input."
             }
         }
+        Test-Case 'ReddotSave has one explicit native selector and keeps Save out of core' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $module = @($configuration.modules | Where-Object name -CEQ 'ReddotSave')[0]
+            Assert-That ((-not [string]::IsNullOrWhiteSpace($module.category)) -xor ($module.assemblies.Count -gt 0)) 'Native selection must choose a category OR explicit assemblies, never both.'
+            Assert-That (($module.modes -join ',') -ceq 'EditMode') 'Save snapshot IO belongs to actual EditMode acceptance.'
+            Assert-That ($module.nativeSources -ccontains 'Assets/Tests/YLFramework/Fixtures/Shared') 'Framework Native entry requires the real shared PackageTestPaths support.'
+            $core = @($configuration.modules | Where-Object name -CEQ 'Reddot')[0]
+            Assert-That (($core.packageInputs -join ',') -ceq 'com.kano.ylframework.reddot') 'The core must not force-install Save.'
+        }
         Test-Case 'DOTween behavior has its own SDK-required module without adding SDK input to ordinary Action' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')

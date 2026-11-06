@@ -1,0 +1,17 @@
+{
+    "name": "YLFramework.RedDots.Save.Tests.EditMode",
+    "rootNamespace": "YLFramework.Tests.RedDots.Save",
+    "references": ["YLFramework.RedDots", "YLFramework.RedDots.Save", "YLFramework.Save", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": ["nunit.framework.dll", "Newtonsoft.Json.dll"],
+    "autoReferenced": false,
+    "defineConstraints": ["UNITY_INCLUDE_TESTS", "YL_SAVE_PACKAGE", "YL_REDDOT_PACKAGE"],
+    "versionDefines": [
+        { "name": "com.kano.ylframework.save", "expression": "0.0.0", "define": "YL_SAVE_PACKAGE" },
+        { "name": "com.kano.ylframework.reddot", "expression": "0.0.0", "define": "YL_REDDOT_PACKAGE" }
+    ],
+    "noEngineReferences": false
+}
