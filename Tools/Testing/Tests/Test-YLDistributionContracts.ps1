@@ -75,7 +75,7 @@ function Invoke-UpmDistributionFixture {
             Write-YLTestJson -Path (Join-Path $output 'result.json') -Value @{
                 schemaVersion = 1; purpose = 'YLTesting.PlayerSmoke'; status = 'Passed'; resultId = $request.resultId; hostId = $request.hostId
                 unityVersion = $EditorVersion; pid = 42; isEditor = $false; platform = 'WindowsPlayer'; frames = 2; error = ''; backend = $Backend; recordCount = 0; leaseCount = 0
-                stages = @('Started', 'ResourceLoaded', 'ReddotLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown')
+                stages = @('Started', 'ResourceLoaded', 'EventLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown')
             }
             [IO.File]::WriteAllText((Join-Path $output 'player.log'), ('[YLPlayerSmoke] PASS ' + $request.resultId))
             return $fact

@@ -10,7 +10,9 @@ using YLFramework.Buff;
 using YLFramework.Equipment;
 using YLFramework.Logging;
 using YLFramework.Mission;
+#if YL_REDDOT_PACKAGE
 using YLFramework.RedDots;
+#endif
 using YLFramework.Resource;
 using YLFramework.Skill;
 using ResourceLocation = YLFramework.Resource.ResourceLocation;
@@ -97,8 +99,10 @@ namespace YLFramework.Tests.Extensions.Domain
             var original = Debug.unityLogger.logHandler;
             var directory = Path.Combine(Application.temporaryCachePath, "YL.Domain.TwoPlay." + System.Guid.NewGuid().ToString("N"));
             _directory = directory;
+#if YL_REDDOT_PACKAGE
             var oldPath = ReddotManager.RegisterPath("Domain/FirstPlay");
             _oldPath = oldPath;
+#endif
             var session = LoggerManager.Enable(new LoggerOptions { WriteToFile = true, Directory = directory });
             session.LogFormat(LogType.Log, null, "domain-first-play");
             var file = session.LogFilePath;
@@ -111,13 +115,15 @@ namespace YLFramework.Tests.Extensions.Domain
             }
 
             yield return new EnterPlayMode(false);
-            Assert.That(ReddotManager.ShouldBeDisplayed("Domain"), Is.False);
             Assert.That(LoggerManager.IsEnabled, Is.False);
+#if YL_REDDOT_PACKAGE
+            Assert.That(ReddotManager.ShouldBeDisplayed("Domain"), Is.False);
             using (ReddotManager.RegisterPath("Domain/FirstPlay"))
             {
                 oldPath.Dispose();
                 Assert.That(ReddotManager.ShouldBeDisplayed("Domain"), Is.True);
             }
+#endif
             var secondOriginal = Debug.unityLogger.logHandler;
             var second = LoggerManager.Enable(new LoggerOptions { WriteToFile = true, Directory = directory });
             second.LogFormat(LogType.Log, null, "domain-second-play");

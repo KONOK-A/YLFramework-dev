@@ -211,9 +211,8 @@ namespace YLFramework.Testing
             foreach (var name in fields.Where(f => f != "schemaVersion")) Text(request, name);
             var phase = Text(request, "phase");
             var combinations = request.ContainsKey("verifyCombinations") && (Value(request, "verifyCombinations") is bool flag ? flag : throw new InvalidOperationException("Lifecycle boolean field required: verifyCombinations"));
-            var ordinary = new[] { "Inspect", "Reopen", "Remove", "VerifyRemoved" }.Contains(phase);
             if (Text(request, "purpose") != "YLTesting.RegistryLifecycle" || !new[] { "Registry", "LocalTarball" }.Contains(Text(request, "packageOrigin")) ||
-                (!ordinary && !(combinations && new[] { "RemoveGameplay", "VerifyExcelOnly", "RestoreGameplay", "RemoveExcel", "VerifyGameplayOnly", "RestoreExcel" }.Contains(phase))) || Text(request, "registryUrl") != "https://package.openupm.com")
+                Text(request, "registryUrl") != "https://package.openupm.com")
                 throw new InvalidOperationException("Lifecycle requires an explicit Registry phase/source.");
             if (!arguments.Contains("-batchmode") || arguments.Contains("-quit") || !Application.isBatchMode)
                 throw new InvalidOperationException("Only explicit batch lifecycle requests have process exit authority.");
@@ -260,9 +259,12 @@ namespace YLFramework.Testing
             foreach (var id in known) Pattern(id, "^com\\.kano\\.ylframework(?:\\.[a-z0-9]+(?:-[a-z0-9]+)*)?$");
             if (known.Length == 0 || known.Distinct(StringComparer.Ordinal).Count() != known.Length || !known.Contains("com.kano.ylframework"))
                 throw new InvalidOperationException("Invalid/duplicate owned package catalog identities.");
+            var combinationPhases = CombinationPhases(roots);
             if (roots.Length == 0 || roots[0] != entryId || roots.Any(id => string.IsNullOrWhiteSpace(id) || !known.Contains(id)) || roots.Distinct(StringComparer.Ordinal).Count() != roots.Length ||
-                (roots.Length > 1 && (roots.Length != 2 || !new HashSet<string>(roots, StringComparer.Ordinal).SetEquals(new[] { "com.kano.ylframework.excel", "com.kano.ylframework.gameplay" }))) || (combinations && roots.Length != 2))
+                (roots.Length > 1 && combinationPhases.Length == 0) || (combinations && roots.Length != 2))
                 throw new InvalidOperationException("Invalid primary/unknown/duplicate/composite lifecycle entry roots.");
+            if (!new[] { "Inspect", "Reopen", "Remove", "VerifyRemoved" }.Contains(phase) && !(combinations && combinationPhases.Contains(phase)))
+                throw new InvalidOperationException("Lifecycle phase differs from its explicit roots/combination profile.");
             var released = Array(release, "packages").Select(Object).ToArray();
             if (released.Length != known.Length || !new HashSet<string>(released.Select(p => Text(p, "id")), StringComparer.Ordinal).SetEquals(known) || !known.Contains(entryId))
                 throw new InvalidOperationException("Incomplete frozen release/entry identity.");
@@ -300,12 +302,18 @@ namespace YLFramework.Testing
                 string.Equals(Text(item, "sha256"), Hash(catalogPath), StringComparison.OrdinalIgnoreCase)) != 1)
                 throw new InvalidOperationException("The package catalog is not bound to the immutable host input receipt.");
             var beforeRoots = roots; var afterRoots = roots;
-            if (phase == "RemoveGameplay" || phase == "VerifyExcelOnly") afterRoots = new[] { "com.kano.ylframework.excel" };
-            if (phase == "RestoreGameplay") beforeRoots = new[] { "com.kano.ylframework.excel" };
-            if (phase == "RemoveExcel" || phase == "VerifyGameplayOnly") afterRoots = new[] { "com.kano.ylframework.gameplay" };
-            if (phase == "RestoreExcel") beforeRoots = new[] { "com.kano.ylframework.gameplay" };
+            if (combinations)
+            {
+                var first = entryId == "com.kano.ylframework.reddot" ? "com.kano.ylframework.reddot" : "com.kano.ylframework.excel";
+                var second = first == "com.kano.ylframework.reddot" ? "com.kano.ylframework.save" : "com.kano.ylframework.gameplay";
+                if (phase == combinationPhases[0] || phase == combinationPhases[1]) afterRoots = new[] { first };
+                if (phase == combinationPhases[2]) beforeRoots = new[] { first };
+                if (phase == combinationPhases[3] || phase == combinationPhases[4]) afterRoots = new[] { second };
+                if (phase == combinationPhases[5]) beforeRoots = new[] { second };
+                if (phase == combinationPhases[1] || phase == combinationPhases[4]) beforeRoots = afterRoots;
+            }
             if (phase == "Remove" || phase == "VerifyRemoved") afterRoots = System.Array.Empty<string>();
-            if (phase == "VerifyExcelOnly" || phase == "VerifyGameplayOnly" || phase == "VerifyRemoved") beforeRoots = afterRoots;
+            if (phase == "VerifyRemoved") beforeRoots = afterRoots;
             var context = new Context { request = request, arguments = arguments, sha256 = Hash(requestPath), roots = roots, released = released, original = original,
                 before = ManifestFor(original, released, beforeRoots, Text(request, "packageOrigin")), after = ManifestFor(original, released, afterRoots, Text(request, "packageOrigin")) };
             var savedState = SafePath(Path.Combine(output, "operation.json"));
@@ -351,7 +359,16 @@ namespace YLFramework.Testing
             if (!File.Exists(SafePath(Path.Combine(path, ".lease")))) throw new InvalidOperationException("Missing owner lease.");
         }
 
-        private static bool IsMutation(string phase) => new[] { "Remove", "RemoveGameplay", "RestoreGameplay", "RemoveExcel", "RestoreExcel" }.Contains(phase);
+        private static string[] CombinationPhases(string[] roots)
+        {
+            if (roots.SequenceEqual(new[] { "com.kano.ylframework.reddot", "com.kano.ylframework.save" }, StringComparer.Ordinal))
+                return new[] { "RemoveSave", "VerifyReddotOnly", "RestoreSave", "RemoveReddot", "VerifySaveOnly", "RestoreReddot" };
+            if (roots.Length == 2 && new HashSet<string>(roots, StringComparer.Ordinal).SetEquals(new[] { "com.kano.ylframework.excel", "com.kano.ylframework.gameplay" }))
+                return new[] { "RemoveGameplay", "VerifyExcelOnly", "RestoreGameplay", "RemoveExcel", "VerifyGameplayOnly", "RestoreExcel" };
+            return System.Array.Empty<string>();
+        }
+
+        private static bool IsMutation(string phase) => new[] { "Remove", "RemoveGameplay", "RestoreGameplay", "RemoveExcel", "RestoreExcel", "RemoveSave", "RestoreSave", "RemoveReddot", "RestoreReddot" }.Contains(phase);
 
         private static string[] Closure(Dictionary<string, object>[] released, string[] roots)
         {

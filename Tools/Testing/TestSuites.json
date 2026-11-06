@@ -60,7 +60,10 @@
         "Daily"
       ],
       "runtimeSources": [
-        "PackageSources/com.kano.ylframework/Runtime/Systems/Reddot/ReddotManager.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/Systems/Reddot/ReddotManager.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotReadState.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotUnreadSource.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotReadSnapshot.cs",
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Singleton/Internal/SingletonSessionState.cs",
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/EventChannel.cs",
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/EventChannelBase.cs",
@@ -71,8 +74,10 @@
         "PackageSources/com.kano.ylframework/Runtime/Foundation/Events/Subscriptions/SubscriptionCleanup.cs"
       ],
       "nativeSources": [
-        "Assets/Editor/YLFrameworkDev"
+        "Assets/Editor/YLFrameworkDev",
+        "Assets/Tests/YLFramework/Fixtures/Shared"
       ],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared"],
       "editTests": [
         "Assets/Tests/YLFramework/EditMode/Systems/Reddot"
       ],
@@ -81,12 +86,75 @@
       ],
       "assemblyMetadata": [
         "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/YLFramework.RedDots.asmdef",
         "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
         "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
       ],
       "packageInputs": [
-        "com.kano.ylframework"
+        "com.kano.ylframework.reddot"
       ],
+      "sampleInputs": []
+    },
+    {
+      "name": "ReddotPlayer",
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "category": "",
+      "assemblies": [],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "excludedCategories": [],
+      "description": "Main + RedDots only: two real Mono Players, immutable diagnostics, UI/read-state lifetime and measured multilevel updates. No Resource publication or Save.",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "suites": ["Special"],
+      "specialBackend": "PlayerNative",
+      "specialModes": ["EditMode"],
+      "specialCategory": "YL.Special.ReddotPlayer",
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.reddot/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Reddot"],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Reddot"],
+      "editTests": ["Assets/Tests/YLFramework/Fixtures/Reddot/Editor"],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/YLFramework.RedDots.asmdef",
+        "PackageSources/com.kano.ylframework.reddot/Editor/YLFramework.RedDots.Editor.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Reddot/Runtime/YLFramework.RedDots.Acceptance.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Reddot/Editor/YLFramework.RedDots.Tests.Player.Editor.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework.reddot"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ReddotSave",
+      "sortingLayer": "",
+      "category": "",
+      "assemblies": ["YLFramework.RedDots.Save.Tests.EditMode"],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "shortHostKey": true,
+      "excludedCategories": [],
+      "description": "Native optional RedDots/Save snapshot composition with real SaveStore files, cold reopen, backup, invalid data, IO and cancellation.",
+      "suites": ["Daily"],
+      "outputEnvironment": ["YL_REDDOT_SAVE_TEST_OUTPUT"],
+      "runtimeSources": [
+        "PackageSources/com.kano.ylframework.reddot/Runtime",
+        "PackageSources/com.kano.ylframework.save/Runtime"
+      ],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared"],
+      "nativeFixtureInputs": [],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/ReddotSave"],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework.reddot/Runtime/YLFramework.RedDots.asmdef",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/Integration/Save/YLFramework.RedDots.Save.asmdef",
+        "PackageSources/com.kano.ylframework.save/Runtime/YLFramework.Save.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Systems/ReddotSave/YLFramework.RedDots.Save.Tests.EditMode.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework.reddot", "com.kano.ylframework.save"],
       "sampleInputs": []
     },
     {
@@ -219,7 +287,11 @@
       ],
       "runtimeSources": [
         "PackageSources/com.kano.ylframework/Runtime",
-        "PackageSources/com.kano.ylframework.gameplay/Runtime"
+        "PackageSources/com.kano.ylframework.gameplay/Runtime",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/Systems/Reddot",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotReadState.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotUnreadSource.cs",
+        "PackageSources/com.kano.ylframework.reddot/Runtime/ReddotReadSnapshot.cs"
       ],
       "nativeSources": [
         "Assets/Tests/YLFramework/Fixtures/Shared",
@@ -264,7 +336,8 @@
         "com.kano.ylframework.excel",
         "com.kano.ylframework.localization",
         "com.kano.ylframework.save",
-        "com.kano.ylframework.gameplay"
+        "com.kano.ylframework.gameplay",
+        "com.kano.ylframework.reddot"
       ],
       "sampleInputs": []
     },
@@ -396,7 +469,8 @@
       "runtimeSources": [
         "PackageSources/com.kano.ylframework/Runtime",
         "PackageSources/com.kano.ylframework.state-machine/Runtime",
-        "PackageSources/com.kano.ylframework.movement2d/Runtime"
+        "PackageSources/com.kano.ylframework.movement2d/Runtime",
+        "PackageSources/com.kano.ylframework.reddot/Runtime"
       ],
       "sourceEnvironment": [
         "YL_BEHAVIOR_ROOT"
@@ -439,7 +513,8 @@
       "packageInputs": [
         "com.kano.ylframework",
         "com.kano.ylframework.state-machine",
-        "com.kano.ylframework.movement2d"
+        "com.kano.ylframework.movement2d",
+        "com.kano.ylframework.reddot"
       ],
       "sampleInputs": []
     },
@@ -753,7 +828,8 @@
         "Special"
       ],
       "runtimeSources": [
-        "PackageSources/com.kano.ylframework/Runtime"
+        "PackageSources/com.kano.ylframework/Runtime",
+        "PackageSources/com.kano.ylframework.reddot/Runtime"
       ],
       "nativeSources": [],
       "editTests": [
@@ -770,7 +846,8 @@
         "com.kano.ylframework.excel",
         "com.kano.ylframework.state-machine",
         "com.kano.ylframework.movement2d",
-        "com.kano.ylframework.gameplay"
+        "com.kano.ylframework.gameplay",
+        "com.kano.ylframework.reddot"
       ],
       "sampleInputs": []
     },

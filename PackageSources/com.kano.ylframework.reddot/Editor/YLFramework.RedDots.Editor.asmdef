@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.RedDots.Editor",
+    "rootNamespace": "YLFramework.RedDots.Editor",
+    "references": ["YLFramework.RedDots"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

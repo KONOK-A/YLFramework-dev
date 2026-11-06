@@ -160,6 +160,21 @@ namespace UnityEditor.Compilation
         {
             var ids = new HashSet<string>(UnityEditor.PackageManager.PackageInfo.Registered.Select(p => p.name), StringComparer.Ordinal);
             var result = new List<Assembly>();
+            if (ids.Contains("com.kano.ylframework.reddot") || ids.Contains("com.kano.ylframework.save"))
+            {
+                if (ids.Contains("com.kano.ylframework"))
+                {
+                    result.Add(new Assembly { name = "YLFramework.Runtime", sourceFiles = new[] { "Packages/com.kano.ylframework/Runtime/Product.cs" } });
+                    if (mode == AssembliesType.Editor) result.Add(new Assembly { name = "YLFramework.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework/Editor/Product.cs" } });
+                }
+                if (ids.Contains("com.kano.ylframework.save")) result.Add(new Assembly { name = "YLFramework.Save", sourceFiles = new[] { "Packages/com.kano.ylframework.save/Runtime/Product.cs" } });
+                if (ids.Contains("com.kano.ylframework.reddot"))
+                {
+                    result.Add(new Assembly { name = "YLFramework.RedDots", sourceFiles = new[] { "Packages/com.kano.ylframework.reddot/Runtime/Product.cs" }, assemblyReferences = new[] { new Assembly { name = "YLFramework.Runtime" } } });
+                    if (mode == AssembliesType.Editor) result.Add(new Assembly { name = "YLFramework.RedDots.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework.reddot/Editor/Product.cs" } });
+                    if (ids.Contains("com.kano.ylframework.save")) result.Add(new Assembly { name = "YLFramework.RedDots.Save", sourceFiles = new[] { "Packages/com.kano.ylframework.reddot/Runtime/Integration/Save/Product.cs" }, assemblyReferences = new[] { new Assembly { name = "YLFramework.RedDots" }, new Assembly { name = "YLFramework.Save" } } });
+                }
+            }
             if (ids.Contains("com.kano.ylframework.gameplay"))
                 foreach (var name in new[] { "Skill", "Buff", "Mission", "Equipment" }) result.Add(new Assembly { name = "YLFramework." + name, sourceFiles = new[] { "Packages/com.kano.ylframework.gameplay/Runtime/" + name + "/Product.cs" } });
             if (mode == AssembliesType.Editor && ids.Contains("com.kano.ylframework.excel"))

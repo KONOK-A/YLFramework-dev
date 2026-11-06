@@ -112,7 +112,7 @@ namespace YLFramework.Editor.Foundation
                 {
                     var fields = owner.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
                     field = fields.FirstOrDefault(candidate => candidate.Name == parts[index]);
-                    if (field == null && owner.Assembly.GetName().Name is "YLFramework.Runtime" or "YLFramework.Editor" or "YLFramework.Character2D" or "YLFramework.Platform2D")
+                    if (field == null && owner.Assembly.GetName().Name is "YLFramework.Runtime" or "YLFramework.Editor" or "YLFramework.Character2D" or "YLFramework.Platform2D" or "YLFramework.RedDots")
                     {
                         field = fields.SingleOrDefault(candidate => candidate.GetCustomAttributes<FormerlySerializedAsAttribute>()
                             .Any(alias => alias.oldName == parts[index]));

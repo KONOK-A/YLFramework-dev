@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.RedDots.Acceptance",
+    "rootNamespace": "YLFramework.RedDots.Acceptance",
+    "references": ["YLFramework.Runtime", "YLFramework.RedDots"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

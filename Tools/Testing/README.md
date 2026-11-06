@@ -84,7 +84,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 
 | 模块 | 层级 | 真实边界 |
 | --- | --- | --- |
-| Reddot | Quick / Daily | 小型逻辑闭包与真实 UGUI 订阅生命周期。切片不能替代完整 Runtime 编译。 |
+| Reddot | Quick / Daily | 独立main+reddot闭包的逻辑、原生程序集/GUID与真实指示组件订阅生命周期。切片不能替代完整Runtime编译；主包Player用核心EventChannel验证，不再强装可选红点。 |
 | Foundation | Daily / Special | 完整 Runtime / Editor 加基础测试；双次 Play 会话单独执行。 |
 | Core | Daily | 完整 MVC / UI / 资源夹具；不隐式安装旧宿主扩展或原游戏资产。 |
 | Domain | Quick / Daily / Special | Skill/Buff/Mission/Equipment/Reddot/Logging完整组合，含实际Excel/作者工具消费者；Quick只编译逻辑，原生作者源只在Daily/Special编译。 |
@@ -224,7 +224,7 @@ Formatter 与 Analyzer 保留独立入口，不并入 UTF，也不改变默认�
 
 `Tools/Packaging/PackageCatalog.json` 是正式包 ID、程序集归属、显式门控及特殊负载的维护入口，版本和依赖仍读取各包的 `package.json`。清单不注册空包；未知包、未知程序集、缺失负载和没有明确前置的宏都必须失败。完整负载包括默认不编译的适配源码，默认 Runtime 的精确源码集合不包括嵌套 asmdef 所有的源码。
 
-`Test-YLIntegrationPackages.ps1 -PackageId <精确包ID>`从真实manifest计算最小自有闭包，检查实际UPM来源、完整内容与Editor/Player编译图。它与`-Integration DOTween|Excel|ExcelGameplay|HybridCLR`互斥，不接受SDK专属参数；ExcelGameplay明确Excel+Gameplay双根，普通PackageIdExcel不强装Gameplay。普通包使用固定编译profile，不接受任意类型/方法探针；DOTween SDK正向仍须Required模式，最小安装不替代SDK验收。
+`Test-YLIntegrationPackages.ps1 -PackageId <精确包ID>`从真实manifest计算最小自有闭包，检查实际UPM来源、完整内容与Editor/Player编译图。它与`-Integration DOTween|Excel|ExcelGameplay|ReddotSave|HybridCLR`互斥，不接受SDK专属参数；ExcelGameplay明确Excel+Gameplay双根，ReddotSave明确Reddot+Save有序双根，普通PackageId不强装这些可选组合。普通包使用固定编译profile，不接受任意类型/方法探针；DOTween SDK正向仍须Required模式，最小安装不替代SDK验收。
 
 ```powershell
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackages.ps1 `
@@ -265,7 +265,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Packaging/Build-YLRegistryPa
 | 来源 | 必需参数 | 自有包直接声明 | 证据边界 |
 | --- | --- | --- | --- |
 | `LocalTarball` | `-ReleaseManifest` | 从冻结回执取已校验tgz；所选自有闭包全部使用真实`file:<绝对tgz>` locator | `ArtifactPreflight`，不是Registry或自动间接依赖证明 |
-| `Registry` | `-RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest` | 只声明显式roots；ExcelGameplay为Excel和Gameplay双根，其余普通入口单根，间接依赖由UPM解析 | 联合核验Registry metadata、下载字节、冻结Release、PackageInfo和generated lock |
+| `Registry` | `-RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest` | 只声明显式roots；ExcelGameplay为Excel和Gameplay双根，ReddotSave为Reddot和Save双根，其余普通入口单根，间接依赖由UPM解析 | 联合核验Registry metadata、下载字节、冻结Release、PackageInfo和generated lock |
 
 `File` / `Git` 拒绝以上 Registry 参数；新来源拒绝 Git 参数。`LocalTarball` 不接受 Registry URL/version 来混淆身份。Registry scope 仅覆盖 `com.kano.ylframework`；HybridCLR 额外覆盖 `com.code-philosophy.hybridclr`，不将 `com.unity` 路由到 OpenUPM。
 
@@ -283,9 +283,11 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegra
   -RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest $releaseManifest
 ```
 
-分别使用标准版`2022.3.62f3`与`6000.3.27f1`；China版是独立profile，不按共享FileVersion前缀冒用。`-Integration`可选`Excel`、`ExcelGameplay`、`DOTween`、`HybridCLR`，旧DomainExcel明确拒绝。`-PackageId com.kano.ylframework.excel`仍是普通Excel，不强装Gameplay。主包还需真实Windows64 Mono构建/运行。
+分别使用标准版`2022.3.62f3`与`6000.3.27f1`；China版是独立profile，不按共享FileVersion前缀冒用。`-Integration`可选`Excel`、`ExcelGameplay`、`ReddotSave`、`DOTween`、`HybridCLR`，旧DomainExcel明确拒绝。`-PackageId com.kano.ylframework.excel`仍是普通Excel，不强装Gameplay。主包还需真实Windows64 Mono构建/运行。
 
 ExcelGameplay的LocalTarball验收复用中立生命周期宿主实际执行10阶段：Inspect/Reopen、移除Gameplay并验证Excel-only、恢复Gameplay、移除Excel及无用DataAssets并验证Gameplay-only、恢复Excel、最后移除全部并验证。每阶段读取真实UPM/manifest/lock与Editor/Player编译图，保留哨兵数据/meta；恢复必须回到原声明语义，不以UPM重排JSON字节视为失败。它不是公开Registry安装，Registry仍受原CI producer/HTTPS/metadata校验约束；单根调用保原4阶段。
+
+`-Integration ReddotSave -PackageSource LocalTarball -ReleaseManifest $releaseManifest`复用同一中立控制器，执行`Inspect, Reopen, RemoveSave, VerifyReddotOnly, RestoreSave, RemoveReddot, VerifySaveOnly, RestoreReddot, Remove, VerifyRemoved`。LocalTarball以真实回执的main+reddot+save闭包直接声明；去Save保留main+reddot，去Reddot同时去无用main，仅留不依赖main的Save，恢复使用原file locator。Registry仅双根直接声明且保原HTTPS/CI约束。两者均由包级Save Version Define控制`YLFramework.RedDots.Save`，不部署SDK或设置全局宏；`-PackageId com.kano.ylframework.reddot`仍为无Save的核心图。生命周期仅显式ExcelGameplay/ReddotSave启用组合十阶段，编译图不代表NUnit或Player构建/运行通过。
 
 每次正向首次安装使用新 host/cache；先记录空 cache，再比对实际 Editor 进程的三项 UPM cache 环境。独立 Registry metadata / tarball 检查下载在结果目录中，不预热 UPM cache。重开、卸载、暖缓存重复解析和阴性重试均不计为另一轮冷安装。报告联合检查 name/version/source/packageId/resolvedPath/isDirectDependency/registryUrl/dependencies、完整锁图及合法受管 `_fingerprint`，不从包版本字符串推断来源。
 

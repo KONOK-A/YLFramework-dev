@@ -8,6 +8,103 @@ namespace YLFramework.Tests.Extensions.Domain
     public class ReddotLifecycleTests
     {
         [Test]
+        public void NumericPathSubscriptionsRebindWithoutUnrelatedOrUnchangedRedraws()
+        {
+            var owner = new GameObject("Domain.Reddot.NumericOwner");
+            var indicator = new GameObject("Domain.Reddot.NumericIndicator");
+            try
+            {
+                using var mail = ReddotManager.RegisterSource("Mail/Gift", "mail", 2);
+                using var other = ReddotManager.RegisterSource("Other", "other");
+                var reddot = owner.AddComponent<Reddot>();
+                reddot.Path = "Mail";
+                reddot.Indicator = indicator;
+                Assert.That(indicator.activeSelf, Is.True);
+                indicator.SetActive(false);
+                other.SetValue(1);
+                mail.SetValue(2);
+                Assert.That(indicator.activeSelf, Is.False, "Unrelated and unchanged values must not redraw this path.");
+                mail.SetValue(3);
+                Assert.That(indicator.activeSelf, Is.True);
+                reddot.Path = "Other";
+                other.SetValue(0);
+                Assert.That(indicator.activeSelf, Is.False);
+                mail.SetValue(4);
+                Assert.That(indicator.activeSelf, Is.False, "The old path subscription must have been disposed.");
+                other.SetValue(5);
+                Assert.That(indicator.activeSelf, Is.True);
+                Object.DestroyImmediate(owner);
+                indicator.SetActive(false);
+                other.SetValue(6);
+                Assert.That(indicator.activeSelf, Is.False, "Destroying the host must unsubscribe, not destroy external indicators.");
+                Assert.That(other.Value, Is.EqualTo(6));
+            }
+            finally
+            {
+                if (owner)
+                {
+                    Object.DestroyImmediate(owner);
+                }
+                Object.DestroyImmediate(indicator);
+                ReddotManager.Reset();
+            }
+        }
+
+        [Test]
+        public void SettersRefreshWhileDisabledAndSelfOrAncestorIndicatorsStayProtected()
+        {
+            var ancestor = new GameObject("Domain.Reddot.Ancestor");
+            var owner = new GameObject("Domain.Reddot.Child");
+            var indicator = new GameObject("Domain.Reddot.ExternalIndicator");
+            try
+            {
+                owner.transform.SetParent(ancestor.transform);
+                var reddot = owner.AddComponent<Reddot>();
+                reddot.Path = "Mail";
+                reddot.Indicator = ancestor;
+                Assert.That(ancestor.activeSelf, Is.True);
+                reddot.Indicator = owner;
+                Assert.That(owner.activeSelf, Is.True);
+                reddot.Indicator = indicator;
+                Assert.That(indicator.activeSelf, Is.False);
+                using var mail = ReddotManager.RegisterSource("Mail", "id", 1);
+                Assert.That(indicator.activeSelf, Is.True);
+                reddot.enabled = false;
+                mail.SetValue(0);
+                Assert.That(indicator.activeSelf, Is.True, "OnDisable must unsubscribe without resetting the previous display.");
+                reddot.Path = "Other";
+                Assert.That(indicator.activeSelf, Is.False, "The Path setter must refresh even while disabled.");
+                indicator.SetActive(true);
+                reddot.Indicator = indicator;
+                Assert.That(indicator.activeSelf, Is.False);
+                mail.SetValue(2);
+                reddot.Path = "Mail";
+                reddot.enabled = true;
+                Assert.That(indicator.activeSelf, Is.True);
+            }
+            finally
+            {
+                Object.DestroyImmediate(ancestor);
+                Object.DestroyImmediate(indicator);
+                ReddotManager.Reset();
+            }
+        }
+
+        [TestCase("path", "_path", typeof(string))]
+        [TestCase("indicator", "_indicator", typeof(GameObject))]
+        public void SerializedFieldsAndFormerNamesRemainConsumable(string name, string oldName, System.Type type)
+        {
+            var field = typeof(Reddot).GetField(name,
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null);
+            Assert.That(field.FieldType, Is.EqualTo(type));
+            Assert.That(field.IsDefined(typeof(SerializeField), false), Is.True);
+            var former = (UnityEngine.Serialization.FormerlySerializedAsAttribute)System.Attribute.GetCustomAttribute(
+                field, typeof(UnityEngine.Serialization.FormerlySerializedAsAttribute));
+            Assert.That(former.oldName, Is.EqualTo(oldName));
+        }
+
+        [Test]
         public void RealUguiIndicatorDoesNotSwitchBusinessButton()
         {
             var canvas = new GameObject("Domain.Reddot.Canvas", typeof(Canvas));

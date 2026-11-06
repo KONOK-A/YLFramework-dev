@@ -39,6 +39,20 @@ try {
         producer = @{ kind = 'GitHubActions'; repository = 'KONOK-A/YLFramework-dev'; workflow = 'FixtureNotAnApprovedCiRun'; runId = '1'; runAttempt = '1' }; packages = $rows }
     $path = Join-Path $root 'release-manifest.json'; Save $path $receipt
     $release = Read-YLRegistryRelease -Path $path
+    $reddotRoots = @('com.kano.ylframework.reddot', 'com.kano.ylframework.save')
+    $reddotClosure = @(Get-YLRegistryClosure -Release $release -EntryPackage $reddotRoots[0] -EntryPackages $reddotRoots)
+    Check (($reddotClosure.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.reddot,com.kano.ylframework.save') 'ReddotSave must use only main+reddot+save, without making Save depend on main.'
+    foreach ($origin in @('Registry', 'LocalTarball')) {
+        $m = New-YLRegistryHostManifest -PackageSource $origin -Release $release -EntryPackage $reddotRoots[0] -EntryPackages $reddotRoots
+        $expected = if ($origin -ceq 'Registry') { $reddotRoots } else { @('com.kano.ylframework', 'com.kano.ylframework.reddot', 'com.kano.ylframework.save') }
+        Assert-YLPackageStringArray -Actual @($m.dependencies.Keys) -Expected $expected -Label "$origin ReddotSave direct declarations"; $checks++
+        Check ($m.scopedRegistries[0].scopes.Count -eq 1 -and $m.scopedRegistries[0].scopes[0] -ceq 'com.kano.ylframework') 'ReddotSave must not acquire SDK Registry scopes.'
+    }
+    foreach ($bad in @(@{ primary = $reddotRoots[1]; roots = @($reddotRoots[1], $reddotRoots[0]) },
+        @{ primary = $reddotRoots[0]; roots = @($reddotRoots[0], 'com.kano.ylframework.gameplay') },
+        @{ primary = $reddotRoots[0]; roots = @($reddotRoots + 'com.kano.ylframework') })) {
+        Reject { Get-YLRegistryClosure -Release $release -EntryPackage $bad.primary -EntryPackages $bad.roots } 'root|composite|explicit'
+    }
     $roots = @('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')
     $combined = @(Get-YLRegistryClosure -Release $release -EntryPackage $roots[0] -EntryPackages $roots)
     Check (($combined.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel,com.kano.ylframework.gameplay') 'ExcelGameplay must use its exact four-package closure, not the retired DomainExcel root.'

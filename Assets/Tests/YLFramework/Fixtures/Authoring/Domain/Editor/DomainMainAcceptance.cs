@@ -781,7 +781,9 @@ namespace YLFramework.Tests.DomainMain
                         p.Contains("/Tests/EditMode/Systems/" + m + "/") || p.Contains("/Tests/PlayMode/Systems/" + m + "/")) ||
                         p.StartsWith("Packages/com.kano.ylframework/Editor/Systems/Shared/", StringComparison.Ordinal) ||
                         p.Contains("/Tests/EditMode/Editor/Domain/") || p.Contains("/Tests/PlayMode/Systems/Domain/") ||
-                        p.Contains("/Tests/YLFramework/Fixtures/Authoring/Domain/") || (excel && p.Contains("/Integrations/DomainExcel/"))).ToArray();
+                        p.Contains("/Tests/YLFramework/Fixtures/Authoring/Domain/") || (excel && p.Contains("/Integrations/DomainExcel/")))
+                    .Concat(Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework.reddot/Runtime/Systems/Reddot"), "*.cs", SearchOption.AllDirectories)
+                        .Select(file => "Packages/com.kano.ylframework.reddot/Runtime/Systems/Reddot/" + Path.GetFileName(file))).ToArray();
                 var rows = files.Select(p => new
                 {
                     path = p,
@@ -791,7 +793,8 @@ namespace YLFramework.Tests.DomainMain
                 }).ToArray();
                 foreach (var row in rows)
                 {
-                    string expected = row.path.StartsWith("Packages/com.kano.ylframework/Runtime/", StringComparison.Ordinal) ? "YLFramework.Runtime" :
+                    string expected = row.path.StartsWith("Packages/com.kano.ylframework.reddot/Runtime/", StringComparison.Ordinal) ? "YLFramework.RedDots" :
+                        row.path.StartsWith("Packages/com.kano.ylframework/Runtime/", StringComparison.Ordinal) ? "YLFramework.Runtime" :
                         row.path.StartsWith("Packages/com.kano.ylframework/Editor/", StringComparison.Ordinal) ? "YLFramework.Editor" :
                         row.path.Contains("/Tests/EditMode/") ? "YLFramework.Tests.EditMode" : row.path.Contains("/Tests/PlayMode/") ? "YLFramework.Tests.PlayMode" :
                         row.path.Contains("/Tests/Integrations/DomainExcel/EditMode/") ? "YLFramework.Domain.Excel.Tests" :

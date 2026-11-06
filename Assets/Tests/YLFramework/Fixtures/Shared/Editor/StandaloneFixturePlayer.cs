@@ -76,8 +76,11 @@ namespace YLFramework.Testing.EditorFixtures
             string locator = Path.Combine(output, "standalone-player-location.txt");
             Assert.That(File.Exists(locator), Is.False);
             File.WriteAllText(locator, player);
-            var deployed = ResourceBuiltInDeployer.Deploy(ResourceBuiltInDeployer.Preflight(release));
-            Assert.That(deployed.Snapshot.Document.CatalogDigest, Is.EqualTo(release.Catalog.CatalogDigest));
+            if (release != null)
+            {
+                var deployed = ResourceBuiltInDeployer.Deploy(ResourceBuiltInDeployer.Preflight(release));
+                Assert.That(deployed.Snapshot.Document.CatalogDigest, Is.EqualTo(release.Catalog.CatalogDigest));
+            }
             const string Empty = "Assets/YLTestingProfile/Empty.unity";
             Assert.That(File.Exists(PackageTestPaths.Physical(Empty)), Is.True);
             for (int index = 0; index < SceneManager.sceneCount; index++)
@@ -139,7 +142,14 @@ namespace YLFramework.Testing.EditorFixtures
                 Assert.That(report.platform, Is.EqualTo("WindowsPlayer"));
                 Assert.That(report.unityVersion, Is.EqualTo(Application.unityVersion));
                 Assert.That(report.runtimeAssembly, Is.EqualTo(expectedRuntime));
-                Assert.That(report.catalogDigest, Is.EqualTo(release.Catalog.CatalogDigest));
+                if (release == null)
+                {
+                    Assert.That(report.catalogDigest, Is.Null.Or.Empty, "A resource-free probe must report no catalog, never a fabricated digest.");
+                }
+                else
+                {
+                    Assert.That(report.catalogDigest, Is.EqualTo(release.Catalog.CatalogDigest));
+                }
                 Assert.That(report.leaseCount, Is.Zero);
                 Assert.That(report.recordCount, Is.Zero);
                 File.Copy(path, Path.Combine(output, "StandalonePlayer-" + run + ".json"));

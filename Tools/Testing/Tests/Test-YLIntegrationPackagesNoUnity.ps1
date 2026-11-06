@@ -25,14 +25,17 @@ function Json([string] $Relative, [object] $Value) {
     [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $Value -Depth 15), [Text.UTF8Encoding]::new($false))
 }
 try {
-    foreach ($name in @('DOTween', 'Excel', 'ExcelGameplay', 'HybridCLR')) {
+    foreach ($name in @('ReddotSave', 'DOTween', 'Excel', 'ExcelGameplay', 'HybridCLR')) {
         $definition = Get-YLIntegrationDefinition $name
         if ($definition.id -cne @{
             DOTween = 'com.kano.ylframework'; Excel = 'com.kano.ylframework.excel'
-            ExcelGameplay = 'com.kano.ylframework.excel'; HybridCLR = 'com.kano.ylframework.hybridclr'
+            ExcelGameplay = 'com.kano.ylframework.excel'; HybridCLR = 'com.kano.ylframework.hybridclr'; ReddotSave = 'com.kano.ylframework.reddot'
         }[$name] -or $definition.assemblies.Count -lt 3) { throw 'The selected integration lost its mandatory compilation closure.' }
         $roots = @($definition.id); if ($name -ceq 'ExcelGameplay') { $roots += 'com.kano.ylframework.gameplay' }
+        if ($name -ceq 'ReddotSave') { $roots += 'com.kano.ylframework.save' }
         if (($definition.roots -join ',') -cne ($roots -join ',')) { throw 'The integration roots differ from the explicit profile.' }
+        if ($name -ceq 'ReddotSave' -and ((@($definition.assemblies.package | Sort-Object -Unique) -join ',') -cne 'com.kano.ylframework,com.kano.ylframework.reddot,com.kano.ylframework.save' -or
+            @($definition.assemblies | Where-Object name -CEQ 'YLFramework.RedDots.Save').Count -ne 1)) { throw 'ReddotSave must enable its real Save adapter from exactly main+reddot+save.' }
         if ($name -cin @('Excel', 'ExcelGameplay')) {
             $ids = @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel')
             if ($name -ceq 'ExcelGameplay') { $ids += 'com.kano.ylframework.gameplay' }
@@ -47,6 +50,11 @@ try {
     if (($definition.roots -join ',') -cne 'com.kano.ylframework.excel' -or
         (@($definition.assemblies.package | Sort-Object -Unique) -join ',') -cne 'com.kano.ylframework,com.kano.ylframework.data-assets,com.kano.ylframework.excel' -or
         @($definition.assemblies | Where-Object name -CEQ 'YLFramework.Domain.Excel.Editor').Count -ne 0) { throw 'PackageId Excel must remain ordinary Excel without Gameplay.' }
+    $count++
+    $definition = Get-YLIntegrationDefinition Package -PackageId 'com.kano.ylframework.reddot'
+    if (($definition.roots -join ',') -cne 'com.kano.ylframework.reddot' -or
+        (@($definition.assemblies.package | Sort-Object -Unique) -join ',') -cne 'com.kano.ylframework,com.kano.ylframework.reddot' -or
+        @($definition.assemblies | Where-Object name -CEQ 'YLFramework.RedDots.Save').Count -ne 0) { throw 'Ordinary Reddot must not install Save or enable its optional adapter.' }
     $count++
     Reject { Get-YLIntegrationDefinition DomainExcel } 'DomainExcel'
     $sdkUrl = 'https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3'

@@ -290,10 +290,11 @@ namespace YLFramework.Testing
         $script:valid = $script:valid.Clone(); $script:valid.packageOrigin = $Origin; $script:valid.integration = $Integration
         $script:valid.Remove('gitRepository'); $script:valid.Remove('gitRevision')
         $script:valid.releaseManifestSha256 = 'c' * 64
-        $suffix = switch ($Integration) { HybridCLR { 'hybridclr' } default { 'excel' } }
+        $suffix = switch ($Integration) { HybridCLR { 'hybridclr' } ReddotSave { 'reddot' } default { 'excel' } }
         $script:valid.entryPackage = if ($Integration -ceq 'DOTween') { 'com.kano.ylframework' } else { 'com.kano.ylframework.' + $suffix }
         $script:valid.entryPackages = @($script:valid.entryPackage)
         if ($Integration -ceq 'ExcelGameplay') { $script:valid.entryPackages += 'com.kano.ylframework.gameplay' }
+        if ($Integration -ceq 'ReddotSave') { $script:valid.entryPackages += 'com.kano.ylframework.save' }
         $fields = Get-YLRegistryRequestFields -Source @{ packageOrigin = $Origin; registryUrl = 'https://package.openupm.com'; registryVersion = '0.1.0-preview.1'; release = @{ sha256 = ('c' * 64) } } -EntryPackage $script:valid.entryPackage -EntryPackages $script:valid.entryPackages
         foreach ($field in $fields.GetEnumerator()) { $script:valid[$field.Key] = $field.Value }
         $script:valid.Remove('dotweenSdkMode'); $script:valid.Remove('sdk')
@@ -333,6 +334,87 @@ namespace YLFramework.Testing
         $script:valid.manifestSha256 = (Get-FileHash -LiteralPath $manifest).Hash
         [UnityEditor.PackageManager.PackageInfo]::Registered = $script:publishedApis
     }
+    foreach ($origin in @('Registry', 'LocalTarball')) {
+        New-PublishedFixture $origin ReddotSave
+        $null = Call ValidateInvocation (Request); $checks++
+        $rows = Call CapturePackages (Request)
+        Check ($rows.Count -eq 3 -and ($valid.packages.name -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.reddot,com.kano.ylframework.save') 'ReddotSave must bind exactly the three installed product owners.'
+        $depths = Call ArtifactDepths (Request)
+        Check ($depths.Count -eq 3 -and $depths['com.kano.ylframework.reddot'] -eq 0 -and $depths['com.kano.ylframework.save'] -eq 0 -and $depths['com.kano.ylframework'] -eq 1) 'ReddotSave Registry depth must be traversed from both roots.'
+        foreach ($bad in @(@{ value = $true }, @{ value = 'com.kano.ylframework.reddot' }, @{ value = @('com.kano.ylframework.reddot', $true) },
+            @{ value = @('com.kano.ylframework.save', 'com.kano.ylframework.reddot') }, @{ value = @('com.kano.ylframework.reddot', 'com.kano.ylframework.gameplay') },
+            @{ value = @('com.kano.ylframework.reddot|com.kano.ylframework.save') }, @{ value = @('com.kano.ylframework.reddot', 'com.kano.ylframework.save', '') })) {
+            $r = Request; $r['entryPackages'] = [Newtonsoft.Json.Linq.JToken]::FromObject($bad.value)
+            Reject { Call ValidateInvocation $r } 'ReddotSave exact ordered string roots'
+        }
+        $r = Request; $null = $r.Remove('entryPackages'); Reject { Call ValidateInvocation $r } 'ReddotSave cannot omit composite roots'
+        foreach ($sdk in @(@{}, @{ version = '9.0.3' }, $true)) {
+            $r = Request; $r['sdk'] = [Newtonsoft.Json.Linq.JToken]::FromObject($sdk)
+            Reject { Call ValidateInvocation $r } 'ReddotSave must not accept an SDK prerequisite'
+        }
+        foreach ($field in @('hostId', 'resultId', 'cacheId', 'workspaceId')) {
+            $r = Request; $r[$field] = [Newtonsoft.Json.Linq.JValue]::new(('0' * 32)); Reject { Call ValidateInvocation $r } "ReddotSave cannot mix $field owners"
+        }
+        $redEditor = [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly))
+        $redPlayer = [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)
+        foreach ($graph in @($redEditor) + @($redPlayer)) {
+            if ($graph.name -ceq 'YLFramework.RedDots') { $graph.assemblyReferences = @($redEditor | Where-Object name -CEQ 'YLFramework.Runtime') }
+            if ($graph.name -ceq 'YLFramework.RedDots.Save') { $graph.defines = @('YL_SAVE_PACKAGE'); $graph.assemblyReferences = @($redEditor | Where-Object { $_.name -cin @('YLFramework.RedDots', 'YLFramework.Save') }) }
+        }
+        $null = Boundary ValidateGraph @((Request), $redEditor, $redPlayer); $checks++
+        foreach ($fault in @('missing-version-define', 'missing-save-reference', 'core-save-reference', 'core-version-define', 'missing-player-adapter', 'player-editor', 'sdk-reference', 'sdk-editor-reference', 'player-editor-reference')) {
+            $adapter = @($redPlayer | Where-Object name -CEQ 'YLFramework.RedDots.Save')[0]
+            $core = @($redPlayer | Where-Object name -CEQ 'YLFramework.RedDots')[0]
+            $badPlayer = $redPlayer
+            try {
+                switch ($fault) {
+                    'missing-version-define' { $adapter.defines = @() }
+                    'missing-save-reference' { $adapter.assemblyReferences = @($redEditor | Where-Object name -CEQ 'YLFramework.RedDots') }
+                    'core-save-reference' { $core.assemblyReferences += @($redEditor | Where-Object name -CEQ 'YLFramework.Save') }
+                    'core-version-define' { $core.defines = @('YL_SAVE_PACKAGE') }
+                    'missing-player-adapter' { $badPlayer = @($redPlayer | Where-Object name -CNE 'YLFramework.RedDots.Save') }
+                    'player-editor' { $badPlayer = @($redPlayer) + @($redEditor | Where-Object name -CEQ 'YLFramework.RedDots.Editor') }
+                    'sdk-reference' { $core.compiledAssemblyReferences = @('HybridCLR.Runtime.dll') }
+                    'sdk-editor-reference' { $core.compiledAssemblyReferences = @('DOTweenEditor.dll') }
+                    'player-editor-reference' { $core.compiledAssemblyReferences = @('YLFramework.RedDots.Editor.dll') }
+                }
+                Reject { Boundary ValidateGraph @((Request), $redEditor, [UnityEditor.Compilation.Assembly[]]$badPlayer) } "ReddotSave actual graph $fault"
+            } finally {
+                $adapter.defines = @('YL_SAVE_PACKAGE'); $adapter.assemblyReferences = @($redEditor | Where-Object { $_.name -cin @('YLFramework.RedDots', 'YLFramework.Save') })
+                $core.assemblyReferences = @($redEditor | Where-Object name -CEQ 'YLFramework.Runtime'); $core.defines = @(); $core.compiledAssemblyReferences = @()
+            }
+        }
+    }
+    foreach ($origin in @('Registry', 'LocalTarball')) {
+        foreach ($entryId in @('com.kano.ylframework.reddot', 'com.kano.ylframework.save')) {
+            New-PublishedFixture $origin ReddotSave
+            $valid.integration = 'Package'; $valid.entryPackage = $entryId; $valid.entryPackages = @($entryId)
+            $ids = @(if ($entryId.EndsWith('.reddot', [StringComparison]::Ordinal)) { @('com.kano.ylframework', 'com.kano.ylframework.reddot') } else { @('com.kano.ylframework.save') })
+            $valid.packages = @($valid.packages | Where-Object { $_.name -cin $ids })
+            $valid.assemblies = @(Get-YLPackageAssemblyPlan -Catalog $fixtureCatalog -Packages $valid.packages -Profile Package -MetadataOnly | Where-Object enabled)
+            $direct = @{}; $locked = @{}
+            $apis = @($publishedApis | Where-Object { $_.name -cin $ids })
+            foreach ($api in $apis) {
+                $api.isDirectDependency = $origin -ceq 'LocalTarball' -or $api.name -ceq $entryId
+                $locator = @($valid.packages | Where-Object name -CEQ $api.name)[0].locator
+                if ($api.isDirectDependency) { $direct[$api.name] = $locator }
+                $locked[$api.name] = @{ source = $(if ($origin -ceq 'Registry') { 'registry' } else { 'local-tarball' }); version = $locator
+                    depth = $(if ($api.isDirectDependency) { 0 } else { 1 }); dependencies = (Get-YLFixtureInternalDependencies -PackageId $api.name -Version '0.1.0-preview.1') }
+                if ($origin -ceq 'Registry') { $locked[$api.name].url = $valid.registryUrl }
+            }
+            Save $manifest @{ dependencies = $direct }; Save $lockPath @{ dependencies = $locked }
+            $valid.manifestSha256 = (Get-FileHash -LiteralPath $manifest).Hash
+            [UnityEditor.PackageManager.PackageInfo]::Registered = $apis
+            $null = Call ValidateInvocation (Request); $rows = Call CapturePackages (Request)
+            Check ($rows.Count -eq $ids.Count) 'Ordinary Reddot-only/Save-only must keep its exact independent closure.'
+            $soloEditor = [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly))
+            $soloPlayer = [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)
+            foreach ($row in @($soloEditor) + @($soloPlayer) | Where-Object name -CEQ 'YLFramework.RedDots') { $row.assemblyReferences = @($soloEditor | Where-Object name -CEQ 'YLFramework.Runtime') }
+            $null = Boundary ValidateGraph @((Request), $soloEditor, $soloPlayer); $checks++
+            $borrowed = [UnityEditor.Compilation.Assembly]::new(); $borrowed.name = 'YLFramework.RedDots.Save'
+            Reject { Boundary ValidateGraph @((Request), $soloEditor, [UnityEditor.Compilation.Assembly[]]@($soloPlayer + $borrowed)) } 'Single root cannot compile the optional Save adapter'
+        }
+    }
     foreach ($integration in @('ExcelGameplay', 'Excel')) {
         New-PublishedFixture Registry $integration
         $excelRoot = @($publishedApis | Where-Object name -CEQ 'com.kano.ylframework.excel')[0].resolvedPath
@@ -358,7 +440,7 @@ namespace YLFramework.Testing
         })
         $observed = MiniExcel $request $miniEditor $selected
         Check ([string]$observed['sdk']['sha256'] -ceq $backend.assemblySha256 -and [string]$observed['sdk']['license'] -ceq 'Apache-2.0') "$integration must verify the actual SDK binary identity and license."
-        foreach ($symbol in @('YL_DOMAIN_EXCEL', 'YL_GAMEPLAY_PACKAGE', 'YL_HYBRIDCLR_9_0_3')) {
+        foreach ($symbol in @('YL_DOMAIN_EXCEL', 'YL_GAMEPLAY_PACKAGE', 'YL_HYBRIDCLR_9_0_3', 'YL_SAVE_PACKAGE')) {
             Reject { MiniExcel $request $miniEditor $selected @($symbol) } "global $symbol cannot replace a package gate"
         }
         foreach ($fault in @('request-hash', 'request-version', 'metadata-hash', 'license', 'attribution', 'license-escape')) {

@@ -24,6 +24,7 @@ YLFramework 是一个面向 Unity 的开源 C# 游戏开发框架。
 | 包 | 内容 |
 | --- | --- |
 | [`com.kano.ylframework`](PackageSources/com.kano.ylframework/README.md) | Runtime / Editor 主体、正式资源、文档、需显式导入的 Resource Startup 样例及条件 DOTween Action 适配；不含 SDK |
+| [`com.kano.ylframework.reddot`](PackageSources/com.kano.ylframework.reddot/README.md) | 独立路径红点、来源凭据和原指示组件；不要求Save或Gameplay |
 | [`com.kano.ylframework.excel`](PackageSources/com.kano.ylframework.excel/README.md) | 完整Editor工作簿作者流程，附MiniExcel/许可；同装Gameplay时启用内置领域适配，无独立DomainExcel包 |
 | [`com.kano.ylframework.hybridclr`](PackageSources/com.kano.ylframework.hybridclr/README.md) | 可选热更适配，官方 SDK `9.0.3` 与匹配的 native 外置 |
 

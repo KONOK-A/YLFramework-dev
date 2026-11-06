@@ -6,18 +6,39 @@
 . (Join-Path $PSScriptRoot 'Packages.ps1')
 . (Join-Path $PSScriptRoot '../UnityHost.ps1')
 
+function Get-YLRegistryLifecyclePhases {
+    param([string] $EntryPackage, [string[]] $EntryPackages = @($EntryPackage), [switch] $VerifyCombinations)
+    $roots = @(Get-YLRegistryEntryPackages -EntryPackage $EntryPackage -EntryPackages $EntryPackages)
+    if ($VerifyCombinations -and $roots.Count -ne 2) { throw 'VerifyCombinations requires the explicit ExcelGameplay or ReddotSave roots.' }
+    $phases = @('Inspect', 'Reopen')
+    if ($VerifyCombinations) {
+        if ($EntryPackage -ceq 'com.kano.ylframework.reddot') { $phases += @('RemoveSave', 'VerifyReddotOnly', 'RestoreSave', 'RemoveReddot', 'VerifySaveOnly', 'RestoreReddot') }
+        else { $phases += @('RemoveGameplay', 'VerifyExcelOnly', 'RestoreGameplay', 'RemoveExcel', 'VerifyGameplayOnly', 'RestoreExcel') }
+    }
+    return $phases + @('Remove', 'VerifyRemoved')
+}
+
 function Get-YLRegistryLifecycleState {
     param([Collections.IDictionary] $Request, [Collections.IDictionary] $Release, [Collections.IDictionary] $Original)
     $roots = @(if ($Request.Contains('entryPackages')) { $Request.entryPackages } else { $Request.entryPackage })
+    if (($Request.Contains('entryPackages') -and $Request.entryPackages -isnot [array]) -or
+        @($roots | Where-Object { $_ -isnot [string] }).Count -or $Request.entryPackage -isnot [string] -or
+        ($Request.Contains('verifyCombinations') -and $Request.verifyCombinations -isnot [bool])) { throw 'Invalid lifecycle entry roots/combination field types.' }
+    $combinations = $Request.Contains('verifyCombinations') -and $Request.verifyCombinations
+    $phases = @(Get-YLRegistryLifecyclePhases -EntryPackage $Request.entryPackage -EntryPackages $roots -VerifyCombinations:$combinations)
+    if ($Request.phase -isnot [string] -or $Request.phase -cnotin $phases) { throw 'Lifecycle phase differs from its explicit roots/combination profile.' }
     $before = $roots; $after = $roots
-    switch -CaseSensitive ($Request.phase) {
-        { $_ -cin @('RemoveGameplay', 'VerifyExcelOnly') } { $after = @('com.kano.ylframework.excel') }
-        RestoreGameplay { $before = @('com.kano.ylframework.excel') }
-        { $_ -cin @('RemoveExcel', 'VerifyGameplayOnly') } { $after = @('com.kano.ylframework.gameplay') }
-        RestoreExcel { $before = @('com.kano.ylframework.gameplay') }
-        { $_ -cin @('Remove', 'VerifyRemoved') } { $after = @() }
+    if ($combinations) {
+        $first = if ($Request.entryPackage -ceq 'com.kano.ylframework.reddot') { 'com.kano.ylframework.reddot' } else { 'com.kano.ylframework.excel' }
+        $second = if ($first -ceq 'com.kano.ylframework.reddot') { 'com.kano.ylframework.save' } else { 'com.kano.ylframework.gameplay' }
+        if ($Request.phase -cin $phases[2..3]) { $after = @($first) }
+        if ($Request.phase -ceq $phases[4]) { $before = @($first) }
+        if ($Request.phase -cin $phases[5..6]) { $after = @($second) }
+        if ($Request.phase -ceq $phases[7]) { $before = @($second) }
+        if ($Request.phase -cin @($phases[3], $phases[6])) { $before = $after }
     }
-    if ($Request.phase -cin @('VerifyExcelOnly', 'VerifyGameplayOnly', 'VerifyRemoved')) { $before = $after }
+    if ($Request.phase -cin @('Remove', 'VerifyRemoved')) { $after = @() }
+    if ($Request.phase -ceq 'VerifyRemoved') { $before = $after }
     $manifests = @(foreach ($selection in @(@{ roots = $before }, @{ roots = $after })) {
         $dependencies = [ordered]@{}
         if ($selection.roots.Count) {
@@ -173,6 +194,28 @@ function Assert-YLRegistryLifecycleCompilation {
                 if ($row[$field] -isnot [array] -or @($row[$field] | Where-Object { $_ -isnot [string] -or -not $_ }).Count) { throw 'Invalid compilation source/reference graph.' }
             }
         }
+        if ($Report.entryPackage -cin @('com.kano.ylframework.reddot', 'com.kano.ylframework.save')) {
+            $reddot = 'com.kano.ylframework.reddot' -cin $Roots; $save = 'com.kano.ylframework.save' -cin $Roots
+            $expected = @()
+            if ($reddot) { $expected += @('YLFramework.Runtime', 'YLFramework.RedDots'); if ($mode -ceq 'editor') { $expected += @('YLFramework.Editor', 'YLFramework.RedDots.Editor') } }
+            if ($save) { $expected += 'YLFramework.Save' }
+            if ($reddot -and $save) { $expected += 'YLFramework.RedDots.Save' }
+            $product = @($seen | Where-Object { $_.StartsWith('YLFramework.', [StringComparison]::Ordinal) })
+            if ($product.Count -ne $expected.Count -or @($expected | Where-Object { -not $seen.Contains($_) }).Count) { throw "Actual $mode ReddotSave compilation membership differs." }
+            foreach ($row in $Report.compilation[$mode]) {
+                if ($row.name -cin $expected -and $row.sourceFiles.Count -eq 0) { throw 'ReddotSave compilation assembly lacks actual sources.' }
+                $all = @($row.name; $row.sourceFiles; $row.assemblyReferences; $row.compiledAssemblyReferences) -join '|'
+                if ($all -match '(?i)TestRunner|nunit|Mcp|ReflectorNet|MiniExcel|DOTween|HybridCLR|(?:^|[/\\])(?:Tests|Samples~?)(?:[/\\]|$)' -or
+                    ($mode -ceq 'player' -and ($all -match '(?i)UnityEditor|YLFramework\.(?:Editor|RedDots\.Editor)' -or
+                        ($row.sourceFiles -join '|') -match '(?i)[/\\]Editor[/\\]')) -or
+                    (-not $save -and $all -match 'YLFramework\.(?:RedDots\.Save|Save)|com\.kano\.ylframework\.save|/Integration/Save/') -or
+                    (-not $reddot -and $all -match 'YLFramework\.(?:Runtime|Editor|RedDots)|com\.kano\.ylframework(?:/|\.reddot)')) { throw "Unauthorized ReddotSave $mode compilation source/reference." }
+                if ($row.name -ceq 'YLFramework.RedDots' -and ('YLFramework.Runtime' -cnotin $row.assemblyReferences -or
+                    ($row.assemblyReferences + $row.compiledAssemblyReferences -join '|') -match 'YLFramework\.(?:RedDots\.Save|Save)')) { throw 'Reddot core compilation must reference only its main dependency, never Save.' }
+                if ($row.name -ceq 'YLFramework.RedDots.Save' -and @(@('YLFramework.RedDots', 'YLFramework.Save') | Where-Object { $_ -cnotin $row.assemblyReferences }).Count) { throw 'Save adapter lacks an actual product compilation reference.' }
+            }
+            continue
+        }
         if (@($Roots | Where-Object { $_ -cin @('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay') }).Count -eq 0 -and $Report.entryPackage -cnotin @('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')) { continue }
         $excel = $mode -ceq 'editor' -and 'com.kano.ylframework.excel' -cin $Roots
         $gameplay = 'com.kano.ylframework.gameplay' -cin $Roots
@@ -217,7 +260,7 @@ function Invoke-YLRegistryLifecycle {
     Set-StrictMode -Version 3.0
     if ($Source['packageOrigin'] -cnotin @('Registry', 'LocalTarball')) { throw 'Lifecycle accepts Registry/LocalTarball artifacts only, never File/Git.' }
     $roots = @(Get-YLRegistryEntryPackages -EntryPackage $EntryPackage -EntryPackages $EntryPackages)
-    if ($VerifyCombinations -and $roots.Count -ne 2) { throw 'VerifyCombinations requires the explicit ExcelGameplay roots.' }
+    $phases = @(Get-YLRegistryLifecyclePhases -EntryPackage $EntryPackage -EntryPackages $roots -VerifyCombinations:$VerifyCombinations)
     Assert-YLTestWorkspace $Workspace
     $run = Get-YLTestDirectory -Workspace $Workspace -Path $Result.path
     if ($run.kind -cne 'Result' -or $run.id -cne $Result.id) { throw 'Lifecycle requires the existing run Result owner.' }
@@ -280,9 +323,6 @@ function Invoke-YLRegistryLifecycle {
         $bindings = @(@{ path = $inputReceiptPath; sha256 = $inputReceiptHash }, @{ path = $receiptPath; sha256 = $neutralReceiptHash },
             @{ path = $before; sha256 = $originalManifestHash }, @{ path = $releasePath; sha256 = $release.sha256 })
         $previous = $null
-        $phases = @('Inspect', 'Reopen')
-        if ($VerifyCombinations) { $phases += @('RemoveGameplay', 'VerifyExcelOnly', 'RestoreGameplay', 'RemoveExcel', 'VerifyGameplayOnly', 'RestoreExcel') }
-        $phases += @('Remove', 'VerifyRemoved')
         foreach ($phase in $phases) {
             Assert-YLUnityHostIdle $hostRecord
             foreach ($owner in @($hostRecord, $cache, $run)) {

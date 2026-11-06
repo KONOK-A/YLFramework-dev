@@ -4,7 +4,7 @@
 param(
     [Parameter(Mandatory)][string] $WorkspaceRoot,
     [Parameter(Mandatory)][string] $Unity,
-    [Parameter(Mandatory, ParameterSetName = 'Integration')][ValidateSet('DOTween', 'Excel', 'ExcelGameplay', 'HybridCLR')][string] $Integration,
+    [Parameter(Mandatory, ParameterSetName = 'Integration')][ValidateSet('DOTween', 'Excel', 'ExcelGameplay', 'ReddotSave', 'HybridCLR')][string] $Integration,
     [Parameter(Mandatory, ParameterSetName = 'Package')][string] $PackageId,
     [ValidateRange(1, 86400)][int] $TimeoutSeconds = 900,
     [Parameter(ParameterSetName = 'Integration')][string] $DOTweenArchive,
@@ -159,7 +159,7 @@ function Assert-YLIntegrationInstalledPackage([Collections.IDictionary] $Request
 }
 
 function Get-YLIntegrationDefinition {
-    param([ValidateSet('Package', 'DOTween', 'Excel', 'ExcelGameplay', 'HybridCLR')][string] $Name, [string] $PackageId,
+    param([ValidateSet('Package', 'DOTween', 'Excel', 'ExcelGameplay', 'ReddotSave', 'HybridCLR')][string] $Name, [string] $PackageId,
         [string] $Repository = ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))),
         [Collections.IDictionary] $Catalog = (Read-YLPackageCatalog), [ValidateSet('Required', 'Absent', 'SdkOnly', 'DefineOnly')][string] $DOTweenSdkMode = 'Required')
     $id = switch -CaseSensitive ($Name) {
@@ -167,12 +167,14 @@ function Get-YLIntegrationDefinition {
         DOTween { 'com.kano.ylframework' }
         Excel { 'com.kano.ylframework.excel' }
         ExcelGameplay { 'com.kano.ylframework.excel' }
+        ReddotSave { 'com.kano.ylframework.reddot' }
         HybridCLR { 'com.kano.ylframework.hybridclr' }
         default { throw 'Unknown integration profile.' }
     }
     if ($id -cnotin @($Catalog['packages'] | ForEach-Object { $_['id'] })) { throw "Unknown package ID: $id" }
     $roots = @($id)
     if ($Name -ceq 'ExcelGameplay') { $roots += 'com.kano.ylframework.gameplay' }
+    if ($Name -ceq 'ReddotSave') { $roots += 'com.kano.ylframework.save' }
     $products = @(Get-YLUpmPackages -Repository $Repository -Ids $roots -Catalog $Catalog)
     $inputs = @($products | ForEach-Object { @{ name = $_.id; version = $_.version } })
     $mode = if ($Name -ceq 'DOTween') { $DOTweenSdkMode } else { $null }
@@ -303,7 +305,7 @@ try {
     if ($artifact) { $inputPaths += 'Tools/Packaging/Build-YLRegistryPackages.ps1' }
     if ($artifact -and $profileName -ceq 'HybridCLR') { $inputPaths += @('Tools/Testing/RegistryAuthoringEntry.cs', 'Tools/Testing/Common/RegistryAuthoring.ps1') }
     if (($PackageSource -ceq 'Registry' -and -not ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent')) -or
-        ($PackageSource -ceq 'LocalTarball' -and $profileName -ceq 'ExcelGameplay')) { $inputPaths += @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1') }
+        ($PackageSource -ceq 'LocalTarball' -and $profileName -cin @('ExcelGameplay', 'ReddotSave'))) { $inputPaths += @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1') }
     if ($artifact) {
         $manifestObject = New-YLRegistryHostManifest -PackageSource $PackageSource -Release $source.release -EntryPackage $definition.id -EntryPackages $definition.roots -RegistryUrl $source.registryUrl
         $dependencies = $manifestObject.dependencies
@@ -508,9 +510,9 @@ try {
         Assert-YLRegistryStageCompleted -Outcome $summary.authoring -Stage Authoring
     }
     if (($PackageSource -ceq 'Registry' -and -not ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent')) -or
-        ($PackageSource -ceq 'LocalTarball' -and $profileName -ceq 'ExcelGameplay')) {
+        ($PackageSource -ceq 'LocalTarball' -and $profileName -cin @('ExcelGameplay', 'ReddotSave'))) {
         . (Join-Path $PSScriptRoot '../Common/RegistryLifecycle.ps1')
-        $summary['lifecycle'] = Invoke-YLRegistryLifecycle -Workspace $workspace -Source $source -Unity $Unity -Editor $editor -EntryPackage $definition.id -EntryPackages $definition.roots -VerifyCombinations:($profileName -ceq 'ExcelGameplay') -Result $run -TimeoutSeconds $TimeoutSeconds
+        $summary['lifecycle'] = Invoke-YLRegistryLifecycle -Workspace $workspace -Source $source -Unity $Unity -Editor $editor -EntryPackage $definition.id -EntryPackages $definition.roots -VerifyCombinations:($profileName -cin @('ExcelGameplay', 'ReddotSave')) -Result $run -TimeoutSeconds $TimeoutSeconds
         $summary.processes = @($summary.processes) + @($summary.lifecycle.processes)
         Assert-YLRegistryStageCompleted -Outcome $summary.lifecycle -Stage Lifecycle
     }

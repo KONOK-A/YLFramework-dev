@@ -109,7 +109,7 @@ namespace YLFramework.Testing
                 report["assemblies"] = required;
                 string[] global = PlayerSettings.GetScriptingDefineSymbols(NamedBuildTarget.Standalone).Split(';');
                 report["globalDefines"] = JArray.FromObject(global);
-                if (global.Contains("YL_DOMAIN_EXCEL") || global.Contains("YL_GAMEPLAY_PACKAGE") || global.Contains("YL_HYBRIDCLR_9_0_3"))
+                if (global.Contains("YL_DOMAIN_EXCEL") || global.Contains("YL_GAMEPLAY_PACKAGE") || global.Contains("YL_HYBRIDCLR_9_0_3") || global.Contains("YL_SAVE_PACKAGE"))
                 {
                     throw new InvalidOperationException("Package presence/version gates must not be replaced by global integration symbols.");
                 }
@@ -293,6 +293,20 @@ namespace YLFramework.Testing
             var installed = PackageInfo.GetAllRegisteredPackages();
             var plan = AssemblyPlan(request);
             PackageCatalogContract.AssertGraph(plan, editor.Select(row => row.name), player.Select(row => row.name));
+            foreach (var graph in new[] { editor, player })
+            {
+                var core = graph.SingleOrDefault(row => row.name == "YLFramework.RedDots");
+                var adapter = graph.SingleOrDefault(row => row.name == "YLFramework.RedDots.Save");
+                if (core != null && (!References(core).Contains("YLFramework.Runtime") || core.defines.Contains("YL_SAVE_PACKAGE") ||
+                    References(core).Any(name => name == "YLFramework.Save" || name == "YLFramework.RedDots.Save")))
+                    throw new InvalidOperationException("Reddot core must retain only its main dependency and no Save-scoped define/reference.");
+                if (adapter != null && (!adapter.defines.Contains("YL_SAVE_PACKAGE") || !References(adapter).Contains("YLFramework.RedDots") || !References(adapter).Contains("YLFramework.Save")))
+                    throw new InvalidOperationException("The actual Save version gate did not enable the Reddot adapter with both product references.");
+                if (Text(request, "integration") == "ReddotSave" && graph.Any(row => References(row).Any(name => Regex.IsMatch(name, @"^(?:DOTween(?:Editor|UpgradeManager)?|HybridCLR|MiniExcel)(?:\.|$)", RegexOptions.IgnoreCase))))
+                    throw new InvalidOperationException("ReddotSave must not acquire an external SDK compilation reference.");
+                if (Text(request, "integration") == "ReddotSave" && graph == player && graph.Any(row => References(row).Any(name => Regex.IsMatch(name, @"^(?:UnityEditor(?:\.|$)|YLFramework\.(?:Editor$|.*\.Editor$))"))))
+                    throw new InvalidOperationException("Editor tooling leaked into the ReddotSave Player compilation references.");
+            }
             var owners = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
             foreach (var owner in plan.Cast<JObject>())
             {
@@ -565,11 +579,13 @@ namespace YLFramework.Testing
         {
             if (Text(request, "integration") != "OptionalAdapterFixture")
             {
-                var roots = Text(request, "integration") == "ExcelGameplay"
+                var roots = Text(request, "integration") == "ReddotSave"
+                    ? new[] { "com.kano.ylframework.reddot", "com.kano.ylframework.save" }
+                    : Text(request, "integration") == "ExcelGameplay"
                     ? new[] { "com.kano.ylframework.excel", "com.kano.ylframework.gameplay" }
                     : new[] { Text(request, "entryPackage") };
                 if (Text(request, "entryPackage") != roots[0] ||
-                    (Text(request, "integration") == "ExcelGameplay" && request.Property("entryPackages") == null) ||
+                    (roots.Length == 2 && request.Property("entryPackages") == null) ||
                     (request.Property("entryPackages") != null && (request["entryPackages"] is not JArray declared ||
                         declared.Any(value => value.Type != JTokenType.String) || !declared.Values<string>().SequenceEqual(roots))))
                 {
@@ -894,7 +910,7 @@ namespace YLFramework.Testing
         {
             if (request["schemaVersion"]?.Type != JTokenType.Integer || (long)request["schemaVersion"] != 1 ||
                 Text(request, "purpose") != "YLTesting.IntegrationPackages" || !Application.isBatchMode ||
-                !new[] { "Package", "DOTween", "Excel", "ExcelGameplay", "HybridCLR", "OptionalAdapterFixture" }.Contains(Text(request, "integration")) ||
+                !new[] { "Package", "DOTween", "Excel", "ExcelGameplay", "ReddotSave", "HybridCLR", "OptionalAdapterFixture" }.Contains(Text(request, "integration")) ||
                 !new[] { "File", "GitRemote", "Registry", "LocalTarball" }.Contains(Text(request, "packageOrigin")) ||
                 request["packages"] is not JArray packages || packages.Count == 0 || request["assemblies"] is not JArray assemblies || assemblies.Count == 0)
             {
@@ -909,6 +925,8 @@ namespace YLFramework.Testing
                 throw new InvalidOperationException("Invalid explicit DOTween SDK mode.");
             }
             if (request.Property("optionalAdapterScenario") != null && Text(request, "integration") != "OptionalAdapterFixture") { throw new InvalidOperationException("A fixture scenario cannot alter a product smoke profile."); }
+            if (Text(request, "integration") == "ReddotSave" && request["sdk"] != null && request["sdk"].Type != JTokenType.Null)
+                throw new InvalidOperationException("ReddotSave has no external SDK prerequisite.");
             if (git) { ValidateGitSource(request); }
             else if (new[] { "gitRepository", "gitRevision" }.Any(field => request[field] != null && request[field].Type != JTokenType.Null))
             {
@@ -956,7 +974,7 @@ namespace YLFramework.Testing
             string profileEntry = Text(request, "integration") switch
             {
                 "DOTween" => "com.kano.ylframework", "Excel" => "com.kano.ylframework.excel",
-                "ExcelGameplay" => "com.kano.ylframework.excel", "HybridCLR" => "com.kano.ylframework.hybridclr", _ => entryPackage
+                "ExcelGameplay" => "com.kano.ylframework.excel", "ReddotSave" => "com.kano.ylframework.reddot", "HybridCLR" => "com.kano.ylframework.hybridclr", _ => entryPackage
             };
             if (!known.Contains(entryPackage) || entryPackage != profileEntry || packages.Any(token => token is not JObject) ||
                 packages.Cast<JObject>().Any(package => !known.Contains(Text(package, "name"))) ||

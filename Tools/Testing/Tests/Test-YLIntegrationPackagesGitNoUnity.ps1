@@ -30,6 +30,7 @@ try {
     $binding = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n" + '(Get-Variable PackageSource -ValueOnly -ErrorAction SilentlyContinue)')
     Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -Integration Excel) -ceq 'File') 'Omitting PackageSource must preserve File, not silently choose Git.'
     Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -PackageId 'com.kano.ylframework') -ceq 'File') 'PackageId must be an explicit minimal-install entry.'
+    Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -Integration ReddotSave) -ceq 'File') 'ReddotSave must be a maintained explicit integration profile.'
     foreach ($options in @(@{ Integration = 'DomainExcel' }, @{ IntegrationDomainExcel = $true })) {
         $refused = $false
         try { $null = & $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' @options }
@@ -103,7 +104,7 @@ try {
     Check ((Get-YLIntegrationPackageContent -Root $package -PackageId 'com.kano.ylframework' -NormalizeManifest).sha256 -cne $baseline.sha256) 'Non-manifest files must use raw bytes.'
 
     function Invoke-ControllerFixture([string] $Fault = '', [Alias('Source')][string] $FixtureSource = 'Git', [string] $EditorVersion = '2022.3.62f3', [string] $Revision = $sha,
-        [string] $RemoteRepository = 'https://example.invalid/product.git', [string] $EntryPackage) {
+        [string] $RemoteRepository = 'https://example.invalid/product.git', [string] $EntryPackage, [string] $IntegrationName = 'ExcelGameplay') {
         $root = Join-Path $sandbox ([Guid]::NewGuid().ToString('N'))
         $fixtureRepository = Join-Path $root 'Repository'; $null = [IO.Directory]::CreateDirectory($fixtureRepository)
         foreach ($relative in @('Tests/Test-YLIntegrationPackages.ps1', 'IntegrationEntry.cs', 'PackageCatalogContract.cs', 'Common/Packages.ps1', 'Common/Workspace.ps1', 'Common/Process.ps1', 'Common/Results.ps1', 'UnityHost.ps1', 'TestSuites.json')) {
@@ -118,12 +119,12 @@ try {
             Save (Join-Path $fixtureRepository "$prefix/packages-lock.json") '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.1"}}}'
         }
         Save (Join-Path $fixtureRepository 'Unity.exe') 'metadata fixture'
-        foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')) {
+        foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay', 'com.kano.ylframework.reddot', 'com.kano.ylframework.save')) {
             $dependencies = Get-YLFixtureInternalDependencies -PackageId $id -Version '0.1.0-preview.1'
             $p = Join-Path $fixtureRepository "PackageSources/$id"
             Save (Join-Path $p 'package.json') (ConvertTo-Json -Depth 5 -InputObject @{ name = $id; version = '0.1.0-preview.1'; dependencies = $dependencies })
             Save (Join-Path $p 'LICENSE.md') 'fixture license'
-            Save (Join-Path $p 'Editor/Product.cs') '// fixture product'
+            if ($id -cne 'com.kano.ylframework.save') { Save (Join-Path $p 'Editor/Product.cs') '// fixture product' }
             if ($id -ceq 'com.kano.ylframework') { Save (Join-Path $p 'Runtime/Product.cs') '// fixture product' }
             Add-YLFixtureAssemblyPayload -Catalog $fixtureCatalog -PackageId $id -Root $p -Sources
         }
@@ -214,7 +215,7 @@ try {
             $statement.Extent.Text -replace '\bexit ([12])\b', '$state.exitCode = $1'
         }
         $controller = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n" + ($statements -join "`n"))
-        $options = @{ WorkspaceRoot = (Join-Path $root 'Workspace'); Unity = (Join-Path $fixtureRepository 'Unity.exe'); Integration = 'ExcelGameplay'; PackageSource = $FixtureSource }
+        $options = @{ WorkspaceRoot = (Join-Path $root 'Workspace'); Unity = (Join-Path $fixtureRepository 'Unity.exe'); Integration = $IntegrationName; PackageSource = $FixtureSource }
         if ($EntryPackage) { $options.Remove('Integration'); $options.PackageId = $EntryPackage }
         if ($FixtureSource -ceq 'Git') { $options.GitRepository = $RemoteRepository; $options.GitRevision = $Revision }
         $null = & $controller @options
@@ -287,6 +288,26 @@ try {
     foreach ($fault in @('source', 'locator', 'revision', 'api-hash', 'api-revision', 'lock-hash', 'lock-version', 'lock-source', 'lock-dependency', 'missing-entry-packages', 'scalar-entry-packages', 'typed-entry-packages', 'single-entry-packages', 'reversed-entry-packages', 'duplicate-entry-packages', 'joined-entry-packages', 'origin', 'content', 'extra-file', 'missing-file', 'public-manifest', 'sources', 'escape', 'input-drift', 'catalog-drift', 'template-drift', 'imported-sample', 'cache-owner-drift')) {
         $fixture = Invoke-ControllerFixture -Fault $fault
         Check ($fixture.summary.status -ceq 'Failed' -and $fixture.state.exitCode -eq 1) "Remote controller accepted $fault."
+    }
+    foreach ($origin in @('File', 'Git')) {
+        $red = Invoke-ControllerFixture -Source $origin -IntegrationName ReddotSave
+        Check ($red.summary.status -ceq 'Completed') "ReddotSave $origin controller failed: $($red.summary.reason)"
+        Assert-YLPackageStringArray -Actual $red.state.request.entryPackages -Expected @('com.kano.ylframework.reddot', 'com.kano.ylframework.save') -Label 'ReddotSave controller roots'; $checks++
+        Assert-YLPackageStringArray -Actual $red.state.request.packages.name -Expected @('com.kano.ylframework', 'com.kano.ylframework.reddot', 'com.kano.ylframework.save') -Label 'ReddotSave File/Git full closure'; $checks++
+        Check (@($red.state.request.assemblies | Where-Object name -CEQ 'YLFramework.RedDots.Save').Count -eq 1 -and $null -eq $red.state.request.sdk -and
+            -not $red.state.request.Contains('dotweenSdkMode') -and $red.summary.playerBuild -ceq 'NotRun' -and $red.summary.playerRuntime -ceq 'NotRun') 'ReddotSave is a package-gated compile graph, not SDK or Player acceptance.'
+        $m = Read-YLPackageEvidenceJson (Join-Path $red.state.project 'Packages/manifest.json')
+        foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.reddot', 'com.kano.ylframework.save')) {
+            $locator = if ($origin -ceq 'File') { 'file:../PackageSources/' + $id } else { 'https://example.invalid/product.git?path=/PackageSources/' + $id + '#' + $sha }
+            Check ($m.dependencies[$id] -ceq $locator) 'ReddotSave File/Git must declare its entire exact same-commit closure.'
+        }
+        foreach ($fault in @('missing-entry-packages', 'scalar-entry-packages', 'typed-entry-packages', 'single-entry-packages', 'reversed-entry-packages', 'joined-entry-packages', 'cache-owner-drift')) {
+            $bad = Invoke-ControllerFixture -Source $origin -IntegrationName ReddotSave -Fault $fault
+            Check ($bad.summary.status -ceq 'Failed') "ReddotSave $origin accepted $fault"
+        }
+        $solo = Invoke-ControllerFixture -Source $origin -EntryPackage 'com.kano.ylframework.reddot'
+        Check ($solo.summary.status -ceq 'Completed' -and ($solo.state.request.packages.name -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.reddot' -and
+            @($solo.state.request.assemblies | Where-Object name -CEQ 'YLFramework.RedDots.Save').Count -eq 0) 'Ordinary Reddot must retain its Save-absent graph.'
     }
     "PASS: $checks NoUnity Git parameter/content/controller/cache contracts. Simulated Unity boundary only, NOT remote or Unity acceptance."
     $passed = $true

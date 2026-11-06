@@ -251,7 +251,20 @@ try {
                 $selected = Get-SelectedSources
                 Assert-That ($selected.runtime -cnotcontains $adapter) "$module Quick unexpectedly compiles a disabled external-SDK adapter."
                 Assert-That ($selected.inputs -ccontains $adapter -and $selected.inputs -ccontains ($adapter + '.meta')) "$module must still hash the full product input."
+                $saveAdapter = 'PackageSources/com.kano.ylframework.reddot/Runtime/Integration/Save/ReddotSaveExtensions.cs'
+                Assert-That ($selected.runtime -cnotcontains $saveAdapter) "$module Quick unexpectedly compiles the conditional Save composition."
+                if ($module -ceq 'Behavior') { Assert-That ($selected.inputs -ccontains $saveAdapter -and $selected.inputs -ccontains ($saveAdapter + '.meta')) "$module must still hash the full optional composition payload." }
             }
+        }
+        Test-Case 'ReddotSave has one explicit native selector and keeps Save out of core' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $module = @($configuration.modules | Where-Object name -CEQ 'ReddotSave')[0]
+            Assert-That ((-not [string]::IsNullOrWhiteSpace($module.category)) -xor ($module.assemblies.Count -gt 0)) 'Native selection must choose a category OR explicit assemblies, never both.'
+            Assert-That (($module.modes -join ',') -ceq 'EditMode') 'Save snapshot IO belongs to actual EditMode acceptance.'
+            Assert-That ($module.nativeSources -ccontains 'Assets/Tests/YLFramework/Fixtures/Shared') 'Framework Native entry requires the real shared PackageTestPaths support.'
+            $core = @($configuration.modules | Where-Object name -CEQ 'Reddot')[0]
+            Assert-That (($core.packageInputs -join ',') -ceq 'com.kano.ylframework.reddot') 'The core must not force-install Save.'
         }
         Test-Case 'DOTween behavior has its own SDK-required module without adding SDK input to ordinary Action' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
@@ -858,7 +871,7 @@ try {
                 resultId = 'result-1'; hostId = 'host-1'; unityVersion = '2022.3.62f3'; pid = 42
                 isEditor = $false; platform = 'WindowsPlayer'; frames = 2; error = ''; backend = 'Mono'
                 recordCount = 0; leaseCount = 0
-                stages = @('Started', 'ResourceLoaded', 'ReddotLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown')
+                stages = @('Started', 'ResourceLoaded', 'EventLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown')
             }
             Write-YLTestJson -Path $path -Value $valid
             $accepted = Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -ProcessResult $process
@@ -871,7 +884,7 @@ try {
                 @{ backend = 'IL2CPP' }, @{ backend = '' }, @{ backend = $true },
                 @{ frames = 0 }, @{ frames = '2' }, @{ status = 'Failed' }, @{ error = 'runtime error' },
                 @{ recordCount = 1 }, @{ recordCount = '0' }, @{ leaseCount = 1 }, @{ stages = @('Started', 'Shutdown') },
-                @{ stages = @('Started', 'ResourceLoaded', 'ReddotLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown', 'Shutdown') }
+                @{ stages = @('Started', 'ResourceLoaded', 'EventLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown', 'Shutdown') }
                 @{ stages = @($true, $true, $true, $true, $true, $true) }
             )) {
                 $invalid = $valid.Clone()
