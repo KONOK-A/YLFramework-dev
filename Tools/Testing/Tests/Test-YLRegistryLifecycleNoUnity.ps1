@@ -467,11 +467,17 @@ try {
                 }
             }
             $withoutSave = @($combination.phases | Where-Object phase -CEQ 'VerifyReddotOnly')[0].report
+            $runtimeGraph = Copy-Value $combination.phases[0].report
+            foreach ($assembly in $runtimeGraph.compilation.player) {
+                $assembly.compiledAssemblyReferences += 'G:/Unity Editor/2022.3.62f3/Editor/Data/PlaybackEngines/WindowsStandaloneSupport/Variations/mono/Managed/UnityEngine.CoreModule.dll'
+            }
+            Assert-YLRegistryLifecycleCompilation -Report $runtimeGraph -Roots $reddotRoots
+            $checks++
             foreach ($field in @('sourceFiles', 'assemblyReferences', 'compiledAssemblyReferences')) {
                 $badGraph = Copy-Value $withoutSave; $badGraph.compilation.player[0][$field] += 'YLFramework.RedDots.Save'
                 Reject { Assert-YLRegistryLifecycleCompilation -Report $badGraph -Roots @($reddotRoots[0]) } 'compilation|Save|source|reference|adapter'
             }
-            foreach ($faultName in @('missing-core', 'missing-player-save', 'empty-adapter', 'core-save-reference', 'adapter-reference', 'player-editor', 'foreign-yl', 'test-reference')) {
+            foreach ($faultName in @('missing-core', 'missing-player-save', 'empty-adapter', 'core-save-reference', 'adapter-reference', 'player-editor', 'player-editor-source', 'unity-editor-reference', 'foreign-yl', 'test-reference')) {
                 $badGraph = Copy-Value $combination.phases[0].report
                 switch ($faultName) {
                     'missing-core' { $badGraph.compilation.player = @($badGraph.compilation.player | Where-Object name -CNE 'YLFramework.RedDots') }
@@ -480,6 +486,8 @@ try {
                     'core-save-reference' { @($badGraph.compilation.editor | Where-Object name -CEQ 'YLFramework.RedDots')[0].assemblyReferences += 'YLFramework.Save' }
                     'adapter-reference' { @($badGraph.compilation.player | Where-Object name -CEQ 'YLFramework.RedDots.Save')[0].assemblyReferences = @('YLFramework.RedDots') }
                     'player-editor' { $badGraph.compilation.player[0].compiledAssemblyReferences += 'YLFramework.RedDots.Editor.dll' }
+                    'player-editor-source' { $badGraph.compilation.player[0].sourceFiles += 'Packages/com.kano.ylframework.reddot/Editor/Injected.cs' }
+                    'unity-editor-reference' { $badGraph.compilation.player[0].compiledAssemblyReferences += 'G:/Unity Editor/2022.3.62f3/Editor/Data/Managed/UnityEngine/UnityEditor.CoreModule.dll' }
                     'foreign-yl' { $badGraph.compilation.player[0].name = 'YLFramework.Gameplay' }
                     'test-reference' { $badGraph.compilation.player[0].compiledAssemblyReferences += 'nunit.framework.dll' }
                 }

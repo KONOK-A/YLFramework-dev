@@ -206,7 +206,8 @@ function Assert-YLRegistryLifecycleCompilation {
                 if ($row.name -cin $expected -and $row.sourceFiles.Count -eq 0) { throw 'ReddotSave compilation assembly lacks actual sources.' }
                 $all = @($row.name; $row.sourceFiles; $row.assemblyReferences; $row.compiledAssemblyReferences) -join '|'
                 if ($all -match '(?i)TestRunner|nunit|Mcp|ReflectorNet|MiniExcel|DOTween|HybridCLR|(?:^|[/\\])(?:Tests|Samples~?)(?:[/\\]|$)' -or
-                    ($mode -ceq 'player' -and $all -match '(?i)UnityEditor|YLFramework\.(?:Editor|RedDots\.Editor)|[/\\]Editor[/\\]') -or
+                    ($mode -ceq 'player' -and ($all -match '(?i)UnityEditor|YLFramework\.(?:Editor|RedDots\.Editor)' -or
+                        ($row.sourceFiles -join '|') -match '(?i)[/\\]Editor[/\\]')) -or
                     (-not $save -and $all -match 'YLFramework\.(?:RedDots\.Save|Save)|com\.kano\.ylframework\.save|/Integration/Save/') -or
                     (-not $reddot -and $all -match 'YLFramework\.(?:Runtime|Editor|RedDots)|com\.kano\.ylframework(?:/|\.reddot)')) { throw "Unauthorized ReddotSave $mode compilation source/reference." }
                 if ($row.name -ceq 'YLFramework.RedDots' -and ('YLFramework.Runtime' -cnotin $row.assemblyReferences -or
