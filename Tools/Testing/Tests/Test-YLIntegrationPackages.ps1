@@ -14,7 +14,7 @@ param(
     [string] $RegistryUrl,
     [string] $RegistryVersion,
     [string] $ReleaseManifest,
-    [Parameter(ParameterSetName = 'Integration')][ValidateSet('Required', 'Absent')][string] $DOTweenSdkMode = 'Required'
+    [Parameter(ParameterSetName = 'Integration')][ValidateSet('Required', 'Absent', 'SdkOnly', 'DefineOnly')][string] $DOTweenSdkMode = 'Required'
 )
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
@@ -161,10 +161,10 @@ function Assert-YLIntegrationInstalledPackage([Collections.IDictionary] $Request
 function Get-YLIntegrationDefinition {
     param([ValidateSet('Package', 'DOTween', 'Excel', 'ExcelGameplay', 'HybridCLR')][string] $Name, [string] $PackageId,
         [string] $Repository = ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))),
-        [Collections.IDictionary] $Catalog = (Read-YLPackageCatalog), [ValidateSet('Required', 'Absent')][string] $DOTweenSdkMode = 'Required')
+        [Collections.IDictionary] $Catalog = (Read-YLPackageCatalog), [ValidateSet('Required', 'Absent', 'SdkOnly', 'DefineOnly')][string] $DOTweenSdkMode = 'Required')
     $id = switch -CaseSensitive ($Name) {
         Package { $PackageId }
-        DOTween { 'com.kano.ylframework.dotween' }
+        DOTween { 'com.kano.ylframework' }
         Excel { 'com.kano.ylframework.excel' }
         ExcelGameplay { 'com.kano.ylframework.excel' }
         HybridCLR { 'com.kano.ylframework.hybridclr' }
@@ -195,7 +195,7 @@ function Get-YLIntegrationPackageFiles([string] $Repository, [object[]] $Package
                 $prefix = [byte[]]::new(200); $length = $stream.Read($prefix, 0, $prefix.Length)
                 if ([Text.Encoding]::UTF8.GetString($prefix, 0, $length).StartsWith('version https://git-lfs.github.com/spec/v1', [StringComparison]::Ordinal)) { throw "Unmaterialized LFS input: $relative" }
                 if ($relative.EndsWith('.dll', [StringComparison]::OrdinalIgnoreCase) -and
-                    ($length -lt 2 -or $prefix[0] -ne 77 -or $prefix[1] -ne 90 -or $package.id -cin @('com.kano.ylframework.dotween', 'com.kano.ylframework.hybridclr'))) { throw "Unapproved package DLL: $($package.id)/$relative" }
+                    ($length -lt 2 -or $prefix[0] -ne 77 -or $prefix[1] -ne 90 -or $package.id -ceq 'com.kano.ylframework.hybridclr')) { throw "Unapproved package DLL: $($package.id)/$relative" }
             } finally { $stream.Dispose() }
             [IO.Path]::GetRelativePath($Repository, $path).Replace('\', '/')
         }
@@ -218,69 +218,11 @@ function Get-YLIntegrationHybridSdk([string] $Repository) {
     } catch { throw "PrerequisiteNotMet: HybridCLR SDK: $($_.Exception.Message)" }
 }
 
-function Get-YLIntegrationDotweenSdk([string] $Repository, [string] $Archive, [string] $OwnedSdkRoot) {
-    try {
-        $approval = [IO.File]::ReadAllText((Join-Path $Repository 'PackageSources/com.kano.ylframework.dotween/Dependencies.json')) | ConvertFrom-Json -AsHashtable -DateKind String
-        $vendor = $approval['vendor']
-        $root = if ($OwnedSdkRoot) { Get-YLTestPath $OwnedSdkRoot } else { Get-YLTestPath (Join-Path $Repository 'Assets/Plugins/Demigiant/DOTween') }
-        $dll = Join-Path $root 'DOTween.dll'
-        if ($OwnedSdkRoot -and -not [IO.Directory]::Exists($root)) {
-            if (-not [IO.File]::Exists($Archive) -or (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ine $vendor['archiveSha256']) { throw 'The explicitly approved Standard SDK archive does not match.' }
-            $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
-            try {
-                $core = @($zip.Entries | Where-Object { $_.FullName -cmatch '(?:^|/)DOTween\.dll$' })
-                if ($core.Count -ne 1) { throw 'The archive must contain one runtime DLL.' }
-                $prefix = $core[0].FullName.Substring(0, $core[0].FullName.Length - 'DOTween.dll'.Length)
-                foreach ($entry in $zip.Entries) {
-                    if (-not $entry.FullName.StartsWith($prefix, [StringComparison]::Ordinal) -or $entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('.meta')) { continue }
-                    $relative = $entry.FullName.Substring($prefix.Length)
-                    if (-not $relative -or $relative -match '(?:^|/)\.\.?(/|$)|\\|:') { throw 'Invalid approved SDK archive path.' }
-                    $target = Join-Path $root $relative
-                    $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
-                    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $false)
-                }
-            } finally { $zip.Dispose() }
-        }
-        if ($vendor['version'] -cne '1.2.825' -or $vendor['assemblySha256'] -isnot [string] -or $vendor['archiveSha256'] -isnot [string] -or
-            -not [IO.File]::Exists($dll) -or (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash -ine $vendor['assemblySha256']) { throw 'The existing DOTween.dll does not match the approved 1.2.825 SDK hash.' }
-        if (-not [IO.File]::Exists($Archive) -or (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ine $vendor['archiveSha256']) { throw 'The approved complete Standard SDK archive is missing or has the wrong SHA256.' }
-        $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
-        try {
-            $core = @($zip.Entries | Where-Object { $_.FullName -cmatch '(?:^|/)DOTween\.dll$' })
-            if ($core.Count -ne 1) { throw 'The approved archive must contain exactly one DOTween.dll.' }
-            $prefix = $core[0].FullName.Substring(0, $core[0].FullName.Length - 'DOTween.dll'.Length)
-            $approvedFiles = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
-            foreach ($entry in $zip.Entries) {
-                if (-not $entry.FullName.StartsWith($prefix, [StringComparison]::Ordinal) -or $entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('.meta')) { continue }
-                $relative = $entry.FullName.Substring($prefix.Length)
-                if ($relative -match '(?:^|/)\.\.?(/|$)|\\|:' -or -not $relative) { throw 'Invalid SDK archive path.' }
-                $stream = $entry.Open()
-                try { $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream)).ToLowerInvariant() } finally { $stream.Dispose() }
-                $approvedFiles.Add($relative, $hash)
-            }
-            foreach ($required in @('DOTween.dll', 'Editor/DOTweenEditor.dll', 'Modules/DOTweenModuleAudio.cs', 'Modules/DOTweenModulePhysics.cs',
-                'Modules/DOTweenModulePhysics2D.cs', 'Modules/DOTweenModuleSprite.cs', 'Modules/DOTweenModuleUI.cs', 'Modules/DOTweenModuleUtils.cs', 'readme.txt')) {
-                if (-not $approvedFiles.ContainsKey($required)) { throw "Incomplete approved SDK: $required" }
-            }
-            $paths = @(Get-YLTestTreeFiles $root)
-            $payload = @($paths | Where-Object { -not $_.EndsWith('.meta', [StringComparison]::OrdinalIgnoreCase) })
-            if ($payload.Count -ne $approvedFiles.Count) { throw 'The existing SDK is not the complete unchanged approved archive file set.' }
-            foreach ($path in $payload) {
-                $relative = [IO.Path]::GetRelativePath($root, $path).Replace('\', '/')
-                if (-not $approvedFiles.ContainsKey($relative) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine $approvedFiles[$relative]) { throw "The existing SDK file is not approved: $relative" }
-            }
-            if (-not [IO.File]::ReadAllText((Join-Path $root 'readme.txt')).Contains('license', [StringComparison]::OrdinalIgnoreCase)) { throw 'The SDK original readme/license notice is missing.' }
-            return @{ root = $root; paths = @($paths | ForEach-Object { [IO.Path]::GetRelativePath($Repository, $_).Replace('\', '/') });
-                version = $vendor['version']; archiveSha256 = $vendor['archiveSha256']; assemblySha256 = $vendor['assemblySha256']; files = $approvedFiles }
-        } finally { $zip.Dispose() }
-    } catch { throw "PrerequisiteNotMet: DOTween SDK: $($_.Exception.Message)" }
-}
-
 $sourceArguments = @{ PackageSource = $PackageSource }
 foreach ($parameter in @('GitRepository', 'GitRevision', 'RegistryUrl', 'RegistryVersion', 'ReleaseManifest')) { if ($PSBoundParameters.ContainsKey($parameter)) { $sourceArguments[$parameter] = $PSBoundParameters[$parameter] } }
 $source = Get-YLIntegrationSource @sourceArguments
 if ($Integration -cne 'DOTween' -and ($PSBoundParameters.ContainsKey('DOTweenSdkMode') -or $PSBoundParameters.ContainsKey('DOTweenArchive'))) { throw 'DOTween SDK parameters require Integration DOTween.' }
-if ($Integration -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent' -and $PSBoundParameters.ContainsKey('DOTweenArchive')) { throw 'DOTween Absent refuses an SDK archive.' }
+if ($Integration -ceq 'DOTween' -and $DOTweenSdkMode -cin @('Absent', 'DefineOnly') -and $PSBoundParameters.ContainsKey('DOTweenArchive')) { throw 'DOTween Absent/DefineOnly refuses an SDK archive.' }
 if ($MyInvocation.InvocationName -eq '.') { return }
 if (-not $IsWindows -or $PSVersionTable.PSVersion.Major -ne 7 -or $PSVersionTable.PSVersion.Minor -ne 6) { throw 'Windows PowerShell Core 7.6 is required.' }
 $repository = Get-YLTestPath ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..')))
@@ -328,7 +270,14 @@ if ($artifact) {
     $summary['release'] = @{ sourceCommit = $source.release.sourceCommit; manifestSha256 = $source.release.sha256; producer = $source.release.producer }
     $summary.scope = "$($summary.acceptanceKind): actual installed source and Editor/Player compilation graphs. Not native, hot-update Player or publish readiness."
 }
+if ($profileName -ceq 'DOTween') {
+    $summary['sdkDeployed'] = $false
+    $summary['defineEnabled'] = $DOTweenSdkMode -cin @('Required', 'DefineOnly')
+}
 try {
+    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'DefineOnly') {
+        throw 'PrerequisiteNotMet: DOTWEEN is requested without its separately supplied SDK. No host, Unity compilation or Player run was started.'
+    }
     $artifactInputs = $null; $manifestObject = $null
     if ($artifact) {
         $artifactInputs = Initialize-YLRegistryExpectedInputs -Source $source -Output (Join-Path $run.path 'ExpectedArtifacts')
@@ -380,18 +329,18 @@ try {
             $inputPaths = @($inputPaths + @('Packages/manifest.json', 'Packages/packages-lock.json', 'PackageSources/com.kano.ylframework.hybridclr/Dependencies.json') | Sort-Object -Unique)
         }
     }
-    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Required') {
+    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -cin @('Required', 'SdkOnly')) {
         $sdkRepository = $repository
         if ($artifact) { $sdkRepository = $artifactInputs.root }
         if (-not $DOTweenArchive) {
-            $approval = [IO.File]::ReadAllText((Join-Path $sdkRepository 'PackageSources/com.kano.ylframework.dotween/Dependencies.json')) | ConvertFrom-Json -AsHashtable -DateKind String
+            $approval = [IO.File]::ReadAllText((Join-Path $sdkRepository 'PackageSources/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween/Dependencies.json')) | ConvertFrom-Json -AsHashtable -DateKind String
             $DOTweenArchive = Join-Path $run.path 'DOTween-1.2.825.zip'
             try { Invoke-WebRequest -Uri $approval['vendor']['url'] -OutFile $DOTweenArchive -TimeoutSec $TimeoutSeconds -ErrorAction Stop }
             catch { throw "PrerequisiteNotMet: Cannot retrieve the explicitly approved DOTween Standard archive: $($_.Exception.Message)" }
         }
         $DOTweenArchive = Get-YLTestPath -Path $DOTweenArchive -ReadOnly
         $sdk = Get-YLIntegrationDotweenSdk -Repository $sdkRepository -Archive $DOTweenArchive -OwnedSdkRoot (Join-Path $run.path 'ApprovedSdk')
-        if (-not $artifact) { $inputPaths = @($inputPaths + 'PackageSources/com.kano.ylframework.dotween/Dependencies.json' | Sort-Object -Unique) }
+        if (-not $artifact) { $inputPaths = @($inputPaths + 'PackageSources/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween/Dependencies.json' | Sort-Object -Unique) }
         $summary['approvedSdkArchive'] = @{ version = $sdk.version; archive = $DOTweenArchive; archiveSha256 = $sdk.archiveSha256; assemblySha256 = $sdk.assemblySha256; files = $sdk.files.Count }
     }
     if ($profileName -cin @('Excel', 'ExcelGameplay')) {
@@ -409,7 +358,7 @@ try {
         if (-not $artifact) { $inputPaths = @($inputPaths + 'PackageSources/com.kano.ylframework.excel/Editor/Dependencies.json' | Sort-Object -Unique) }
     }
     $toolchain = @($Unity)
-    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Required') { $toolchain += $DOTweenArchive }
+    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -cin @('Required', 'SdkOnly')) { $toolchain += $DOTweenArchive }
     if ($artifact) { $toolchain += $source.release.path }
     $identity = Get-YLTestInputIdentity -Repository $repository -Paths $inputPaths -Toolchain $toolchain -Profile $profile
     $summary.inputIdentity = $identity
@@ -425,8 +374,19 @@ try {
     if (-not $artifact) { foreach ($package in $products) {
         $dependencies[$package.id] = if ($git) { $source.gitRepository + '?path=/' + $package.relative + '#' + $source.gitRevision } else { 'file:../' + $package.relative }
     } }
-    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Required') {
+    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -cin @('Required', 'SdkOnly')) {
         foreach ($relative in $sdk.files.Keys) { $files['Assets/Plugins/Demigiant/DOTween/' + $relative] = [IO.File]::ReadAllBytes((Join-Path $sdk.root $relative)) }
+        if ($DOTweenSdkMode -ceq 'SdkOnly') {
+            # The vendor Editor postprocessor otherwise adds DOTWEEN during import. Only this negative fixture disables its import, never its SDK bytes.
+            foreach ($relative in @($sdk.files.Keys | Where-Object { $_.StartsWith('Editor/', [StringComparison]::Ordinal) -and $_.EndsWith('.dll', [StringComparison]::Ordinal) })) {
+                $metadata = "fileFormatVersion: 2`nguid: $([Guid]::NewGuid().ToString('N'))`nPluginImporter:`n  serializedVersion: 1`n  iconMap: {}`n  executionOrder: {}`n  isPreloaded: 0`n  platformData:`n    Any:`n      enabled: 0`n      settings: {}`n    Editor:`n      enabled: 0`n      settings:`n        DefaultValueInitialized: true`n  userData: YLTesting.SdkOnly.NoVendorAutoSetup`n  assetBundleName: `n  assetBundleVariant: `n"
+                $files['Assets/Plugins/Demigiant/DOTween/' + $relative + '.meta'] = [Text.Encoding]::UTF8.GetBytes($metadata)
+            }
+        }
+        $summary.sdkDeployed = $true
+        $summary['sdkEditorToolingEnabled'] = $DOTweenSdkMode -ceq 'Required'
+    }
+    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Required') {
         # These are new owned ProjectSettings, never the source project's settings.
         $files['ProjectSettings/ProjectSettings.asset'] = [Text.Encoding]::UTF8.GetBytes("%YAML 1.1`n%TAG !u! tag:unity3d.com,2011:`n--- !u!129 &1`nPlayerSettings:`n  m_ObjectHideFlags: 0`n  serializedVersion: 26`n  scriptingDefineSymbols:`n    Standalone: DOTWEEN`n")
     }
@@ -456,7 +416,7 @@ try {
     if ($profileName -ceq 'DOTween') { $request.dotweenSdkMode = $DOTweenSdkMode }
     if ($artifact) { foreach ($field in (Get-YLRegistryRequestFields -Source $source -EntryPackage $definition.id -EntryPackages $definition.roots).GetEnumerator()) { $request[$field.Key] = $field.Value } }
     # The request needs approved SDK identities, not the source project's physical SDK path.
-    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Required') { $request.sdk = @{ version = $sdk.version; assemblySha256 = $sdk.assemblySha256 } }
+    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -cin @('Required', 'SdkOnly')) { $request.sdk = @{ version = $sdk.version; assemblySha256 = $sdk.assemblySha256 } }
     Write-YLTestJson -Path $requestPath -Value $request
     $summary.report = Join-Path $output 'report.json'
     $start = [Diagnostics.ProcessStartInfo]::new($Unity)
@@ -476,7 +436,7 @@ try {
     Assert-YLTestProcessSucceeded $fact
     if ($null -eq $report) { throw 'Unity exited without an actual integration compilation report.' }
     foreach ($field in @('purpose', 'integration', 'hostId', 'resultId', 'unityVersion', 'inputHash', 'packageOrigin', 'expectedTemplateHash', 'entryPackage', 'catalogSha256', 'status')) {
-        if ($report[$field] -isnot [string] -or $report[$field] -cne $(if ($field -ceq 'status') { if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent') { 'NegativeNoSdk' } else { 'Completed' } } else { $request[$field] })) { throw "Integration report identity/status mismatch: $field" }
+        if ($report[$field] -isnot [string] -or $report[$field] -cne $(if ($field -ceq 'status') { if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent') { 'NegativeNoSdk' } elseif ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'SdkOnly') { 'NegativeAdapterDisabled' } else { 'Completed' } } else { $request[$field] })) { throw "Integration report identity/status mismatch: $field" }
     }
     Assert-YLPackageStringArray -Actual $report['entryPackages'] -Expected $definition.roots -Label 'Integration report entry roots'
     if ($report['schemaVersion'] -isnot [long] -or $report['schemaVersion'] -ne 1 -or $report['pid'] -isnot [long] -or $report['pid'] -ne $fact.pid -or
@@ -537,6 +497,9 @@ try {
     }
     $summary.packages = $report['packages']; $summary.assemblies = $report['assemblies']
     if ($report['sdk'] -is [Collections.IDictionary]) { $summary['sdk'] = $report['sdk'] }
+    if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -cin @('Required', 'SdkOnly')) {
+        $null = Get-YLIntegrationDotweenSdk -Repository $sdkRepository -Archive $DOTweenArchive -OwnedSdkRoot (Join-Path $hostRecord.path 'Assets/Plugins/Demigiant/DOTween')
+    }
     $summary.compilation = 'VerifiedUnityEditorCompilation'; $summary.playerGraph = 'VerifiedGraphOnlyNotPlayerBuild'
     if ($artifact -and $profileName -ceq 'HybridCLR') {
         . (Join-Path $PSScriptRoot '../Common/RegistryAuthoring.ps1')
@@ -555,6 +518,9 @@ try {
     if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent') {
         $summary['integrationResult'] = 'NegativeNoSdk'; $summary.scope = 'Package installation and absent SDK compilation gate only. NOT positive DOTween integration.'
         $summary.status = 'NegativeNoSdk'
+    } elseif ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'SdkOnly') {
+        $summary['integrationResult'] = 'NegativeAdapterDisabled'; $summary.scope = 'Approved SDK deployed without DOTWEEN: adapter absent from Editor/Player graphs. NOT positive DOTween integration.'
+        $summary.status = 'NegativeAdapterDisabled'
     } else { $summary.status = 'Completed' }
 } catch {
     $summary.reason = $_.Exception.Message
@@ -575,7 +541,7 @@ try {
                 $currentTemplate = Get-YLTestInputIdentity -Repository $repository -Paths $freshPackagePaths -Profile 'LocalReleaseExpectedTemplateNotInstallSource'
                 if ($currentTemplate.sha256 -cne $templateIdentity.sha256) { throw 'The explicit local release expected template drifted; Git input identity is not replaced by this template.' }
                 }
-                if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Required') {
+                if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -cin @('Required', 'SdkOnly')) {
                     $currentSdk = Get-YLIntegrationDotweenSdk -Repository $sdkRepository -Archive $DOTweenArchive -OwnedSdkRoot $sdk.root
                 }
                 $recheck = Get-YLTestInputIdentity -Repository $repository -Paths @($fresh | Sort-Object -Unique) -Toolchain $toolchain -Profile $profile
@@ -595,4 +561,4 @@ try {
     "$($summary.status): $profileName; $($summary.compilation); $($summary.reason)"
 }
 if ($summary.status -ceq 'PrerequisiteNotMet') { exit 2 }
-if ($summary.status -cnotin @('Completed', 'NegativeNoSdk')) { exit 1 }
+if ($summary.status -cnotin @('Completed', 'NegativeNoSdk', 'NegativeAdapterDisabled')) { exit 1 }

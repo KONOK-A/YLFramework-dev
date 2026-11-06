@@ -50,6 +50,15 @@ function Fixture([string] $Id) {
 }
 try {
     $catalog = Read-YLPackageCatalog
+    Case 'Action owns the original DOTween adapter without a separate installation unit or SDK dependency' {
+        Check (@($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.dotween').Count -eq 0) 'The retired DOTween package is still an installation unit.'
+        $main = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework')[0]
+        $adapter = @($main.assemblies | Where-Object name -CEQ 'YLFramework.Actions.DOTween')
+        Check ($adapter.Count -eq 1 -and $adapter[0].path -ceq 'Runtime/Systems/Action/Integration/DOTween/YLFramework.Actions.DOTween.asmdef') 'Action must own the unchanged optional adapter assembly.'
+        $manifest = Read-YLPackageEvidenceJson (Join-Path $repository 'PackageSources/com.kano.ylframework/package.json')
+        Check (@($manifest.dependencies.Keys | Where-Object { $_ -match '(?i)dotween|demigiant' }).Count -eq 0) 'The main package must not install a vendor SDK or retired adapter package.'
+        Check (-not [IO.Directory]::Exists((Join-Path $repository 'PackageSources/com.kano.ylframework.dotween'))) 'The unpublished adapter package must not remain as an empty shell.'
+    }
     Case 'Excel is one authoring package with a Gameplay-conditional adapter and no retired package identity' {
         Check (@($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.domain-excel').Count -eq 0) 'The retired DomainExcel package is still advertised as an installation unit.'
         Check (-not [IO.Directory]::Exists((Join-Path $repository 'PackageSources/com.kano.ylframework.domain-excel'))) 'The unpublished DomainExcel package must not remain as an empty compatibility shell.'
@@ -200,6 +209,25 @@ try {
         $main['Runtime/YLFramework.Runtime.asmdef'] = Bytes (ConvertTo-Json -InputObject $asmdef -Depth 20)
         Reject { Get-YLRegistryPayload -Contents $main } 'optional|reference|dependency|main'
     }
+    Case 'MainWithoutSdkExcludesOnlyAdapter and refuses extra files under the approved adapter subtree' {
+        $main = [Collections.Generic.Dictionary[string, byte[]]]::new([StringComparer]::Ordinal)
+        $mainRoot = Join-Path $repository 'PackageSources/com.kano.ylframework'
+        foreach ($file in @(Get-YLTestTreeFiles $mainRoot)) {
+            $relative = [IO.Path]::GetRelativePath($mainRoot, $file).Replace('\', '/')
+            if ($relative -cne '.gitattributes') { $main.Add($relative, [IO.File]::ReadAllBytes($file)) }
+        }
+        $payload = Get-YLRegistryPayload -Contents $main
+        $adapter = @($payload.assemblies | Where-Object name -CEQ 'YLFramework.Actions.DOTween')[0]
+        Check (($adapter.sources -join ',') -ceq 'Runtime/Systems/Action/Integration/DOTween/DOTweenAction.cs') 'The full adapter source must remain separately owned even when disabled.'
+        $runtime = @($payload.assemblies | Where-Object name -CEQ 'YLFramework.Runtime')[0]
+        Check (@($runtime.sources | Where-Object { $_ -match '/Integration/DOTween/' }).Count -eq 0) 'The conditional subtree entered the main Runtime.'
+        foreach ($name in @('Vendor.cs', 'DOTweenModuleUI.cs')) {
+            $path = 'Runtime/Systems/Action/Integration/DOTween/' + $name
+            Asset $main $path '// Unapproved vendor-shaped payload fixture.'
+            try { Reject { Get-YLRegistryPayload -Contents $main } 'Forbidden|unapproved|unauthorized' }
+            finally { $null = $main.Remove($path); $null = $main.Remove($path + '.meta') }
+        }
+    }
     Case 'Package discovery rejects an unlisted source directory instead of silently skipping it' {
         $sourceRoot = Join-Path $root 'PackageSources'; $null = [IO.Directory]::CreateDirectory($sourceRoot)
         $unknown = Join-Path $sourceRoot 'com.kano.ylframework.unknown'; $null = [IO.Directory]::CreateDirectory($unknown)
@@ -227,6 +255,15 @@ try {
     if (-not [IO.File]::Exists($contractSource)) { throw 'RED: the compiled package catalog/source-set contract is missing.' }
     $references = @([IO.Directory]::EnumerateFiles((Join-Path $PSHOME 'ref'), '*.dll')) + @([Newtonsoft.Json.Linq.JObject].Assembly.Location)
     Add-Type -Path $contractSource -ReferencedAssemblies $references -CompilerOptions @('/langversion:9.0', '/nowarn:1701')
+    foreach ($mode in @('Required', 'Absent', 'SdkOnly', 'DefineOnly')) {
+        Case "DOTween conditional plan independently records SDK mode $mode" {
+            $inputs = [Newtonsoft.Json.Linq.JArray]::Parse('[{"name":"com.kano.ylframework","version":"0.1.0-preview.1"}]')
+            $json = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $catalog -Depth 40))
+            $plan = [YLFramework.Testing.PackageCatalogContract]::Definitions($json, $inputs, 'DOTween', $mode)
+            $adapter = @($plan | Where-Object { [string]$_['name'] -ceq 'YLFramework.Actions.DOTween' })
+            Check ($adapter.Count -eq 1 -and [bool]$adapter[0]['enabled'].Value -eq ($mode -cin @('Required', 'DefineOnly'))) 'Only the explicit define, not SDK presence, may enable the adapter.'
+        }
+    }
     Case 'Compiled catalog cannot use an unknown macro to silently drop a required assembly' {
         $invalid = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $catalog -Depth 40))
         $invalid['packages'][0]['assemblies'][0]['defineConstraints'] = [Newtonsoft.Json.Linq.JArray]::new([object[]]@('NEVER_COMPILE_WITHOUT_A_PROFILE'))

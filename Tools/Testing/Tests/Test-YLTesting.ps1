@@ -237,6 +237,37 @@ try {
             Assert-That ([regex]::Matches($source, 'typeof\(YLFramework[.]Editor[.]StateMachine[.]FsmEditorWindow\)[.]Assembly[.]GetType').Count -eq 2) 'Both FSM factory lookups need their real Editor owner, not the Resource Editor assembly.'
             Assert-That ($module.description.Contains('Historical pre-split') -and $module.description.Contains('sourceCommit')) 'The historical producer must state its frozen source revision boundary.'
         }
+        Test-Case 'Quick excludes the disabled adapter from compilation but binds its complete product input' {
+            $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $tokens = $null; $errors = $null
+            $syntax = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'Tools/Testing/Invoke-YLTests.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'The maintained entry does not parse.'
+            $function = $syntax.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-SelectedSources' }, $true)
+            . ([scriptblock]::Create($function.Extent.Text))
+            $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
+            $adapter = 'PackageSources/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween/DOTweenAction.cs'
+            foreach ($module in @('Domain', 'Behavior')) {
+                $definition = @($configuration.modules | Where-Object name -CEQ $module)[0]
+                $selected = Get-SelectedSources
+                Assert-That ($selected.runtime -cnotcontains $adapter) "$module Quick unexpectedly compiles a disabled external-SDK adapter."
+                Assert-That ($selected.inputs -ccontains $adapter -and $selected.inputs -ccontains ($adapter + '.meta')) "$module must still hash the full product input."
+            }
+        }
+        Test-Case 'DOTween behavior has its own SDK-required module without adding SDK input to ordinary Action' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $modules = @($configuration.modules | Where-Object name -CEQ 'DOTween')
+            Assert-That ($modules.Count -eq 1) 'The original DOTween behavior tests have no native automation entry.'
+            $module = $modules[0]
+            Assert-That ($module.nativeSdk -ceq 'DOTween' -and ($module.packageInputs -join ',') -ceq 'com.kano.ylframework') 'The SDK module must install the main product, not the retired adapter package.'
+            Assert-That (($module.assemblies -join ',') -ceq 'YLFramework.Actions.DOTween.Tests.EditMode,YLFramework.Actions.DOTween.Tests.PlayMode') 'Both original test assemblies must be selected.'
+            $action = @($configuration.modules | Where-Object name -CEQ 'Action')[0]
+            Assert-That (-not $action.Contains('nativeSdk')) 'Ordinary Action must remain independent of SDK preparation.'
+            foreach ($side in @('EditMode', 'PlayMode')) {
+                $assembly = Read-YLPackageEvidenceJson (Join-Path $repoRoot "Assets/Tests/YLFramework/Integrations/DOTween/$side/YLFramework.Actions.DOTween.Tests.$side.asmdef")
+                Assert-That (($assembly.defineConstraints -join ',') -ceq 'DOTWEEN,UNITY_INCLUDE_TESTS' -and $assembly.versionDefines.Count -eq 0) 'The original tests must not silently disappear behind a retired package presence gate.'
+            }
+        }
         Test-Case 'Domain authoring tests declare Save without adding it to main-only modules' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')

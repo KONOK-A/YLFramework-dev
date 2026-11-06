@@ -290,8 +290,8 @@ namespace YLFramework.Testing
         $script:valid = $script:valid.Clone(); $script:valid.packageOrigin = $Origin; $script:valid.integration = $Integration
         $script:valid.Remove('gitRepository'); $script:valid.Remove('gitRevision')
         $script:valid.releaseManifestSha256 = 'c' * 64
-        $suffix = switch ($Integration) { HybridCLR { 'hybridclr' } DOTween { 'dotween' } default { 'excel' } }
-        $script:valid.entryPackage = 'com.kano.ylframework.' + $suffix
+        $suffix = switch ($Integration) { HybridCLR { 'hybridclr' } default { 'excel' } }
+        $script:valid.entryPackage = if ($Integration -ceq 'DOTween') { 'com.kano.ylframework' } else { 'com.kano.ylframework.' + $suffix }
         $script:valid.entryPackages = @($script:valid.entryPackage)
         if ($Integration -ceq 'ExcelGameplay') { $script:valid.entryPackages += 'com.kano.ylframework.gameplay' }
         $fields = Get-YLRegistryRequestFields -Source @{ packageOrigin = $Origin; registryUrl = 'https://package.openupm.com'; registryVersion = '0.1.0-preview.1'; release = @{ sha256 = ('c' * 64) } } -EntryPackage $script:valid.entryPackage -EntryPackages $script:valid.entryPackages
@@ -525,7 +525,7 @@ namespace YLFramework.Testing
     $negative = Boundary ValidateDotween @((Request), $empty, $empty, $selected, [string[]]@())
     Check ([string]$negative['status'] -ceq 'NegativeNoSdk' -and [string]$negative['mode'] -ceq 'Absent') 'DOTween Absent must not be reported as a positive SDK integration.'
     $borrowedAdapter = [UnityEditor.Compilation.Assembly]::new(); $borrowedAdapter.name = 'Ordinary'
-    $borrowedAdapter.sourceFiles = @('Packages/com.kano.ylframework.dotween/Runtime/Product.cs')
+    $borrowedAdapter.sourceFiles = @('Packages/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween/Product.cs')
     Reject { Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly)),
         [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Player) + @($borrowedAdapter))) } 'a non-product assembly cannot borrow disabled adapter sources'
     $wrapper = [UnityEditor.Compilation.Assembly]::new(); $wrapper.name = 'YLFramework.Actions.DOTween'
@@ -549,6 +549,21 @@ namespace YLFramework.Testing
     $sdkEditor = [UnityEditor.Compilation.Assembly[]]@($wrapper, $modules)
     $sdkReport = Boundary ValidateDotween @((Request), $sdkEditor, [UnityEditor.Compilation.Assembly[]]@($wrapper), $selected, [string[]]@('DOTWEEN'))
     Check ([string]$sdkReport['mode'] -ceq 'Required' -and [string]$sdkReport['sha256'] -ceq $valid.sdk.assemblySha256) 'Required mode lost the approved SDK binary identity checks.'
+    $valid.dotweenSdkMode = 'SdkOnly'
+    $valid.assemblies = @($valid.assemblies | Where-Object name -CNE 'YLFramework.Actions.DOTween')
+    $sdkOnly = Boundary ValidateDotween @((Request), [UnityEditor.Compilation.Assembly[]]@($modules), $empty, $selected, [string[]]@())
+    Check ([string]$sdkOnly['status'] -ceq 'NegativeAdapterDisabled' -and [bool]$sdkOnly['sdkDeployed'].Value -and
+        -not [bool]$sdkOnly['defineEnabled'].Value -and -not [bool]$sdkOnly['sdkEditorToolingEnabled'].Value -and -not [bool]$sdkOnly['wrapperCompiled'].Value) 'SdkWithoutDefineDoesNotEnableAdapter must remain a negative integration result.'
+    $modules.compiledAssemblyReferences = @('Assets/Plugins/Demigiant/DOTween/Editor/DOTweenEditor.dll')
+    Reject { Boundary ValidateDotween @((Request), [UnityEditor.Compilation.Assembly[]]@($modules), $empty, $selected, [string[]]@()) } 'SdkOnly refuses vendor auto-setup tooling references'
+    $modules.compiledAssemblyReferences = @()
+    Reject { Boundary ValidateDotween @((Request), $sdkEditor, $empty, $selected, [string[]]@()) } 'SdkOnly refuses an Editor wrapper'
+    Reject { Boundary ValidateDotween @((Request), [UnityEditor.Compilation.Assembly[]]@($modules), [UnityEditor.Compilation.Assembly[]]@($wrapper), $selected, [string[]]@()) } 'SdkOnly refuses a Player wrapper'
+    Reject { Boundary ValidateDotween @((Request), [UnityEditor.Compilation.Assembly[]]@($modules), $empty, $selected, [string[]]@('DOTWEEN')) } 'SdkOnly refuses a global define'
+    $valid.dotweenSdkMode = 'DefineOnly'
+    Reject { Boundary ValidateDotween @((Request), $empty, $empty, $selected, [string[]]@('DOTWEEN')) } 'MissingSdkIsNotPositiveIntegration'
+    $valid.Remove('dotweenSdkMode')
+    $valid.assemblies = @(Get-YLPackageAssemblyPlan -Catalog $fixtureCatalog -Packages $valid.packages -Profile DOTween -DOTweenSdkMode Required -MetadataOnly | Where-Object enabled)
     $null = Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($modules, $entryAssembly)), [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)); $checks++
     $engineEditor = [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($modules, $entryAssembly))
     $enginePlayer = [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)

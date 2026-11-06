@@ -775,6 +775,51 @@
       "sampleInputs": []
     },
     {
+      "name": "DOTween",
+      "category": "",
+      "assemblies": ["YLFramework.Actions.DOTween.Tests.EditMode", "YLFramework.Actions.DOTween.Tests.PlayMode"],
+      "nativeLayout": "Framework",
+      "nativeSdk": "DOTween",
+      "graphics": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Original DOTween Action API and true PlayMode ownership, cancellation, pooling and Unity synchronization-context contracts with an explicitly approved external Standard SDK.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared"],
+      "editTests": ["Assets/Tests/YLFramework/Integrations/DOTween/EditMode"],
+      "playTests": ["Assets/Tests/YLFramework/Integrations/DOTween/PlayMode"],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/Integrations/DOTween/EditMode/YLFramework.Actions.DOTween.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/Integrations/DOTween/PlayMode/YLFramework.Actions.DOTween.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ActionHelp",
+      "category": "YL.Special.ActionHelp",
+      "modes": ["EditMode"],
+      "assemblies": [],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "The existing Action Help installation and ownership contract; not the full historical Help/XML suite.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Help/ApiHelpTests.cs"],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
       "name": "Action",
       "category": "",
       "assemblies": [

@@ -392,6 +392,7 @@ namespace YLFramework.Tests.Actions
         }
 
         [Test]
+        [Category("YL.Special.ActionHelp")]
         public void KnownIntegrationAndOwnershipBoundariesAreExplicit()
         {
             StringAssert.Contains("Interface 只返回当前 ActionKit 模块实例", Topic("lifecycle").SearchText);
@@ -401,7 +402,11 @@ namespace YLFramework.Tests.Actions
             StringAssert.Contains("父动作不会随它完成", Topic("screen").SearchText);
             StringAssert.Contains("子动作取消会取消父序列", Topic("sequence").SearchText);
             StringAssert.Contains("当前可选 DOTween 动作集成已可用", Topic("distribution").SearchText);
-            StringAssert.Contains("完整 Integrations/DOTween 文件夹", Topic("distribution").SearchText);
+            StringAssert.Contains("主包包含动作源码、组件、资源、编辑器帮助及 DOTween 自有条件适配", Topic("distribution").SearchText);
+            StringAssert.Contains("单独安装完整 Standard SDK 并启用 DOTWEEN", Topic("distribution").SearchText);
+            StringAssert.Contains("只有独立条件程序集引用 DOTween.dll", Topic("distribution").SearchText);
+            StringAssert.Contains("不再安装独立 DOTween 适配包", Topic("distribution").SearchText);
+            StringAssert.DoesNotContain("完整 Integrations/DOTween 文件夹", Topic("distribution").SearchText);
             StringAssert.DoesNotContain("未安装也未实现", Topic("distribution").SearchText);
             StringAssert.Contains("内建 Observable BCL 适配", Topic("distribution").SearchText);
             StringAssert.Contains("不再提供 Action 单文件替代安装", Topic("distribution").SearchText);

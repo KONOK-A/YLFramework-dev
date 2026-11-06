@@ -8,6 +8,7 @@ param(
     [string] $Unity,
     [string] $WorkspaceRoot = $env:YL_TEST_WORKSPACE,
     [string] $Selection,
+    [string] $DOTweenArchive,
     [ValidateRange(1, 86400)][int] $TimeoutSeconds = 600,
     [string] $Dotnet = (Get-Command dotnet -CommandType Application -TotalCount 1 -ErrorAction SilentlyContinue).Source,
     [string] $NUnitAssembly = (Join-Path $env:USERPROFILE '.nuget/packages/nunit/3.14.0/lib/net45/nunit.framework.dll'),
@@ -64,7 +65,11 @@ function Get-SelectedSources([switch] $Native, [object] $EditorProfile) {
         $path = Get-YLTestPath (Join-Path $repository $relative)
         $paths = if ([IO.Directory]::Exists($path)) { @(Get-YLTestTreeFiles $path) } else { @($path) }
         foreach ($file in $paths) {
-            if ($file.EndsWith('.cs', [StringComparison]::OrdinalIgnoreCase)) { $runtime.Add([IO.Path]::GetRelativePath($repository, $file).Replace('\', '/')) }
+            if ($file.EndsWith('.cs', [StringComparison]::OrdinalIgnoreCase)) {
+                $source = [IO.Path]::GetRelativePath($repository, $file).Replace('\', '/')
+                if (-not $Native -and $source.StartsWith('PackageSources/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween/', [StringComparison]::Ordinal)) { continue }
+                $runtime.Add($source)
+            }
         }
     }
     foreach ($folder in $folders) {
@@ -155,6 +160,9 @@ function Get-OfflineSelection([string] $Executable, [object] $InputIdentity) {
 }
 
 try {
+    if ($PSBoundParameters.ContainsKey('DOTweenArchive') -and ($Module -cne 'DOTween' -or $Suite -cne 'Daily' -or $Action -cnotin @('Run', 'Discover'))) {
+        throw 'DOTweenArchive is accepted only by the explicit Daily DOTween native module.'
+    }
     $configuration = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'TestSuites.json')) | ConvertFrom-Json -DateKind String
     if ($configuration.schemaVersion -ne 1) { throw 'Unsupported suite definition schema.' }
     if ($Action -ceq 'List') {
@@ -204,7 +212,7 @@ try {
             if ($Suite -ceq 'Daily' -or ($Suite -ceq 'Special' -and -not $dotnetProfile)) {
                 . (Join-Path $PSScriptRoot 'UnityHost.ps1')
                 Invoke-YLUnitySuite -Repository $repository -Definition $definition -EditorProfile $editor -Unity $Unity -WorkspaceRoot $root `
-                    -Action $Action -Suite $Suite -Module $Module -TimeoutSeconds $TimeoutSeconds -Selection $Selection -KeepArtifacts ([bool]$KeepArtifacts) -Summary $summary
+                    -Action $Action -Suite $Suite -Module $Module -TimeoutSeconds $TimeoutSeconds -Selection $Selection -DOTweenArchive $DOTweenArchive -KeepArtifacts ([bool]$KeepArtifacts) -Summary $summary
                 $exitCode = 0
             } else {
             $Dotnet = Get-YLTestPath -Path $Dotnet -ReadOnly

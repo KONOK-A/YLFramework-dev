@@ -3,7 +3,7 @@ MIT License
 Copyright (c) 2026 KONOK-A
 
 Maintained by Kano. The MIT terms below cover YLFramework adapter code in this
-package, not the independently installed DOTween SDK. The framework's inherited
+directory, not the independently installed DOTween SDK. The framework's inherited
 source-origin credits are retained below; they do not imply that every credited
 component is copied into this adapter.
 
@@ -46,8 +46,8 @@ SOFTWARE.
   product's decision not to redistribute the SDK, not a vendor-wide prohibition
   on unchanged Standard redistribution.
 - Main-package dependencies and their notices remain in the
-  [main package license](../com.kano.ylframework/LICENSE.md). MiniExcel is not an
+  [main package license](../../../../../LICENSE.md). MiniExcel is not an
   adapter dependency. Unity APIs remain subject to Unity's terms.
 
-Sibling-package links use the repository layout; installed package notices must
-be opened from the selected package's actual resolved directory.
+Relative links use the main package layout; installed notices can be opened from
+the package's actual resolved directory.

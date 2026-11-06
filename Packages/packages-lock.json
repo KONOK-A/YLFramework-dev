@@ -107,14 +107,6 @@
         "com.kano.ylframework": "0.1.0-preview.1"
       }
     },
-    "com.kano.ylframework.dotween": {
-      "version": "file:../PackageSources/com.kano.ylframework.dotween",
-      "depth": 0,
-      "source": "local",
-      "dependencies": {
-        "com.kano.ylframework": "0.1.0-preview.1"
-      }
-    },
     "com.kano.ylframework.excel": {
       "version": "file:../PackageSources/com.kano.ylframework.excel",
       "depth": 0,

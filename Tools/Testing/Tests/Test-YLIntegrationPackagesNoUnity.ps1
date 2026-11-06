@@ -28,7 +28,7 @@ try {
     foreach ($name in @('DOTween', 'Excel', 'ExcelGameplay', 'HybridCLR')) {
         $definition = Get-YLIntegrationDefinition $name
         if ($definition.id -cne @{
-            DOTween = 'com.kano.ylframework.dotween'; Excel = 'com.kano.ylframework.excel'
+            DOTween = 'com.kano.ylframework'; Excel = 'com.kano.ylframework.excel'
             ExcelGameplay = 'com.kano.ylframework.excel'; HybridCLR = 'com.kano.ylframework.hybridclr'
         }[$name] -or $definition.assemblies.Count -lt 3) { throw 'The selected integration lost its mandatory compilation closure.' }
         $roots = @($definition.id); if ($name -ceq 'ExcelGameplay') { $roots += 'com.kano.ylframework.gameplay' }

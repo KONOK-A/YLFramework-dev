@@ -48,7 +48,7 @@ foreach ($relative in @('Packages/manifest.json', 'Packages/packages-lock.json')
     foreach ($name in $manifest['dependencies'].Keys) { if (-not $approved.Contains($name)) { throw "An actual source dependency is not explicitly approved: $name" } }
     $checks++
 }
-foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.localization', 'com.kano.ylframework.save', 'com.kano.ylframework.state-machine', 'com.kano.ylframework.movement2d', 'com.kano.ylframework.gameplay', 'com.kano.ylframework.dotween', 'com.kano.ylframework.excel', 'com.kano.ylframework.hybridclr')) {
+foreach ($id in @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.localization', 'com.kano.ylframework.save', 'com.kano.ylframework.state-machine', 'com.kano.ylframework.movement2d', 'com.kano.ylframework.gameplay', 'com.kano.ylframework.excel', 'com.kano.ylframework.hybridclr')) {
     if (-not $approved.Contains($id)) { throw "An owned package is not explicitly approved: $id" }; $checks++
 }
 if ($boundary.Contains('PackageTestPaths.Physical("Packages/manifest.json")') -or $boundary.Contains('path.StartsWith("Assets/YLFramework/"')) { throw 'The project manifest or scene still uses the obsolete package boundary.' }; $checks++

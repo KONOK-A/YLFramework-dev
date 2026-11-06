@@ -191,6 +191,7 @@ namespace YLFramework.Testing
                 }
                 report["status"] = "Completed";
                 if (integration == "DOTween" && (string)request["dotweenSdkMode"] == "Absent") { report["status"] = "NegativeNoSdk"; }
+                if (integration == "DOTween" && (string)request["dotweenSdkMode"] == "SdkOnly") { report["status"] = "NegativeAdapterDisabled"; }
                 WriteReport(request, report);
                 EditorApplication.Exit(0);
             }
@@ -239,6 +240,8 @@ namespace YLFramework.Testing
 
         private static JObject ValidateDotween(JObject request, CompiledAssembly[] editor, CompiledAssembly[] player, JObject[] selected, string[] global)
         {
+            string mode = (string)request["dotweenSdkMode"] ?? "Required";
+            if (mode == "DefineOnly") { throw new InvalidOperationException("DOTWEEN without its SDK cannot be a positive integration."); }
             if ((string)request["dotweenSdkMode"] == "Absent")
             {
                 if (global.Contains("DOTWEEN") || editor.Concat(player).Any(assembly => assembly.name == "YLFramework.Actions.DOTween" ||
@@ -248,15 +251,31 @@ namespace YLFramework.Testing
                 {
                     throw new InvalidOperationException("DOTween Absent refuses the wrapper, global DOTWEEN and any deployed SDK.");
                 }
-                return JObject.FromObject(new { mode = "Absent", status = "NegativeNoSdk", sdkDeployed = false, wrapperCompiled = false });
+                return JObject.FromObject(new { mode = "Absent", status = "NegativeNoSdk", sdkDeployed = false, defineEnabled = false, sdkEditorToolingEnabled = false, wrapperCompiled = false });
             }
-            var adapter = editor.Single(assembly => assembly.name == "YLFramework.Actions.DOTween");
-            string dll = adapter.compiledAssemblyReferences.Single(path => Path.GetFileName(path) == "DOTween.dll");
-            if (!global.Contains("DOTWEEN") || !adapter.defines.Contains("DOTWEEN") ||
-                !string.Equals(Path.GetFullPath(dll), Path.GetFullPath(Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween/DOTween.dll")), StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(Hash(dll), Text((JObject)request["sdk"], "assemblySha256"), StringComparison.OrdinalIgnoreCase))
+            string dll = Path.GetFullPath(Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween/DOTween.dll"));
+            if (!File.Exists(dll) || !string.Equals(Hash(dll), Text((JObject)request["sdk"], "assemblySha256"), StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidOperationException("DOTween must compile against the approved consumer SDK and the owned DOTWEEN setting.");
+                throw new InvalidOperationException("The deployed DOTween SDK must match its approved binary identity.");
+            }
+            if (mode == "SdkOnly")
+            {
+                if (global.Contains("DOTWEEN") || editor.Concat(player).Any(assembly => assembly.name == "YLFramework.Actions.DOTween") ||
+                    AppDomain.CurrentDomain.GetAssemblies().Any(assembly => new[] { "YLFramework.Actions.DOTween", "DOTweenEditor", "DOTweenUpgradeManager" }.Contains(assembly.GetName().Name)) ||
+                    editor.Concat(player).SelectMany(assembly => assembly.compiledAssemblyReferences).Any(path => new[] { "DOTweenEditor.dll", "DOTweenUpgradeManager.dll" }.Contains(Path.GetFileName(path))))
+                {
+                    throw new InvalidOperationException("SdkOnly refuses DOTWEEN or any compiled/loaded adapter.");
+                }
+            }
+            else
+            {
+                var adapter = editor.Single(assembly => assembly.name == "YLFramework.Actions.DOTween");
+                string reference = adapter.compiledAssemblyReferences.Single(path => Path.GetFileName(path) == "DOTween.dll");
+                if (!global.Contains("DOTWEEN") || !adapter.defines.Contains("DOTWEEN") ||
+                    !string.Equals(Path.GetFullPath(reference), dll, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("DOTween must compile against the approved consumer SDK and the owned DOTWEEN setting.");
+                }
             }
             string modules = Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween/Modules");
             var sdkSources = Files(modules).Where(path => path.EndsWith(".cs", StringComparison.Ordinal)).Select(Path.GetFullPath).ToArray();
@@ -265,7 +284,8 @@ namespace YLFramework.Testing
             {
                 throw new InvalidOperationException("The complete SDK Modules did not enter actual compilation: " + string.Join(",", sdkSources.Where(path => !compiled.Contains(path))));
             }
-            return JObject.FromObject(new { mode = "Required", version = Text((JObject)request["sdk"], "version"), dll, sha256 = Hash(dll), modules = sdkSources });
+            return JObject.FromObject(new { mode, status = mode == "SdkOnly" ? "NegativeAdapterDisabled" : "Completed", sdkDeployed = true,
+                defineEnabled = mode == "Required", sdkEditorToolingEnabled = mode == "Required", wrapperCompiled = mode == "Required", version = Text((JObject)request["sdk"], "version"), dll, sha256 = Hash(dll), modules = sdkSources });
         }
 
         private static void ValidateGraph(JObject request, CompiledAssembly[] editor, CompiledAssembly[] player)
@@ -418,7 +438,7 @@ namespace YLFramework.Testing
                 int length = stream.Read(prefix, 0, prefix.Length);
                 if (Encoding.UTF8.GetString(prefix, 0, length).StartsWith("version https://git-lfs.github.com/spec/v1", StringComparison.Ordinal) ||
                     (relative.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) &&
-                        (length < 2 || prefix[0] != 77 || prefix[1] != 90 || name == "com.kano.ylframework.dotween" || name == "com.kano.ylframework.hybridclr")))
+                        (length < 2 || prefix[0] != 77 || prefix[1] != 90 || name == "com.kano.ylframework.hybridclr")))
                 {
                     throw new InvalidOperationException("Unmaterialized LFS or unapproved installed package binary: " + relative);
                 }
@@ -883,7 +903,7 @@ namespace YLFramework.Testing
             bool git = Text(request, "packageOrigin") == "GitRemote";
             if (Artifact(request)) { ValidateArtifactRequest(request); }
             if ((request["dotweenSdkMode"] != null && request["dotweenSdkMode"].Type != JTokenType.Null &&
-                    !new[] { "Required", "Absent" }.Contains(Text(request, "dotweenSdkMode"))) ||
+                    !new[] { "Required", "Absent", "SdkOnly", "DefineOnly" }.Contains(Text(request, "dotweenSdkMode"))) ||
                 (request.Property("dotweenSdkMode") != null && Text(request, "integration") != "DOTween"))
             {
                 throw new InvalidOperationException("Invalid explicit DOTween SDK mode.");
@@ -935,7 +955,7 @@ namespace YLFramework.Testing
             string entryPackage = Text(request, "entryPackage");
             string profileEntry = Text(request, "integration") switch
             {
-                "DOTween" => "com.kano.ylframework.dotween", "Excel" => "com.kano.ylframework.excel",
+                "DOTween" => "com.kano.ylframework", "Excel" => "com.kano.ylframework.excel",
                 "ExcelGameplay" => "com.kano.ylframework.excel", "HybridCLR" => "com.kano.ylframework.hybridclr", _ => entryPackage
             };
             if (!known.Contains(entryPackage) || entryPackage != profileEntry || packages.Any(token => token is not JObject) ||

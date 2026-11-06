@@ -248,7 +248,7 @@ namespace YLFramework.Editor.Actions
                 "Deinit 立即标记 IsDeinitialized，Reset 立即恢复 NotStart 和非暂停状态；物理 Kill(false) 通过捕获的 UnitySynchronizationContext.Post 延后执行，包含 paused Tween。" +
                 "待清理期间保留 pending marker，阻止其他动作重复认领；执行时复核实际主线程、active、原 marker 及其他 owner，仅清理仍 owned 的 Tween。" +
                 "OnFinish 仅 detach hooks，不 kill 已完成且 autoKill=false 的 Tween；source owner 负责该 Tween 之后的生命周期。",
-                "复制完整 Integrations/DOTween 文件夹；消费者 asmdef 引用 YLFramework.Runtime、YLFramework.Actions.DOTween " +
+                "主包已包含 Runtime/Systems/Action/Integration/DOTween 中的自有适配源码；消费者 asmdef 引用 YLFramework.Runtime、YLFramework.Actions.DOTween " +
                 "及实际 DG.Tweening.Tween 所在的 DOTween.dll。核心和 Observable-only 不要求此 DLL。当前核对版本为 1.2.825。" +
                 "必须传独立根 Tween 或 DG.Tweening.Sequence 本身，不能传 nested Sequence 的内部子 Tween：" +
                 "库没有公开 isSequenced 查询，且忽略子 Tween 的独立控制。YLFramework.Actions.Sequence 与 DG.Tweening.Sequence 不是同一类型。\n" +
@@ -417,15 +417,15 @@ namespace YLFramework.Editor.Actions
             new Topic("distribution", "框架内建与可选集成", "扩展与工具",
                 "通过正式 YLFramework 安装使用内建动作，并确认可选集成边界。",
                 "Action 与 Observable 内建于 YLFramework.Runtime，消费者 asmdef 引用该唯一 Runtime。" +
-                "通过 YLFramework > Toolkit > 导出框架包 使用既有框架导出流程；不再提供 Action 单文件替代安装。" +
-                "默认框架包包含动作源码、组件、资源及编辑器帮助，不包含 Tests 或可选 Integrations。" +
-                "DOTween 需要完整 Integrations/DOTween 文件夹及单独安装的 DOTween.dll。",
+                "使用正式 UPM 主包，不再提供 Action 单文件替代安装或旧框架导出菜单。" +
+                "主包包含动作源码、组件、资源、编辑器帮助及 DOTween 自有条件适配，不包含 Tests 或供应商 SDK。" +
+                "DOTween 仍需单独安装完整 Standard SDK 并启用 DOTWEEN；只有独立条件程序集引用 DOTween.dll。",
                 "沿用 YLFramework 的 UGUI 等既有依赖契约，不承诺零外部依赖；不要同时安装两份 Runtime。\n" +
                 "当前可选 DOTween 动作集成已可用，提供 DOTweenAction 与 ActionKitDOTweenExtension；" +
                 "消费者还需引用 YLFramework.Actions.DOTween 与实际 DOTween.dll。帮助仅索引已加载的精确可选程序集，不把供应商 API 当作 ActionKit API。" +
                 "内建 Observable BCL 适配提供 UniRxAction<T> 与 ActionKitUniRxExtension，不依赖第三方 UniRx SDK。" +
                 "导入另一工程后仍需检查目标平台编译及实际资源效果。",
-                "此页不需要运行时调用示例。请使用正式框架安装或框架包导出流程，按需另行引入可选 DOTween 源码及供应商依赖。",
+                "此页不需要运行时调用示例。请安装正式 UPM 主包，按需独立安装供应商 SDK 并完成 DOTWEEN Setup，不再安装独立 DOTween 适配包。",
                 "",
                 "ActionKit", "UniRxAction", "ActionKitUniRxExtension")
             {

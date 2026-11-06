@@ -103,7 +103,7 @@ namespace YLFramework.Testing
         {
             Validate(catalog);
             if (!new[] { "Package", "DOTween", "Excel", "ExcelGameplay", "HybridCLR", "OptionalAdapterFixture" }.Contains(profile) ||
-                (profile != "DOTween" && !string.IsNullOrEmpty(dotweenMode)) || (profile == "DOTween" && !new[] { "Required", "Absent" }.Contains(dotweenMode))) { throw Error("Unknown/ambiguous package smoke profile."); }
+                (profile != "DOTween" && !string.IsNullOrEmpty(dotweenMode)) || (profile == "DOTween" && !new[] { "Required", "Absent", "SdkOnly", "DefineOnly" }.Contains(dotweenMode))) { throw Error("Unknown/ambiguous package smoke profile."); }
             var declared = ((JArray)catalog["packages"]).Cast<JObject>().ToDictionary(row => Text(row, "id"), StringComparer.Ordinal);
             var versions = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var token in packages)
@@ -120,7 +120,7 @@ namespace YLFramework.Testing
                 foreach (var assembly in ((JArray)declared[Text(package, "name")]["assemblies"]).Cast<JObject>())
                 {
                     var defines = new HashSet<string>(StringComparer.Ordinal);
-                    if (profile == "DOTween" && dotweenMode == "Required") { defines.Add("DOTWEEN"); }
+                    if (profile == "DOTween" && (dotweenMode == "Required" || dotweenMode == "DefineOnly")) { defines.Add("DOTWEEN"); }
                     foreach (var version in ((JArray)assembly["versionDefines"]).Cast<JObject>())
                     {
                         if (versions.TryGetValue(Text(version, "name"), out string installed) &&
