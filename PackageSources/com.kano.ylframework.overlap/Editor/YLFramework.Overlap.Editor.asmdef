@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Overlap.Editor",
+    "rootNamespace": "YLFramework.Editor.Overlap",
+    "references": ["YLFramework.Overlap", "YLFramework.Editor"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -417,6 +417,68 @@ namespace YLFramework.Tests.Extensions.Behavior
             }
         }
 
+        [Test]
+        public void FrozenOverlapComponentsColdLoadWithOriginalGuidsFieldsAndEventsWithoutSaving()
+        {
+            const string Path = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblySplitV1/Content/Behavior/Components.prefab";
+            var source = File.ReadAllBytes(Path);
+            var metadata = File.ReadAllBytes(Path + ".meta");
+            using var hash = System.Security.Cryptography.SHA256.Create();
+            Assert.That(string.Concat(hash.ComputeHash(source).Select(value => value.ToString("x2"))),
+                Is.EqualTo("09f38cd34aa55364493ba389d7e8b55dd06d881e7614e9a2ecf4a29cd6c3e47e"));
+            Assert.That(AssetDatabase.AssetPathToGUID(Path), Is.EqualTo("73dab49f422e8304e846b6bf7838e329"));
+            var contents = PrefabUtility.LoadPrefabContents(Path);
+            try
+            {
+                Assert.That(contents.activeSelf, Is.False);
+                foreach (var child in contents.GetComponentsInChildren<Transform>(true))
+                {
+                    Assert.That(GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(child.gameObject), Is.Zero, child.name);
+                }
+                Assert.That(contents.GetComponentsInChildren<MonoBehaviour>(true), Has.Length.EqualTo(6));
+                var area = contents.GetComponent<OverlapArea2D>();
+                var circle = contents.GetComponent<OverlapCircle2D>();
+                Assert.That(area, Is.Not.Null);
+                Assert.That(circle, Is.Not.Null);
+                Assert.That(area.GetType().Assembly.GetName().Name, Is.EqualTo("YLFramework.Overlap"));
+                Assert.That(circle.GetType().Assembly, Is.SameAs(area.GetType().Assembly));
+                Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(area))),
+                    Is.EqualTo("3cb3192915845724e936d6ba3e5d692f"));
+                Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(circle))),
+                    Is.EqualTo("c08500f745b47234a8b6ef0ff49d0dce"));
+                var target = contents.transform.Find("Target2D");
+                Assert.That(target, Is.Not.Null);
+                Assert.That(area.Mode, Is.EqualTo(OverlapAreaMode.Transform));
+                Assert.That(area.LayerMask.value, Is.EqualTo(55));
+                Assert.That(area.Positions, Is.Empty);
+                Assert.That(area.Transforms, Is.EqualTo(new[] { target }));
+                Assert.That(area.results, Has.Count.EqualTo(1));
+                Assert.That(area.results[0].collider, Is.SameAs(target.GetComponent<BoxCollider2D>()));
+                Assert.That(area.results[0].point, Is.EqualTo(new Vector2(2, 3)));
+                Assert.That(circle.LayerMask.value, Is.EqualTo(1));
+                Assert.That(circle.Radius, Is.EqualTo(2f));
+                Assert.That(circle.results, Is.Empty);
+                foreach (var query in new OverlapBase2D[] { area, circle })
+                {
+                    Assert.That(query.DetectionNumber, Is.EqualTo(10f));
+                    Assert.That(query.UpdateMode, Is.EqualTo(OverlapUpdateMode.Normal));
+                    using var serialized = new SerializedObject(query);
+                    Assert.That(serialized.FindProperty("runOnAwake").boolValue, Is.True);
+                    Assert.That(query.onColliderEnter, Is.Not.Null);
+                    Assert.That(query.onColliderExit, Is.Not.Null);
+                    // 冻结输入中的两个事件均为空，不能为本次回归重采或补造持久回调。
+                    Assert.That(query.onColliderEnter.GetPersistentEventCount(), Is.Zero);
+                    Assert.That(query.onColliderExit.GetPersistentEventCount(), Is.Zero);
+                }
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+                CollectionAssert.AreEqual(source, File.ReadAllBytes(Path));
+                CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Path + ".meta"));
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void LegacyYlStateMachineYamlRetainsLayersScriptsGroupsAndAutomaticPolicy(bool automatic)

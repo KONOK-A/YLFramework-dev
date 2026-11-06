@@ -10,10 +10,24 @@ namespace YLFramework.Tests.Extensions.Behavior
     public class OverlapOfflineTests
     {
         private static string Root => Environment.GetEnvironmentVariable("YL_BEHAVIOR_ROOT") ?? Directory.GetCurrentDirectory();
-        private static string Runtime => Path.Combine(global::YLFramework.Testing.PackageTestPaths.MainSourceRoot(Root), "Runtime/Utilities/Overlap");
+        private static string Runtime
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework.overlap/Runtime/Utilities/Overlap");
+#else
+                return Path.Combine(Root, "PackageSources/com.kano.ylframework.overlap/Runtime/Utilities/Overlap");
+#endif
+            }
+        }
 
         private static object NewCycle()
         {
+#if !UNITY_EDITOR
+            // A reflection-only slice has no IL type reference to load the compiled production assembly implicitly.
+            Assembly.Load("YLFramework.Runtime");
+#endif
             var type = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("YLFramework.Overlap.OverlapQueryCycle")).FirstOrDefault(t => t != null);
             Assert.That(type, Is.Not.Null, "The managed reentry/lifecycle guard is missing.");
             return Activator.CreateInstance(type, true);
@@ -21,6 +35,29 @@ namespace YLFramework.Tests.Extensions.Behavior
 
         private static object Call(object cycle, string method, params object[] arguments) =>
             cycle.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).Invoke(cycle, arguments);
+
+#if UNITY_EDITOR
+        [Test]
+        public void Legacy3DAndSerializedComponentsUnchanged_HaveOneIndependentRuntimeOwner()
+        {
+            Assert.That(typeof(global::YLFramework.Overlap.OverlapCircle2D).Assembly.GetName().Name, Is.EqualTo("YLFramework.Overlap"));
+            Assert.That(typeof(global::YLFramework.Overlap.OverlapBox3D).Assembly, Is.SameAs(typeof(global::YLFramework.Overlap.OverlapSphere3D).Assembly));
+            Assert.That(typeof(global::YLFramework.Overlap.OverlapBox3D).Assembly.GetName().Name, Is.EqualTo("YLFramework.Overlap"));
+        }
+
+        [Test]
+        public void OriginalComponentAndInspectorGuidsHaveIndependentRuntimeAndEditorOwners()
+        {
+            const string Root = "Packages/com.kano.ylframework.overlap/";
+            Assert.That(typeof(global::YLFramework.Editor.Overlap.OverlapArea2DInspector).Assembly.GetName().Name,
+                Is.EqualTo("YLFramework.Overlap.Editor"));
+            Assert.That(UnityEditor.AssetDatabase.AssetPathToGUID(Root + "Runtime/Utilities/Overlap/OverlapCircle2D.cs"), Is.EqualTo("c08500f745b47234a8b6ef0ff49d0dce"));
+            Assert.That(UnityEditor.AssetDatabase.AssetPathToGUID(Root + "Editor/Utilities/Overlap/OverlapArea2DInspector.cs"), Is.EqualTo("eb43a55cda803a04f983f8861a47ee99"));
+            string definition = UnityEditor.Compilation.CompilationPipeline.GetAssemblyDefinitionFilePathFromScriptPath(Root + "Editor/Utilities/Overlap/OverlapArea2DInspector.cs");
+            Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(definition)), Does.Contain("YLFramework.Overlap.Editor"));
+            Assert.That(UnityEditor.AssetDatabase.AssetPathToGUID("Packages/com.kano.ylframework/Runtime/Utilities/Overlap/OverlapCircle2D.cs"), Is.Empty);
+        }
+#endif
 
         [Test]
         public void SameCycleRejectsRecursiveQueriesButAnotherInstanceCanQuery()

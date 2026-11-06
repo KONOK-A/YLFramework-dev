@@ -87,6 +87,8 @@ namespace YLFramework.Tests
             if (path == "Runtime/Utilities/CharacterController2D" || path == "Runtime/Utilities/MoveablePlatform" ||
                 path == "Editor/Utilities/CharacterController2D" || path == "Editor/Utilities/MoveablePlatform")
                 return "Packages/com.kano.ylframework.movement2d/" + path;
+            if (path == "Runtime/Utilities/Overlap" || path == "Editor/Utilities/Overlap")
+                return "Packages/com.kano.ylframework.overlap/" + path;
             return PackageRoot + path;
         }
     }

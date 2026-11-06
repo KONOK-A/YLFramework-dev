@@ -89,6 +89,37 @@
       "samples": []
     },
     {
+      "id": "com.kano.ylframework.overlap",
+      "assemblies": [
+        { "name": "YLFramework.Overlap", "path": "Runtime/YLFramework.Overlap.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Overlap.Editor", "path": "Editor/YLFramework.Overlap.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": [
+        "Runtime/Utilities/Overlap.meta",
+        "Runtime/Utilities/Overlap/OverlapArea2D.cs", "Runtime/Utilities/Overlap/OverlapArea2D.cs.meta",
+        "Runtime/Utilities/Overlap/OverlapBase.cs", "Runtime/Utilities/Overlap/OverlapBase.cs.meta",
+        "Runtime/Utilities/Overlap/OverlapBase2D.cs", "Runtime/Utilities/Overlap/OverlapBase2D.cs.meta",
+        "Runtime/Utilities/Overlap/OverlapBase3D.cs", "Runtime/Utilities/Overlap/OverlapBase3D.cs.meta",
+        "Runtime/Utilities/Overlap/OverlapBox2D.cs", "Runtime/Utilities/Overlap/OverlapBox2D.cs.meta",
+        "Runtime/Utilities/Overlap/OverlapBox3D.cs", "Runtime/Utilities/Overlap/OverlapBox3D.cs.meta",
+        "Runtime/Utilities/Overlap/OverlapCapsule2D.cs", "Runtime/Utilities/Overlap/OverlapCapsule2D.cs.meta",
+        "Runtime/Utilities/Overlap/OverlapCircle2D.cs", "Runtime/Utilities/Overlap/OverlapCircle2D.cs.meta",
+        "Runtime/Utilities/Overlap/OverlapPoint2D.cs", "Runtime/Utilities/Overlap/OverlapPoint2D.cs.meta",
+        "Runtime/Utilities/Overlap/OverlapQueryCycle.cs", "Runtime/Utilities/Overlap/OverlapQueryCycle.cs.meta",
+        "Runtime/Utilities/Overlap/OverlapSphere3D.cs", "Runtime/Utilities/Overlap/OverlapSphere3D.cs.meta",
+        "Editor/Utilities/Overlap.meta",
+        "Editor/Utilities/Overlap/OverlapArea2DInspector.cs", "Editor/Utilities/Overlap/OverlapArea2DInspector.cs.meta",
+        "Editor/Utilities/Overlap/OverlapBase2DInspector.cs", "Editor/Utilities/Overlap/OverlapBase2DInspector.cs.meta",
+        "Editor/Utilities/Overlap/OverlapBase3DInspector.cs", "Editor/Utilities/Overlap/OverlapBase3DInspector.cs.meta",
+        "Editor/Utilities/Overlap/OverlapBox2DInspector.cs", "Editor/Utilities/Overlap/OverlapBox2DInspector.cs.meta",
+        "Editor/Utilities/Overlap/OverlapCapsule2DInspector.cs", "Editor/Utilities/Overlap/OverlapCapsule2DInspector.cs.meta",
+        "Editor/Utilities/Overlap/OverlapGizmos.cs", "Editor/Utilities/Overlap/OverlapGizmos.cs.meta",
+        "Runtime/OverlapEditorVisibility.cs", "Runtime/OverlapEditorVisibility.cs.meta",
+        "Editor/OverlapDetectorInspector.cs", "Editor/OverlapDetectorInspector.cs.meta"
+      ],
+      "samples": []
+    },
+    {
       "id": "com.kano.ylframework.state-machine",
       "assemblies": [
         { "name": "YLFramework.StateMachine", "path": "Runtime/YLFramework.StateMachine.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },

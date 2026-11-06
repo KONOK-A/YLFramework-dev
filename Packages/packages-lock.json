@@ -154,6 +154,16 @@
         "com.unity.modules.physics2d": "1.0.0"
       }
     },
+    "com.kano.ylframework.overlap": {
+      "version": "file:../PackageSources/com.kano.ylframework.overlap",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.kano.ylframework": "0.1.0-preview.1",
+        "com.unity.modules.physics": "1.0.0",
+        "com.unity.modules.physics2d": "1.0.0"
+      }
+    },
     "com.kano.ylframework.reddot": {
       "version": "file:../PackageSources/com.kano.ylframework.reddot",
       "depth": 0,

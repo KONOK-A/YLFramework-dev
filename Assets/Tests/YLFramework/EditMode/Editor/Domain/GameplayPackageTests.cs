@@ -101,7 +101,7 @@ namespace YLFramework.Tests
             var table = JsonUtility.FromJson<MoveTable>(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(
                 "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblyMoves.json")));
             var moves = table.moves.Where(move => move.package == "com.kano.ylframework.gameplay").ToArray();
-            Assert.That(table.moves, Has.Length.EqualTo(24));
+            Assert.That(table.moves, Has.Length.EqualTo(26));
             Assert.That(moves, Has.Length.EqualTo(4));
             foreach (var move in moves)
             {

@@ -42,6 +42,7 @@ function Get-YLDevelopmentHostInputs([string] $Repository) {
         'PackageSources/com.kano.ylframework.save/package.json',
         'PackageSources/com.kano.ylframework.state-machine/package.json',
         'PackageSources/com.kano.ylframework.movement2d/package.json',
+        'PackageSources/com.kano.ylframework.overlap/package.json',
         'PackageSources/com.kano.ylframework.gameplay/package.json',
         'PackageSources/com.kano.ylframework.reddot/package.json',
         'PackageSources/com.kano.ylframework.excel/package.json',

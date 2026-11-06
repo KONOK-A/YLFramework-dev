@@ -444,12 +444,131 @@
       "sampleInputs": []
     },
     {
+      "name": "Overlap",
+      "category": "YL.Module.Behavior",
+      "assemblies": [],
+      "nativeAssemblies": ["YLFramework.Overlap.Tests.EditMode", "YLFramework.Overlap.Tests.PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Main plus Overlap only. Quick compiles the original managed query-cycle guard; Daily retains the real 2D/3D shape, fixed-capacity, disable and reentry tests.",
+      "suites": ["Quick", "Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework.overlap/Runtime/Utilities/Overlap/OverlapQueryCycle.cs"],
+      "sourceEnvironment": ["YL_BEHAVIOR_ROOT"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Utilities/Overlap"],
+      "playTests": ["Assets/Tests/YLFramework/PlayMode/Utilities/Overlap"],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "PackageSources/com.kano.ylframework.overlap",
+        "PackageSources/com.kano.ylframework.overlap/Runtime/YLFramework.Overlap.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/Editor/YLFramework.Overlap.Editor.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Utilities/Overlap/YLFramework.Overlap.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/Utilities/Overlap/YLFramework.Overlap.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework.overlap"],
+      "sampleInputs": []
+    },
+    {
+      "name": "OverlapPlayer",
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "category": "",
+      "assemblies": [],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "excludedCategories": [],
+      "description": "Only main + overlap: authored prefab/scene, actual dual-PID Mono Players and native 2D/3D dense workload measurements. No Resource publication.",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "suites": ["Special"],
+      "specialBackend": "PlayerNative",
+      "specialModes": ["EditMode"],
+      "specialCategory": "YL.Special.OverlapPlayer",
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.overlap/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Overlap/Runtime"],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Overlap/Runtime", "Assets/Tests/YLFramework/Fixtures/Overlap/Editor"],
+      "editTests": ["Assets/Tests/YLFramework/Fixtures/Overlap/Editor"],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/Runtime/YLFramework.Overlap.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/Editor/YLFramework.Overlap.Editor.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Overlap/Runtime/YLFramework.Overlap.Acceptance.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Overlap/Editor/YLFramework.Overlap.Tests.Player.Editor.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework.overlap"],
+      "sampleInputs": []
+    },
+    {
+      "name": "OverlapMovement",
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "category": "",
+      "assemblies": ["YLFramework.Overlap.Movement.Tests"],
+      "modes": ["PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "excludedCategories": [],
+      "description": "Declared main + movement2d + overlap native coexistence: real motor/platform colliders and old/new 3D detectors. No historical Behavior acceptance entry.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.movement2d/Runtime", "PackageSources/com.kano.ylframework.overlap/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared"],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Overlap/IntegrationMovement"],
+      "editTests": [],
+      "playTests": ["Assets/Tests/YLFramework/Fixtures/Overlap/IntegrationMovement"],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "PackageSources/com.kano.ylframework.movement2d/Runtime/Utilities/CharacterController2D/YLFramework.Character2D.asmdef",
+        "PackageSources/com.kano.ylframework.movement2d/Runtime/Utilities/MoveablePlatform/YLFramework.Platform2D.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/Runtime/YLFramework.Overlap.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/Editor/YLFramework.Overlap.Editor.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Overlap/IntegrationMovement/YLFramework.Overlap.Movement.Tests.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework.movement2d", "com.kano.ylframework.overlap"],
+      "sampleInputs": []
+    },
+    {
+      "name": "OverlapEditor",
+      "shortHostKey": true,
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "category": "",
+      "assemblies": ["YLFramework.Overlap.Tests.EditMode"],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Overlap authoring and native Editor contracts, without a Player or unrelated features.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.overlap/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Utilities/Overlap"],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/Runtime/YLFramework.Overlap.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/Editor/YLFramework.Overlap.Editor.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Utilities/Overlap/YLFramework.Overlap.Tests.EditMode.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework.overlap"],
+      "sampleInputs": []
+    },
+    {
       "name": "Behavior",
       "category": "YL.Module.Behavior",
       "assemblies": [],
       "nativeAssemblies": [
         "YLFramework.Tests.EditMode",
-        "YLFramework.Tests.PlayMode"
+        "YLFramework.Tests.PlayMode",
+        "YLFramework.Overlap.Tests.EditMode",
+        "YLFramework.Overlap.Tests.PlayMode"
       ],
       "nativeLayout": "Framework",
       "graphics": true,
@@ -470,7 +589,8 @@
         "PackageSources/com.kano.ylframework/Runtime",
         "PackageSources/com.kano.ylframework.state-machine/Runtime",
         "PackageSources/com.kano.ylframework.movement2d/Runtime",
-        "PackageSources/com.kano.ylframework.reddot/Runtime"
+        "PackageSources/com.kano.ylframework.reddot/Runtime",
+        "PackageSources/com.kano.ylframework.overlap/Runtime"
       ],
       "sourceEnvironment": [
         "YL_BEHAVIOR_ROOT"
@@ -506,6 +626,11 @@
       ],
       "assemblyMetadata": [
         "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/package.json",
+        "PackageSources/com.kano.ylframework.overlap/Runtime/YLFramework.Overlap.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/Editor/YLFramework.Overlap.Editor.asmdef",
+        "Assets/Tests/YLFramework/EditMode/Utilities/Overlap/YLFramework.Overlap.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/Utilities/Overlap/YLFramework.Overlap.Tests.PlayMode.asmdef",
         "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
         "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
         "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"
@@ -514,7 +639,8 @@
         "com.kano.ylframework",
         "com.kano.ylframework.state-machine",
         "com.kano.ylframework.movement2d",
-        "com.kano.ylframework.reddot"
+        "com.kano.ylframework.reddot",
+        "com.kano.ylframework.overlap"
       ],
       "sampleInputs": []
     },
@@ -829,7 +955,8 @@
       ],
       "runtimeSources": [
         "PackageSources/com.kano.ylframework/Runtime",
-        "PackageSources/com.kano.ylframework.reddot/Runtime"
+        "PackageSources/com.kano.ylframework.reddot/Runtime",
+        "PackageSources/com.kano.ylframework.overlap/Runtime"
       ],
       "nativeSources": [],
       "editTests": [
@@ -839,6 +966,8 @@
       "assemblyMetadata": [
         "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
         "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/Runtime/YLFramework.Overlap.asmdef",
+        "PackageSources/com.kano.ylframework.overlap/Editor/YLFramework.Overlap.Editor.asmdef",
         "Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/YLFramework.MigrationFixtures.Tests.EditMode.asmdef"
       ],
       "packageInputs": [
@@ -847,7 +976,8 @@
         "com.kano.ylframework.state-machine",
         "com.kano.ylframework.movement2d",
         "com.kano.ylframework.gameplay",
-        "com.kano.ylframework.reddot"
+        "com.kano.ylframework.reddot",
+        "com.kano.ylframework.overlap"
       ],
       "sampleInputs": []
     },

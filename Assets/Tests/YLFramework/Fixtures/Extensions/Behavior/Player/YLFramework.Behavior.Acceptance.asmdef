@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Behavior.Acceptance",
     "rootNamespace": "YLFramework.Behavior.Acceptance",
-    "references": ["YLFramework.Runtime", "YLFramework.StateMachine", "YLFramework.Character2D", "YLFramework.Platform2D"],
+    "references": ["YLFramework.Runtime", "YLFramework.Overlap", "YLFramework.StateMachine", "YLFramework.Character2D", "YLFramework.Platform2D"],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
