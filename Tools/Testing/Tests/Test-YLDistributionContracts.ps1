@@ -27,7 +27,7 @@ function Invoke-UpmDistributionFixture {
         'Tools/Testing/Profiles/Unity2022/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.1"}}}'
         'Unity.exe' = 'editor-metadata-fixture'
     }
-    $ids = @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.dotween', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay', 'com.kano.ylframework.hybridclr')
+    $ids = @('com.kano.ylframework', 'com.kano.ylframework.data-assets', 'com.kano.ylframework.excel', 'com.kano.ylframework.gameplay', 'com.kano.ylframework.hybridclr')
     foreach ($id in $ids) {
         $dependencies = Get-YLFixtureInternalDependencies -PackageId $id -Version '0.1.0-preview.1'
         $dependencies['com.unity.nuget.newtonsoft-json'] = '3.2.1'

@@ -57,7 +57,13 @@ namespace YLFramework.Core.Tests
                 .Single(a => a.name == "YLFramework.Runtime");
             var files = System.IO.Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework/Runtime"), "*.cs", System.IO.SearchOption.AllDirectories)
                 .Select(p => p.Replace('\\', '/')).ToArray();
-            Assert.That(assembly.sourceFiles.Select(p => System.IO.Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(p)).Replace('\\', '/')), Is.EquivalentTo(files));
+            const string AdapterRoot = "Packages/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween";
+            string adapterRoot = global::YLFramework.Testing.PackageTestPaths.Physical(AdapterRoot).Replace('\\', '/') + "/";
+            var adapterFiles = files.Where(p => p.StartsWith(adapterRoot, System.StringComparison.Ordinal)).ToArray();
+            Assert.That(adapterFiles.Select(System.IO.Path.GetFileName), Is.EquivalentTo(new[] { "DOTweenAction.cs" }));
+            Assert.That(UnityEditor.AssetDatabase.AssetPathToGUID(AdapterRoot + "/YLFramework.Actions.DOTween.asmdef"),
+                Is.EqualTo("269cc8620fbed2b4daa22533cd8731d1"));
+            Assert.That(assembly.sourceFiles.Select(p => System.IO.Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(p)).Replace('\\', '/')), Is.EquivalentTo(files.Except(adapterFiles)));
             Assert.That(typeof(Module).Assembly, Is.SameAs(typeof(YLFramework.YLFrameworkRoot).Assembly));
             Assert.That(System.IO.Directory.GetDirectories(global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework/Runtime")).Select(System.IO.Path.GetFileName),
                 Is.EquivalentTo(new[] { "Foundation", "Core", "Systems", "Utilities" }));

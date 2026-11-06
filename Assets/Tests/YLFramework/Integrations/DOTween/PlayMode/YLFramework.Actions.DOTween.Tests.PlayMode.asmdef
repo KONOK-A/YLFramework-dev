@@ -18,15 +18,8 @@
   "autoReferenced": false,
   "defineConstraints": [
     "DOTWEEN",
-    "UNITY_INCLUDE_TESTS",
-    "YL_DOTWEEN_PACKAGE"
+    "UNITY_INCLUDE_TESTS"
   ],
-  "versionDefines": [
-    {
-      "expression": "0.1.0-preview.1",
-      "name": "com.kano.ylframework.dotween",
-      "define": "YL_DOTWEEN_PACKAGE"
-    }
-  ],
+  "versionDefines": [],
   "noEngineReferences": false
 }

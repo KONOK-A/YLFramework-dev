@@ -1,10 +1,10 @@
 {
     "optional": true,
-    "includedInMainPackage": false,
-    "packageId": "com.kano.ylframework.dotween",
+    "includedInMainPackage": true,
+    "packageId": "com.kano.ylframework",
     "version": "0.1.0-preview.1",
-    "requiredPackages": ["com.kano.ylframework"],
-    "gitInstallation": "Explicitly declare the main and adapter Git URLs at the same full validated SHA in the consuming project manifest.",
+    "requiredPackages": [],
+    "gitInstallation": "Install the main package at the validated full SHA. Its optional Action adapter still requires the independently supplied SDK and DOTWEEN define.",
     "define": "DOTWEEN",
     "requiredAssembly": "DOTween",
     "vendor": {
@@ -20,7 +20,7 @@
         "vendorRedistributionTerms": "Verbatim Standard source may be redistributed with original copyright notices, disclaimers and readme.txt; compiled form may accompany it. Modified versions and DOTween Pro follow their separate restrictions.",
         "installation": "Obtain the unchanged official Standard archive separately, including its Runtime Modules and original readme. Do not use DOTween Pro as a substitute."
     },
-    "wrapperLicense": "MIT; retain this package's LICENSE.md and its source attributions",
+    "wrapperLicense": "MIT; retain this directory's LICENSE.md and its source attributions",
     "wrapperLicenseFile": "LICENSE.md",
     "nativeOrPlayerAcceptance": false
 }

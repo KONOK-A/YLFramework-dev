@@ -15,7 +15,7 @@ ActionKit 是 Unity 动作编排模块：把回调、等待、条件、插值等
 
 ## 目录与依赖
 
-主体路径相对主包根（安装后为 `Packages/com.kano.ylframework/`），DOTween 为独立包：
+所有路径相对主包根（安装后为 `Packages/com.kano.ylframework/`）；DOTween保留独立条件程序集，但不单独发行：
 
 | 目录 | 职责 | 程序集 |
 |---|---|---|
@@ -23,11 +23,17 @@ ActionKit 是 Unity 动作编排模块：把回调、等待、条件、插值等
 | [`Runtime/Systems/Action/Observable/`](../../Runtime/Systems/Action/Observable/) | 内建 BCL `IObservable<T>` 适配，无 UniRx 包依赖 | 同上 |
 | [`Runtime/Systems/Action/Resources/`](../../Runtime/Systems/Action/Resources/) | 屏幕过渡 Prefab | 同上 |
 | [`Editor/Systems/Action/`](../../Editor/Systems/Action/) | 资源创建工具与 Help 提供方 | `YLFramework.Editor` |
-| [`com.kano.ylframework.dotween/Runtime/`](../../../com.kano.ylframework.dotween/Runtime/) | 可选 `Tween` 适配 | `YLFramework.Actions.DOTween` |
+| [`Runtime/Systems/Action/Integration/DOTween/`](../../Runtime/Systems/Action/Integration/DOTween/) | 可选`Tween`自有适配源码，不含SDK | `YLFramework.Actions.DOTween` |
 
 Runtime 内复用 ZipTool 与 `UnityEngine.UI`；普通 Editor 引用 Runtime、UI，Help 是同一 Editor 主体内的功能分区。二者不静态引用 DOTween wrapper 或供应商 DLL。Runtime / Editor 主体的 `autoReferenced` 为 true，ZipTool / Help 不单独生成产品 DLL；可选集成与测试保留各自约束。完整程序集契约见 [架构总览](../Architecture.md)。
 
-DOTween wrapper 使用 `YLFramework.Integrations.DOTween`，消费者按需添加 `using YLFramework.Integrations.DOTween;`，程序集名仍为 `YLFramework.Actions.DOTween`。它显式引用 Runtime + `DOTween.dll`，要求 `DOTWEEN`；SDK `1.2.825` 由应用独立安装并完成 Setup，例如位于包外 `Assets/Plugins/Demigiant/DOTween/DOTween.dll`，适配包不携带或下载 SDK。Git 安装须显式声明主包和 DOTween 适配包，详见[选装说明](../../../com.kano.ylframework.dotween/README.md)。供应商 Standard 许可允许满足原署名、免责声明和 readme 保留条件的原样再分发；不随适配包携带是本产品边界，不是供应商绝对禁止，Pro 与修改版另受其条款约束。
+### DOTween 可选适配
+
+DOTween wrapper使用`YLFramework.Integrations.DOTween`，消费者按需添加`using YLFramework.Integrations.DOTween;`，程序集名仍为`YLFramework.Actions.DOTween`，消费方asmdef显式引用它。它显式引用Runtime + `DOTween.dll`，要求`DOTWEEN`；SDK `1.2.825`由应用独立安装并完成Setup，例如位于包外`Assets/Plugins/Demigiant/DOTween/DOTween.dll`。主包只带MIT自有适配源码，不携带或下载SDK，主Runtime不引用供应商DLL；Git安装仅声明主包，无独立`.dotween`包。
+
+批准来源、完整Standard归档/程序集摘要及Modules前置见[Dependencies.json](../../Runtime/Systems/Action/Integration/DOTween/Dependencies.json)，自有适配的MIT与原署名见[集成许可](../../Runtime/Systems/Action/Integration/DOTween/LICENSE.md)，不覆盖主包许可。供应商Standard许可允许满足原署名、免责声明和readme保留条件的原样再分发；本产品不捆绑SDK不是供应商绝对禁止，Pro与修改版另受其条款约束。包升级/卸载不替换或删除应用独立安装的SDK、宏或用户数据。
+
+无SDK且无宏时仅适配程序集缺席，普通Action完整可用；有合格SDK且有宏时启用适配；有SDK但无宏仍不编译适配；有宏而缺SDK必须补齐前置，不能撤宏伪装正向通过。源码仓库的`Required`/`Absent`保留正向/无SDK阴性原义，另用`SdkOnly`记录SDK已投放但宏关闭的阴性结果、`DefineOnly`记录启动Unity之前拒绝的前置不足。编译图和真实Player是不同证据。
 
 <a id="core-concepts"></a>
 
@@ -154,7 +160,7 @@ private void OnDisable() => _background.Cancel();
 - 提供方 namespace `YLFramework.Editor.Actions`，稳定注册 id `actionkit`；factory 惰性构建只读内容，API 文档不会执行 demo。公共菜单 `YLFramework/帮助`。
 - API 筛选所属 namespace 的精确或点分边界，包含内建 Observable 及可用 DOTween 类型，不展示整个共享 Runtime。只有 DOTween 指南保留可选程序集门控。
 - XML 来自唯一 [`Runtime/csc.rsp`](../../Runtime/csc.rsp) 的 `Library/YLFramework.Runtime.xml`；optional 使用 `Library/YLFramework.Actions.DOTween.xml`，按真实 Assembly 去重。XML 是构建产物，不随产品包交付。
-- Action 随主 UPM 包安装，DOTween 适配另行选装；旧框架导出菜单退役，不提供单文件导出或独立 Action 包，边界见 [文档首页](../README.md#帮助与包内容)。
+- Action和DOTween自有适配源码随主UPM包安装，SDK与宏由应用独立准备；旧框架导出菜单退役，不提供单文件导出或独立Action/DOTween包，边界见[文档首页](../README.md#帮助与包内容)。
 
 ## 历史说明
 

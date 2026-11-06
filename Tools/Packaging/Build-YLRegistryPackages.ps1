@@ -129,11 +129,15 @@ function Get-YLRegistryPayload {
     $files = [Collections.Generic.SortedDictionary[string, object]]::new([StringComparer]::Ordinal)
     $guids = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
     $directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $dotweenPrefix = 'Runtime/Systems/Action/Integration/DOTween/'
+    $dotweenFiles = @('DOTweenAction.cs', 'YLFramework.Actions.DOTween.asmdef', 'csc.rsp', 'Dependencies.json', 'LICENSE.md') | ForEach-Object { $dotweenPrefix + $_ }
     foreach ($entry in $Contents.GetEnumerator()) {
         $path = $entry.Key; [byte[]]$bytes = $entry.Value
         Assert-YLRegistryRelativePath $path
         # Classify metadata by its owning asset, not as an unrelated allowed .meta file.
         $publishPath = if ($path.EndsWith('.meta', [StringComparison]::Ordinal)) { $path.Substring(0, $path.Length - 5) } else { $path }
+        if ($publishPath.StartsWith($dotweenPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+            ($id -cne 'com.kano.ylframework' -or $publishPath -cnotin $dotweenFiles)) { throw "Unapproved DOTween adapter subtree input: $id/$path" }
         if (-not $allowed.Contains($path.Split('/')[0]) -or
             $publishPath -match '^(?i:Assets|Packages|ProjectSettings|Library|Temp|obj|bin|Tests|Tools|Settings|Integrations)(?:/|$)' -or
             $publishPath -match '(?i)(?:^|/)(?:Tests|Library|Temp|obj|bin|node_modules|TestResults|SDK|Demigiant|HybridCLRData|AGENTS\.md|\.\w[^/]*|DOTween[^/]*\.dll|McpPlugin[^/]*\.dll|HybridCLR\.(?:Runtime|Editor)\.dll)(?:/|$)' -or

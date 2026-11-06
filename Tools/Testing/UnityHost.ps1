@@ -172,18 +172,28 @@ function Invoke-YLUnitySuite {
     param(
         [string] $Repository, [object] $Definition, [object] $EditorProfile,
         [string] $Unity, [string] $WorkspaceRoot, [string] $Action, [string] $Suite, [string] $Module,
-        [int] $TimeoutSeconds, [string] $Selection, [bool] $KeepArtifacts, [Collections.IDictionary] $Summary
+        [int] $TimeoutSeconds, [string] $Selection, [string] $DOTweenArchive, [bool] $KeepArtifacts, [Collections.IDictionary] $Summary
     )
     $sources = Get-SelectedSources -Native -EditorProfile $EditorProfile
     $sessionScene = 'prepareSessionScene' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSessionScene
     $desktop = $Suite -ceq 'Special' -and 'interactiveDesktop' -cin $Definition.PSObject.Properties.Name -and $Definition.interactiveDesktop
+    $dotween = 'nativeSdk' -cin $Definition.PSObject.Properties.Name
+    $nativeTools = @($Unity)
+    if ($dotween) {
+        if ($Definition.nativeSdk -isnot [string] -or $Definition.nativeSdk -cne 'DOTween' -or $Module -cne 'DOTween' -or
+            $Definition.nativeLayout -cne 'Framework' -or [string]::IsNullOrWhiteSpace($DOTweenArchive)) { throw 'PrerequisiteNotMet: DOTween native behavior requires its explicit approved Standard archive in the Framework module.' }
+        $DOTweenArchive = Get-YLTestPath -Path $DOTweenArchive -ReadOnly
+        $nativeTools += $DOTweenArchive
+    } elseif ($DOTweenArchive) { throw 'An ordinary native module cannot deploy a DOTween SDK.' }
     $profile = "Unity-$($EditorProfile.version)-UTF$($EditorProfile.testFramework)-UGUI$($EditorProfile.ugui)-$Suite-$($Definition.nativeLayout)-Graphics$($Definition.graphics)-IsolatedModes"
     if ($sessionScene) { $profile += '-SessionScenes' }
     if ($desktop) { $profile += '-Desktop' }
-    $identity = Get-YLTestInputIdentity -Repository $Repository -Paths $sources.inputs -Toolchain @($Unity) -Profile $profile
+    if ($dotween) { $profile += '-ApprovedDOTween-InitializeOnce' }
+    $identity = Get-YLTestInputIdentity -Repository $Repository -Paths $sources.inputs -Toolchain $nativeTools -Profile $profile
     $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $Repository
     $repositoryKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Repository.ToLowerInvariant()))).Substring(0, 12)
     $hostKey = "Unity-$($EditorProfile.version)-$Suite-$Module-$repositoryKey"
+    if ($dotween) { $hostKey += '-SdkInitializeOnce' }
     $hasSamples = 'sampleInputs' -cin $Definition.PSObject.Properties.Name -and @($Definition.sampleInputs).Count -gt 0
     if ($hasSamples) { $hostKey += '-Samples-' + $identity.sha256 }
     if ($sessionScene) { $hostKey += '-SessionScenes' }
@@ -214,6 +224,17 @@ function Invoke-YLUnitySuite {
             }
         }
         Assert-YLUnityHostIdle $hostRecord
+        $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key "$Action-$Suite-$Module-$($EditorProfile.version)"
+        $runLease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
+        $Summary['ownerId'] = $run.id
+        $Summary['summary'] = Join-Path $run.path 'summary.json'
+        $Summary['status'] = 'Failed'
+        if ($KeepArtifacts) { [IO.File]::WriteAllText((Join-Path $run.path '.pinned'), 'Explicit KeepArtifacts retention.') }
+        $sdk = $null
+        if ($dotween) {
+            $sdk = Get-YLIntegrationDotweenSdk -Repository $Repository -Archive $DOTweenArchive -OwnedSdkRoot (Join-Path $run.path 'ApprovedSdk')
+            $Summary['sdk'] = @{ mode = 'Required'; version = $sdk.version; archiveSha256 = $sdk.archiveSha256; assemblySha256 = $sdk.assemblySha256; sdkDeployed = $true; defineEnabled = $true }
+        }
         $ids = if ('packageInputs' -cin $Definition.PSObject.Properties.Name) { @($Definition.packageInputs) } else { @('com.kano.ylframework') }
         $productPackages = @(Get-YLUpmPackages -Repository $Repository -Ids $ids)
         $catalog = Read-YLPackageCatalog
@@ -274,13 +295,23 @@ function Invoke-YLUnitySuite {
             $manifest.dependencies[$package.id] = 'file:../' + $package.relative
         }
         $files['Packages/manifest.json'] = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Json -InputObject $manifest -Depth 8))
+        if ($dotween) {
+            foreach ($relative in $sdk.files.Keys) { $files['Assets/Plugins/Demigiant/DOTween/' + $relative] = [IO.File]::ReadAllBytes((Join-Path $sdk.root $relative)) }
+        }
         Sync-YLUnityHost -HostRecord $hostRecord -Files $files -Identity $identity -EditorVersion $EditorProfile.version
-        $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key "$Action-$Suite-$Module-$($EditorProfile.version)"
-        $runLease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
-        $Summary['ownerId'] = $run.id
-        $Summary['summary'] = Join-Path $run.path 'summary.json'
-        $Summary['status'] = 'Failed'
-        if ($KeepArtifacts) { [IO.File]::WriteAllText((Join-Path $run.path '.pinned'), 'Explicit KeepArtifacts retention.') }
+        if ($dotween) {
+            $settings = Get-YLHostManagedPath $hostRecord 'ProjectSettings/ProjectSettings.asset'
+            $created = -not [IO.File]::Exists($settings)
+            if ($created) {
+                # Initial settings become Unity-managed output, not a fixed source file to overwrite after every run.
+                $stream = [IO.File]::Open($settings, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+                try {
+                    $seed = [Text.Encoding]::UTF8.GetBytes("%YAML 1.1`n%TAG !u! tag:unity3d.com,2011:`n--- !u!129 &1`nPlayerSettings:`n  m_ObjectHideFlags: 0`n  serializedVersion: 26`n  scriptingDefineSymbols:`n    Standalone: DOTWEEN`n")
+                    $stream.Write($seed, 0, $seed.Length)
+                } finally { $stream.Dispose() }
+            }
+            $Summary['sdkInitialization'] = @{ settings = $settings; created = $created; lifecycle = 'InitializeOnceThenUnityManaged' }
+        }
 
         function Invoke-NativeOperation([string] $Operation, [object[]] $Tests = @(), [string] $Mode = '') {
             $output = Join-Path $run.path $(if ($Mode) { "$Operation-$Mode" } else { $Operation })
@@ -350,9 +381,9 @@ function Invoke-YLUnitySuite {
         }
         $discovered = Invoke-NativeOperation -Operation Discover
         $fresh = Get-SelectedSources -Native -EditorProfile $EditorProfile
-        $sourceRecheck = Get-YLTestInputIdentity -Repository $Repository -Paths $fresh.inputs -Toolchain @($Unity) -Profile $profile
+        $sourceRecheck = Get-YLTestInputIdentity -Repository $Repository -Paths $fresh.inputs -Toolchain $nativeTools -Profile $profile
         if ($sourceRecheck.sha256 -cne $identity.sha256) { throw 'Source inputs drifted during Unity discovery.' }
-        $toolFiles = @($Unity, (Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($discovered.response.compiledInputs)
+        $toolFiles = @($nativeTools) + @((Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($discovered.response.compiledInputs)
         $effective = Get-YLTestInputIdentity -Repository $Repository -Paths $fresh.inputs -Toolchain $toolFiles -Profile $profile
         $actualSelection = New-YLTestSelection -InputIdentity $effective -Tests $discovered.response.tests
         Assert-YLUnitySelectionModes -Selection $actualSelection -Definition $Definition -Suite $Suite
@@ -373,14 +404,18 @@ function Invoke-YLUnitySuite {
                 $execution = Invoke-NativeOperation -Operation Run -Tests $modeTests -Mode $mode
                 if ($execution.response.status -cne 'Passed') { throw 'Native execution was not an ordinary test pass.' }
                 $fresh = Get-SelectedSources -Native -EditorProfile $EditorProfile
-                $currentTools = @($Unity, (Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($execution.response.compiledInputs)
+                $currentTools = @($nativeTools) + @((Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($execution.response.compiledInputs)
                 $current = Get-YLTestInputIdentity -Repository $Repository -Paths $fresh.inputs -Toolchain $currentTools -Profile $profile
                 Read-YLTestXml -Path (Join-Path $execution.output "results-$mode.xml") -Selection $actualSelection -InputIdentity $current -Mode $mode -ProcessResult $execution.process
             })
             $total = ($modes | Measure-Object -Property total -Sum).Sum
             $Summary['testResult'] = [ordered]@{ status = 'Passed'; total = $total; passed = $total; failed = 0; skipped = 0; modes = @($modes) }
-            $Summary['status'] = 'Passed'
-        } else { $Summary['status'] = 'Completed' }
+        }
+        if ($dotween) {
+            $null = Get-YLIntegrationDotweenSdk -Repository $Repository -Archive $DOTweenArchive -OwnedSdkRoot $sdk.root
+            $null = Get-YLIntegrationDotweenSdk -Repository $Repository -Archive $DOTweenArchive -OwnedSdkRoot (Join-Path $hostRecord.path 'Assets/Plugins/Demigiant/DOTween')
+        }
+        $Summary['status'] = if ($Action -ceq 'Run') { 'Passed' } else { 'Completed' }
     } catch {
         $Summary['reason'] = $_.Exception.Message
         throw

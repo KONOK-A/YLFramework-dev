@@ -34,7 +34,7 @@ Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎�
 | Json.NET：`com.unity.nuget.newtonsoft-json` | 包声明 `3.2.1`，由 UPM 自动解析，不需手动拷 DLL；不可用同名替身 DLL 代替 |
 | `BouncyCastle.Cryptography 2.7.0` | netstandard2.0 DLL 与许可已随框架携带，用于 HKDF-SHA256；不要再导入冲突副本 |
 
-主包还显式声明所用Unity内置模块。默认产品不包含或要求可选宿主扩展、Odin、MCP、DOTween、MiniExcel或HybridCLR。选装功能与集成包独立交付，可选SDK只在实际安装对应集成时需要，不混入主包。
+主包还显式声明所用Unity内置模块。默认产品不包含或要求可选宿主扩展、Odin、MCP、DOTween SDK、MiniExcel或HybridCLR。DOTween自有适配源码位于主包Action的条件程序集，不要求安装SDK或启用宏；其他选装功能独立交付，可选SDK不混入主包。
 
 ### Registry 与自动依赖
 
@@ -60,7 +60,7 @@ Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎�
 | `com.kano.ylframework.gameplay` | 主包、Newtonsoft UPM | Skill/Buff/Mission/Equipment四Runtime与统一作者工具，不要求Excel |
 | `com.kano.ylframework.excel` | 主包、DataAssets | MiniExcel 与许可随 Excel 包携带 |
 | Excel Gameplay 条件适配 | 包含在Excel中，另安装Gameplay | 无独立DomainExcel包，不需要全局宏 |
-| `com.kano.ylframework.dotween` | 主包 | SDK 独立准备；无 SDK 的门控检查不是正向集成 |
+| DOTween 条件适配 | 随主包Action提供，不是独立UPM包 | SDK独立准备且启用`DOTWEEN`；无SDK或宏关闭的门控检查不是正向集成 |
 | `com.kano.ylframework.hybridclr` | 主包 | 额外添加窄 scope `com.code-philosophy.hybridclr`，官方 SDK `9.0.3` 间接解析，不随适配包捆绑 |
 
 不要把 `com.unity`、`com` 等宽 scope 指向 OpenUPM。HybridCLR 完整 manifest 见[适配包说明](../../com.kano.ylframework.hybridclr/README.md#registry-安装)。Registry 验收目标是标准版 `2022.3.62f3` 与 `6000.3.27f1`，与 China `2022.3.62f3c1` 和历史 native 专项分开。实际支持范围仍以对应源码、发布字节和回执为准。
@@ -82,7 +82,7 @@ Unity 不支持在 `package.json` 中声明 Git URL 传递依赖。自有包虽�
 | 选择的能力 | 必须显式声明的自有 Git 包 | 额外前置 |
 | --- | --- | --- |
 | 主包 | `com.kano.ylframework` | UGUI / Json.NET 等 Registry 依赖自动解析 |
-| DOTween | 主包 + `com.kano.ylframework.dotween` | 独立安装官方 DOTween Standard `1.2.825`，完成 SDK Setup 和 `DOTWEEN` |
+| DOTween | 仅主包 | 独立安装官方DOTween Standard `1.2.825`，完成SDK Setup和`DOTWEEN`；消费asmdef显式引用`YLFramework.Actions.DOTween` |
 | DataAssets | 主包 + `com.kano.ylframework.data-assets` | 不要求安装 Excel |
 | Localization | 主包 + `com.kano.ylframework.localization` | 不要求安装 DataAssets/Excel/TMP |
 | Save | 仅 `com.kano.ylframework.save` + Newtonsoft UPM | 不需要主包；若使用主包SerializedDictionary则消费方显式安装两者 |
@@ -162,7 +162,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 
 | 集成 | 使用边界 |
 | --- | --- |
-| DOTween | [`com.kano.ylframework.dotween`](../../com.kano.ylframework.dotween/README.md)，外部 DOTween.dll 与 `DOTWEEN`；[Action 接入](Modules/Action.md#扩展方式) |
+| DOTween | [主包Action条件适配](Modules/Action.md#dotween-可选适配)，外部`DOTween.dll`与`DOTWEEN`，不单独发行或默认下载SDK |
 | DataAssets | [`com.kano.ylframework.data-assets`](../../com.kano.ylframework.data-assets/README.md)，独立配置根、登记与Editor作者工具 |
 | Localization | [`com.kano.ylframework.localization`](../../com.kano.ylframework.localization/README.md)，独立语言根、显示绑定和Editor作者工具 |
 | Save | [`com.kano.ylframework.save`](../../com.kano.ylframework.save/README.md)，无主包安装依赖；[详细存储合同](Modules/Save.md) |

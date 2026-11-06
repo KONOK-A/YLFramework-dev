@@ -157,7 +157,7 @@ try {
         Check (-not [IO.Directory]::Exists($checkout)) 'The independent fixture checkout was not actually removed.'
     }
     Case 'Missing package is rejected' {
-        $path = Join-Path $sources 'com.kano.ylframework.dotween/package.json'
+        $path = Join-Path $sources 'com.kano.ylframework.excel/package.json'
         $moved = $path + '.saved'; [IO.File]::Move($path, $moved)
         try { Reject { Get-YLRegistryPackageSet -Root $sources } 'missing|manifest' } finally { [IO.File]::Move($moved, $path) }
     }

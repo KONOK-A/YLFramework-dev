@@ -516,7 +516,7 @@ namespace YLFramework.Testing
                     throw new InvalidOperationException("Unauthorized product package content: " + relative);
                 }
                 if (expected != null && (Regex.IsMatch(relative, @"(?:^|/)(?:DOTween[^/]*\.dll|HybridCLR[^/]*\.dll|dnlib\.dll|Demigiant)(?:/|$)", RegexOptions.IgnoreCase) ||
-                    (relative.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && new[] { "com.kano.ylframework.dotween", "com.kano.ylframework.hybridclr" }.Contains(Text(expected, "name")))))
+                    (relative.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && Text(expected, "name") == "com.kano.ylframework.hybridclr")))
                 {
                     throw new InvalidOperationException("An external SDK was bundled in an owned artifact.");
                 }

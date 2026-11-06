@@ -6,6 +6,7 @@
       "assemblies": [
         { "name": "YLFramework.Runtime", "path": "Runtime/YLFramework.Runtime.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
         { "name": "YLFramework.Editor", "path": "Editor/YLFramework.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Actions.DOTween", "path": "Runtime/Systems/Action/Integration/DOTween/YLFramework.Actions.DOTween.asmdef", "player": true, "defineConstraints": ["DOTWEEN"], "versionDefines": [] },
         { "name": "YLFramework.ResourceStartup.Sample", "path": "Samples~/ResourceStartup/Runtime/YLFramework.ResourceStartup.Sample.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
         { "name": "YLFramework.ResourceStartup.Sample.Editor", "path": "Samples~/ResourceStartup/Editor/YLFramework.ResourceStartup.Sample.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
       ],
@@ -13,6 +14,9 @@
         "Runtime/Core/Resources/YLFramework/Core/Canvas.prefab",
         "Runtime/Core/Resources/YLFramework/Core/EventSystem.prefab",
         "Runtime/Systems/Action/Resources/ActionKit/ScreenTransitionCanvas.prefab",
+        "Runtime/Systems/Action/Integration/DOTween/DOTweenAction.cs",
+        "Runtime/Systems/Action/Integration/DOTween/Dependencies.json",
+        "Runtime/Systems/Action/Integration/DOTween/LICENSE.md",
         "Prefabs/YLFramework.prefab",
         "Plugins/BouncyCastle/BouncyCastle.Cryptography.dll",
         "Plugins/BouncyCastle/SOURCE.txt",
@@ -29,14 +33,6 @@
         { "name": "YLFramework.DataAssets.Editor", "path": "Editor/YLFramework.DataAssets.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
       ],
       "requiredFiles": ["Runtime/Systems/DataAssets/ScriptableObjectConfigs.cs", "Runtime/Systems/DataAssets/ScriptableObjectData.cs", "Editor/Systems/DataAssets/ScriptableObjectConfigsController.cs"],
-      "samples": []
-    },
-    {
-      "id": "com.kano.ylframework.dotween",
-      "assemblies": [
-        { "name": "YLFramework.Actions.DOTween", "path": "Runtime/YLFramework.Actions.DOTween.asmdef", "player": true, "defineConstraints": ["DOTWEEN"], "versionDefines": [] }
-      ],
-      "requiredFiles": ["Dependencies.json", "Runtime/DOTweenAction.cs"],
       "samples": []
     },
     {

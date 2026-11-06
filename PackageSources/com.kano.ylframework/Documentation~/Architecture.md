@@ -12,7 +12,7 @@ YLFramework 按需交付与使用。主包有 `YLFramework.Runtime` 与 `YLFrame
 | --- | --- |
 | `Runtime` | Foundation、Core、Systems、Utilities 四个职责区，共用 Runtime 主体 |
 | `Editor` | 作者工具、公共支撑与 Help，共用 Editor-only 主体 |
-| 独立选装 UPM 包 | DataAssets、Localization、Save、StateMachine、Movement2D、Gameplay、DOTween、Excel、HybridCLR的可选边界；Excel内置条件Gameplay适配，Save可不安装主包 |
+| 独立选装 UPM 包 | DataAssets、Localization、Save、StateMachine、Movement2D、Gameplay、Excel、HybridCLR的可选边界；Excel内置条件Gameplay适配，Save可不安装主包；DOTween自有适配源码归主包Action条件程序集 |
 | `Prefabs`、`Samples~`、`Documentation~` | 正式模板、显式导入后才编译的接入样例、按文件路径打开的产品指南 |
 | `Plugins/BouncyCastle` | 随包的批准依赖及完整来源许可；不递归整个宿主 Plugins |
 | `Assets/Tests/YLFramework` | 源仓库测试与夹具，不在任何产品包内 |
@@ -34,7 +34,6 @@ PackageSources/
   com.kano.ylframework.localization/
   com.kano.ylframework.save/
   com.kano.ylframework.gameplay/    Runtime/{Skill,Buff,Mission,Equipment}/  Editor/
-  com.kano.ylframework.dotween/
   com.kano.ylframework.excel/
   com.kano.ylframework.hybridclr/  Samples~/HybridCLR/
 Assets/Tests/YLFramework/          # repository only
@@ -52,7 +51,7 @@ Assets/Tests/YLFramework/          # repository only
 | `YLFramework.StateMachine` / `.Editor` | true | Runtime引用主Runtime的Foundation；Editor引用自身Runtime与主Editor的包路径工具，轻量`YLFramework.FSM`仍属主包 |
 | `YLFramework.Character2D` / `YLFramework.Platform2D` | true | 同属movement2d安装单元，各只引用主Runtime，不互相引用；统一`YLFramework.Movement2D.Editor`只在Editor编译 |
 | `YLFramework.Skill` / `YLFramework.Buff` / `YLFramework.Mission` / `YLFramework.Equipment` | true | 同属Gameplay安装单元，各只引用主Runtime，不互相引用；Buff/Mission显式引用Newtonsoft，统一`YLFramework.Gameplay.Editor`拥有共享作者工具与原退出hooks |
-| `YLFramework.Actions.DOTween` | false | Runtime + 外部 DOTween.dll，受 `DOTWEEN` 约束 |
+| `YLFramework.Actions.DOTween` | false | 主包`Runtime/Systems/Action/Integration/DOTween`，引用Runtime + 外部DOTween.dll，受`DOTWEEN`约束；不单独发行、不捆绑SDK |
 | `YLFramework.Excel.Editor` | true | 主 Runtime/Editor、DataAssets Runtime/Editor、MiniExcel、Json.NET，仅 Editor |
 | `YLFramework.Domain.Excel.Editor` | true | 位于Excel/Editor/Gameplay；真实Gameplay包版本定义启用，依赖后端和四领域Runtime/Editor；通用Excel/Gameplay产品无互相依赖 |
 | `YLFramework.HybridCLR` / `.Editor` | false | 主体与声明的官方 HybridCLR SDK；dnlib 仅 Editor，主体不反向依赖 |

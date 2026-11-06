@@ -100,6 +100,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Excel | Daily | 显式安装现有可选适配与 MiniExcel，执行真实 XLSX、AssetDatabase 和预览合同；只声明 EditMode。 |
 | ExcelGameplay | Daily | Excel+Gameplay的显式组合，保原Domain.Excel.Tests与全部32领域列/旧XLSX/Undo协议；普通Excel模块不装Gameplay。 |
 | Action | Daily | Action / Observable 的真实取消、释放、池化复用、场景结束与屏幕过渡；共享依赖检查不借用其他测试类。 |
+| DOTween | Daily | 仅主包加显式批准的完整Standard SDK，执行原两个测试程序集及真实PlayMode上下文/所有权/取消/池化合同；用`-DOTweenArchive`指定归档，不要求普通Action安装SDK。 |
+| ActionHelp | Daily | 精确执行现有`KnownIntegrationAndOwnershipBoundariesAreExplicit` EditMode用例，验证主包条件适配/外置SDK/独立程序集文案；不是完整历史Help/XML套件。 |
 | Audio | Daily / Special | 日常 AudioKit / source / owner / 作者与资源生命周期；Special执行连续Play、authority/provider与无输出采样的Bundle会话，真实音频输出/DSP仍独立。 |
 | Resource | Daily / Special | 有界真实Catalog / Codec / Bundle构建；Special保留原场景安全、双次Play及租约隔离断言，使用碰撞拒绝的短宿主名。 |
 
@@ -287,7 +289,13 @@ ExcelGameplay的LocalTarball验收复用中立生命周期宿主实际执行10�
 
 每次正向首次安装使用新 host/cache；先记录空 cache，再比对实际 Editor 进程的三项 UPM cache 环境。独立 Registry metadata / tarball 检查下载在结果目录中，不预热 UPM cache。重开、卸载、暖缓存重复解析和阴性重试均不计为另一轮冷安装。报告联合检查 name/version/source/packageId/resolvedPath/isDirectDependency/registryUrl/dependencies、完整锁图及合法受管 `_fingerprint`，不从包版本字符串推断来源。
 
-DOTween 默认 `-DOTweenSdkMode Required`，必须取得并核对批准的 Standard archive、实际程序集、路径、摘要、Modules 和 `DOTWEEN`。指定 `-DOTweenSdkMode Absent` 时拒绝 archive、不下载或投放 SDK、不设置宏，并要求包装程序集在 Editor/Player 图均缺席，结果为 `NegativeNoSdk`，不计正向集成。无法取得必需 SDK 是前置不足，不是 Required 通过。
+DOTween自有适配源码归主包Action，不再有独立`.dotween`安装单元。集成默认`-DOTweenSdkMode Required`，必须取得并核对批准的Standard archive、实际程序集、路径、摘要、Modules和`DOTWEEN`。`Absent`拒绝archive、不下载或投放SDK、不设置宏，适配在Editor/Player图均缺席，结果`NegativeNoSdk`；`SdkOnly`投放同一批准SDK但不启用宏，结果`NegativeAdapterDisabled`；`DefineOnly`明确请求有宏/无SDK，在创建宿主及启动Unity前以`PrerequisiteNotMet`拒绝，并保留无编译/运行的summary。两阴性不算Required正向；SDK是否投放与宏是否启用分别记录。
+
+原DOTween行为测试独立通过`Invoke-YLTests.ps1 -Action Run -Suite Daily -Module DOTween -DOTweenArchive <approved-archive> -Unity $unity -WorkspaceRoot $workspace`执行，复用相同批准记录与完整归档校验，在自有Native宿主中部署SDK/设置宏，不读取或改写开发工程SDK/宏。普通`-Module Action`不投放SDK。集成编译图本身不是NUnit或Player行为通过。
+
+Native DOTween在新`SdkInitializeOnce`自有宿主首次以CreateNew初始化`DOTWEEN`，随后由Unity和完整原厂Editor Setup持久化ProjectSettings，重复Discover/Run绝不重新覆盖该文件，也不把Unity生成/展开的配置当固定producer源文件。首次预置避免原厂导入加宏的重编译时序使UTF过早发现零叶。通用Sync的未知源码/样例/受管输入hash保护保持不变，旧试运行宿主不重采纳或删除。Quick仅从编译源集排除该明确条件适配子树，完整产品文件和meta仍绑定输入身份，不给普通Domain/Behavior Quick强装SDK。
+
+Standard SDK的Editor后处理器会在首次导入自动添加`DOTWEEN`。为实际保持`SdkOnly`这一阴性状态，工具仅在该自有宿主生成Editor DLL禁用导入的PluginImporter元数据，并实查没有加载/引用供应商Editor工具；完整SDK文件及Modules仍按批准归档逐字节投放，Runtime DLL仍启用。`Required`不禁用供应商Editor工具。该导入策略在summary/report单独记录为`sdkEditorToolingEnabled`，不是修改SDK、清理用户宏或绕过产品编译错误。
 
 受管 `_fingerprint` 按实际来源格式验证：Unity 6 的 LocalTarball 安装写入 32hex，Git / Registry 及官方 BuiltIn 缓存观测使用 40hex；Unity 2022 的 LocalTarball 可以没有该字段。只在对应已验证安装来源中规范化这个已知字段，不向 File 或源 tarball 开放，也不忽略未知 `_` 字段。字段不是包内容身份，冻结负载摘要及完整文件集合仍须匹配。
 

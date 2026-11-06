@@ -677,7 +677,7 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework.excel/Editor/Licenses/MiniExcel-LICENSE.txt")), Is.True);
             foreach (var package in new[]
             {
-                (name: "com.kano.ylframework", notices: new[] { "LICENSE.md" }),
+                (name: "com.kano.ylframework", notices: new[] { "LICENSE.md", "Runtime/Systems/Action/Integration/DOTween/LICENSE.md" }),
                 (name: "com.kano.ylframework.excel", notices: new[] { "LICENSE.md", "Editor/Gameplay/LICENSE.md", "Editor/Licenses/MiniExcel-LICENSE.txt" })
             })
             {

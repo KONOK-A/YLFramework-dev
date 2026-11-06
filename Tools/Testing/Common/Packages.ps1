@@ -77,6 +77,64 @@ function Get-YLPackageAssemblyPlan {
     return (ConvertFrom-Json -InputObject $plan.ToString() -AsHashtable -NoEnumerate)
 }
 
+function Get-YLIntegrationDotweenSdk([string] $Repository, [string] $Archive, [string] $OwnedSdkRoot) {
+    try {
+        $approval = [IO.File]::ReadAllText((Join-Path $Repository 'PackageSources/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween/Dependencies.json')) | ConvertFrom-Json -AsHashtable -DateKind String
+        $vendor = $approval['vendor']
+        $root = if ($OwnedSdkRoot) { Get-YLTestPath $OwnedSdkRoot } else { Get-YLTestPath (Join-Path $Repository 'Assets/Plugins/Demigiant/DOTween') }
+        $dll = Join-Path $root 'DOTween.dll'
+        if ($OwnedSdkRoot -and -not [IO.Directory]::Exists($root)) {
+            if (-not [IO.File]::Exists($Archive) -or (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ine $vendor['archiveSha256']) { throw 'The explicitly approved Standard SDK archive does not match.' }
+            $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+            try {
+                $core = @($zip.Entries | Where-Object { $_.FullName -cmatch '(?:^|/)DOTween\.dll$' })
+                if ($core.Count -ne 1) { throw 'The archive must contain one runtime DLL.' }
+                $prefix = $core[0].FullName.Substring(0, $core[0].FullName.Length - 'DOTween.dll'.Length)
+                foreach ($entry in $zip.Entries) {
+                    if (-not $entry.FullName.StartsWith($prefix, [StringComparison]::Ordinal) -or $entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('.meta')) { continue }
+                    $relative = $entry.FullName.Substring($prefix.Length)
+                    if (-not $relative -or $relative -match '(?:^|/)\.\.?(/|$)|\\|:') { throw 'Invalid approved SDK archive path.' }
+                    $target = Join-Path $root $relative
+                    $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+                    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $false)
+                }
+            } finally { $zip.Dispose() }
+        }
+        if ($vendor['version'] -cne '1.2.825' -or $vendor['assemblySha256'] -isnot [string] -or $vendor['archiveSha256'] -isnot [string] -or
+            -not [IO.File]::Exists($dll) -or (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash -ine $vendor['assemblySha256']) { throw 'The existing DOTween.dll does not match the approved 1.2.825 SDK hash.' }
+        if (-not [IO.File]::Exists($Archive) -or (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ine $vendor['archiveSha256']) { throw 'The approved complete Standard SDK archive is missing or has the wrong SHA256.' }
+        $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+        try {
+            $core = @($zip.Entries | Where-Object { $_.FullName -cmatch '(?:^|/)DOTween\.dll$' })
+            if ($core.Count -ne 1) { throw 'The approved archive must contain exactly one DOTween.dll.' }
+            $prefix = $core[0].FullName.Substring(0, $core[0].FullName.Length - 'DOTween.dll'.Length)
+            $approvedFiles = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+            foreach ($entry in $zip.Entries) {
+                if (-not $entry.FullName.StartsWith($prefix, [StringComparison]::Ordinal) -or $entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('.meta')) { continue }
+                $relative = $entry.FullName.Substring($prefix.Length)
+                if ($relative -match '(?:^|/)\.\.?(/|$)|\\|:' -or -not $relative) { throw 'Invalid SDK archive path.' }
+                $stream = $entry.Open()
+                try { $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream)).ToLowerInvariant() } finally { $stream.Dispose() }
+                $approvedFiles.Add($relative, $hash)
+            }
+            foreach ($required in @('DOTween.dll', 'Editor/DOTweenEditor.dll', 'Modules/DOTweenModuleAudio.cs', 'Modules/DOTweenModulePhysics.cs',
+                'Modules/DOTweenModulePhysics2D.cs', 'Modules/DOTweenModuleSprite.cs', 'Modules/DOTweenModuleUI.cs', 'Modules/DOTweenModuleUtils.cs', 'readme.txt')) {
+                if (-not $approvedFiles.ContainsKey($required)) { throw "Incomplete approved SDK: $required" }
+            }
+            $paths = @(Get-YLTestTreeFiles $root)
+            $payload = @($paths | Where-Object { -not $_.EndsWith('.meta', [StringComparison]::OrdinalIgnoreCase) })
+            if ($payload.Count -ne $approvedFiles.Count) { throw 'The existing SDK is not the complete unchanged approved archive file set.' }
+            foreach ($path in $payload) {
+                $relative = [IO.Path]::GetRelativePath($root, $path).Replace('\', '/')
+                if (-not $approvedFiles.ContainsKey($relative) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine $approvedFiles[$relative]) { throw "The existing SDK file is not approved: $relative" }
+            }
+            if (-not [IO.File]::ReadAllText((Join-Path $root 'readme.txt')).Contains('license', [StringComparison]::OrdinalIgnoreCase)) { throw 'The SDK original readme/license notice is missing.' }
+            return @{ root = $root; paths = @($paths | ForEach-Object { [IO.Path]::GetRelativePath($Repository, $_).Replace('\', '/') });
+                version = $vendor['version']; archiveSha256 = $vendor['archiveSha256']; assemblySha256 = $vendor['assemblySha256']; files = $approvedFiles }
+        } finally { $zip.Dispose() }
+    } catch { throw "PrerequisiteNotMet: DOTween SDK: $($_.Exception.Message)" }
+}
+
 function Get-YLInstalledPackageReference {
     param([string] $Repository, [string] $PackageId, [string] $RelativePath, [string] $UnityVersion)
     $Repository = Get-YLTestPath -Path $Repository -ReadOnly
