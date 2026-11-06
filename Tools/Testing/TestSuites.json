@@ -949,7 +949,7 @@
       "shortHostKey": true,
       "excludedCategories": [],
       "specialCategory": "YL.Special.MigrationFixtures",
-      "description": "Historical pre-split producer, recreated only from the original sourceCommit recorded in the frozen FixtureIdentity.json. Current sources support compilation/discovery; do not recapture or overwrite the original snapshot.",
+      "description": "Historical pre-split producer, recreated only from an independently identified pre-split checkout. FixtureIdentity.json records captured time, Unity version and original assembly, not a source commit. Current sources support compilation/discovery; do not recapture or overwrite the original snapshot.",
       "suites": [
         "Special"
       ],
@@ -1000,6 +1000,34 @@
         "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
         "Assets/Tests/YLFramework/Integrations/DOTween/EditMode/YLFramework.Actions.DOTween.Tests.EditMode.asmdef",
         "Assets/Tests/YLFramework/Integrations/DOTween/PlayMode/YLFramework.Actions.DOTween.Tests.PlayMode.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "Help",
+      "category": "",
+      "modes": ["EditMode"],
+      "assemblies": ["YLFramework.Tests.EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "shortHostKey": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Complete main-package Help metadata, compiler XML, installed documentation links, real Editor windows and frozen common-state consumers; no optional SDK or product required.",
+      "suites": ["Daily"],
+      "outputEnvironment": ["BEE_CACHE_DIRECTORY"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/NamespaceMigration",
+        "Assets/Tests/YLFramework/EditMode/Editor/Common/EditorCommonStateFixture.cs"
+      ],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Help"],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef"
       ],
       "packageInputs": ["com.kano.ylframework"],
       "sampleInputs": []

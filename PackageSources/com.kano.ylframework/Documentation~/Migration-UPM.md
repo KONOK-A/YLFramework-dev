@@ -14,9 +14,11 @@ Players remain separate application deliverables.
    because it has the old framework name.
 3. After the frozen Release and Registry acceptance handoff confirm version
    availability, prefer the [Registry single-entry configuration](README.md#registry-与自动依赖).
-   Only the selected leaf is direct; Domain Excel resolves the main and Excel
-   packages, and HybridCLR also resolves the separately distributed official
-   SDK `9.0.3` through its additional narrow scope. Do not copy development-host
+   A single selected package resolves its actual manifest closure. Save does not
+   depend on main. Excel resolves main and DataAssets; its built-in Domain Excel
+   adapter requires an explicit Gameplay entry. RedDots Save likewise requires
+   explicit RedDots and Save entries. HybridCLR resolves the separately distributed
+   official SDK `9.0.3` through its additional narrow scope. Do not copy development-host
    dependencies. For the [Git fallback](README.md#git-url-与依赖闭包), obtain the
    actual full SHA and explicit manifest closure from the acceptance handoff.
    All sibling Git packages and the pinned HybridCLR SDK need direct entries.

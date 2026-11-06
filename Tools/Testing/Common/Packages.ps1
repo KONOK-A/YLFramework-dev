@@ -383,9 +383,14 @@ function Get-YLRegistryEntryPackages {
     foreach ($id in $EntryPackages) {
         if ([string]::IsNullOrWhiteSpace($id) -or $id -cnotin $known -or -not $seen.Add($id)) { throw 'Invalid/unknown/duplicate artifact entry roots.' }
     }
-    if ($EntryPackages.Count -gt 1 -and ($EntryPackages.Count -ne 2 -or
+    $allPackages = $EntryPackages.Count -eq $known.Count -and $EntryPackage -ceq 'com.kano.ylframework'
+    if ($allPackages) {
+        for ($index = 0; $index -lt $known.Count; $index++) { if ($EntryPackages[$index] -cne $known[$index]) { $allPackages = $false; break } }
+    }
+    if ($EntryPackages.Count -gt 1 -and -not $allPackages -and ($EntryPackages.Count -ne 2 -or
         (-not $seen.SetEquals([string[]]@('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')) -and
-            -not ($EntryPackages[0] -ceq 'com.kano.ylframework.reddot' -and $EntryPackages[1] -ceq 'com.kano.ylframework.save')))) { throw 'Only the explicit ExcelGameplay or ordered ReddotSave composite roots are supported.' }
+            -not ($EntryPackages[0] -ceq 'com.kano.ylframework.reddot' -and $EntryPackages[1] -ceq 'com.kano.ylframework.save') -and
+            -not ($EntryPackages[0] -ceq 'com.kano.ylframework.movement2d' -and $EntryPackages[1] -ceq 'com.kano.ylframework.overlap')))) { throw 'Only the explicit ExcelGameplay, ordered ReddotSave, MovementOverlap or catalog-ordered AllPackages roots are supported.' }
     return $EntryPackages
 }
 
@@ -425,7 +430,7 @@ function New-YLRegistryHostManifest {
         elseif ($package.id -cin $EntryPackages) { $dependencies[$package.id] = $package.version }
     }
     $scopes = @('com.kano.ylframework')
-    if ($EntryPackage -ceq 'com.kano.ylframework.hybridclr') { $scopes += 'com.code-philosophy.hybridclr' }
+    if ('com.kano.ylframework.hybridclr' -cin $packages.id) { $scopes += 'com.code-philosophy.hybridclr' }
     return @{ dependencies = $dependencies; scopedRegistries = @(@{ name = 'OpenUPM'; url = $RegistryUrl; scopes = $scopes }) }
 }
 
@@ -460,7 +465,7 @@ function Assert-YLRegistryResolvedGraph {
                 $entry['version'] -cne $locator -or $row['packageId'].Replace('\', '/') -cne ($id + '@' + $locator)) { throw 'Observed package source/version/packageId/lock differs from the frozen request.' }
             Assert-YLPackageDependencies $row['dependencies'] $package.dependencies
             if ($PackageSource -ceq 'Registry' -and ($row['registryUrl'] -isnot [string] -or $row['registryUrl'] -cne $RegistryUrl -or $entry['url'] -cne $RegistryUrl)) { throw 'Observed package Registry URL differs.' }
-        } elseif ($id -ceq 'com.code-philosophy.hybridclr' -and $EntryPackage -ceq 'com.kano.ylframework.hybridclr') {
+        } elseif ($id -ceq 'com.code-philosophy.hybridclr' -and $expected.ContainsKey('com.kano.ylframework.hybridclr')) {
             if ($row['source'] -cne 'Registry' -or $entry['source'] -cne 'registry' -or $row['version'] -cne '9.0.3' -or $entry['version'] -cne '9.0.3' -or
                 $row['packageId'] -cne ($id + '@9.0.3') -or $row['registryUrl'] -cne $RegistryUrl -or $entry['url'] -cne $RegistryUrl -or $row['isDirectDependency']) { throw 'Observed HybridCLR SDK must be the indirect official Registry version.' }
             Assert-YLPackageDependencies $row['dependencies'] $SdkDependencies

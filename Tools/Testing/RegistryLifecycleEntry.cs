@@ -260,8 +260,10 @@ namespace YLFramework.Testing
             if (known.Length == 0 || known.Distinct(StringComparer.Ordinal).Count() != known.Length || !known.Contains("com.kano.ylframework"))
                 throw new InvalidOperationException("Invalid/duplicate owned package catalog identities.");
             var combinationPhases = CombinationPhases(roots);
+            bool fixedComposite = roots.SequenceEqual(new[] { "com.kano.ylframework.movement2d", "com.kano.ylframework.overlap" }, StringComparer.Ordinal) ||
+                (entryId == "com.kano.ylframework" && roots.SequenceEqual(known, StringComparer.Ordinal));
             if (roots.Length == 0 || roots[0] != entryId || roots.Any(id => string.IsNullOrWhiteSpace(id) || !known.Contains(id)) || roots.Distinct(StringComparer.Ordinal).Count() != roots.Length ||
-                (roots.Length > 1 && combinationPhases.Length == 0) || (combinations && roots.Length != 2))
+                (roots.Length > 1 && combinationPhases.Length == 0 && !fixedComposite) || (combinations && combinationPhases.Length == 0))
                 throw new InvalidOperationException("Invalid primary/unknown/duplicate/composite lifecycle entry roots.");
             if (!new[] { "Inspect", "Reopen", "Remove", "VerifyRemoved" }.Contains(phase) && !(combinations && combinationPhases.Contains(phase)))
                 throw new InvalidOperationException("Lifecycle phase differs from its explicit roots/combination profile.");
@@ -290,7 +292,7 @@ namespace YLFramework.Testing
             var scopes = Array(original, "scopedRegistries");
             if (scopes.Count != 1) throw new InvalidOperationException("Invalid original Registry scopes.");
             var scope = Object(scopes[0]);
-            var expectedScopes = entryId.EndsWith(".hybridclr", StringComparison.Ordinal) ? new[] { "com.kano.ylframework", "com.code-philosophy.hybridclr" } : new[] { "com.kano.ylframework" };
+            var expectedScopes = Closure(released, roots).Contains("com.kano.ylframework.hybridclr") ? new[] { "com.kano.ylframework", "com.code-philosophy.hybridclr" } : new[] { "com.kano.ylframework" };
             if (scope.Count != 3 || Text(scope, "name") != "OpenUPM" || Text(scope, "url") != Text(request, "registryUrl") ||
                 !Array(scope, "scopes").SequenceEqual(expectedScopes.Cast<object>())) throw new InvalidOperationException("Invalid original scoped Registry configuration.");
             var inputPath = Path.Combine(host, ".yl-inputs.json");

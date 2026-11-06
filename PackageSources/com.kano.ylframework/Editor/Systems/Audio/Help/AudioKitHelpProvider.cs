@@ -33,8 +33,8 @@ namespace YLFramework.Editor.Audio
             {
                 guides[0] = new HelpPage("overview", guides[0].Title, guides[0].Group, guides[0].Summary,
                     guides[0].Blocks.Concat(new[] { HelpBlock.Notice("XML 文档尚未生成",
-                        "模块 csc.rsp 在 Unity 编译时生成 Library/YLFramework.Runtime.xml。声明来自真实程序集，" +
-                        "缺少 XML 时不按名称补造说明；请等待统一脚本编译完成。") }).ToArray())
+                        "模块 csc.rsp 在编译器实际执行时生成 Library/YLFramework.Runtime.xml；命中编译缓存不保证恢复该文件。声明来自真实程序集，" +
+                        "缺少 XML 时只保留元数据与人工指南，不按名称补造说明，也不从 Help 发起重编译。") }).ToArray())
                 {
                     RelatedTypes = guides[0].RelatedTypes,
                     FeaturedTypes = guides[0].FeaturedTypes
@@ -396,7 +396,7 @@ namespace YLFramework.Editor.Audio
                     "插值和组合使用 Action，音频播放进度直接读 AudioHandle.Time/Duration/Progress。TimerScope、ActionHandle 和 AudioHandle " +
                     "分别管理自己的任务或请求，不共享生命周期索引。Audio 的完成检测使用宿主 Update，不以 clip.length 计时。"),
                 HelpBlock.Paragraph("清理", "所有者在选定的 OnDisable/OnDestroy/场景边界取消自有 TimerHandle 或关闭 TimerScope，并清理播放句柄和订阅；不要用 Timer.Shutdown 代替普通组件退出。" +
-                    "通用注销与生命周期工具使用 YLFramework.Events，不再提供 Audio 专属包装。完整 Timer API 见 Documentation/Modules/Timing.md。")),
+                    "通用注销与生命周期工具使用 YLFramework.Events，不再提供 Audio 专属包装。完整 Timer API 见 Documentation~/Modules/Timing.md。")),
             Guide("diagnostics", "诊断与平台入口", "被动读取 Sound 统计与实际 Clip 预算，唯一写操作为显式统计清零，不创建音频宿主。",
                 new[] { typeof(AudioKitDiagnostics), typeof(AudioKitDebugWindow), typeof(AudioKit), typeof(AudioSoundStats) },
                 HelpBlock.Paragraph("打开方式", "YLFramework/Audio/Debug 打开独立 Editor 窗口，复用 Runtime 诊断绘制器；运行 GUI 入口仅存在于 Editor/Development Build。" +

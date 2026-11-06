@@ -9,7 +9,9 @@
 function Get-YLRegistryLifecyclePhases {
     param([string] $EntryPackage, [string[]] $EntryPackages = @($EntryPackage), [switch] $VerifyCombinations)
     $roots = @(Get-YLRegistryEntryPackages -EntryPackage $EntryPackage -EntryPackages $EntryPackages)
-    if ($VerifyCombinations -and $roots.Count -ne 2) { throw 'VerifyCombinations requires the explicit ExcelGameplay or ReddotSave roots.' }
+    if ($VerifyCombinations -and ($roots.Count -ne 2 -or
+        (-not [Collections.Generic.HashSet[string]]::new([string[]]$roots, [StringComparer]::Ordinal).SetEquals([string[]]@('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')) -and
+            -not ($roots[0] -ceq 'com.kano.ylframework.reddot' -and $roots[1] -ceq 'com.kano.ylframework.save')))) { throw 'VerifyCombinations requires the explicit ExcelGameplay or ReddotSave roots.' }
     $phases = @('Inspect', 'Reopen')
     if ($VerifyCombinations) {
         if ($EntryPackage -ceq 'com.kano.ylframework.reddot') { $phases += @('RemoveSave', 'VerifyReddotOnly', 'RestoreSave', 'RemoveReddot', 'VerifySaveOnly', 'RestoreReddot') }
@@ -175,15 +177,20 @@ function Read-YLRegistryLifecyclePhase {
             -not (($removal['completion'] -ceq ($kind + 'Request') -and $removal['requestStatusObserved'] -and $removal['requestStatus'] -ceq 'Success') -or
                 ($removal['completion'] -ceq 'ResolvedAfterReload' -and -not $removal['requestStatusObserved'] -and $removal['requestStatus'] -ceq ''))) { throw 'Missing actual asynchronous removal completion evidence.' }
     }
-    Assert-YLRegistryLifecycleCompilation -Report $report -Roots $state.roots
+    Assert-YLRegistryLifecycleCompilation -Report $report -Roots $state.roots -Release $Release
     [IO.File]::Copy($manifestPath, (Join-Path $Request.output 'manifest.json'))
     [IO.File]::Copy($lockPath, (Join-Path $Request.output 'packages-lock.json'))
     return @{ phase = $Request.phase; status = 'Completed'; report = $report; reportPath = $Path; graph = $graph; process = $ProcessResult; output = $Request.output; error = '' }
 }
 
 function Assert-YLRegistryLifecycleCompilation {
-    param([Collections.IDictionary] $Report, [string[]] $Roots)
+    param([Collections.IDictionary] $Report, [string[]] $Roots, [Parameter(Mandatory)][Collections.IDictionary] $Release)
     Assert-YLPackageFields $Report['compilation'] @('editor', 'player')
+    $packages = @(if ($Roots.Count) { Get-YLRegistryClosure -Release $Release -EntryPackage $Roots[0] -EntryPackages $Roots })
+    $plan = @(if ($packages.Count) {
+        $profile = if ('com.kano.ylframework.hybridclr' -cin $packages.id) { 'HybridCLR' } else { 'Package' }
+        Get-YLPackageAssemblyPlan -Catalog (Read-YLPackageCatalog) -Packages @($packages | ForEach-Object { @{ name = $_.id; version = $_.version } }) -Profile $profile -MetadataOnly
+    })
     foreach ($mode in @('editor', 'player')) {
         if ($Report.compilation[$mode] -isnot [array]) { throw 'Missing actual CompilationPipeline graph.' }
         $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -193,6 +200,12 @@ function Assert-YLRegistryLifecycleCompilation {
             foreach ($field in @('sourceFiles', 'assemblyReferences', 'compiledAssemblyReferences')) {
                 if ($row[$field] -isnot [array] -or @($row[$field] | Where-Object { $_ -isnot [string] -or -not $_ }).Count) { throw 'Invalid compilation source/reference graph.' }
             }
+        }
+        $expected = @($plan | Where-Object { $_.enabled -and ($mode -ceq 'editor' -or $_.player) } | ForEach-Object name)
+        $product = @($seen | Where-Object { $_.StartsWith('YLFramework.', [StringComparison]::Ordinal) })
+        if ($product.Count -ne $expected.Count -or @($expected | Where-Object { -not $seen.Contains($_) }).Count) { throw "Actual $mode compilation differs from the complete frozen package assembly plan." }
+        foreach ($row in $Report.compilation[$mode] | Where-Object { $_.name -cin $expected }) {
+            if ($row.sourceFiles.Count -eq 0) { throw 'A required lifecycle compilation assembly lacks actual sources.' }
         }
         if ($Report.entryPackage -cin @('com.kano.ylframework.reddot', 'com.kano.ylframework.save')) {
             $reddot = 'com.kano.ylframework.reddot' -cin $Roots; $save = 'com.kano.ylframework.save' -cin $Roots
@@ -287,7 +300,7 @@ function Invoke-YLRegistryLifecycle {
         Assert-YLUnityHostIdle $hostRecord
         $catalogPath = Join-Path $Workspace.repository 'Tools/Packaging/PackageCatalog.json'
         $null = Read-YLPackageCatalog -Path $catalogPath
-        $identity = Get-YLTestInputIdentity -Repository $Workspace.repository -Paths @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1', 'Tools/Packaging/PackageCatalog.json',
+        $identity = Get-YLTestInputIdentity -Repository $Workspace.repository -Paths @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/PackageCatalogContract.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1', 'Tools/Packaging/PackageCatalog.json',
             'Tools/Testing/Common/Packages.ps1', 'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/UnityHost.ps1') -Toolchain @($Unity) -Profile ('RegistryLifecycle-v1-' + $Editor.productVersion + '-' + ($roots -join '+') + '-' + $Source.packageOrigin + '-' + [bool]$VerifyCombinations + '-' + $release.sha256 + '-' + $token)
         $files = [ordered]@{}
         $files['Assets/RegistryLifecycle/Editor/RegistryLifecycleEntry.cs'] = [IO.File]::ReadAllBytes((Join-Path $Workspace.repository 'Tools/Testing/RegistryLifecycleEntry.cs'))

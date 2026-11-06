@@ -17,6 +17,21 @@ namespace YLFramework.Tests.Help
         private const BindingFlags PrivateInstance = BindingFlags.NonPublic | BindingFlags.Instance;
 
         [Test]
+        public void DeliveryGuidesDescribeUpmInsteadOfTheRetiredExporterAndUseCurrentOutputPaths()
+        {
+            var tools = Registration("foundation-tools").Create();
+            var delivery = tools.Guides.Single(page => page.Id == "tools").SearchText;
+            StringAssert.Contains("UPM", delivery);
+            StringAssert.DoesNotContain("导出框架包", delivery);
+            StringAssert.DoesNotContain("默认导出", delivery);
+            Assert.That(tools.Guides.Any(page => page.SearchText.Contains("Documentation~/Modules")), Is.True);
+            var authoring = Registration("core").Create().Guides.Single(page => page.Id == "authoring").SearchText;
+            StringAssert.Contains("Assets/YLFrameworkData/Generated/ResourceReferences", authoring);
+            StringAssert.Contains("不随 UPM 包交付", authoring);
+            StringAssert.DoesNotContain("默认导出范围", authoring);
+        }
+
+        [Test]
         public void FoundationAndToolsKeepTheirCuratedNavigationGroupsAfterAssemblyMerge()
         {
             var module = Registration("foundation-tools").Create();

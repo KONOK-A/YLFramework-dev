@@ -51,7 +51,7 @@ function FixtureGraph([string] $Side) {
 try {
     # Exercise the real inline SDK gate without running Execute or changing production visibility.
     $integrationSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../IntegrationEntry.cs'))
-    $sdkMiniExcel = [regex]::Matches($integrationSource, '(?s)if \(integration == "Excel" \|\| integration == "ExcelGameplay"\)\s*\{.*?\r?\n                \}\s*(?=if \(integration == "HybridCLR"\))')
+    $sdkMiniExcel = [regex]::Matches($integrationSource, '(?s)if \(integration == "Excel" \|\| integration == "ExcelGameplay" \|\| integration == "AllPackages"\)\s*\{.*?\r?\n                \}\s*(?=if \(integration == "HybridCLR" \|\| integration == "AllPackages"\))')
     $globalGate = [regex]::Matches($integrationSource, '(?s)if \(global.Contains\("YL_DOMAIN_EXCEL"\).*?\r?\n                \}')
     Check ($sdkMiniExcel.Count -eq 1 -and $globalGate.Count -eq 1) 'The maintained MiniExcel/global gates must be exercised, not replaced by a fixture implementation.'
     $sdkProbe = @'
@@ -89,6 +89,28 @@ namespace YLFramework.Testing
     function MiniExcel($Request, $Editor, $Selected, [string[]] $Global = @()) {
         try { return ,([YLFramework.Testing.SdkMiniExcelFixture]::Validate($Request, [UnityEditor.Compilation.Assembly[]]$Editor, [Newtonsoft.Json.Linq.JObject[]]$Selected, $Global)) }
         catch { throw $_.Exception.GetBaseException() }
+    }
+    $productCatalog = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject (Read-YLPackageCatalog) -Depth 40))
+    foreach ($profile in @('MovementOverlap', 'AllPackages')) {
+        $roots = if ($profile -ceq 'AllPackages') { @((Read-YLPackageCatalog).packages.id) }
+            else { @('com.kano.ylframework.movement2d', 'com.kano.ylframework.overlap') }
+        $r = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -Depth 5 -InputObject @{ integration = $profile; entryPackage = $roots[0]; entryPackages = $roots }))
+        Assert-YLPackageStringArray -Actual @((Boundary EntryPackages @($r, $productCatalog)) | ForEach-Object { [string]$_ }) -Expected $roots -Label "$profile C# roots"
+        $checks++
+        foreach ($fault in @('missing', 'scalar', 'typed', 'subset', 'joined', 'reordered', 'duplicate', 'primary')) {
+            $bad = $r.DeepClone()
+            switch ($fault) {
+                missing { $null = $bad.Remove('entryPackages') }
+                scalar { $bad['entryPackages'] = [Newtonsoft.Json.Linq.JValue]::new($roots[0]) }
+                typed { $bad['entryPackages'][0] = [Newtonsoft.Json.Linq.JValue]::new($true) }
+                subset { $bad['entryPackages'] = [Newtonsoft.Json.Linq.JArray]::FromObject([string[]]@($roots[0])) }
+                joined { $bad['entryPackages'] = [Newtonsoft.Json.Linq.JArray]::FromObject([string[]]@(($roots -join ','))) }
+                reordered { $bad['entryPackages'] = [Newtonsoft.Json.Linq.JArray]::FromObject([string[]](@($roots[1]) + @($roots[0]) + @($roots | Where-Object { $_ -cnotin $roots[0..1] }))) }
+                duplicate { $bad['entryPackages'].Add($roots[0]) }
+                primary { $bad['entryPackage'] = [Newtonsoft.Json.Linq.JValue]::new($roots[1]) }
+            }
+            Reject { Boundary EntryPackages @($bad, $productCatalog) } "$profile $fault roots"
+        }
     }
     [UnityEngine.Application]::dataPath = (Join-Path $hostRecord.path 'Assets').Replace('\', '/'); $null = [IO.Directory]::CreateDirectory([UnityEngine.Application]::dataPath)
     $output = Join-Path $result.path 'Compile'; $null = [IO.Directory]::CreateDirectory($output)
@@ -461,6 +483,21 @@ namespace YLFramework.Testing
             }
         }
         if ($integration -ceq 'ExcelGameplay') {
+            $allRequest = $request.DeepClone()
+            $allRequest['integration'] = [Newtonsoft.Json.Linq.JValue]::new('AllPackages')
+            $allRequest['excelSdk'] = $allRequest['sdk'].DeepClone()
+            $allRequest['sdk'] = [Newtonsoft.Json.Linq.JObject]::Parse('{"version":"9.0.3","source":"Registry"}')
+            $allObserved = MiniExcel $allRequest $miniEditor $selected
+            Check ([string]$allObserved['excelSdk']['sha256'] -ceq $backend.assemblySha256 -and $null -eq $allObserved['sdk']) 'AllPackages must validate MiniExcel independently without overwriting or treating the HybridCLR identity as MiniExcel.'
+            foreach ($fault in @('missing', 'hybrid-as-excel', 'hash')) {
+                $bad = $allRequest.DeepClone()
+                switch ($fault) {
+                    missing { $null = $bad.Remove('excelSdk') }
+                    hybrid-as-excel { $bad['excelSdk'] = $bad['sdk'].DeepClone() }
+                    hash { $bad['excelSdk']['assemblySha256'] = [Newtonsoft.Json.Linq.JValue]::new(('e' * 64)) }
+                }
+                Reject { MiniExcel $bad $miniEditor $selected } "AllPackages separate MiniExcel $fault"
+            }
             Reject { MiniExcel $request @($miniEditor | Where-Object name -CNE 'YLFramework.Domain.Excel.Editor') $selected } 'Both roots require the enabled adapter'
             $adapter[0].defines = @(); Reject { MiniExcel $request $miniEditor $selected } 'The adapter requires its package-scoped define'; $adapter[0].defines = @('YL_GAMEPLAY_PACKAGE')
             $adapter[0].assemblyReferences = @(); Reject { MiniExcel $request $miniEditor $selected } 'The adapter requires its actual Gameplay Editor reference'

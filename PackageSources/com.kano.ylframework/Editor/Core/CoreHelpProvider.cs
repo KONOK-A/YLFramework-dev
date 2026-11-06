@@ -58,8 +58,8 @@ namespace YLFramework.Editor.Core
                     HelpBlock.Paragraph("Module 模板", "Assets/Create/YLFramework/Core/Module 输出 " + CreateModuleCommand.OutputRoot + " 下的独立用户代码和 asmdef，拒绝覆盖已有目录。" +
                         "namespace 为 YLFramework.Core.Examples；不会生成完整 MVC/View/Panel 代码或改写 Assets/Games。"),
                     HelpBlock.Paragraph("默认资源与资源常量", "YLFramework/Core/Create Missing Default Resources 只补缺失的 Core Canvas/EventSystem，不替换已有身份。" +
-                        "YLFramework/Resource/Workbench 通过 ResourceProject、Group 和 Catalog 配置资源。项目可登记多个已有来源目录，每个目录使用 GUID 和明确的地址前缀；由组中的选择项决定内容，无需搬动已有资源。现有Editor配置已统一为此模型，不再保留旧单根配置的读取或迁移。Core Editor 预览使用同一资源模拟层，不查询外部资源项目。资源地址常量可生成到 Assets/YLFrameworkData/YLResourceReferences.cs，类型为 YLFramework.Generated.ResourceNames；" +
-                        "业务 asmdef 需显式引用生成程序集，未知/手写承载拒绝覆盖。这些用户生成物不在默认导出范围。"),
+                        "YLFramework/Resource/Workbench 通过 ResourceProject、Group 和 Catalog 配置资源。项目可登记多个已有来源目录，每个目录使用 GUID 和明确的地址前缀；由组中的选择项决定内容，无需搬动已有资源。现有Editor配置已统一为此模型，不再保留旧单根配置的读取或迁移。Core Editor 预览使用同一资源模拟层，不查询外部资源项目。资源地址常量默认生成到 Assets/YLFrameworkData/Generated/ResourceReferences/YLResourceReferences.cs，类型为 YLFramework.Generated.ResourceNames；" +
+                        "业务 asmdef 需显式引用生成程序集，未知/手写承载拒绝覆盖。这些用户生成物不随 UPM 包交付。"),
                     Document("资源工具与生成承载", "Modules/Resource.md")),
                 Guide("analyzers", "自有分析器 " + AnalyzerRuleCatalog.Rules[0].Id + "～" + AnalyzerRuleCatalog.Rules[AnalyzerRuleCatalog.Rules.Count - 1].Id,
                     AnalyzerRuleCatalog.Rules.Count + " 项诊断默认启用且均为 Warning；提示使用约束，不是运行时安全证明。",

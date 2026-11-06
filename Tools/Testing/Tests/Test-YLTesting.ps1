@@ -104,6 +104,18 @@ function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minut
 
 try {
     if ($Group -in @('All', 'Workspace')) {
+        Test-Case 'Complete Help API and XML coverage uses the maintained native CLI with only the main product' {
+            . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $entries = @($configuration.modules | Where-Object name -CEQ 'Help')
+            Assert-That ($entries.Count -eq 1) 'The full Help suite has no maintained CLI entry.'
+            $help = $entries[0]
+            Assert-That ($help.category -ceq '' -and $help.graphics -and ($help.modes -join ',') -ceq 'EditMode' -and ($help.suites -join ',') -ceq 'Daily') 'Help must retain actual graphical Editor execution, not a partial category or a managed substitute.'
+            Assert-That (($help.editTests -join ',') -ceq 'Assets/Tests/YLFramework/EditMode/Editor/Help' -and ($help.packageInputs -join ',') -ceq 'com.kano.ylframework') 'Help must compile every original API/XML/window fixture without forcing optional products.'
+            Assert-That (($help.outputEnvironment -join ',') -ceq 'BEE_CACHE_DIRECTORY') 'The real compiler XML side output must be produced in an owned cold compiler cache, not fabricated or borrowed from a global cache.'
+            Assert-That ('Assets/Tests/YLFramework/Fixtures/NamespaceMigration' -cin $help.nativeSources -and 'Assets/Tests/YLFramework/EditMode/Editor/Common/EditorCommonStateFixture.cs' -cin $help.editTests + $help.nativeSources) 'Help cold-state fixtures must be copied with their original owner, not recreated.'
+        }
         Test-Case 'Offline references bind the exact real UPM resolution and refuse missing or escaping package files' {
             $root = Join-Path $sandbox ('InstalledReference-' + [Guid]::NewGuid().ToString('N'))
             $package = 'com.unity.nuget.newtonsoft-json'
@@ -327,7 +339,8 @@ try {
             }
             $source = [IO.File]::ReadAllText((Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/AssemblyMigrationFixtureFreezeTests.cs'))
             Assert-That ([regex]::Matches($source, 'typeof\(YLFramework[.]Editor[.]StateMachine[.]FsmEditorWindow\)[.]Assembly[.]GetType').Count -eq 2) 'Both FSM factory lookups need their real Editor owner, not the Resource Editor assembly.'
-            Assert-That ($module.description.Contains('Historical pre-split') -and $module.description.Contains('sourceCommit')) 'The historical producer must state its frozen source revision boundary.'
+            $frozenIdentity = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblySplitV1/FixtureIdentity.json')
+            Assert-That ($module.description.Contains('Historical pre-split') -and $module.description.Contains('independently identified pre-split checkout') -and $module.description.Contains('not a source commit') -and -not $frozenIdentity.Contains('sourceCommit')) 'The historical producer must preserve its pre-split boundary without inventing a source commit in the frozen identity.'
         }
         Test-Case 'Quick excludes the disabled adapter from compilation but binds its complete product input' {
             $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))

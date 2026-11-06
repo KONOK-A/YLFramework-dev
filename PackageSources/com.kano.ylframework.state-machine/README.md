@@ -10,6 +10,8 @@ Install this package with its main-package dependency. Runtime consumers declare
 `YLFramework.StateMachine` in their asmdef; Editor consumers also declare
 `YLFramework.StateMachine.Editor` where they use authoring APIs. Foundation type
 resolution and play-state checks come from the main package, not copied helpers.
+Git consumers explicitly declare main and this package at the same accepted full
+SHA; package-level SemVer dependencies do not fetch sibling Git packages.
 
 The graph stylesheet and state script template retain their original GUIDs and
 package-relative paths. Create And Add creates a new script without replacing an

@@ -106,12 +106,13 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Action | Daily | Action / Observable 的真实取消、释放、池化复用、场景结束与屏幕过渡；共享依赖检查不借用其他测试类。 |
 | DOTween | Daily | 仅主包加显式批准的完整Standard SDK，执行原两个测试程序集及真实PlayMode上下文/所有权/取消/池化合同；用`-DOTweenArchive`指定归档，不要求普通Action安装SDK。 |
 | ActionHelp | Daily | 精确执行现有`KnownIntegrationAndOwnershipBoundariesAreExplicit` EditMode用例，验证主包条件适配/外置SDK/独立程序集文案；不是完整历史Help/XML套件。 |
+| Help | Daily | 仅主包，完整API/XML/搜索/真实Editor窗口及旧Common状态夹具。沿用现有`outputEnvironment`把`BEE_CACHE_DIRECTORY`限定到本次自有结果目录，真实冷编译生成XML，不借共享缓存或手造文档；不代表DOTween SDK帮助已执行。 |
 | Audio | Daily / Special | 日常 AudioKit / source / owner / 作者与资源生命周期；Special执行连续Play、authority/provider与无输出采样的Bundle会话，真实音频输出/DSP仍独立。 |
 | Resource | Daily / Special | 有界真实Catalog / Codec / Bundle构建；Special保留原场景安全、双次Play及租约隔离断言，使用碰撞拒绝的短宿主名。 |
 
 准确范围以当前 `TestSuites.json` 和发现产物为准。模块声明不是所有平台或所有环境已验收的承诺。
 
-`MigrationFixtures` 是历史拆分前快照的 producer，只能在冻结 `FixtureIdentity.json` 所记录的原 `sourceCommit` 检出中重建。当前源码保留真实依赖以支持编译与 `-Action Discover -Suite Special -Module MigrationFixtures`；当前拆包布局运行该 producer 会在输出前拒绝，不得为验证新包重写原 54 份冻结输入或其旧 Catalog tuple。
+`MigrationFixtures` 是历史拆分前快照的producer，只能在独立核实的拆分前检出中重建。冻结`FixtureIdentity.json`只记录捕获时间、Unity版本与原程序集，不包含sourceCommit；精确来源不能从该文件虚构。当前源码保留真实依赖以支持编译与`-Action Discover -Suite Special -Module MigrationFixtures`；当前拆包布局运行该producer会在输出前拒绝，不得为验证新包重写原冻结输入或其旧Catalog tuple。当前旧数据消费者由Core、Gameplay、Behavior、ExcelGameplay等独立执行；新Resource内容的重建/发布/Player另由DataAssets、Data与Gameplay的Special验证，不冒称旧Bundle跨引擎兼容。
 
 Behavior继续选择两个独立Overlap测试程序集，并显式安装Overlap包；新增冻结`AssemblySplitV1/Content/Behavior/Components.prefab`冷读回归使用`LoadPrefabContents/UnloadPrefabContents`且不保存，核原Area/Circle脚本GUID、新Runtime、字段/对象引用、原空UnityEvents与无missing script。冻结Prefab还有movement2d/RedDots组件，所以该回归只在真实Behavior组合执行，不为Overlap-only强装其他功能。它不改写历史`typeAssembly`、Catalog或Bundle，也不声明旧Bundle跨Unity版本兼容；记录旧程序集tuple的正式Resource内容仍须重建。
 
@@ -271,7 +272,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Packaging/Build-YLRegistryPa
 | 来源 | 必需参数 | 自有包直接声明 | 证据边界 |
 | --- | --- | --- | --- |
 | `LocalTarball` | `-ReleaseManifest` | 从冻结回执取已校验tgz；所选自有闭包全部使用真实`file:<绝对tgz>` locator | `ArtifactPreflight`，不是Registry或自动间接依赖证明 |
-| `Registry` | `-RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest` | 只声明显式roots；ExcelGameplay为Excel和Gameplay双根，ReddotSave为Reddot和Save双根，其余普通入口单根，间接依赖由UPM解析 | 联合核验Registry metadata、下载字节、冻结Release、PackageInfo和generated lock |
+| `Registry` | `-RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest` | 只声明固定profile的显式roots；普通入口单根，组合按下述固定列表声明，间接依赖由UPM解析 | 联合核验Registry metadata、下载字节、冻结Release、PackageInfo和generated lock |
 
 `File` / `Git` 拒绝以上 Registry 参数；新来源拒绝 Git 参数。`LocalTarball` 不接受 Registry URL/version 来混淆身份。Registry scope 仅覆盖 `com.kano.ylframework`；HybridCLR 额外覆盖 `com.code-philosophy.hybridclr`，不将 `com.unity` 路由到 OpenUPM。
 
@@ -289,11 +290,15 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegra
   -RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest $releaseManifest
 ```
 
-分别使用标准版`2022.3.62f3`与`6000.3.27f1`；China版是独立profile，不按共享FileVersion前缀冒用。`-Integration`可选`Excel`、`ExcelGameplay`、`ReddotSave`、`DOTween`、`HybridCLR`，旧DomainExcel明确拒绝。`-PackageId com.kano.ylframework.excel`仍是普通Excel，不强装Gameplay。主包还需真实Windows64 Mono构建/运行。
+分别使用标准版`2022.3.62f3`与`6000.3.27f1`；China版是独立profile，不按共享FileVersion前缀冒用。`-Integration`可选`Excel`、`ExcelGameplay`、`ReddotSave`、`DOTween`、`HybridCLR`、`MovementOverlap`、`AllPackages`，旧DomainExcel明确拒绝。`-PackageId com.kano.ylframework.excel`仍是普通Excel，不强装Gameplay。主包还需真实Windows64 Mono构建/运行。
+
+`MovementOverlap`固定有序根为movement2d、overlap，自有闭包精确为main+movement2d+overlap。`AllPackages`固定按Catalog顺序声明完整11根，不接受子集、重排或任意多根；同时启用Excel/Gameplay与RedDots/Save条件程序集，分别核验MiniExcel后端与外置HybridCLR SDK `9.0.3`的身份。DOTween SDK/宏仍缺席，不暗中下载或开启；其四状态另跑显式DOTween profile。File/Git保留相同组合与真实编译图校验，LocalTarball使用完整冻结负载，Registry仍须真正发布和元数据前置，不能借新profile声称公开可用。
 
 ExcelGameplay的LocalTarball验收复用中立生命周期宿主实际执行10阶段：Inspect/Reopen、移除Gameplay并验证Excel-only、恢复Gameplay、移除Excel及无用DataAssets并验证Gameplay-only、恢复Excel、最后移除全部并验证。每阶段读取真实UPM/manifest/lock与Editor/Player编译图，保留哨兵数据/meta；恢复必须回到原声明语义，不以UPM重排JSON字节视为失败。它不是公开Registry安装，Registry仍受原CI producer/HTTPS/metadata校验约束；单根调用保原4阶段。
 
 `-Integration ReddotSave -PackageSource LocalTarball -ReleaseManifest $releaseManifest`复用同一中立控制器，执行`Inspect, Reopen, RemoveSave, VerifyReddotOnly, RestoreSave, RemoveReddot, VerifySaveOnly, RestoreReddot, Remove, VerifyRemoved`。LocalTarball以真实回执的main+reddot+save闭包直接声明；去Save保留main+reddot，去Reddot同时去无用main，仅留不依赖main的Save，恢复使用原file locator。Registry仅双根直接声明且保原HTTPS/CI约束。两者均由包级Save Version Define控制`YLFramework.RedDots.Save`，不部署SDK或设置全局宏；`-PackageId com.kano.ylframework.reddot`仍为无Save的核心图。生命周期仅显式ExcelGameplay/ReddotSave启用组合十阶段，编译图不代表NUnit或Player构建/运行通过。
+
+MovementOverlap与AllPackages复用原四阶段中立生命周期，不借Excel/RedDots的十阶段移除语义；错误请求`VerifyCombinations`直接拒绝。各阶段按冻结release闭包和Catalog核对完整Editor/Player自有程序集集合及非空源，既不能只看Excel/Gameplay成员，也不能从实际图反推预期。移除仍保留原哨兵数据与meta，不清Cache制造卸载成功。
 
 每次正向首次安装使用新 host/cache；先记录空 cache，再比对实际 Editor 进程的三项 UPM cache 环境。独立 Registry metadata / tarball 检查下载在结果目录中，不预热 UPM cache。重开、卸载、暖缓存重复解析和阴性重试均不计为另一轮冷安装。报告联合检查 name/version/source/packageId/resolvedPath/isDirectDependency/registryUrl/dependencies、完整锁图及合法受管 `_fingerprint`，不从包版本字符串推断来源。
 
@@ -313,13 +318,13 @@ HybridCLR 的新来源以官方 Registry SDK `9.0.3` 为间接依赖；先核对
 
 ### 公开批准点
 
-GitHub `Repository Tooling (No Unity)` 对新合同和固定提交打包运行工具门禁；只有成功的 `main` push run 才保存五包和回执的只读候选 artifact。PR / workflow_dispatch / 本地 producer 不等于已批准候选，工具门禁也不是 Unity 安装或 Player 通过。
+GitHub `Repository Tooling (No Unity)` 对新合同和固定提交打包运行工具门禁；只有成功的`main` push run才保存当前完整Catalog集合和回执的只读候选artifact，目前为11包。PR / workflow_dispatch / 本地producer不等于已批准候选，工具门禁也不是Unity安装或Player通过；历史五包候选保留原身份，不原位扩包。
 
-1. 先完成获准的代码 PR / main CI，固定主线源 SHA、workflow / run / attempt、artifact 和六个文件的字节身份；用同一批字节执行两版 LocalTarball 预检。任何必需案例失败或前置不足，均不是 `ReadyForPublish`。
-2. 重新检查五个包 ID、目标版本、OpenUPM 定义、Tag 和 Release。与同一来源/字节匹配的登记可以复用；只有内容更正或真实不兼容占用才考虑五包同步递增预览版本，不能因临时服务故障 bump。已发布同版本内容不覆盖。
-3. 在对外写入前，独立批准精确源提交、预览 Tag、五包、回执摘要和全部候选资产摘要。批准前不创建公开 Tag / Release、不提交 OpenUPM 登记、不直接 npm publish。Code commit、push、PR、Tag、Release 与 OpenUPM 写入是不同授权。
+1. 先完成获准的代码PR / main CI，固定主线源SHA、workflow / run / attempt、artifact及全部包tarball与回执的字节身份，目前共12个文件；用同一批字节执行两版LocalTarball预检。任何必需案例失败或前置不足，均不是`ReadyForPublish`。
+2. 重新检查完整Catalog的包ID、目标版本、OpenUPM定义、Tag和Release。与同一来源/字节匹配的登记可以复用；只有内容更正或真实不兼容占用才考虑整批同步递增预览版本，不能因临时服务故障bump。已发布同版本内容不覆盖。
+3. 在对外写入前，独立批准精确源提交、预览Tag、完整包集合、回执摘要和全部候选资产摘要。批准前不创建公开Tag / Release、不提交OpenUPM登记、不直接npm publish。Code commit、push、PR、Tag、Release与OpenUPM写入是不同授权。
 4. 获准发布时使用普通 annotated Tag，并核对 peeled commit；annotated Tag object SHA 不等于其目标提交。Release 附件必须与已批准 CI artifact 字节相同，缺失或不符即停止，不就地重包或替换已公开附件。
-5. 五个版本在 Registry 都就绪后再执行两版真实最小安装、正负 SDK、样例、暖重开、中立卸载和 Player 矩阵。未就绪保留公开阶段前置阻塞，不用抽取源码、Git 或 LocalTarball 结果替代。
+5. 全部版本在Registry都就绪后再执行两版真实最小安装、正负SDK、样例、暖重开、中立卸载和Player矩阵。未就绪保留公开阶段前置阻塞，不用抽取源码、Git或LocalTarball结果替代；仅获准本地交付验收时不自动进入公开阶段。
 
 ## Player 运行冒烟
 

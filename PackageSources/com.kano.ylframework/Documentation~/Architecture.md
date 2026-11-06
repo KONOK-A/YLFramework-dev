@@ -58,6 +58,8 @@ Assets/Tests/YLFramework/          # repository only
 | `YLFramework.Skill` / `YLFramework.Buff` / `YLFramework.Mission` / `YLFramework.Equipment` | true | 同属Gameplay安装单元，各只引用主Runtime，不互相引用；Buff/Mission显式引用Newtonsoft，统一`YLFramework.Gameplay.Editor`拥有共享作者工具与原退出hooks |
 | `YLFramework.Actions.DOTween` | false | 主包`Runtime/Systems/Action/Integration/DOTween`，引用Runtime + 外部DOTween.dll，受`DOTWEEN`约束；不单独发行、不捆绑SDK |
 | `YLFramework.RedDots` | true | 独立reddot安装单元，只引用主Runtime的事件和会话支撑；不强装Save或Gameplay |
+| `YLFramework.RedDots.Editor` | true | reddot包自有的只读诊断窗口，引用RedDots Runtime，仅Editor |
+| `YLFramework.RedDots.Save` | true | 位于reddot/Runtime/Integration/Save；真实Save包的Version Define启用，只显式组合RedDots与Save，不把Save变成核心安装依赖 |
 | `YLFramework.Excel.Editor` | true | 主 Runtime/Editor、DataAssets Runtime/Editor、MiniExcel、Json.NET，仅 Editor |
 | `YLFramework.Domain.Excel.Editor` | true | 位于Excel/Editor/Gameplay；真实Gameplay包版本定义启用，依赖后端和四领域Runtime/Editor；通用Excel/Gameplay产品无互相依赖 |
 | `YLFramework.HybridCLR` / `.Editor` | false | 主体与声明的官方 HybridCLR SDK；dnlib 仅 Editor，主体不反向依赖 |
