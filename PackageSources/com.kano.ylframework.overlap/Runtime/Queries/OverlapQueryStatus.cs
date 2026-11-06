@@ -13,6 +13,11 @@ namespace YLFramework.Overlap
     {
         None = 0,
         InvalidScene = 1,
-        TriggerQueriesDisabled = 2
+        TriggerQueriesDisabled = 2,
+        WorkspaceRequired = 3,
+        UnsupportedGeometry = 4,
+        GeometryBudgetExceeded = 5,
+        InvalidGeometry = 6,
+        UnsupportedCast = 7
     }
 }

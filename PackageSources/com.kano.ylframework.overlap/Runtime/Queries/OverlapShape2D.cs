@@ -8,7 +8,9 @@ namespace YLFramework.Overlap
         Point,
         Circle,
         Box,
-        Capsule
+        Capsule,
+        [InspectorName("\u73af\u5f62\u6247\u533a (Sector)")]
+        Sector
     }
 
     /// <summary>World-space geometry. Volumes require positive dimensions; Point has no extent.</summary>
@@ -38,9 +40,20 @@ namespace YLFramework.Overlap
         {
             get;
         }
+        public float OuterRadius => Radius;
+        public float InnerRadius
+        {
+            get;
+        }
+        public float AngleDegrees
+        {
+            get;
+        }
+        /// <summary>World Z rotation, with the sector's forward direction along +X. Not its aperture.</summary>
+        public float RotationDegrees => Angle;
 
         private OverlapShape2D(OverlapShapeKind2D kind, Vector2 center, Vector2 size, float radius,
-            float angle, CapsuleDirection2D capsuleDirection)
+            float angle, CapsuleDirection2D capsuleDirection, float innerRadius = 0, float angleDegrees = 0)
         {
             Kind = kind;
             Center = center;
@@ -48,6 +61,8 @@ namespace YLFramework.Overlap
             Radius = radius;
             Angle = angle;
             CapsuleDirection = capsuleDirection;
+            InnerRadius = innerRadius;
+            AngleDegrees = angleDegrees;
             Validate();
         }
 
@@ -67,10 +82,32 @@ namespace YLFramework.Overlap
             float angle = 0) =>
             new OverlapShape2D(OverlapShapeKind2D.Capsule, center, size, 0, angle, capsuleDirection);
 
+        /// <summary>A filled XY sector, annular sector, or (at 360 degrees) disk/ring. No sector Cast is provided.</summary>
+        public static OverlapShape2D Sector(Vector2 center, float outerRadius, float angleDegrees,
+            float innerRadius = 0, float rotationDegrees = 0) =>
+            new OverlapShape2D(OverlapShapeKind2D.Sector, center, default, outerRadius, rotationDegrees,
+                default, innerRadius, angleDegrees);
+
         internal void Validate()
         {
             ValidateVector(Center, "center");
-            if (Kind == OverlapShapeKind2D.Circle)
+            if (Kind == OverlapShapeKind2D.Sector)
+            {
+                ValidatePositive(OuterRadius, "outerRadius");
+                if (!IsFinite(InnerRadius) || InnerRadius < 0 || InnerRadius >= OuterRadius)
+                {
+                    throw new ArgumentOutOfRangeException("innerRadius");
+                }
+                if (!IsFinite(AngleDegrees) || AngleDegrees <= 0 || AngleDegrees > 360)
+                {
+                    throw new ArgumentOutOfRangeException("angleDegrees");
+                }
+                if (!IsFinite(RotationDegrees))
+                {
+                    throw new ArgumentOutOfRangeException("rotationDegrees");
+                }
+            }
+            else if (Kind == OverlapShapeKind2D.Circle)
             {
                 ValidatePositive(Radius, "radius");
             }

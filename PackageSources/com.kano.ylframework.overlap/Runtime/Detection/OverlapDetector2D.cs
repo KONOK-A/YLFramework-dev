@@ -22,6 +22,10 @@ namespace YLFramework.Overlap
         [SerializeField] private Transform ignoredRoot;
         [SerializeField] private bool groupByRigidbody;
         [SerializeField] private bool sortByDistance;
+        [SerializeField] private int maxShapesPerCollider = 256;
+        [SerializeField] private int maxVerticesPerShape = 4096;
+        [SerializeField] private float geometryTolerance = 0.00001f;
+        private OverlapQueryWorkspace2D _workspace;
         private Collider2D[] _buffer;
         private OverlapShape2D[] _worldShapes = Array.Empty<OverlapShape2D>();
         private readonly OverlapContactTracker<OverlapContact<Collider2D>> _tracker = new OverlapContactTracker<OverlapContact<Collider2D>>();
@@ -137,6 +141,9 @@ namespace YLFramework.Overlap
             get; private set;
         }
         public int BufferCapacity => _buffer == null ? 0 : _buffer.Length;
+        public int MaxShapesPerCollider => maxShapesPerCollider;
+        public int MaxVerticesPerShape => maxVerticesPerShape;
+        public float GeometryTolerance => geometryTolerance;
         public string ConfigurationError { get; private set; } = string.Empty;
         public OverlapQueryResult2D LastQuery
         {
@@ -156,6 +163,19 @@ namespace YLFramework.Overlap
                 Array.Clear(_buffer, 0, _buffer.Length);
             }
             _buffer = null;
+            _generation++;
+        }
+
+        public void ConfigureGeometryWorkspace(int maxShapesPerCollider = 256, int maxVerticesPerShape = 4096,
+            float geometryTolerance = 0.00001f)
+        {
+            OverlapQueryWorkspace2D.ValidateConfiguration(maxShapesPerCollider, maxVerticesPerShape, geometryTolerance);
+            this.maxShapesPerCollider = maxShapesPerCollider;
+            this.maxVerticesPerShape = maxVerticesPerShape;
+            this.geometryTolerance = geometryTolerance;
+            _workspace?.Dispose();
+            _workspace = null;
+            _configurationChanged = true;
             _generation++;
         }
 
@@ -277,13 +297,14 @@ namespace YLFramework.Overlap
                     int rawCount = 0;
                     for (int i = 0; i < composite.Count; i++)
                     {
-                        var query = OverlapQuery2D.Query(scene, _worldShapes[i], filter, _buffer);
+                        var query = OverlapQuery2D.Query(scene, _worldShapes[i], filter, _buffer, _workspace);
+                        rawCount = rawCount > int.MaxValue - query.RawCount ? int.MaxValue : rawCount + query.RawCount;
                         if (query.Status == OverlapQueryStatus.Invalidated)
                         {
-                            LastQuery = query;
+                            LastQuery = new OverlapQueryResult2D(0, rawCount, OverlapQueryStatus.Invalidated,
+                                query.InvalidationReason);
                             return false;
                         }
-                        rawCount = rawCount > int.MaxValue - query.RawCount ? int.MaxValue : rawCount + query.RawCount;
                         complete &= query.Status == OverlapQueryStatus.Complete;
                         for (int j = 0; j < query.Count; j++)
                         {
@@ -341,6 +362,7 @@ namespace YLFramework.Overlap
                 OverlapDetectionGeometry.ValidateMode(samplingMode);
                 OverlapDetectionGeometry.ValidateCapacity(initialCapacity, maxCapacity);
                 Filter.Validate();
+                OverlapQueryWorkspace2D.ValidateConfiguration(maxShapesPerCollider, maxVerticesPerShape, geometryTolerance);
                 if (composite == null)
                 {
                     throw new InvalidOperationException("Composite cannot be null.");
@@ -351,9 +373,21 @@ namespace YLFramework.Overlap
                     _worldShapes = new OverlapShape2D[count];
                 }
                 var matrix = transform.localToWorldMatrix;
+                bool needsWorkspace = false;
                 for (int i = 0; i < count; i++)
                 {
                     _worldShapes[i] = composite.ToWorld(i, matrix);
+                    needsWorkspace |= _worldShapes[i].Kind == OverlapShapeKind2D.Sector;
+                }
+                if (!needsWorkspace || _workspace != null && (_workspace.MaxShapesPerCollider != maxShapesPerCollider ||
+                    _workspace.MaxVerticesPerShape != maxVerticesPerShape || _workspace.GeometryTolerance != geometryTolerance))
+                {
+                    _workspace?.Dispose();
+                    _workspace = null;
+                }
+                if (needsWorkspace && _workspace == null)
+                {
+                    _workspace = new OverlapQueryWorkspace2D(maxShapesPerCollider, maxVerticesPerShape, geometryTolerance);
                 }
             }
             catch (ArgumentException error)
@@ -418,6 +452,8 @@ namespace YLFramework.Overlap
         private void Release(OverlapExitReason reason)
         {
             _generation++;
+            _workspace?.Dispose();
+            _workspace = null;
             _elapsed = 0;
             _committedFilter = default;
             _hasCommittedFilter = false;

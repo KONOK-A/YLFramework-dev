@@ -16,6 +16,10 @@ namespace YLFramework.Overlap
             public float radius;
             public float angle;
             public CapsuleDirection2D direction;
+            public float outerRadius;
+            public float innerRadius;
+            public float angleDegrees;
+            public float rotationDegrees;
         }
 
         [SerializeField] private LocalShape[] shapes;
@@ -41,7 +45,11 @@ namespace YLFramework.Overlap
                     size = shape.Size,
                     radius = shape.Radius,
                     angle = shape.Angle,
-                    direction = shape.CapsuleDirection
+                    direction = shape.CapsuleDirection,
+                    outerRadius = shape.OuterRadius,
+                    innerRadius = shape.InnerRadius,
+                    angleDegrees = shape.AngleDegrees,
+                    rotationDegrees = shape.RotationDegrees
                 };
             }
         }
@@ -59,6 +67,9 @@ namespace YLFramework.Overlap
                     return OverlapShape2D.Box(shape.center, shape.size, shape.angle);
                 case OverlapShapeKind2D.Capsule:
                     return OverlapShape2D.Capsule(shape.center, shape.size, shape.direction, shape.angle);
+                case OverlapShapeKind2D.Sector:
+                    return OverlapShape2D.Sector(shape.center, shape.outerRadius, shape.angleDegrees,
+                        shape.innerRadius, shape.rotationDegrees);
                 default:
                     throw new ArgumentOutOfRangeException("kind");
             }
@@ -86,7 +97,12 @@ namespace YLFramework.Overlap
             }
             if (!OverlapDetectionGeometry.EqualScale(scale.x, scale.y))
             {
-                throw new InvalidOperationException("Circles and capsules require uniform XY scale, not an elliptical bound.");
+                throw new InvalidOperationException("Circles, capsules and sectors require uniform XY scale, not an elliptical bound.");
+            }
+            if (shape.Kind == OverlapShapeKind2D.Sector)
+            {
+                return OverlapShape2D.Sector(center, shape.OuterRadius * scale.x, shape.AngleDegrees,
+                    shape.InnerRadius * scale.x, angle);
             }
             return shape.Kind == OverlapShapeKind2D.Circle ? OverlapShape2D.Circle(center, shape.Radius * scale.x) :
                 OverlapShape2D.Capsule(center, shape.Size * scale.x, shape.CapsuleDirection, angle);

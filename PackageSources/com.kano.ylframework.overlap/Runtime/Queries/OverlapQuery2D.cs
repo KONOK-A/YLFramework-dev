@@ -16,11 +16,39 @@ namespace YLFramework.Overlap
             Collider2D[] results) => Query(Physics2D.defaultPhysicsScene, shape, filter, results);
 
         public static OverlapQueryResult2D Query(PhysicsScene2D scene, in OverlapShape2D shape,
-            in OverlapFilter2D filter, Collider2D[] results)
+            in OverlapFilter2D filter, Collider2D[] results) => Query(scene, shape, filter, results, null);
+
+        public static OverlapQueryResult2D Query(in OverlapShape2D shape, in OverlapFilter2D filter,
+            Collider2D[] results, OverlapQueryWorkspace2D workspace) =>
+            Query(Physics2D.defaultPhysicsScene, shape, filter, results, workspace);
+
+        public static OverlapQueryResult2D Query(PhysicsScene2D scene, in OverlapShape2D shape,
+            in OverlapFilter2D filter, Collider2D[] results, OverlapQueryWorkspace2D workspace)
         {
             ValidateBuffer(results);
             shape.Validate();
             filter.Validate();
+            workspace?.Begin();
+            try
+            {
+                return QueryCore(scene, shape, filter, results, workspace);
+            }
+            finally
+            {
+                workspace?.End();
+            }
+        }
+
+        private static OverlapQueryResult2D QueryCore(PhysicsScene2D scene, in OverlapShape2D shape,
+            in OverlapFilter2D filter, Collider2D[] results, OverlapQueryWorkspace2D workspace)
+        {
+            bool sector = shape.Kind == OverlapShapeKind2D.Sector;
+            if (sector && workspace == null)
+            {
+                Array.Clear(results, 0, results.Length);
+                return new OverlapQueryResult2D(0, 0, OverlapQueryStatus.Invalidated,
+                    OverlapQueryInvalidationReason.WorkspaceRequired);
+            }
             bool validScene = scene.IsValid();
             if (!validScene || (filter.ContactFilter.useTriggers && !Physics2D.queriesHitTriggers))
             {
@@ -28,13 +56,34 @@ namespace YLFramework.Overlap
                 return new OverlapQueryResult2D(0, 0, OverlapQueryStatus.Invalidated,
                     validScene ? OverlapQueryInvalidationReason.TriggerQueriesDisabled : OverlapQueryInvalidationReason.InvalidScene);
             }
-            int rawCount = QueryRaw(scene, shape, filter.ContactFilter, results);
+            float broadRadius = 0;
+            if (sector && !workspace.TryBroadRadius(shape.OuterRadius, out broadRadius))
+            {
+                Array.Clear(results, 0, results.Length);
+                return new OverlapQueryResult2D(0, 0, OverlapQueryStatus.Invalidated,
+                    OverlapQueryInvalidationReason.InvalidGeometry);
+            }
+            int rawCount = sector ? RawCircle(scene, shape.Center, broadRadius, filter.ContactFilter, results) :
+                QueryRaw(scene, shape, filter.ContactFilter, results);
             var status = rawCount == results.Length ? OverlapQueryStatus.MayBeTruncated : OverlapQueryStatus.Complete;
             int count = 0;
             for (int i = 0; i < rawCount; i++)
             {
                 if (filter.Allows(results[i]))
                 {
+                    if (sector)
+                    {
+                        var reason = workspace.Intersects(results[i], shape, out bool hit);
+                        if (reason != OverlapQueryInvalidationReason.None)
+                        {
+                            Array.Clear(results, 0, results.Length);
+                            return new OverlapQueryResult2D(0, rawCount, OverlapQueryStatus.Invalidated, reason);
+                        }
+                        if (!hit)
+                        {
+                            continue;
+                        }
+                    }
                     results[count++] = results[i];
                 }
             }
@@ -75,6 +124,12 @@ namespace YLFramework.Overlap
             shape.Validate();
             filter.Validate();
             direction = ValidateCast(direction, distance);
+            if (shape.Kind == OverlapShapeKind2D.Sector)
+            {
+                Array.Clear(results, 0, results.Length);
+                return new OverlapQueryResult2D(0, 0, OverlapQueryStatus.Invalidated,
+                    OverlapQueryInvalidationReason.UnsupportedCast);
+            }
             bool validScene = scene.IsValid();
             if (!validScene || (filter.ContactFilter.useTriggers && !Physics2D.queriesHitTriggers))
             {

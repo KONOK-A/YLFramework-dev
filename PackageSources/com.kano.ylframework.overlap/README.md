@@ -27,8 +27,8 @@ live under `Runtime/Detection`.
 
 `OverlapQuery2D.Query/Cast` accept world-space `OverlapShape2D`, explicit
 `OverlapFilter2D(ContactFilter2D, ...)`, and `Collider2D[]`/`RaycastHit2D[]`.
-Shapes are `Point`, `Circle`, `Box` (full size and Z angle), and `Capsule`
-(full size, capsule direction and Z angle). Point casts are rays.
+Shapes are `Point`, `Circle`, `Box` (full size and Z angle), `Capsule`
+(full size, capsule direction and Z angle), and `Sector` (see below). Point casts are rays.
 `OverlapQuery3D.Query/Cast` support `Sphere`, `Box` (full size and orientation),
 and `Capsule` (cap centers and radius); `Raycast` has a separate origin argument.
 3D filters require a layer mask and default to `QueryTriggerInteraction.Ignore`;
@@ -71,6 +71,94 @@ storage, bounded by the supplied array; it does not promise cross-process order
 or globally nearest results from a truncated buffer. No allocation/timing
 measurement is implied.
 
+### 2D Sector, Annular Sector And Ring
+
+`OverlapShape2D.Sector(Vector2 center, float outerRadius, float angleDegrees,
+float innerRadius = 0, float rotationDegrees = 0)` describes a **filled world XY**
+region. Forward is +X rotated about Z by `rotationDegrees`; `angleDegrees` is its
+aperture, not its rotation. `OuterRadius > 0`, `0 <= InnerRadius < OuterRadius`,
+and `0 < AngleDegrees <= 360` are required. Zero inner radius includes the apex;
+360 degrees has no radial boundaries and describes a disk or full ring. Existing
+`Angle` still means Z rotation; the named `RotationDegrees` property makes that
+meaning explicit for a sector. The original four enum values are unchanged.
+
+Sector queries require an explicit, reusable `OverlapQueryWorkspace2D` as the
+**final** argument to either existing scene/default-scene `Query` overload:
+
+```csharp
+using var workspace = new OverlapQueryWorkspace2D(
+    maxShapesPerCollider: 256, maxVerticesPerShape: 4096, geometryTolerance: 0.00001f);
+var region = OverlapShape2D.Sector(center, 5, 120, innerRadius: 1, rotationDegrees: 30);
+var result = OverlapQuery2D.Query(scene, region, filter, callerResults, workspace);
+```
+
+The workspace is a plain caller-owned `sealed IDisposable`, not a component or
+global cache. Construct it outside recurring queries, keep it private to an owner,
+and dispose it when that owner stops. It retains only managed low-level geometry
+storage and numeric vertices, never Colliders, bodies, scenes or cached geometry.
+Disposed or reentrant use throws before touching output. The old overloads remain
+unchanged for all original shapes; Sector without a workspace returns empty
+`Invalidated / WorkspaceRequired`. Sector Cast returns empty
+`Invalidated / UnsupportedCast` before any native cast. It is not a compound
+sweep, an occlusion/visibility test, or a slash animation.
+
+The broad phase is the native scene circle with outer radius expanded outward by
+the workspace's world-unit tolerance (rounded outward to float). Raw saturation
+remains `MayBeTruncated`, even when every candidate is in the hole, ignored, or
+body-grouped. Every allowed candidate is re-read with
+`Collider2D.GetShapes(group, shapeIndex, 1)` on **every query**. No hash cache,
+scene scan, helper Collider or global Physics setting is used. Physics pose/sync
+responsibility is the same as for the original native queries; the API does not
+call project-wide `Physics2D.SyncTransforms`.
+
+The narrow phase analytically computes distance to the real exported shapes:
+Circle = point plus native radius, Capsule = segment plus radius, convex Polygon
+= filled convex polygon plus radius, Edges = individual segments plus radius
+(never a filled hull). Vertices use only the returned `localToWorldMatrix`:
+body-local geometry receives its body pose; static bodyless geometry is already
+world-space. Collider transform, offset and scale are **not applied twice**.
+All shapes of Polygon/Composite colliders are visited. Real inner/outer arcs,
+finite radial edges, segment/arc crossings and tangencies, and both containment
+directions are handled without polygonizing arcs. Calculations use double
+intermediates over Unity's float-exported geometry and accept distance no greater
+than `shape.radius + geometryTolerance`. This is a floating-point analytic
+policy, **not** bit-for-bit equality with Unity's native narrow phase. Native
+broad-phase/filter policy still gates candidate admission; tolerance does not
+recover geometry omitted by the engine or unsynchronized transforms.
+
+The body translation minus sector center is evaluated before the rotated local
+vertex, preserving a small native body-local offset under a common large world
+translation. Circle intersections and point-to-segment distances use normalized
+line coordinates/normal distances, not a rounded huge-segment parameter multiplied
+back into its endpoints. Residual sum errors and conservative line/root/interval
+roundoff bounds are checked against a fraction (1/16 per checked operation) of the
+configured world-unit tolerance. Uncertified severe cancellation explicitly gives
+`InvalidGeometry`, not `Complete` with an invented hit or miss; it does not enlarge
+the geometric tolerance. This finite arithmetic policy is not a claim that every
+finite configuration or every engine extreme-coordinate query is certified.
+
+Supported high-level colliders are Circle, Capsule, Box, Polygon, Edge, and
+Composite (Polygons or Outlines), including the engine's generated nonuniformly
+scaled target geometry. The workspace preallocates one native shape slot and its
+configured vertex storage. **Before extraction**, `Collider2D.shapeCount` is checked
+against `maxShapesPerCollider`; conservative per-shape vertex bounds are 1 for
+Circle, 2 for Capsule, `Physics2D.MaxPolygonShapeVertices` for Box/Polygon/Composite
+Polygons, `EdgeCollider2D.pointCount` for Edge, and
+`CompositeCollider2D.pointCount + 1` for Outlines (closed chains repeat a point).
+Exceeding these bounds returns empty `Invalidated / GeometryBudgetExceeded`, even
+if an individual convex shape would have fit. A list's capacity is not treated
+as a limit. The default 4096-vertex budget is finite, not unlimited precision or
+an allocation measurement. CPU work is bounded by native shape and vertex limits
+per candidate; steady-state zero allocation is not claimed without measurement.
+
+Tilemap, CustomCollider2D and unknown types are deliberately
+`Invalidated / UnsupportedGeometry` because a trusted pre-extraction vertex
+bound has not been established here. Missing/malformed/nonfinite exported
+geometry or failed native reads return `InvalidGeometry`; no unknown geometry
+silently becomes a complete miss. Ignore/root filters run first, so an explicitly
+ignored unsupported collider need not be extracted. Failure clears the entire
+output, preserves the observed `RawCount`, and cannot commit detector contacts.
+
 ## Continuous Detection
 
 `OverlapDetector2D` / `OverlapDetector3D` query their owner's actual physics scene.
@@ -79,6 +167,15 @@ Set `Composite` to `new OverlapComposite2D(localShapes)` or
 with **local** coordinates. A single child uses the same Union/diff path. Configurations
 copy shape values and contain no Unity object references or runtime state; sharing
 one configuration does not share buffers, contacts or observers. Empty Union is legal.
+2D Sector children use the same round-shape uniform XY/no-shear conversion as
+Circle/Capsule, including mirrored forward directions. Their outer/inner radii,
+aperture and rotation are serialized separately. A Detector lazily creates its
+**own** workspace only when its current Union contains a Sector; primitive-only
+Unions never allocate a shape group. `ConfigureGeometryWorkspace(256, 4096,
+0.00001f)` sets the finite limits/tolerance (also serialized in its Inspector).
+Budget reconfiguration, Stop, disable, destroy and scene retirement dispose owned
+storage; the next running Sector sample creates a fresh workspace. Invalid or
+over-budget geometry preserves `LastComplete` and emits no false separation.
 `Filter` accepts the existing dimension-specific query filter. Grouping uses actual
 attached bodies across all children; bodyless colliders remain independent. The first
 child's representative is retained for each identity, not a global nearest collider.
@@ -160,6 +257,12 @@ grouping; green/orange borrowed results do not purport to enumerate colliders ex
 by native filtering. Closing the Inspector releases these per-inspector references.
 No global debug cache, Resource authority or update service is created. 2D global
 trigger suppression remains a visible prerequisite; no tool toggles it for preview.
+For 2D Sector preview, the raw list is the native outer-circle candidate list,
+and orange can also mean outside the aperture or inside its hole. A separate
+per-Inspector workspace applies the same budgets/tolerance and is disposed when
+the Inspector closes. Wire geometry uses real inner/outer arcs and finite radial
+edges; a disk omits its inner arc, a full ring omits radial edges. Sector Cast
+is visibly unsupported and no translated/swept sector wire shape is fabricated.
 
 The source repository declares `Daily / Overlap` for original and new native physics
 contracts, `Daily / OverlapEditor` for authoring, `Special / OverlapPlayer` for the

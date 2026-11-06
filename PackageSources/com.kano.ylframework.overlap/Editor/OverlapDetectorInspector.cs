@@ -58,6 +58,7 @@ namespace YLFramework.Editor.Overlap
         private Collider2D[] _raw2D;
         private Collider2D[] _accepted2D;
         private RaycastHit2D[] _hits2D;
+        private OverlapQueryWorkspace2D _workspace2D;
         private Collider[] _raw3D;
         private Collider[] _accepted3D;
         private RaycastHit[] _hits3D;
@@ -74,6 +75,8 @@ namespace YLFramework.Editor.Overlap
         {
             EditorApplication.update -= AutoSample;
             ClearPreview();
+            _workspace2D?.Dispose();
+            _workspace2D = null;
         }
 
         internal static Diagnostics ReadDiagnostics(Component detector)
@@ -108,6 +111,7 @@ namespace YLFramework.Editor.Overlap
                 if (detector is OverlapDetector2D two)
                 {
                     _ = two.Filter;
+                    OverlapQueryWorkspace2D.ValidateConfiguration(two.MaxShapesPerCollider, two.MaxVerticesPerShape, two.GeometryTolerance);
                     for (int i = 0; i < two.Composite.Count; i++)
                     {
                         World2D(two, i);
@@ -143,7 +147,15 @@ namespace YLFramework.Editor.Overlap
             serializedObject.Update();
             using (new EditorGUI.DisabledScope(EditorUtility.IsPersistent(target)))
             {
-                DrawPropertiesExcluding(serializedObject, "m_Script");
+                if (TwoD)
+                {
+                    DrawComposite2D();
+                    DrawPropertiesExcluding(serializedObject, "m_Script", "composite");
+                }
+                else
+                {
+                    DrawPropertiesExcluding(serializedObject, "m_Script");
+                }
                 if (serializedObject.ApplyModifiedProperties())
                 {
                     ClearPreview();
@@ -176,6 +188,13 @@ namespace YLFramework.Editor.Overlap
             EditorGUILayout.LabelField("Allocated buffer", diagnostic.Capacity.ToString());
             EditorGUILayout.LabelField("Last complete contacts (borrowed)", diagnostic.LastCompleteCount.ToString());
             EditorGUILayout.HelpBox("LastComplete is the last committed baseline, not a claim that the latest partial/invalid observation is complete. RawCount includes repeated Union children; RawCount - Count is not a rejected-collider count.", MessageType.Info);
+            if (TwoD)
+            {
+                var two = (OverlapDetector2D)target;
+                EditorGUILayout.HelpBox("Sector workspace: " + two.MaxShapesPerCollider + " shapes/collider, " +
+                    two.MaxVerticesPerShape + " vertices/shape, tolerance " + two.GeometryTolerance +
+                    " world units. Unsupported geometry or a pre-extraction budget excess invalidates the observation, not a complete miss.", MessageType.Info);
+            }
             if (!string.IsNullOrEmpty(diagnostic.Error))
             {
                 EditorGUILayout.HelpBox(diagnostic.Error, MessageType.Error);
@@ -218,6 +237,11 @@ namespace YLFramework.Editor.Overlap
             }
             _previewCapacity = EditorGUILayout.IntField("Caller buffer capacity", _previewCapacity);
             _cast = EditorGUILayout.Toggle("Draw / sample Cast", _cast);
+            if (TwoD && error.Length == 0 && _child >= 0 && _child < ((OverlapDetector2D)target).Composite.Count &&
+                World2D((OverlapDetector2D)target, _child).Kind == OverlapShapeKind2D.Sector)
+            {
+                EditorGUILayout.HelpBox("Sector / annular sector / ring Cast is unsupported. Only the overlap region is queried/drawn; no swept sector or visibility/occlusion is implied.", MessageType.Info);
+            }
             _direction = EditorGUILayout.Vector3Field("World Cast direction (2D: XY)", _direction);
             _distance = EditorGUILayout.FloatField("World Cast distance", _distance);
             if (EditorGUI.EndChangeCheck())
@@ -239,7 +263,9 @@ namespace YLFramework.Editor.Overlap
                 }
             }
             EditorGUILayout.HelpBox("Last explicit preview (not live runtime state): " + _previewStatus, MessageType.Info);
-            EditorGUILayout.LabelField("Raw uses native layer/trigger/depth policy; orange means ignored or body-grouped, not an exhaustive scene scan.", EditorStyles.wordWrappedLabel);
+            EditorGUILayout.LabelField(TwoD ?
+                "Raw uses native layer/trigger/depth policy and the outer circle for sectors; orange can mean outside region, ignored or body-grouped, not an exhaustive scene scan." :
+                "Raw uses native layer/trigger/depth policy; orange means ignored or body-grouped, not an exhaustive scene scan.", EditorStyles.wordWrappedLabel);
             for (int i = 0; i < _rawCount; i++)
             {
                 UnityEngine.Object item = TwoD ? _raw2D[i] : (UnityEngine.Object)_raw3D[i];
@@ -248,7 +274,7 @@ namespace YLFramework.Editor.Overlap
                 {
                     accepted |= item == (TwoD ? _accepted2D[j] : (UnityEngine.Object)_accepted3D[j]);
                 }
-                EditorGUILayout.ObjectField(accepted ? "Accepted" : "Ignored / grouped", item, typeof(UnityEngine.Object), true);
+                EditorGUILayout.ObjectField(accepted ? "Accepted" : TwoD ? "Outside region / ignored / grouped" : "Ignored / grouped", item, typeof(UnityEngine.Object), true);
             }
         }
 
@@ -264,6 +290,47 @@ namespace YLFramework.Editor.Overlap
             SamplePreview();
             Repaint();
             SceneView.RepaintAll();
+        }
+
+        private void DrawComposite2D()
+        {
+            var composite = serializedObject.FindProperty("composite");
+            EditorGUILayout.PropertyField(composite, new GUIContent("Local Union"), false);
+            if (!composite.isExpanded)
+            {
+                return;
+            }
+            var shapes = composite.FindPropertyRelative("shapes");
+            EditorGUILayout.PropertyField(shapes.FindPropertyRelative("Array.size"), new GUIContent("Children"));
+            for (int i = 0; i < shapes.arraySize; i++)
+            {
+                using var box = new EditorGUILayout.VerticalScope(EditorStyles.helpBox);
+                var child = shapes.GetArrayElementAtIndex(i);
+                var kind = child.FindPropertyRelative("kind");
+                EditorGUILayout.PropertyField(kind, new GUIContent("Child " + i));
+                EditorGUILayout.PropertyField(child.FindPropertyRelative("center"));
+                switch ((OverlapShapeKind2D)kind.intValue)
+                {
+                    case OverlapShapeKind2D.Circle:
+                        EditorGUILayout.PropertyField(child.FindPropertyRelative("radius"));
+                        break;
+                    case OverlapShapeKind2D.Box:
+                    case OverlapShapeKind2D.Capsule:
+                        EditorGUILayout.PropertyField(child.FindPropertyRelative("size"));
+                        EditorGUILayout.PropertyField(child.FindPropertyRelative("angle"), new GUIContent("Rotation Degrees"));
+                        if ((OverlapShapeKind2D)kind.intValue == OverlapShapeKind2D.Capsule)
+                        {
+                            EditorGUILayout.PropertyField(child.FindPropertyRelative("direction"));
+                        }
+                        break;
+                    case OverlapShapeKind2D.Sector:
+                        EditorGUILayout.PropertyField(child.FindPropertyRelative("outerRadius"));
+                        EditorGUILayout.PropertyField(child.FindPropertyRelative("innerRadius"));
+                        EditorGUILayout.PropertyField(child.FindPropertyRelative("angleDegrees"), new GUIContent("Angle Degrees (Aperture)"));
+                        EditorGUILayout.PropertyField(child.FindPropertyRelative("rotationDegrees"));
+                        break;
+                }
+            }
         }
 
         internal void SamplePreview()
@@ -298,8 +365,29 @@ namespace YLFramework.Editor.Overlap
                         _hits2D = new RaycastHit2D[_previewCapacity];
                     }
                     var scene = detector.gameObject.scene.GetPhysicsScene2D();
-                    var raw = OverlapQuery2D.Query(scene, shape, new OverlapFilter2D(filter.ContactFilter), _raw2D);
-                    var accepted = OverlapQuery2D.Query(scene, shape, filter, _accepted2D);
+                    var broad = shape;
+                    if (shape.Kind == OverlapShapeKind2D.Sector)
+                    {
+                        if (_workspace2D != null && (_workspace2D.MaxShapesPerCollider != detector.MaxShapesPerCollider ||
+                            _workspace2D.MaxVerticesPerShape != detector.MaxVerticesPerShape || _workspace2D.GeometryTolerance != detector.GeometryTolerance))
+                        {
+                            _workspace2D.Dispose();
+                            _workspace2D = null;
+                        }
+                        if (_workspace2D == null)
+                        {
+                            _workspace2D = new OverlapQueryWorkspace2D(detector.MaxShapesPerCollider,
+                                detector.MaxVerticesPerShape, detector.GeometryTolerance);
+                        }
+                        if (!_workspace2D.TryBroadRadius(shape.OuterRadius, out float radius))
+                        {
+                            _previewStatus = "Invalidated: InvalidGeometry (nonfinite broad-phase radius).";
+                            return;
+                        }
+                        broad = OverlapShape2D.Circle(shape.Center, radius);
+                    }
+                    var raw = OverlapQuery2D.Query(scene, broad, new OverlapFilter2D(filter.ContactFilter), _raw2D);
+                    var accepted = OverlapQuery2D.Query(scene, shape, filter, _accepted2D, _workspace2D);
                     _rawCount = raw.Count;
                     _acceptedCount = accepted.Count;
                     _previewStatus = accepted.Status + " / " + accepted.InvalidationReason + "; Count/RawCount " + accepted.Count + "/" + accepted.RawCount;
@@ -307,7 +395,7 @@ namespace YLFramework.Editor.Overlap
                     {
                         var cast = OverlapQuery2D.Cast(scene, shape, _direction, _distance, filter, _hits2D);
                         _hitCount = cast.Count;
-                        _previewStatus += "; Cast " + cast.Status + " " + cast.Count + "/" + cast.RawCount;
+                        _previewStatus += "; Cast " + cast.Status + " / " + cast.InvalidationReason + " " + cast.Count + "/" + cast.RawCount;
                     }
                 }
                 else
@@ -447,7 +535,8 @@ namespace YLFramework.Editor.Overlap
             using var scope = new Handles.DrawingScope(Color.cyan);
             Vector3 direction = TwoD ? new Vector3(_direction.x, _direction.y, 0) : _direction;
             if (_cast && OverlapShape3D.IsFinite(_distance) && _distance >= 0 && direction.sqrMagnitude > 0 &&
-                OverlapShape3D.IsFinite(direction.sqrMagnitude))
+                OverlapShape3D.IsFinite(direction.sqrMagnitude) &&
+                (!TwoD || World2D((OverlapDetector2D)target, _child).Kind != OverlapShapeKind2D.Sector))
             {
                 Vector3 offset = direction.normalized * _distance;
                 Handles.DrawDottedLine(center, center + offset, 4);
@@ -525,6 +614,28 @@ namespace YLFramework.Editor.Overlap
                     break;
                 case OverlapShapeKind2D.Capsule:
                     HandlesExtensions.DrawCapsule2D(Vector3.zero, shape.Size, shape.CapsuleDirection);
+                    break;
+                case OverlapShapeKind2D.Sector:
+                    if (shape.AngleDegrees == 360)
+                    {
+                        Handles.DrawWireDisc(Vector3.zero, Vector3.forward, shape.OuterRadius);
+                        if (shape.InnerRadius > 0)
+                        {
+                            Handles.DrawWireDisc(Vector3.zero, Vector3.forward, shape.InnerRadius);
+                        }
+                    }
+                    else
+                    {
+                        Vector3 start = Quaternion.Euler(0, 0, -shape.AngleDegrees * 0.5f) * Vector3.right;
+                        Vector3 end = Quaternion.Euler(0, 0, shape.AngleDegrees * 0.5f) * Vector3.right;
+                        Handles.DrawWireArc(Vector3.zero, Vector3.forward, start, shape.AngleDegrees, shape.OuterRadius);
+                        if (shape.InnerRadius > 0)
+                        {
+                            Handles.DrawWireArc(Vector3.zero, Vector3.forward, start, shape.AngleDegrees, shape.InnerRadius);
+                        }
+                        Handles.DrawLine(start * shape.InnerRadius, start * shape.OuterRadius);
+                        Handles.DrawLine(end * shape.InnerRadius, end * shape.OuterRadius);
+                    }
                     break;
             }
         }

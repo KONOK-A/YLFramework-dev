@@ -689,5 +689,217 @@ namespace YLFramework.Tests.Extensions.Behavior
             return sentinel;
         }
     }
+    public sealed class OverlapSectorAuthoringTests
+    {
+        private string _folder;
+        private GameObject _root;
+
+        [SetUp]
+        public void Setup()
+        {
+            _folder = "Assets/__YLSectorAuthoring_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", _folder.Substring(7));
+            _root = new GameObject("OwnedSectorAuthoring");
+        }
+
+        [TearDown]
+        public void Cleanup()
+        {
+            if (_root)
+            {
+                Object.DestroyImmediate(_root);
+            }
+            Assert.That(AssetDatabase.DeleteAsset(_folder), Is.True);
+        }
+
+        private OverlapDetector2D Detector()
+        {
+            var shape = OverlapShape2D.Sector(new Vector2(1, 2), 3, 270, 1);
+            var detector = _root.AddComponent<OverlapDetector2D>();
+            detector.Composite = new OverlapComposite2D(shape);
+            return detector;
+        }
+
+        [Test]
+        public void AnnularSectorFieldsSupportPrefabOverrideUndoAndColdReimportWithoutRuntimeState()
+        {
+            Detector();
+            string path = _folder + "/Sector.prefab";
+            var prefab = PrefabUtility.SaveAsPrefabAsset(_root, path);
+            byte[] original = File.ReadAllBytes(path);
+            Object.DestroyImmediate(_root);
+            _root = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+            var detector = _root.GetComponent<OverlapDetector2D>();
+            Undo.IncrementCurrentGroup();
+            using (var data = new SerializedObject(detector))
+            {
+                var shape = data.FindProperty("composite.shapes").GetArrayElementAtIndex(0);
+                shape.FindPropertyRelative("outerRadius").floatValue = 7;
+                shape.FindPropertyRelative("innerRadius").floatValue = 2;
+                shape.FindPropertyRelative("angleDegrees").floatValue = 180;
+                shape.FindPropertyRelative("rotationDegrees").floatValue = 37;
+                data.FindProperty("maxShapesPerCollider").intValue = 7;
+                data.FindProperty("maxVerticesPerShape").intValue = 64;
+                data.FindProperty("geometryTolerance").floatValue = 0.001f;
+                data.ApplyModifiedProperties();
+            }
+            Undo.FlushUndoRecordObjects();
+            Assert.That(PrefabUtility.GetPropertyModifications(_root), Has.Some.Matches<PropertyModification>(
+                item => item.propertyPath.EndsWith(".innerRadius", StringComparison.Ordinal)));
+            Undo.PerformUndo();
+            using (var data = new SerializedObject(detector))
+            {
+                Assert.That(data.FindProperty("composite.shapes").GetArrayElementAtIndex(0).FindPropertyRelative("innerRadius").floatValue, Is.EqualTo(1));
+            }
+            Undo.PerformRedo();
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+            string coldPath = _folder + "/Cold.prefab";
+            Assert.That(PrefabUtility.SaveAsPrefabAsset(_root, coldPath), Is.Not.Null);
+            Object.DestroyImmediate(_root);
+            _root = null;
+            AssetDatabase.ImportAsset(coldPath, ImportAssetOptions.ForceUpdate);
+            var cold = PrefabUtility.LoadPrefabContents(coldPath);
+            try
+            {
+                var reloaded = cold.GetComponent<OverlapDetector2D>();
+                using var data = new SerializedObject(reloaded);
+                var shape = data.FindProperty("composite.shapes").GetArrayElementAtIndex(0);
+                Assert.That(shape.FindPropertyRelative("outerRadius").floatValue, Is.EqualTo(7));
+                Assert.That(shape.FindPropertyRelative("innerRadius").floatValue, Is.EqualTo(2));
+                Assert.That(shape.FindPropertyRelative("angleDegrees").floatValue, Is.EqualTo(180));
+                Assert.That(shape.FindPropertyRelative("rotationDegrees").floatValue, Is.EqualTo(37));
+                Assert.That(reloaded.MaxShapesPerCollider, Is.EqualTo(7));
+                Assert.That(reloaded.MaxVerticesPerShape, Is.EqualTo(64));
+                Assert.That(reloaded.GeometryTolerance, Is.EqualTo(0.001f));
+                Assert.That(OverlapDetectorInspector.ValidateConfiguration(reloaded), Is.Empty);
+                Assert.That(reloaded.BufferCapacity, Is.Zero);
+                string json = JsonUtility.ToJson(reloaded.Composite);
+                Assert.That(json, Does.Not.Contain("instanceID"));
+                Assert.That(json, Does.Not.Contain("workspace"));
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(cold);
+            }
+        }
+
+        [Test]
+        public void AnnularSectorWorldConversionAcceptsUniformMirrorsButRejectsEllipseAndShear()
+        {
+            var detector = Detector();
+            _root.transform.SetPositionAndRotation(new Vector3(8, -2, 6), Quaternion.Euler(0, 0, 90));
+            _root.transform.localScale = new Vector3(-2, 2, 1);
+            var world = OverlapDetectorInspector.World2D(detector, 0);
+            Assert.That(Vector2.Distance(world.Center, new Vector2(4, -4)), Is.LessThan(0.0001f));
+            Assert.That(world.Radius, Is.EqualTo(6).Within(0.00001f));
+            Assert.That(world.Angle, Is.EqualTo(-90).Within(0.0001f));
+            _root.transform.localScale = new Vector3(2, 3, 1);
+            Assert.That(OverlapDetectorInspector.ValidateConfiguration(detector), Is.Not.Empty);
+            _root.transform.rotation = Quaternion.Euler(20, 0, 0);
+            Assert.That(OverlapDetectorInspector.ValidateConfiguration(detector), Is.Not.Empty);
+        }
+
+        [Test]
+        public void SectorPreviewUsesOuterCircleCandidatesAndIndependentWorkspaceAndDiagnosesCast()
+        {
+            var detector = Detector();
+            detector.Filter = new OverlapFilter2D(new ContactFilter2D { useLayerMask = true, layerMask = 1 << 11 });
+            foreach (var position in new[] { new Vector3(1, 2), new Vector3(3, 2) })
+            {
+                var child = new GameObject("OwnedPreviewTarget");
+                child.transform.SetParent(_root.transform, false);
+                child.transform.position = position;
+                child.layer = 11;
+                child.AddComponent<CircleCollider2D>().radius = 0.1f;
+            }
+            Physics2D.SyncTransforms();
+            var previous = Selection.objects;
+            var inspector = (OverlapDetectorInspector)UnityEditor.Editor.CreateEditor(detector);
+            const BindingFlags Flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            OverlapQueryWorkspace2D preview = null;
+            try
+            {
+                Selection.activeGameObject = _root;
+                string serialized = EditorJsonUtility.ToJson(detector);
+                typeof(OverlapDetectorInspector).GetField("_cast", Flags).SetValue(inspector, true);
+                inspector.SamplePreview();
+                Assert.That(typeof(OverlapDetectorInspector).GetField("_rawCount", Flags).GetValue(inspector), Is.EqualTo(2));
+                Assert.That(typeof(OverlapDetectorInspector).GetField("_acceptedCount", Flags).GetValue(inspector), Is.EqualTo(1));
+                Assert.That((string)typeof(OverlapDetectorInspector).GetField("_previewStatus", Flags).GetValue(inspector), Does.Contain("UnsupportedCast"));
+                preview = (OverlapQueryWorkspace2D)typeof(OverlapDetectorInspector).GetField("_workspace2D", Flags).GetValue(inspector);
+                Assert.That(preview, Is.Not.Null);
+                inspector.SamplePreview();
+                Assert.That(typeof(OverlapDetectorInspector).GetField("_workspace2D", Flags).GetValue(inspector), Is.SameAs(preview));
+                Assert.That(detector.BufferCapacity, Is.Zero);
+                Assert.That(detector.LastComplete, Is.Empty);
+                Assert.That(EditorJsonUtility.ToJson(detector), Is.EqualTo(serialized));
+            }
+            finally
+            {
+                Object.DestroyImmediate(inspector);
+                Selection.objects = previous;
+            }
+            Assert.Throws<ObjectDisposedException>(() => OverlapQuery2D.Query(OverlapShape2D.Sector(Vector2.zero, 3, 90),
+                detector.Filter, new Collider2D[8], preview));
+        }
+
+        [Test]
+        public void InvalidSectorWorkspaceBudgetIsVisibleBeforeAnyNativeQuery()
+        {
+            var detector = Detector();
+            using var data = new SerializedObject(detector);
+            data.FindProperty("maxVerticesPerShape").intValue = 0;
+            data.ApplyModifiedProperties();
+            Assert.That(OverlapDetectorInspector.ValidateConfiguration(detector), Does.Contain("maxVerticesPerShape"));
+            Assert.That(detector.Sample(), Is.False);
+            Assert.That(detector.LastQuery.Status, Is.EqualTo(OverlapQueryStatus.Invalidated));
+            Assert.That(detector.BufferCapacity, Is.Zero);
+        }
+    }
+    public sealed class OverlapSectorNumericsTests
+    {
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        public void SectorRelativeCoordinateKernelCancelsSharedTranslationAndRejectsRemainingLostTerms(int layout)
+        {
+            double extent = Math.Pow(2, 56);
+            double first = 2;
+            double second = 0;
+            double translation = extent;
+            double center = extent;
+            if (layout == 1)
+            {
+                const float RotationComponent = 0.70710677f;
+                first = RotationComponent * extent;
+                second = -(double)RotationComponent * 2;
+                translation = 0;
+                center = (float)first;
+            }
+            else if (layout == 2)
+            {
+                first = extent;
+                translation = 0;
+            }
+            var arguments = new object[] { first, second, translation, center, 0.00001d, 0d };
+            var method = typeof(OverlapQueryWorkspace2D).GetMethod("TryRelativeCoordinate", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+            bool reliable = (bool)method.Invoke(null, arguments);
+            double coordinate = (double)arguments[5];
+            TestContext.WriteLine("FIX1 I2 pure coordinate layout=" + layout + "; first=" + first.ToString("R") +
+                "; second=" + second.ToString("R") + "; translation=" + translation.ToString("R") +
+                "; center=" + center.ToString("R") + "; coordinate=" + coordinate.ToString("R") + "; reliable=" + reliable);
+            Assert.That(reliable, Is.EqualTo(layout != 1));
+            if (reliable)
+            {
+                Assert.That(coordinate, Is.EqualTo(layout == 0 ? 2 : 0));
+            }
+            else
+            {
+                Assert.That(first, Is.EqualTo(center));
+                Assert.That(Math.Abs(second), Is.GreaterThan(1), "The discarded finite term is not harmless tolerance noise.");
+            }
+        }
+    }
 }
 #endif
