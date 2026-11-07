@@ -22,9 +22,9 @@ YLFramework 是 Unity C# 游戏框架，提供基础机制、Module / MVC / UI�
 
 Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎门禁，定点为 `2022.3.62f3c1` / `6000.3.27f1`；详见 [平台与范围](Modules/Resource.md#共存与范围)。本地 Bundle、远端更新、加密与整个框架的支持范围不能混为一谈。
 
-1. 首选取得冻结 Release 资产及对应 Registry 验收回执；首版仍是 Unreleased，以下配置不表示五个版本已经公开可用。Git 回退则需要本次验收提供的真实完整 SHA，不能安装占位值或假设同名 tag 已发布。
-2. Registry 版本就绪后，按下节在消费工程 `Packages/manifest.json` 只声明所选能力的唯一入口，等待 UPM 自动解析闭包。使用 Git 回退时则显式声明全部 Git 闭包。不要复制源宿主的 Packages、ProjectSettings 或整个外部 Plugins / Resources 目录。
-3. 消费方 asmdef 显式引用 `YLFramework.Runtime`；仅 Editor 扩展引用 `YLFramework.Editor`。检查真实 Unity 编译，而不是只看 IDE。
+1. 首选取得冻结 Release 资产及对应 Registry 验收回执；首版仍是 Unreleased，以下配置不表示当前11个包版本已经公开可用。Git 回退则需要本次验收提供的真实完整 SHA，不能安装占位值或假设同名 tag 已发布。
+2. Registry 版本就绪后，按下节在消费工程 `Packages/manifest.json` 声明所选能力的直接入口，等待 UPM 自动解析闭包。条件适配需显式安装其组合；使用 Git 回退时须显式声明全部 Git 闭包。不要复制源宿主的 Packages、ProjectSettings 或整个外部 Plugins / Resources 目录。
+3. 消费方 asmdef 显式引用所用 Runtime 程序集；主包为 `YLFramework.Runtime`，选装包归属见[架构表](Architecture.md#目录与程序集)。仅 Editor 扩展引用相应 Editor 程序集。检查真实 Unity 编译，而不是只看 IDE。
 4. 按能力完成显式装配。基础工具可直接使用；UI、Resource、命名 Audio 和领域配置遵守各自初始化与所有权，不因放入 Root Prefab 就自动全部启用。
 5. 在目标工程验证实际场景与 Player；配置、反射类型、资源闭包和可选 SDK 的平台前置由应用一并准备。
 
@@ -58,7 +58,9 @@ Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎�
 | `com.kano.ylframework.localization` | 主包、UGUI | 显式语言根、文本/ResourceImage 与作者窗口 |
 | `com.kano.ylframework.save` | Newtonsoft UPM，无主包依赖 | 槽位、同步/异步JSON、原子单文件和显式恢复 |
 | `com.kano.ylframework.gameplay` | 主包、Newtonsoft UPM | Skill/Buff/Mission/Equipment四Runtime与统一作者工具，不要求Excel |
-| `com.kano.ylframework.reddot` | 主包 | 独立路径/来源登记和指示组件，不要求Save或Gameplay |
+| `com.kano.ylframework.state-machine` | 主包 | 配置式状态机、图编辑与状态脚本生成；轻量FSM仍属主包 |
+| `com.kano.ylframework.movement2d` | 主包、内置physics2d | Character2D / Platform2D两个Runtime与统一Editor，不安装Overlap |
+| `com.kano.ylframework.reddot` | 主包 | 核心不要求Save或Gameplay；使用`YLFramework.RedDots.Save`时另显式安装Save |
 | `com.kano.ylframework.overlap` | 主包 | 原2D/3D检测组件与Inspector，直接声明内置physics/physics2d，不要求movement2d或其他选装包 |
 | `com.kano.ylframework.excel` | 主包、DataAssets | MiniExcel 与许可随 Excel 包携带 |
 | Excel Gameplay 条件适配 | 包含在Excel中，另安装Gameplay | 无独立DomainExcel包，不需要全局宏 |
@@ -85,7 +87,7 @@ Unity 不支持在 `package.json` 中声明 Git URL 传递依赖。自有包虽�
 | --- | --- | --- |
 | 主包 | `com.kano.ylframework` | UGUI / Json.NET 等 Registry 依赖自动解析 |
 | DOTween | 仅主包 | 独立安装官方DOTween Standard `1.2.825`，完成SDK Setup和`DOTWEEN`；消费asmdef显式引用`YLFramework.Actions.DOTween` |
-| 红点 | 主包 + `com.kano.ylframework.reddot` | consumer asmdef显式引用`YLFramework.RedDots`，不安装Save/Gameplay |
+| 红点 | 主包 + `com.kano.ylframework.reddot` | consumer asmdef显式引用`YLFramework.RedDots`；使用`YLFramework.RedDots.Save`时另显式声明Save的同SHA Git条目，核心不强装Save/Gameplay |
 | DataAssets | 主包 + `com.kano.ylframework.data-assets` | 不要求安装 Excel |
 | Localization | 主包 + `com.kano.ylframework.localization` | 不要求安装 DataAssets/Excel/TMP |
 | Save | 仅 `com.kano.ylframework.save` + Newtonsoft UPM | 不需要主包；若使用主包SerializedDictionary则消费方显式安装两者 |

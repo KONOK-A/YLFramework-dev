@@ -55,6 +55,8 @@ Skill / Buff / Mission / Equipment 使用各自的 `SkillsConfig`、`BuffsConfig
 
 `Reddot` 组件只切换明确绑定的 `Indicator`，停用或销毁时精确退订，不遍历切换全部业务子节点。
 
+数值聚合、嵌套Batch与订阅、显式`ReddotReadState`导入导出、可选`YLFramework.RedDots.Save`以及只读诊断见[红点包说明](../../../com.kano.ylframework.reddot/README.md)。核心不自动持久化、恢复或保存槽位；来源凭据与已读状态都有明确owner，不因安装Save而自动写盘。
+
 ## Logging
 
 有效 Play 会话的主线程中显式调用 `LoggerManager.Enable()` 才安装处理器和宿主。文件输出另外由 `new LoggerOptions { WriteToFile = true }` 启用；未提供目录时，Manager 使用 `Application.persistentDataPath/YLFramework/Logs`。

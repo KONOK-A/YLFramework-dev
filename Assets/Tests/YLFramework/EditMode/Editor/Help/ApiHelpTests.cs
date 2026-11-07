@@ -441,7 +441,7 @@ namespace YLFramework.Tests.Actions
             var menu = typeof(ActionKitHelpProvider).GetMethod("Open", BindingFlags.NonPublic | BindingFlags.Static)
                 .GetCustomAttribute<MenuItem>();
             Assert.That(menu.menuItem, Is.EqualTo("YLFramework/Action/帮助"));
-            var asmdef = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(Application.dataPath, "YLFramework/Editor/YLFramework.Editor.asmdef")));
+            var asmdef = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework/Editor/YLFramework.Editor.asmdef"));
             StringAssert.IsMatch("\"includePlatforms\"\\s*:\\s*\\[\\s*\"Editor\"\\s*\\]", asmdef);
             StringAssert.DoesNotContain("\"YLFramework.Editor.Help\"", asmdef);
         }
@@ -819,8 +819,8 @@ namespace YLFramework.Tests.Actions
                 var path = Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(Application.dataPath, "..", "Library", assembly.GetName().Name + ".xml")));
                 Assert.That(module.XmlPaths[assembly], Is.EqualTo(path));
                 Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Is.True, "Unity must generate the local -doc output: " + path);
-                var folder = assembly == typeof(ActionKit).Assembly ? "Runtime" : "Integrations/DOTween/Runtime";
-                Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(Application.dataPath, "YLFramework", folder, "csc.rsp"))).Trim(),
+                var folder = assembly == typeof(ActionKit).Assembly ? "Runtime" : "Runtime/Systems/Action/Integration/DOTween";
+                Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine("Packages/com.kano.ylframework", folder, "csc.rsp"))).Trim(),
                     Is.EqualTo("-doc:Library/" + assembly.GetName().Name + ".xml"));
                 var document = new System.Xml.XmlDocument();
                 document.Load(path);

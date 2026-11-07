@@ -1,6 +1,8 @@
 # YLFramework Movement 2D
 
 Install this package with the main package and Unity's physics2d module.
+Git consumers explicitly declare main and this package at the same accepted full
+SHA; package-level SemVer dependencies do not fetch sibling Git packages.
 Character movement belongs to `YLFramework.Character2D`; moving paths, platforms
 and passenger detection belong to `YLFramework.Platform2D`. Their namespaces,
 serialized fields, script GUIDs and UnityEvent types are unchanged.

@@ -102,7 +102,7 @@ namespace YLFramework.Testing
         public static JArray Definitions(JObject catalog, JArray packages, string profile, string dotweenMode)
         {
             Validate(catalog);
-            if (!new[] { "Package", "DOTween", "Excel", "ExcelGameplay", "ReddotSave", "HybridCLR", "OptionalAdapterFixture" }.Contains(profile) ||
+            if (!new[] { "Package", "DOTween", "Excel", "ExcelGameplay", "ReddotSave", "HybridCLR", "MovementOverlap", "AllPackages", "OptionalAdapterFixture" }.Contains(profile) ||
                 (profile != "DOTween" && !string.IsNullOrEmpty(dotweenMode)) || (profile == "DOTween" && !new[] { "Required", "Absent", "SdkOnly", "DefineOnly" }.Contains(dotweenMode))) { throw Error("Unknown/ambiguous package smoke profile."); }
             var declared = ((JArray)catalog["packages"]).Cast<JObject>().ToDictionary(row => Text(row, "id"), StringComparer.Ordinal);
             var versions = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -113,7 +113,9 @@ namespace YLFramework.Testing
                 versions.Add(Text(package, "name"), Text(package, "version"));
             }
             if (versions.Count == 0) { throw Error("The package plan must be nonempty."); }
-            if (profile == "HybridCLR") { versions.Add("com.code-philosophy.hybridclr", "9.0.3"); }
+            if (profile == "AllPackages" && !new HashSet<string>(declared.Keys, StringComparer.Ordinal).SetEquals(versions.Keys)) { throw Error("AllPackages requires the complete catalog package set."); }
+            if (profile == "MovementOverlap" && !new HashSet<string>(new[] { "com.kano.ylframework", "com.kano.ylframework.movement2d", "com.kano.ylframework.overlap" }, StringComparer.Ordinal).SetEquals(versions.Keys)) { throw Error("MovementOverlap requires exactly main, movement2d and overlap."); }
+            if (profile == "HybridCLR" || profile == "AllPackages") { versions.Add("com.code-philosophy.hybridclr", "9.0.3"); }
             var result = new JArray();
             foreach (var package in packages.Cast<JObject>())
             {

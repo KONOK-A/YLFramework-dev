@@ -21,7 +21,7 @@ complete-only notification correction and migration boundaries.
 ## Registry Installation
 
 The intended release channel is OpenUPM. This preview is still unreleased until
-the five package versions, frozen Release assets and their acceptance receipt are
+all eleven package versions, frozen Release assets and their acceptance receipt are
 available; the configuration below is not a claim that publication has occurred.
 After that handoff, use this minimal `Packages/manifest.json` for the main package:
 
@@ -34,9 +34,12 @@ After that handoff, use this minimal `Packages/manifest.json` for the main packa
 }
 ```
 
-For an optional package, declare just its package ID at the same version. UPM
-then resolves the main package and, for Domain Excel, the Excel package. Do not
-copy development-host dependencies or route `com.unity` through OpenUPM.
+For one optional package, declare its package ID at the same version and let UPM
+resolve its actual manifest dependencies. Save requires Json.NET but not the main
+package. Excel requires main and DataAssets; its built-in Gameplay adapter also
+requires an explicit Gameplay entry. RedDots core does not require Save; install
+Save separately to enable `YLFramework.RedDots.Save`. Do not copy development-host
+dependencies or route `com.unity` through OpenUPM.
 HybridCLR additionally needs the narrow `com.code-philosophy.hybridclr` scope so
 UPM can resolve the separately distributed official SDK `9.0.3`; DOTween still
 requires a separately installed approved SDK and its `DOTWEEN` define.

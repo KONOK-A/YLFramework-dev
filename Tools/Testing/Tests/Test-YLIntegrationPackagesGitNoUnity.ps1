@@ -31,6 +31,9 @@ try {
     Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -Integration Excel) -ceq 'File') 'Omitting PackageSource must preserve File, not silently choose Git.'
     Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -PackageId 'com.kano.ylframework') -ceq 'File') 'PackageId must be an explicit minimal-install entry.'
     Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -Integration ReddotSave) -ceq 'File') 'ReddotSave must be a maintained explicit integration profile.'
+    foreach ($name in @('MovementOverlap', 'AllPackages')) {
+        Check ((& $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' -Integration $name) -ceq 'File') "$name must use the maintained integration CLI, not a parallel runner."
+    }
     foreach ($options in @(@{ Integration = 'DomainExcel' }, @{ IntegrationDomainExcel = $true })) {
         $refused = $false
         try { $null = & $binding -WorkspaceRoot $sandbox -Unity 'Unused.exe' @options }

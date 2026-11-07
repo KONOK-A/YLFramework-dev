@@ -54,6 +54,11 @@ try {
     $roots = @('com.kano.ylframework.excel', 'com.kano.ylframework.gameplay')
     $arguments = @{ Workspace = $workspace; Source = $source; Unity = $exe; Editor = $editor; EntryPackage = $roots[0]; EntryPackages = $roots; Result = $run; TimeoutSeconds = 30 }
     $reddotRoots = @('com.kano.ylframework.reddot', 'com.kano.ylframework.save')
+    $movementRoots = @('com.kano.ylframework.movement2d', 'com.kano.ylframework.overlap')
+    foreach ($selection in @(@{ roots = $movementRoots }, @{ roots = @((Read-YLPackageCatalog).packages.id) })) {
+        Check ((@(Get-YLRegistryLifecyclePhases -EntryPackage $selection.roots[0] -EntryPackages $selection.roots) -join ',') -ceq 'Inspect,Reopen,Remove,VerifyRemoved') 'Final fixed composites must use the same four-phase neutral lifecycle.'
+        Reject { Get-YLRegistryLifecyclePhases -EntryPackage $selection.roots[0] -EntryPackages $selection.roots -VerifyCombinations } 'explicit|root|combination'
+    }
     $bothGraph = @{ entryPackage = $reddotRoots[0]; compilation = @{ editor = @(); player = @() } }
     foreach ($mode in @('editor', 'player')) {
         foreach ($name in @('YLFramework.Runtime', 'YLFramework.RedDots', 'YLFramework.Save', 'YLFramework.RedDots.Save')) {
@@ -64,10 +69,10 @@ try {
     foreach ($name in @('YLFramework.Editor', 'YLFramework.RedDots.Editor')) {
         $bothGraph.compilation.editor += @{ name = $name; sourceFiles = @('Packages/com.kano.ylframework/Editor/Product.cs'); assemblyReferences = @(); compiledAssemblyReferences = @() }
     }
-    Assert-YLRegistryLifecycleCompilation -Report $bothGraph -Roots $reddotRoots; $checks++
+    Assert-YLRegistryLifecycleCompilation -Report $bothGraph -Roots $reddotRoots -Release $source.release; $checks++
     $missingAdapter = Copy-Value $bothGraph
     $missingAdapter.compilation.player = @($missingAdapter.compilation.player | Where-Object name -CNE 'YLFramework.RedDots.Save')
-    Reject { Assert-YLRegistryLifecycleCompilation -Report $missingAdapter -Roots $reddotRoots } 'compilation|assembly|adapter'
+    Reject { Assert-YLRegistryLifecycleCompilation -Report $missingAdapter -Roots $reddotRoots -Release $source.release } 'compilation|assembly|adapter'
     $stateOriginal = @{ dependencies = [ordered]@{ 'com.kano.ylframework' = 'file:C:/main.tgz'; 'com.kano.ylframework.reddot' = 'file:C:/reddot.tgz'; 'com.kano.ylframework.save' = 'file:C:/save.tgz' }; scopedRegistries = @() }
     foreach ($case in @(
         @{ phase = 'Inspect'; ids = 'com.kano.ylframework,com.kano.ylframework.reddot,com.kano.ylframework.save'; remove = ''; add = '' },
@@ -357,6 +362,15 @@ try {
         Check ($case.status -ceq 'Completed' -and $case.phases.Count -eq 4) "Frozen entry lifecycle failed for ${id}: $($case.error)"
         $script:legacy = $false
     }
+    foreach ($selection in @(@{ roots = $movementRoots }, @{ roots = @((Read-YLPackageCatalog).packages.id) })) {
+        $script:scenarioEntry = $selection.roots[0]; $script:scenarioRoots = $selection.roots
+        $caseArguments = $arguments.Clone(); $caseArguments.EntryPackage = $script:scenarioEntry; $caseArguments.EntryPackages = $script:scenarioRoots
+        $case = Invoke-YLRegistryLifecycle @caseArguments
+        Check ($case.status -ceq 'Completed' -and $case.phases.Count -eq 4 -and $case.sentinels.status -ceq 'Unchanged') "Fixed composite lifecycle failed: $($case.error)"
+        $graph = Copy-Value $case.phases[0].report
+        $graph.compilation.player = @($graph.compilation.player | Where-Object name -CNE 'YLFramework.Overlap')
+        Reject { Assert-YLRegistryLifecycleCompilation -Report $graph -Roots $script:scenarioRoots -Release $source.release } 'compilation|assembly'
+    }
     $script:scenarioEntry = $roots[0]; $script:scenarioRoots = $roots
     $baselineHost = $outcome.host.id
     $script:reload = $true; $starts.Clear()
@@ -386,11 +400,13 @@ try {
         Check (($combination.phases.phase -join ',') -ceq 'Inspect,Reopen,RemoveGameplay,VerifyExcelOnly,RestoreGameplay,RemoveExcel,VerifyGameplayOnly,RestoreExcel,Remove,VerifyRemoved') 'Explicit combinations must execute both root removals/restorations and final removal.'
         $withRuntimeContracts = Copy-Value $combination.phases[0].report
         foreach ($mode in @('editor', 'player')) {
-            $withRuntimeContracts.compilation[$mode] += @(@{ name = 'YLFramework.Runtime'; sourceFiles = @(
+            $runtime = @($withRuntimeContracts.compilation[$mode] | Where-Object name -CEQ 'YLFramework.Runtime')
+            Check ($runtime.Count -eq 1) 'The valid fixture must retain its actual single Runtime assembly.'
+            $runtime[0].sourceFiles = @(
                 'Packages/com.kano.ylframework/Runtime/Utilities/Excel/Attributes/ExcelColumnNameAttribute.cs',
-                'Packages/com.kano.ylframework/Runtime/Utilities/Excel/ExcelFieldsType.cs'); assemblyReferences = @(); compiledAssemblyReferences = @() })
+                'Packages/com.kano.ylframework/Runtime/Utilities/Excel/ExcelFieldsType.cs')
         }
-        Assert-YLRegistryLifecycleCompilation -Report $withRuntimeContracts -Roots $roots
+        Assert-YLRegistryLifecycleCompilation -Report $withRuntimeContracts -Roots $roots -Release $source.release
         $checks++
         foreach ($faultName in @('missing-adapter', 'missing-player-gameplay', 'empty-adapter-source', 'empty-gameplay-source', 'adapter-reference', 'player-source-leak', 'precompiled-type', 'extra-compilation-field')) {
             $badReport = Copy-Value $combination.phases[0].report
@@ -404,7 +420,7 @@ try {
                 'precompiled-type' { $badReport.compilation.editor[0].compiledAssemblyReferences = 'MiniExcel.dll' }
                 'extra-compilation-field' { $badReport.compilation.player[0].unobserved = $true }
             }
-            Reject { Assert-YLRegistryLifecycleCompilation -Report $badReport -Roots $roots } 'compilation|assembly|adapter|source|reference|field'
+            Reject { Assert-YLRegistryLifecycleCompilation -Report $badReport -Roots $roots -Release $source.release } 'compilation|assembly|adapter|source|reference|field'
         }
         foreach ($phase in $combination.phases) {
             $names = @($phase.graph.packages | ForEach-Object name)
@@ -471,11 +487,11 @@ try {
             foreach ($assembly in $runtimeGraph.compilation.player) {
                 $assembly.compiledAssemblyReferences += 'G:/Unity Editor/2022.3.62f3/Editor/Data/PlaybackEngines/WindowsStandaloneSupport/Variations/mono/Managed/UnityEngine.CoreModule.dll'
             }
-            Assert-YLRegistryLifecycleCompilation -Report $runtimeGraph -Roots $reddotRoots
+            Assert-YLRegistryLifecycleCompilation -Report $runtimeGraph -Roots $reddotRoots -Release $source.release
             $checks++
             foreach ($field in @('sourceFiles', 'assemblyReferences', 'compiledAssemblyReferences')) {
                 $badGraph = Copy-Value $withoutSave; $badGraph.compilation.player[0][$field] += 'YLFramework.RedDots.Save'
-                Reject { Assert-YLRegistryLifecycleCompilation -Report $badGraph -Roots @($reddotRoots[0]) } 'compilation|Save|source|reference|adapter'
+                Reject { Assert-YLRegistryLifecycleCompilation -Report $badGraph -Roots @($reddotRoots[0]) -Release $source.release } 'compilation|Save|source|reference|adapter'
             }
             foreach ($faultName in @('missing-core', 'missing-player-save', 'empty-adapter', 'core-save-reference', 'adapter-reference', 'player-editor', 'player-editor-source', 'unity-editor-reference', 'foreign-yl', 'test-reference')) {
                 $badGraph = Copy-Value $combination.phases[0].report
@@ -491,7 +507,7 @@ try {
                     'foreign-yl' { $badGraph.compilation.player[0].name = 'YLFramework.Gameplay' }
                     'test-reference' { $badGraph.compilation.player[0].compiledAssemblyReferences += 'nunit.framework.dll' }
                 }
-                Reject { Assert-YLRegistryLifecycleCompilation -Report $badGraph -Roots $reddotRoots } 'compilation|assembly|adapter|source|reference|Save|core'
+                Reject { Assert-YLRegistryLifecycleCompilation -Report $badGraph -Roots $reddotRoots -Release $source.release } 'compilation|assembly|adapter|source|reference|Save|core'
             }
             if ($origin -ceq 'LocalTarball') {
                 $remove = @($combination.phases | Where-Object phase -CEQ 'RemoveReddot')[0].report.removal

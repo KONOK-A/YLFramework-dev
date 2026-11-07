@@ -133,13 +133,13 @@ namespace YLFramework.Testing
                     report["sdk"] = ValidateDotween(request, editor, player, selected, global);
                     report["dotweenSdkMode"] = (string)request["dotweenSdkMode"] ?? "Required";
                 }
-                if (integration == "Excel" || integration == "ExcelGameplay")
+                if (integration == "Excel" || integration == "ExcelGameplay" || integration == "AllPackages")
                 {
                     var excel = editor.Single(assembly => assembly.name == "YLFramework.Excel.Editor");
                     string dll = excel.compiledAssemblyReferences.Single(path => Path.GetFileName(path) == "MiniExcel.dll");
                     string root = Text(selected.Single(package => Text(package, "name") == "com.kano.ylframework.excel"), "root");
                     var backend = (JObject)ReadJson(Path.Combine(root, "Editor/Dependencies.json"))["backend"];
-                    var expectedSdk = (JObject)request["sdk"];
+                    var expectedSdk = (JObject)request[integration == "AllPackages" ? "excelSdk" : "sdk"];
                     if (Text(backend, "version") != "1.31.2" || !string.Equals(Hash(dll), Text(backend, "assemblySha256"), StringComparison.OrdinalIgnoreCase) ||
                         Text(backend, "version") != Text(expectedSdk, "version") || Text(backend, "assemblySha256") != Text(expectedSdk, "assemblySha256") ||
                         !string.Equals(Path.GetFullPath(dll), Path.GetFullPath(Path.Combine(root, "Editor/Plugins/MiniExcel.dll")), StringComparison.OrdinalIgnoreCase) ||
@@ -149,16 +149,16 @@ namespace YLFramework.Testing
                     {
                         throw new InvalidOperationException("The actually referenced MiniExcel binary/version/license is incorrect.");
                     }
-                    report["sdk"] = JObject.FromObject(new { version = Text(backend, "version"), assembly = System.Reflection.AssemblyName.GetAssemblyName(dll).FullName,
+                    report[integration == "AllPackages" ? "excelSdk" : "sdk"] = JObject.FromObject(new { version = Text(backend, "version"), assembly = System.Reflection.AssemblyName.GetAssemblyName(dll).FullName,
                         productVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(dll).ProductVersion, dll, sha256 = Hash(dll), license = Text(backend, "license") });
                     var adapter = editor.SingleOrDefault(assembly => assembly.name == "YLFramework.Domain.Excel.Editor");
-                    if ((adapter != null) != (integration == "ExcelGameplay") ||
+                    if ((adapter != null) != (integration == "ExcelGameplay" || integration == "AllPackages") ||
                         (adapter != null && (!adapter.defines.Contains("YL_GAMEPLAY_PACKAGE") || !References(adapter).Contains("YLFramework.Gameplay.Editor"))))
                     {
                         throw new InvalidOperationException("The actual Gameplay package presence did not control the Excel adapter assembly.");
                     }
                 }
-                if (integration == "HybridCLR")
+                if (integration == "HybridCLR" || integration == "AllPackages")
                 {
                     var sdk = installed.Single(package => package.name == "com.code-philosophy.hybridclr");
                     JObject sdkReport;
@@ -488,7 +488,7 @@ namespace YLFramework.Testing
             var selected = ((JArray)request["packages"]).Cast<JObject>().ToArray();
             var names = selected.Select(package => Text(package, "name")).ToArray();
             if (installed.Any(package => package.errors.Length != 0 || (!package.name.StartsWith("com.unity.", StringComparison.Ordinal) &&
-                !names.Contains(package.name) && !(Text(request, "integration") == "HybridCLR" && package.name == "com.code-philosophy.hybridclr"))))
+                !names.Contains(package.name) && !((Text(request, "integration") == "HybridCLR" || Text(request, "integration") == "AllPackages") && package.name == "com.code-philosophy.hybridclr"))))
             {
                 throw new InvalidOperationException("The consumer resolved errors or undeclared non-Unity packages.");
             }
@@ -583,9 +583,13 @@ namespace YLFramework.Testing
                     ? new[] { "com.kano.ylframework.reddot", "com.kano.ylframework.save" }
                     : Text(request, "integration") == "ExcelGameplay"
                     ? new[] { "com.kano.ylframework.excel", "com.kano.ylframework.gameplay" }
+                    : Text(request, "integration") == "MovementOverlap"
+                    ? new[] { "com.kano.ylframework.movement2d", "com.kano.ylframework.overlap" }
+                    : Text(request, "integration") == "AllPackages"
+                    ? ((JArray)catalog["packages"]).Cast<JObject>().Select(package => Text(package, "id")).ToArray()
                     : new[] { Text(request, "entryPackage") };
                 if (Text(request, "entryPackage") != roots[0] ||
-                    (roots.Length == 2 && request.Property("entryPackages") == null) ||
+                    (roots.Length > 1 && request.Property("entryPackages") == null) ||
                     (request.Property("entryPackages") != null && (request["entryPackages"] is not JArray declared ||
                         declared.Any(value => value.Type != JTokenType.String) || !declared.Values<string>().SequenceEqual(roots))))
                 {
@@ -910,7 +914,7 @@ namespace YLFramework.Testing
         {
             if (request["schemaVersion"]?.Type != JTokenType.Integer || (long)request["schemaVersion"] != 1 ||
                 Text(request, "purpose") != "YLTesting.IntegrationPackages" || !Application.isBatchMode ||
-                !new[] { "Package", "DOTween", "Excel", "ExcelGameplay", "ReddotSave", "HybridCLR", "OptionalAdapterFixture" }.Contains(Text(request, "integration")) ||
+                !new[] { "Package", "DOTween", "Excel", "ExcelGameplay", "ReddotSave", "HybridCLR", "MovementOverlap", "AllPackages", "OptionalAdapterFixture" }.Contains(Text(request, "integration")) ||
                 !new[] { "File", "GitRemote", "Registry", "LocalTarball" }.Contains(Text(request, "packageOrigin")) ||
                 request["packages"] is not JArray packages || packages.Count == 0 || request["assemblies"] is not JArray assemblies || assemblies.Count == 0)
             {
@@ -927,6 +931,11 @@ namespace YLFramework.Testing
             if (request.Property("optionalAdapterScenario") != null && Text(request, "integration") != "OptionalAdapterFixture") { throw new InvalidOperationException("A fixture scenario cannot alter a product smoke profile."); }
             if (Text(request, "integration") == "ReddotSave" && request["sdk"] != null && request["sdk"].Type != JTokenType.Null)
                 throw new InvalidOperationException("ReddotSave has no external SDK prerequisite.");
+            if ((request.Property("excelSdk") != null && Text(request, "integration") != "AllPackages") ||
+                (Text(request, "integration") == "AllPackages" && (request["excelSdk"] is not JObject || request["sdk"] is not JObject)))
+            {
+                throw new InvalidOperationException("Only AllPackages requires separate approved Excel and HybridCLR SDK identities.");
+            }
             if (git) { ValidateGitSource(request); }
             else if (new[] { "gitRepository", "gitRevision" }.Any(field => request[field] != null && request[field].Type != JTokenType.Null))
             {
@@ -974,7 +983,8 @@ namespace YLFramework.Testing
             string profileEntry = Text(request, "integration") switch
             {
                 "DOTween" => "com.kano.ylframework", "Excel" => "com.kano.ylframework.excel",
-                "ExcelGameplay" => "com.kano.ylframework.excel", "ReddotSave" => "com.kano.ylframework.reddot", "HybridCLR" => "com.kano.ylframework.hybridclr", _ => entryPackage
+                "ExcelGameplay" => "com.kano.ylframework.excel", "ReddotSave" => "com.kano.ylframework.reddot", "HybridCLR" => "com.kano.ylframework.hybridclr",
+                "MovementOverlap" => "com.kano.ylframework.movement2d", "AllPackages" => "com.kano.ylframework", _ => entryPackage
             };
             if (!known.Contains(entryPackage) || entryPackage != profileEntry || packages.Any(token => token is not JObject) ||
                 packages.Cast<JObject>().Any(package => !known.Contains(Text(package, "name"))) ||

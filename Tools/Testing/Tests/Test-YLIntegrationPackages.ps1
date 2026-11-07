@@ -4,7 +4,7 @@
 param(
     [Parameter(Mandatory)][string] $WorkspaceRoot,
     [Parameter(Mandatory)][string] $Unity,
-    [Parameter(Mandatory, ParameterSetName = 'Integration')][ValidateSet('DOTween', 'Excel', 'ExcelGameplay', 'ReddotSave', 'HybridCLR')][string] $Integration,
+    [Parameter(Mandatory, ParameterSetName = 'Integration')][ValidateSet('DOTween', 'Excel', 'ExcelGameplay', 'ReddotSave', 'HybridCLR', 'MovementOverlap', 'AllPackages')][string] $Integration,
     [Parameter(Mandatory, ParameterSetName = 'Package')][string] $PackageId,
     [ValidateRange(1, 86400)][int] $TimeoutSeconds = 900,
     [Parameter(ParameterSetName = 'Integration')][string] $DOTweenArchive,
@@ -159,7 +159,7 @@ function Assert-YLIntegrationInstalledPackage([Collections.IDictionary] $Request
 }
 
 function Get-YLIntegrationDefinition {
-    param([ValidateSet('Package', 'DOTween', 'Excel', 'ExcelGameplay', 'ReddotSave', 'HybridCLR')][string] $Name, [string] $PackageId,
+    param([ValidateSet('Package', 'DOTween', 'Excel', 'ExcelGameplay', 'ReddotSave', 'HybridCLR', 'MovementOverlap', 'AllPackages')][string] $Name, [string] $PackageId,
         [string] $Repository = ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))),
         [Collections.IDictionary] $Catalog = (Read-YLPackageCatalog), [ValidateSet('Required', 'Absent', 'SdkOnly', 'DefineOnly')][string] $DOTweenSdkMode = 'Required')
     $id = switch -CaseSensitive ($Name) {
@@ -169,12 +169,16 @@ function Get-YLIntegrationDefinition {
         ExcelGameplay { 'com.kano.ylframework.excel' }
         ReddotSave { 'com.kano.ylframework.reddot' }
         HybridCLR { 'com.kano.ylframework.hybridclr' }
+        MovementOverlap { 'com.kano.ylframework.movement2d' }
+        AllPackages { 'com.kano.ylframework' }
         default { throw 'Unknown integration profile.' }
     }
     if ($id -cnotin @($Catalog['packages'] | ForEach-Object { $_['id'] })) { throw "Unknown package ID: $id" }
     $roots = @($id)
     if ($Name -ceq 'ExcelGameplay') { $roots += 'com.kano.ylframework.gameplay' }
     if ($Name -ceq 'ReddotSave') { $roots += 'com.kano.ylframework.save' }
+    if ($Name -ceq 'MovementOverlap') { $roots += 'com.kano.ylframework.overlap' }
+    if ($Name -ceq 'AllPackages') { $roots = @($Catalog.packages.id) }
     $products = @(Get-YLUpmPackages -Repository $Repository -Ids $roots -Catalog $Catalog)
     $inputs = @($products | ForEach-Object { @{ name = $_.id; version = $_.version } })
     $mode = if ($Name -ceq 'DOTween') { $DOTweenSdkMode } else { $null }
@@ -255,7 +259,7 @@ if ($profileName -ceq 'DOTween') { $resultKey += "-$DOTweenSdkMode" }
 $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key $resultKey
 $lease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
 $hostLease = $null; $hostRecord = $null; $cacheLease = $null; $cache = $null; $identity = $null; $templateIdentity = $null
-$inputPaths = @(); $sdk = $null; $products = @(); $report = $null
+$inputPaths = @(); $sdk = $null; $excelSdk = $null; $products = @(); $report = $null
 $git = $source.packageOrigin -ceq 'GitRemote'
 $artifact = $source.packageOrigin -cin @('LocalTarball', 'Registry')
 $summary = [ordered]@{
@@ -305,7 +309,7 @@ try {
     if ($artifact) { $inputPaths += 'Tools/Packaging/Build-YLRegistryPackages.ps1' }
     if ($artifact -and $profileName -ceq 'HybridCLR') { $inputPaths += @('Tools/Testing/RegistryAuthoringEntry.cs', 'Tools/Testing/Common/RegistryAuthoring.ps1') }
     if (($PackageSource -ceq 'Registry' -and -not ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent')) -or
-        ($PackageSource -ceq 'LocalTarball' -and $profileName -cin @('ExcelGameplay', 'ReddotSave'))) { $inputPaths += @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1') }
+        ($PackageSource -ceq 'LocalTarball' -and $profileName -cin @('ExcelGameplay', 'ReddotSave', 'MovementOverlap', 'AllPackages'))) { $inputPaths += @('Tools/Testing/RegistryLifecycleEntry.cs', 'Tools/Testing/Common/RegistryLifecycle.ps1') }
     if ($artifact) {
         $manifestObject = New-YLRegistryHostManifest -PackageSource $PackageSource -Release $source.release -EntryPackage $definition.id -EntryPackages $definition.roots -RegistryUrl $source.registryUrl
         $dependencies = $manifestObject.dependencies
@@ -320,7 +324,7 @@ try {
         }
         $dependencies['com.unity.nuget.newtonsoft-json'] = $profileLock['dependencies']['com.unity.nuget.newtonsoft-json']['version']
     }
-    if ($profileName -ceq 'HybridCLR') {
+    if ($profileName -cin @('HybridCLR', 'AllPackages')) {
         if ($artifact) {
             $approval = Join-Path @($products | Where-Object id -CEQ 'com.kano.ylframework.hybridclr')[0].root 'Dependencies.json'
             $sdk = Get-YLHybridClrRegistrySdk -Approval $approval -Output (Join-Path $run.path 'RegistrySdk') -RegistryUrl $source.registryUrl
@@ -345,7 +349,7 @@ try {
         if (-not $artifact) { $inputPaths = @($inputPaths + 'PackageSources/com.kano.ylframework/Runtime/Systems/Action/Integration/DOTween/Dependencies.json' | Sort-Object -Unique) }
         $summary['approvedSdkArchive'] = @{ version = $sdk.version; archive = $DOTweenArchive; archiveSha256 = $sdk.archiveSha256; assemblySha256 = $sdk.assemblySha256; files = $sdk.files.Count }
     }
-    if ($profileName -cin @('Excel', 'ExcelGameplay')) {
+    if ($profileName -cin @('Excel', 'ExcelGameplay', 'AllPackages')) {
         $excel = if ($artifact) { Join-Path @($products | Where-Object id -CEQ 'com.kano.ylframework.excel')[0].root 'Editor' } else { Join-Path $repository 'PackageSources/com.kano.ylframework.excel/Editor' }
         $approval = [IO.File]::ReadAllText((Join-Path $excel 'Dependencies.json')) | ConvertFrom-Json -AsHashtable -DateKind String
         $backend = $approval['backend']; $dll = Join-Path $excel 'Plugins/MiniExcel.dll'
@@ -356,7 +360,7 @@ try {
             if (-not $path.StartsWith($excel + '\', [StringComparison]::OrdinalIgnoreCase) -or -not [IO.File]::Exists($path) -or [IO.FileInfo]::new($path).Length -eq 0) { throw 'PrerequisiteNotMet: MiniExcel license or attribution is missing.' }
         }
         $summary['expectedSdk'] = @{ name = 'MiniExcel'; version = $backend['version']; assembly = [Reflection.AssemblyName]::GetAssemblyName($dll).FullName; sha256 = $backend['assemblySha256']; license = $backend['license']; purpose = 'LocalReleaseExpectedTemplateNotInstallSource' }
-        $sdk = $backend
+        if ($profileName -ceq 'AllPackages') { $excelSdk = $backend } else { $sdk = $backend }
         if (-not $artifact) { $inputPaths = @($inputPaths + 'PackageSources/com.kano.ylframework.excel/Editor/Dependencies.json' | Sort-Object -Unique) }
     }
     $toolchain = @($Unity)
@@ -416,6 +420,7 @@ try {
         entryPackage = $definition.id; entryPackages = $definition.roots; catalogSha256 = (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     if ($profileName -ceq 'DOTween') { $request.dotweenSdkMode = $DOTweenSdkMode }
+    if ($profileName -ceq 'AllPackages') { $request.excelSdk = $excelSdk }
     if ($artifact) { foreach ($field in (Get-YLRegistryRequestFields -Source $source -EntryPackage $definition.id -EntryPackages $definition.roots).GetEnumerator()) { $request[$field.Key] = $field.Value } }
     # The request needs approved SDK identities, not the source project's physical SDK path.
     if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -cin @('Required', 'SdkOnly')) { $request.sdk = @{ version = $sdk.version; assemblySha256 = $sdk.assemblySha256 } }
@@ -449,7 +454,7 @@ try {
     $actualLock = (Read-YLIntegrationJson $lockPath).ToString() | ConvertFrom-Json -AsHashtable -DateKind String
     if ($artifact) {
         Assert-YLRegistryCacheObservation -Actual $report['cacheEnvironment'] -CacheRoot $cache.path
-        $sdkDeps = if ($profileName -ceq 'HybridCLR') { $sdk.dependencies } else { @{} }
+        $sdkDeps = if ($profileName -cin @('HybridCLR', 'AllPackages')) { $sdk.dependencies } else { @{} }
         $summary['resolvedGraph'] = Assert-YLRegistryResolvedGraph -Manifest (Read-YLPackageEvidenceJson (Join-Path $hostRecord.path 'Packages/manifest.json')) -Lock $actualLock -Rows $report['resolvedDependencies'] -Release $source.release -EntryPackage $definition.id -EntryPackages $definition.roots -PackageSource $PackageSource -RegistryUrl $source.registryUrl -EditorVersion $editor.version -HostRoot $hostRecord.path -CacheRoot $cache.path -SdkDependencies $sdkDeps
         $summary['cacheUse'] = Get-YLRegistryCacheUse -CacheRoot $cache.path -PackageSource $PackageSource
     }
@@ -487,7 +492,7 @@ try {
         if ($expectedSources.Count -eq 0 -or -not $sources.SetEquals($expectedSources) -or
             $rows[0]['loadedPath'] -ine (Join-Path $hostRecord.path ('Library/ScriptAssemblies/' + $expected.name + '.dll'))) { throw 'Actual compiled sources/loaded assembly are outside the registered resolvedRoot or incomplete.' }
     }
-    if ($profileName -ceq 'HybridCLR') {
+    if ($profileName -cin @('HybridCLR', 'AllPackages')) {
         $locked = $actualLock['dependencies']['com.code-philosophy.hybridclr']
         if ($artifact) {
             if ($report['sdk']['version'] -cne '9.0.3' -or $report['sdk']['source'] -cne 'Registry' -or $report['sdk']['isDirectDependency'] -isnot [bool] -or $report['sdk']['isDirectDependency']) { throw 'Actual HybridCLR SDK must be the indirect Registry version.' }
@@ -499,6 +504,7 @@ try {
     }
     $summary.packages = $report['packages']; $summary.assemblies = $report['assemblies']
     if ($report['sdk'] -is [Collections.IDictionary]) { $summary['sdk'] = $report['sdk'] }
+    if ($profileName -ceq 'AllPackages') { $summary['excelSdk'] = $report['excelSdk'] }
     if ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -cin @('Required', 'SdkOnly')) {
         $null = Get-YLIntegrationDotweenSdk -Repository $sdkRepository -Archive $DOTweenArchive -OwnedSdkRoot (Join-Path $hostRecord.path 'Assets/Plugins/Demigiant/DOTween')
     }
@@ -510,7 +516,7 @@ try {
         Assert-YLRegistryStageCompleted -Outcome $summary.authoring -Stage Authoring
     }
     if (($PackageSource -ceq 'Registry' -and -not ($profileName -ceq 'DOTween' -and $DOTweenSdkMode -ceq 'Absent')) -or
-        ($PackageSource -ceq 'LocalTarball' -and $profileName -cin @('ExcelGameplay', 'ReddotSave'))) {
+        ($PackageSource -ceq 'LocalTarball' -and $profileName -cin @('ExcelGameplay', 'ReddotSave', 'MovementOverlap', 'AllPackages'))) {
         . (Join-Path $PSScriptRoot '../Common/RegistryLifecycle.ps1')
         $summary['lifecycle'] = Invoke-YLRegistryLifecycle -Workspace $workspace -Source $source -Unity $Unity -Editor $editor -EntryPackage $definition.id -EntryPackages $definition.roots -VerifyCombinations:($profileName -cin @('ExcelGameplay', 'ReddotSave')) -Result $run -TimeoutSeconds $TimeoutSeconds
         $summary.processes = @($summary.processes) + @($summary.lifecycle.processes)

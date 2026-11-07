@@ -5,7 +5,7 @@ Copyright (c) 2026 KONOK-A
 Maintained by Kano. The MIT terms below cover YLFramework domain authoring code
 in this package. The framework's inherited source-origin credits are retained
 below; they do not imply that every credited component is copied into this
-adapter. The MiniExcel backend is provided only by the separate Excel package.
+adapter. The MiniExcel backend is provided only by the owning Excel package.
 
 - XFGameFramework / XFABManager and adapted modules:
   Copyright (c) 2021 弦小风;
@@ -37,13 +37,13 @@ SOFTWARE.
 
 - Required Excel-package backend MiniExcel `1.31.2`: Apache-2.0,
   Copyright (c) 2021 LIN, WEI-HAN. Its
-  [full license](../com.kano.ylframework.excel/Editor/Licenses/MiniExcel-LICENSE.txt)
-  and [attribution](../com.kano.ylframework.excel/Editor/Licenses/MiniExcel-ATTRIBUTION.txt)
-  are retained by `com.kano.ylframework.excel`; this package does not duplicate
+  [full license](../Licenses/MiniExcel-LICENSE.txt)
+  and [attribution](../Licenses/MiniExcel-ATTRIBUTION.txt)
+  are retained by `com.kano.ylframework.excel`; this adapter does not duplicate
   or relicense its binary.
 
 - Newtonsoft.Json retains its own license. Main-package notices are in the
-  [main package license](../com.kano.ylframework/LICENSE.md). DOTween and HybridCLR
+  [main package license](../../../com.kano.ylframework/LICENSE.md). DOTween and HybridCLR
   SDKs are not included in or required by this package.
 - Unity APIs remain subject to Unity's terms.
 

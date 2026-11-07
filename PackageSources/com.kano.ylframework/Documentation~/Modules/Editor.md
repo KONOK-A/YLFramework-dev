@@ -2,7 +2,7 @@
 
 > [文档首页](../README.md) · [架构](../Architecture.md) · [配置数据](Data.md) · [领域系统](Domain.md) · [Help](Help.md)
 
-本页面向扩展作者工具的开发者。框架普通 Editor 共用 `YLFramework.Editor`；可选 Excel / HybridCLR 保留独立程序集。目录职责与依赖方向见架构，本页维护资产编辑与公共支撑的使用合同。
+本页面向扩展作者工具的开发者。主包 Editor 归 `YLFramework.Editor`；各独立功能包的 Editor 程序集归其自身安装单元，完整清单见[架构](../Architecture.md#目录与程序集)。本页维护资产编辑与公共支撑的使用合同。
 
 ## 资产编辑
 

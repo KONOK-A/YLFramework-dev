@@ -6,6 +6,8 @@ Buff, Mission and Equipment remain independent Runtime assemblies:
 `YLFramework.Equipment`. Each references only the main Runtime; Buff and Mission
 also explicitly reference Newtonsoft.Json. Consumer asmdefs declare the domains
 they actually use, not a shared Runtime umbrella.
+Git consumers explicitly declare main and this package at the same accepted full
+SHA; package-level SemVer dependencies do not fetch sibling Git packages.
 
 Authoring for all four domains and its internal shared helpers belongs to
 `YLFramework.Gameplay.Editor`. It includes the existing common session cleanup

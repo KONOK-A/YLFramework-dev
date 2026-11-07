@@ -5,6 +5,10 @@ The existing `YLFramework.RedDots` namespace now belongs to the independent
 dependency and add `YLFramework.RedDots` to consumer asmdef references. The core
 does not require Save, Gameplay, Excel or an additional font/UI package beyond
 the main package's existing dependencies.
+Git consumers explicitly declare main and this package at the same accepted full
+SHA. To use `YLFramework.RedDots.Save`, also declare the Save Git entry at that
+SHA and reference the conditional assembly; package SemVer does not fetch sibling
+Git packages. Core RedDots remains usable without Save.
 
 `ReddotManager` retains its original normalized, case-sensitive whole-segment
 paths. `AddPath` is an idempotent set, while `RegisterPath` returns an independently

@@ -160,13 +160,13 @@ namespace UnityEditor.Compilation
         {
             var ids = new HashSet<string>(UnityEditor.PackageManager.PackageInfo.Registered.Select(p => p.name), StringComparer.Ordinal);
             var result = new List<Assembly>();
+            if (ids.Contains("com.kano.ylframework"))
+            {
+                result.Add(new Assembly { name = "YLFramework.Runtime", sourceFiles = new[] { "Packages/com.kano.ylframework/Runtime/Product.cs" } });
+                if (mode == AssembliesType.Editor) result.Add(new Assembly { name = "YLFramework.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework/Editor/Product.cs" } });
+            }
             if (ids.Contains("com.kano.ylframework.reddot") || ids.Contains("com.kano.ylframework.save"))
             {
-                if (ids.Contains("com.kano.ylframework"))
-                {
-                    result.Add(new Assembly { name = "YLFramework.Runtime", sourceFiles = new[] { "Packages/com.kano.ylframework/Runtime/Product.cs" } });
-                    if (mode == AssembliesType.Editor) result.Add(new Assembly { name = "YLFramework.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework/Editor/Product.cs" } });
-                }
                 if (ids.Contains("com.kano.ylframework.save")) result.Add(new Assembly { name = "YLFramework.Save", sourceFiles = new[] { "Packages/com.kano.ylframework.save/Runtime/Product.cs" } });
                 if (ids.Contains("com.kano.ylframework.reddot"))
                 {
@@ -176,7 +176,20 @@ namespace UnityEditor.Compilation
                 }
             }
             if (ids.Contains("com.kano.ylframework.gameplay"))
+            {
                 foreach (var name in new[] { "Skill", "Buff", "Mission", "Equipment" }) result.Add(new Assembly { name = "YLFramework." + name, sourceFiles = new[] { "Packages/com.kano.ylframework.gameplay/Runtime/" + name + "/Product.cs" } });
+                if (mode == AssembliesType.Editor) result.Add(new Assembly { name = "YLFramework.Gameplay.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework.gameplay/Editor/Product.cs" } });
+            }
+            foreach (var entry in new[] {
+                (id: "data-assets", runtime: "DataAssets", editor: "DataAssets.Editor"), (id: "localization", runtime: "Localization", editor: "Localization.Editor"),
+                (id: "state-machine", runtime: "StateMachine", editor: "StateMachine.Editor"), (id: "overlap", runtime: "Overlap", editor: "Overlap.Editor"),
+                (id: "movement2d", runtime: "Character2D", editor: "Movement2D.Editor"), (id: "hybridclr", runtime: "HybridCLR", editor: "HybridCLR.Editor") })
+            {
+                if (!ids.Contains("com.kano.ylframework." + entry.id)) continue;
+                result.Add(new Assembly { name = "YLFramework." + entry.runtime, sourceFiles = new[] { "Packages/com.kano.ylframework." + entry.id + "/Runtime/Product.cs" } });
+                if (entry.id == "movement2d") result.Add(new Assembly { name = "YLFramework.Platform2D", sourceFiles = new[] { "Packages/com.kano.ylframework.movement2d/Runtime/Platform/Product.cs" } });
+                if (mode == AssembliesType.Editor) result.Add(new Assembly { name = "YLFramework." + entry.editor, sourceFiles = new[] { "Packages/com.kano.ylframework." + entry.id + "/Editor/Product.cs" } });
+            }
             if (mode == AssembliesType.Editor && ids.Contains("com.kano.ylframework.excel"))
             {
                 var excel = new Assembly { name = "YLFramework.Excel.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework.excel/Editor/Excel.cs" }, compiledAssemblyReferences = new[] { "Library/PackageCache/com.kano.ylframework.excel/Editor/Plugins/MiniExcel.dll" } };
