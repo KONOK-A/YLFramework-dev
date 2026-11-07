@@ -339,7 +339,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistrib
 ```
 
 - 先完成真实 UPM 安装及无 Tests/UTF 的图验证，仅向自有接收宿主的产品根外安装 `Tools/Testing/PlayerSmoke.cs`、独立 asmdef 及 Resources 文本，不修改正式包或主工程场景。旧 unitypackage 导出/导入已退役。
-- 使用`BuildOptions.None`构建小型专用场景，实际验证初始化、Resources加载、红点通知/释放、live Lease的Busy保护、归还后零计数及资源服务关闭。IL2CPP还核实真实GameAssembly、global-metadata.dat及实际ManagedStripped的生产程序集边界。
+- 使用`BuildOptions.None`构建小型专用场景，实际验证初始化、Resources加载、核心事件通知/退订（`EventLifecycle`）、live Lease的Busy保护、归还后零计数及资源服务关闭。IL2CPP还核实真实GameAssembly、global-metadata.dat及实际ManagedStripped的生产程序集边界。
 - 同一产物启动两次，分别写`PlayerRun`/`PlayerRepeat`。要求普通exit0、Job后代清零、版本/run/host/实际PID与编译宏后端匹配、完整有序阶段、无运行错误且产物SHA256未变，不能只凭日志PASS或旧报告接受。JSON字段类型严格校验，不允许布尔或数字通过PowerShell字符串强制转换冒充身份或阶段。
 - 构建与运行分别记录在`Build/report.json`、`PlayerRun/result.json`和`PlayerRepeat/result.json`；超时、缺报告、残余租约、错误身份及非普通退出均不是通过。
 - 普通冒烟采用`-batchmode -nographics`，证明对应Mono/IL2CPP后端的本场景逻辑与Resources运行链，不证明渲染、真实音频输出、任意反射类型保留或其他平台。默认分发构建仍不包含探针；HybridCLR需要下面独立显式模式。
