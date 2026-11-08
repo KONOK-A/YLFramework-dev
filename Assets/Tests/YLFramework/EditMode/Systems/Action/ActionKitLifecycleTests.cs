@@ -38,7 +38,7 @@ namespace YLFramework.Tests.Actions
         }
 
         [Test]
-        public void InitializeAndLegacyAliasRunThePatchOncePerGeneration()
+        public void InitializeRunsThePatchOncePerGeneration()
         {
             var calls = 0;
             Kit observed = null;
@@ -49,7 +49,7 @@ namespace YLFramework.Tests.Actions
                 Assert.That(Kit.Interface, Is.SameAs(context));
             };
             Kit.Initialize();
-            Kit.InitArchitecture();
+            Kit.Initialize();
             Assert.That(Kit.IsInitialized, Is.True);
             Assert.That(Kit.Interface, Is.SameAs(observed));
             Assert.That(calls, Is.EqualTo(1));

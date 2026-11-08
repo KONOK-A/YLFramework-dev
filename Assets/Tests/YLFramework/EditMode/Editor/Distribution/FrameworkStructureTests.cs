@@ -1,9 +1,7 @@
-using System;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
 using UnityEditor;
-using UnityEngine;
 
 namespace YLFramework.Tests
 {
@@ -11,43 +9,42 @@ namespace YLFramework.Tests
     {
         private const string PackageRoot = "Packages/com.kano.ylframework/";
 
-        [Serializable]
-        private sealed class Move
-        {
-            public string From;
-            public string To;
-            public string Guid;
-        }
-
-        [Serializable]
-        private sealed class MoveList
-        {
-            public Move[] Moves;
-        }
-
         [Test]
-        public void ProductLayoutPreservesEveryRecordedAssetIdentity()
+        public void InstalledPackagesOwnTheirCurrentScriptIdentitiesWithoutLeakingOptionalAssets()
         {
-            var manifest = AssetDatabase.LoadAssetAtPath<TextAsset>("Assets/Tests/YLFramework/Fixtures/NamespaceMigration/ProductMoves.json");
-            Assert.That(manifest, Is.Not.Null);
-            var moves = JsonUtility.FromJson<MoveList>(manifest.text).Moves;
-            Assert.That(moves.Length, Is.EqualTo(28));
-            foreach (var move in moves)
+            var anchors = new[]
             {
-                string current = CurrentPath(move.To);
-                string package = current.Split('/')[1];
-                if (UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Any(info => info.name == package))
+                ("com.kano.ylframework", "Runtime/Foundation/Events/Subscriptions/EventBus.cs", "f1cd757ac67e81c4bbf1d8919cfc2058"),
+                ("com.kano.ylframework", "Editor/Common/Settings/ProjectSettingsScriptableObject.cs", "5c5731fb2ee10ba46b4c302aeb0c3717"),
+                ("com.kano.ylframework", "Runtime/Systems/Resource/Integration/Audio/ResourceAudioClipProvider.cs", "e1f75cb9b4f220144a028552d1a4624d"),
+                ("com.kano.ylframework.state-machine", "Runtime/Systems/StateMachine/FsmController.cs", "669ecbf1eff5cdb4fb85896497a489b6"),
+                ("com.kano.ylframework.movement2d", "Runtime/Utilities/CharacterController2D/CharacterController2D.cs", "c4e9c15020213574abd044e313014268"),
+                ("com.kano.ylframework.movement2d", "Runtime/Utilities/MoveablePlatform/MoveablePlatform2D.cs", "63ea22a6f7494254789144999759e98e"),
+                ("com.kano.ylframework.overlap", "Runtime/Detection/OverlapDetector2D.cs", "78540f8a7d3054b47a96a10cbefaae8b"),
+                ("com.kano.ylframework.overlap", "Runtime/Detection/OverlapDetector3D.cs", "93df00acc5406744487711e68d2d09a6"),
+                ("com.kano.ylframework.gameplay", "Runtime/Skill/SkillConfigData.cs", "1a3a29525ba46c2468186d1837b21fb5"),
+                ("com.kano.ylframework.data-assets", "Runtime/Systems/DataAssets/ScriptableObjectConfigs.cs", "5e54610ded7e2994aaa66cefe28b02ce"),
+                ("com.kano.ylframework.localization", "Runtime/Systems/Localization/LanguageConfig.cs", "30a56d547611e6f448ff727ea7957e29"),
+                ("com.kano.ylframework.save", "Runtime/Systems/Save/SaveManager.cs", "ff5957d84032533449f21601f372570a"),
+                ("com.kano.ylframework.reddot", "Runtime/Systems/Reddot/Reddot.cs", "3ff4191f5232945449bde5c92a1b497d"),
+                ("com.kano.ylframework.excel", "Editor/ExcelValues.cs", "c12cc4e0c0435a9488f224355bc0d70e"),
+                ("com.kano.ylframework.hybridclr", "Runtime/HybridCLRLoader.cs", "fa5277b79a27ae34196cc6edd0e514e8")
+            };
+            var installed = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Select(info => info.name).ToArray();
+            Assert.That(installed, Does.Contain("com.kano.ylframework"));
+            foreach (var anchor in anchors)
+            {
+                string current = "Packages/" + anchor.Item1 + "/" + anchor.Item2;
+                if (installed.Contains(anchor.Item1))
                 {
-                    Assert.That(AssetDatabase.AssetPathToGUID(current), Is.EqualTo(move.Guid), move.To);
-                    Assert.That(AssetDatabase.GUIDToAssetPath(move.Guid), Is.EqualTo(current), move.Guid);
+                    Assert.That(AssetDatabase.LoadAssetAtPath<MonoScript>(current), Is.Not.Null, current);
+                    Assert.That(AssetDatabase.AssetPathToGUID(current), Is.EqualTo(anchor.Item3), current);
+                    Assert.That(AssetDatabase.GUIDToAssetPath(anchor.Item3), Is.EqualTo(current), anchor.Item3);
                 }
                 else
                 {
-                    Assert.That(AssetDatabase.GUIDToAssetPath(move.Guid), Is.Empty, "Absent optional assets must not remain in the main package.");
+                    Assert.That(AssetDatabase.GUIDToAssetPath(anchor.Item3), Is.Empty, "Absent optional assets must not remain in the main package.");
                 }
-                // From records the historical Assets layout, not a path in the installed package.
-                var oldPath = DevelopmentHostBoundaryTests.SourcePath("Assets/YLFramework/" + move.From);
-                Assert.That(File.Exists(oldPath) || Directory.Exists(oldPath), Is.False, move.From);
             }
         }
 
@@ -75,21 +72,5 @@ namespace YLFramework.Tests
             }
         }
 
-        private static string CurrentPath(string path)
-        {
-            foreach (var domain in new[] { "Skill", "Buff", "Mission", "Equipment", "Shared" })
-            {
-                if (path.StartsWith("Editor/Systems/" + domain + "/", StringComparison.Ordinal))
-                    return "Packages/com.kano.ylframework.gameplay/Editor/" + path.Substring("Editor/Systems/".Length);
-            }
-            if (path.StartsWith("Editor/Systems/StateMachine/", StringComparison.Ordinal))
-                return "Packages/com.kano.ylframework.state-machine/" + path;
-            if (path == "Runtime/Utilities/CharacterController2D" || path == "Runtime/Utilities/MoveablePlatform" ||
-                path == "Editor/Utilities/CharacterController2D" || path == "Editor/Utilities/MoveablePlatform")
-                return "Packages/com.kano.ylframework.movement2d/" + path;
-            if (path == "Runtime/Utilities/Overlap" || path == "Editor/Utilities/Overlap")
-                return "Packages/com.kano.ylframework.overlap/" + path;
-            return PackageRoot + path;
-        }
     }
 }

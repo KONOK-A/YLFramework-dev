@@ -9,7 +9,8 @@ namespace YLFramework.Overlap
     {
         Manual,
         Update,
-        FixedUpdate
+        FixedUpdate,
+        UnscaledUpdate
     }
 
     public enum OverlapExitReason
@@ -43,13 +44,19 @@ namespace YLFramework.Overlap
         {
             get;
         }
+        /// <summary>当轮以 Detector 世界位置求得的实际代表碰撞体最近点；2D 的 Z 为零，销毁退出保留最后提交值。</summary>
+        public Vector3 Point
+        {
+            get;
+        }
 
-        internal OverlapContact(T collider, UnityEngine.Object target, int identity, int colliderInstanceId)
+        internal OverlapContact(T collider, UnityEngine.Object target, int identity, int colliderInstanceId, Vector3 point)
         {
             Collider = collider;
             Target = target;
             Identity = identity;
             ColliderInstanceId = colliderInstanceId;
+            Point = point;
         }
     }
 
@@ -180,7 +187,7 @@ namespace YLFramework.Overlap
 
         internal static void ValidateMode(OverlapSamplingMode mode)
         {
-            if (mode < OverlapSamplingMode.Manual || mode > OverlapSamplingMode.FixedUpdate)
+            if (mode < OverlapSamplingMode.Manual || mode > OverlapSamplingMode.UnscaledUpdate)
             {
                 throw new ArgumentOutOfRangeException(nameof(mode));
             }

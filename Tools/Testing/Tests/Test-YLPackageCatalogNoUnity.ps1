@@ -135,6 +135,17 @@ try {
         $adapter = Read-YLPackageEvidenceJson (Join-Path $repository 'PackageSources/com.kano.ylframework.excel/Editor/Gameplay/YLFramework.Domain.Excel.Editor.asmdef')
         Check (@($adapter.references) -ccontains 'YLFramework.Gameplay.Editor') 'The optional ExcelGameplay authoring consumer must declare its real Gameplay Editor dependency.'
     }
+    Case 'HybridCLR source approval and both assembly version defines retain the explicit supported SDK gate' {
+        $approval = Read-YLPackageEvidenceJson (Join-Path $repository 'PackageSources/com.kano.ylframework.hybridclr/Dependencies.json')
+        Check ($approval.package.name -ceq 'com.code-philosophy.hybridclr' -and $approval.package.version -ceq '9.0.3') 'The existing approval must retain the explicitly supported SDK identity and version.'
+        foreach ($path in @('Runtime/YLFramework.HybridCLR.asmdef', 'Editor/YLFramework.HybridCLR.Editor.asmdef')) {
+            $definition = Read-YLPackageEvidenceJson (Join-Path $repository "PackageSources/com.kano.ylframework.hybridclr/$path")
+            Check ($definition.versionDefines.Count -eq 1 -and $definition.versionDefines[0].name -ceq $approval.package.name -and
+                $definition.versionDefines[0].expression -ceq '[9.0.3,9.0.4)' -and
+                $definition.versionDefines[0].define -ceq 'YL_HYBRIDCLR_9_0_3' -and
+                ($definition.defineConstraints -join ',') -ceq 'YL_HYBRIDCLR_9_0_3') 'Runtime and Editor must agree with the approved explicit SDK gate, not any later SDK version.'
+        }
+    }
     Case 'Movement2D owns two independent runtimes and one Editor with explicit physics dependency' {
         $movement = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.movement2d')
         Check ($movement.Count -eq 1) 'The combined movement2d package is missing from the maintained catalog.'

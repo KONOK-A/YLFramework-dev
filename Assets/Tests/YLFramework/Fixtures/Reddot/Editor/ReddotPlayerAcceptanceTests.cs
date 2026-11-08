@@ -98,7 +98,7 @@ namespace YLFramework.RedDots.Tests
                 run.sceneMetaSha256 = Hash(run.folder + "/Player.unity.meta");
                 run.sceneBeforeBuildSha256 = Hash(run.folder + "/Player.unity");
                 WriteNew(Path.Combine(output, "Reddot-owned-prepared.json"), JsonUtility.ToJson(run, true));
-            });
+            }, new[] { "YL_REDDOT_ACCEPTANCE" });
             string managed = Path.Combine(run.player, "P_Data/Managed");
             NoLinks(managed);
             CollectionAssert.AreEquivalent(_assemblies.Select(name => name + ".dll"),
@@ -199,12 +199,13 @@ namespace YLFramework.RedDots.Tests
                     ("sourcesPerLeaf", 3L), ("echoSources", 1L), ("warmIterations", 8L), ("iterations", 128L), ("updates", 24576L),
                     ("warmedReadPairs", 100000L), ("finalValue", 24577L), ("readChecksum", 76800000L), ("readAllocatedBytes", allocationCounterReliable ? 0L : -1L),
                     ("maximumCallbackDepth", 1L), ("diagnosticNodes", 86L), ("diagnosticSources", 193L), ("diagnosticSubscribers", 65L),
-                    ("rootNotifications", index == 0 ? 24577L : 129L), ("globalNotifications", index == 0 ? 24577L : 129L),
+                    ("rootNotifications", index == 0 ? 24577L : 129L),
                     ("leafNotifications", index == 0 ? 24576L : 8192L) })
                 {
                     Assert.That(measurement[pair.Item1]?.Type, Is.EqualTo(JTokenType.Integer), pair.Item1);
                     Assert.That(measurement.Value<long>(pair.Item1), Is.EqualTo(pair.Item2), pair.Item1);
                 }
+                Assert.That(measurement.Property("globalNotifications"), Is.Null, "No retired global counter may be reported as a path alias.");
                 foreach (string key in new[] { "updateMilliseconds", "readMilliseconds", "diagnosticMilliseconds" })
                 {
                     Assert.That(measurement[key]?.Type == JTokenType.Float || measurement[key]?.Type == JTokenType.Integer, Is.True, key);

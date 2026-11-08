@@ -76,6 +76,29 @@ namespace YLFramework.Tests.Extensions.Data
         }
 
         [Test]
+        public void DestroyedRegisteredRootIsNotReturnedAsALiveConfigOrLanguageValue()
+        {
+            using var handle = LocalizationManager.AddConfig(_root);
+            UnityEngine.Object.DestroyImmediate(_root);
+            Assert.That(ReferenceEquals(_root, null), Is.False);
+            Assert.That(_root == null, Is.True);
+            Assert.That(LocalizationManager.Configs, Is.Empty);
+            Assert.That(LocalizationManager.GetLanguageInfo(1, SystemLanguage.English), Is.Null);
+            Assert.That(_english && _chinese, Is.True, "The handle must not destroy caller-owned language definitions.");
+        }
+
+        [Test]
+        public void DestroyedRegisteredLanguageRemainsAnExplicitInvalidInputInsteadOfASilentFallback()
+        {
+            using var handle = LocalizationManager.AddConfig(_root);
+            UnityEngine.Object.DestroyImmediate(_english);
+            Assert.That(ReferenceEquals(_english, null), Is.False);
+            Assert.Throws<InvalidOperationException>(() => _root.GetLanguageConfigData(SystemLanguage.English));
+            Assert.Throws<InvalidOperationException>(() => LocalizationManager.GetLanguageInfo(1, SystemLanguage.English));
+            Assert.That(LocalizationManager.Configs.Count, Is.EqualTo(1));
+        }
+
+        [Test]
         public void EmptyImageEntryFallsBackRatherThanDereferencingNull()
         {
             _chinese.languagesInfo[0].type = MultiLanguageType.Image;

@@ -3,11 +3,13 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Compilation;
+using UnityEditor.Experimental.GraphView;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -171,10 +173,6 @@ namespace YLFramework.StateMachine.Acceptance
             run.className = "FsmGenerated" + run.token;
             run.assemblyName = "YLFramework.StateMachine.Acceptance.Generated" + run.token;
             run.beforeDomain = _domainToken;
-            run.unityVersion = Application.unityVersion;
-            run.runtimeAssembly = typeof(FsmController).Assembly.GetName().Name;
-            run.editorAssembly = typeof(FsmStateCreator).Assembly.GetName().Name;
-            run.pid = System.Diagnostics.Process.GetCurrentProcess().Id;
             run.deadlineTicks = DateTime.UtcNow.AddMinutes(2).Ticks;
             SessionState.SetString(PendingKey, JsonUtility.ToJson(run));
             var controller = ScriptableObject.CreateInstance<RuntimeFsmController>();
@@ -255,6 +253,220 @@ namespace YLFramework.StateMachine.Acceptance
             Assert.That(binding.guid, Is.EqualTo(guid));
             Assert.That(binding.className, Is.EqualTo(run.className));
             Assert.That(reopened.ValidateConfiguration(out string error), Is.True, error);
+            foreach (string generated in new[] { path, assetPath, run.folder + "/Generated.asmdef" })
+            {
+                File.Copy(Physical(generated), Path.Combine(run.output, Path.GetFileName(generated)), false);
+                File.Copy(Physical(generated + ".meta"), Path.Combine(run.output, Path.GetFileName(generated) + ".meta"), false);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CurrentAuthoringColdReadRetainsScriptsGroupsAndNamedPrefabLayers(bool automatic)
+        {
+            string output = RequireContext();
+            RequireEmptyScenes();
+            EditorSceneManager.OpenScene(RunnerScene, OpenSceneMode.Single);
+            RequireEmptyScenes();
+            var run = NewOwnedAssets(output);
+            var selection = Selection.instanceIDs;
+            var asset = CreatePlayerConfiguration(run);
+            string path = AssetDatabase.GetAssetPath(asset);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            asset.layers.Add("Nested");
+            asset.originGuid = guid;
+            asset.viewPosition = new Vector3(20, 40, 0);
+            asset.viewScale = Vector3.one * 0.6f;
+            var transition = asset.GetTransitionData("Idle", "Nested");
+            transition.autoSwitch = automatic;
+            transition.groupConditions.Add(new GroupCondition
+            {
+                conditions = new List<FsmConditionData>
+                {
+                    new FsmConditionData { parameterName = "advance", targetValue = 0, compareType = CompareType.Equal }
+                }
+            });
+            asset.Save();
+            AssetDatabase.SaveAssetIfDirty(asset);
+            CaptureAsset(run, path);
+            var originalActive = SceneManager.GetActiveScene();
+            var authoringScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            if (SceneManager.GetActiveScene() != authoringScene)
+            {
+                SceneManager.SetActiveScene(authoringScene);
+            }
+            Assert.That(SceneManager.GetActiveScene(), Is.EqualTo(authoringScene));
+            var host = new GameObject("OwnedCurrentFsmLayers");
+            host.SetActive(false);
+            try
+            {
+                var controller = host.AddComponent<FsmController>();
+                controller.AddRuntimeFsmController(asset, "Gameplay");
+                using (var serialized = new SerializedObject(controller))
+                {
+                    serialized.FindProperty("resetOnDisable").boolValue = false;
+                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                }
+                string prefabPath = run.folder + "/Host.prefab";
+                Assert.That(PrefabUtility.SaveAsPrefabAsset(host, prefabPath), Is.Not.Null);
+                CaptureAsset(run, prefabPath);
+                UnityEngine.Object.DestroyImmediate(host);
+                host = null;
+                Undo.ClearUndo(asset);
+                Resources.UnloadAsset(asset);
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                AssetDatabase.ImportAsset(prefabPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                var reopened = AssetDatabase.LoadAssetAtPath<RuntimeFsmController>(path);
+                Assert.That(ReferenceEquals(reopened, asset), Is.False);
+                Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+                Assert.That(reopened.layers, Is.EqualTo(new[] { "Nested" }));
+                Assert.That(reopened.originGuid, Is.EqualTo(guid));
+                Assert.That(reopened.viewPosition, Is.EqualTo(new Vector3(20, 40, 0)));
+                Assert.That(reopened.viewScale, Is.EqualTo(Vector3.one * 0.6f));
+                Assert.That(reopened.GetDefaultStateNodeData(string.Empty).name, Is.EqualTo("Idle"));
+                Assert.That(reopened.GetDefaultStateNodeData("Nested").name, Is.EqualTo("Child"));
+                Assert.That(reopened.GetStateNodeData("Nested").isSubStateMachine, Is.True);
+                Assert.That(reopened.GetStateNodeData(FsmConst.EntryState).IsEntryState, Is.True);
+                Assert.That(reopened.GetStateNodeData(FsmConst.AnyState).IsAnyState, Is.True);
+                foreach (string node in new[] { "Idle", "Nested", "Child" })
+                {
+                    var script = reopened.GetStateNodeData(node).stateScripts.Single();
+                    Assert.That(script.guid, Is.EqualTo(AssetDatabase.AssetPathToGUID(StateScript)));
+                    Assert.That(script.className, Is.EqualTo("YLFramework.StateMachine.Acceptance.StateMachinePlayerState"));
+                }
+                var edge = reopened.GetTransitionData("Idle", "Nested");
+                Assert.That(edge.autoSwitch, Is.EqualTo(automatic));
+                Assert.That(edge.conditions.Single().targetValue, Is.EqualTo(1));
+                Assert.That(edge.groupConditions.Single().conditions.Single().parameterName, Is.EqualTo("advance"));
+                Assert.That(edge.groupConditions.Single().conditions.Single().targetValue, Is.Zero);
+                Assert.That(reopened.parameters.Single().Value, Is.Zero);
+                Assert.That(reopened.ValidateConfiguration(out string error), Is.True, error);
+                var contents = PrefabUtility.LoadPrefabContents(prefabPath);
+                try
+                {
+                    Assert.That(GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(contents), Is.Zero);
+                    var restored = contents.GetComponent<FsmController>();
+                    Assert.That(restored.RuntimeFsmControllerLayers.Single().name, Is.EqualTo("Gameplay"));
+                    Assert.That(restored.RuntimeFsmControllerLayers.Single().controller, Is.SameAs(reopened));
+                    using var serialized = new SerializedObject(restored);
+                    Assert.That(serialized.FindProperty("resetOnDisable").boolValue, Is.False);
+                    Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(restored))),
+                        Is.EqualTo("669ecbf1eff5cdb4fb85896497a489b6"));
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(contents);
+                }
+                foreach (var input in run.assets)
+                {
+                    string name = (automatic ? "Automatic-" : "Conditional-") + Path.GetFileName(input.path);
+                    File.Copy(Physical(input.path), Path.Combine(output, name), false);
+                    File.Copy(Physical(input.path + ".meta"), Path.Combine(output, name + ".meta"), false);
+                }
+                run.status = "ColdReadVerified";
+                run.reopened = true;
+                WriteNew(Path.Combine(output, "FsmCurrentInput-" + automatic + ".json"), JsonUtility.ToJson(run, true));
+                DeleteOwnedAssets(run);
+            }
+            finally
+            {
+                if (host)
+                {
+                    UnityEngine.Object.DestroyImmediate(host);
+                }
+                if (originalActive.IsValid() && originalActive.isLoaded)
+                {
+                    SceneManager.SetActiveScene(originalActive);
+                }
+                if (authoringScene.IsValid() && authoringScene.isLoaded)
+                {
+                    Assert.That(EditorSceneManager.CloseScene(authoringScene, true), Is.True);
+                }
+                Selection.instanceIDs = selection;
+            }
+        }
+
+        [Test]
+        public void CurrentGraphDeletesNestedNodesAndRestoresBindingsWithOneUndoRedo()
+        {
+            string output = RequireContext();
+            RequireEmptyScenes();
+            var run = NewOwnedAssets(output);
+            var selection = Selection.instanceIDs;
+            var instanceField = typeof(Context).GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic);
+            var previous = instanceField.GetValue(null);
+            string[] integerKeys = { "YL.AssetFSMControllerInstanceID", "FSMControllerIndex" };
+            bool[] hadKeys = integerKeys.Select(EditorPrefs.HasKey).ToArray();
+            int[] values = integerKeys.Select(key => EditorPrefs.GetInt(key)).ToArray();
+            const string GuidKey = "YL.AssetFSMRuntimeFSMControllerGUID";
+            bool hadGuid = EditorPrefs.HasKey(GuidKey);
+            string previousGuid = EditorPrefs.GetString(GuidKey);
+            FsmStateGraphView graph = null;
+            try
+            {
+                var asset = CreatePlayerConfiguration(run);
+                foreach (string key in integerKeys)
+                {
+                    EditorPrefs.SetInt(key, 0);
+                }
+                var context = (Context)Activator.CreateInstance(typeof(Context), true);
+                context.RuntimeFsmControllerGuid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(asset));
+                instanceField.SetValue(null, context);
+                graph = new FsmStateGraphView();
+                Assert.That(graph.StateNodes.Keys, Is.EquivalentTo(new[] { "Any State", "Entry", "Idle", "Nested" }));
+                Undo.FlushUndoRecordObjects();
+                Undo.ClearUndo(asset);
+                graph.AddToSelection(graph.GetNode("Nested"));
+                graph.deleteSelection("Delete", GraphView.AskUser.DontAskUser);
+                Undo.FlushUndoRecordObjects();
+                Assert.That(asset.states.Select(node => node.name), Is.EquivalentTo(new[] { "Any State", "Entry", "Idle" }));
+                Assert.That(asset.transitions, Is.Empty);
+                Undo.PerformUndo();
+                asset.ClearCache();
+                graph.RefreshNodes();
+                Assert.That(graph.GetNode("Nested"), Is.Not.Null);
+                Assert.That(asset.GetDefaultStateNodeData("Nested").name, Is.EqualTo("Child"));
+                Assert.That(asset.GetStateNodeData("Child").stateScripts.Single().guid, Is.EqualTo(AssetDatabase.AssetPathToGUID(StateScript)));
+                Assert.That(asset.GetTransitionData("Idle", "Nested").conditions.Single().parameterName, Is.EqualTo("advance"));
+                Undo.PerformRedo();
+                asset.ClearCache();
+                graph.RefreshNodes();
+                Assert.That(graph.GetNode("Nested"), Is.Null);
+                Assert.That(asset.GetStateNodeData("Child"), Is.Null);
+                Assert.That(asset.GetStateNodeData(FsmConst.EntryState).IsEntryState, Is.True);
+                Assert.That(asset.GetStateNodeData(FsmConst.AnyState).IsAnyState, Is.True);
+                Undo.ClearUndo(asset);
+                asset.Save();
+                AssetDatabase.SaveAssetIfDirty(asset);
+                CaptureAsset(run, AssetDatabase.GetAssetPath(asset));
+                DeleteOwnedAssets(run);
+            }
+            finally
+            {
+                graph?.ClearSelection();
+                graph?.Clear();
+                instanceField.SetValue(null, previous);
+                for (int index = 0; index < integerKeys.Length; index++)
+                {
+                    if (hadKeys[index])
+                    {
+                        EditorPrefs.SetInt(integerKeys[index], values[index]);
+                    }
+                    else
+                    {
+                        EditorPrefs.DeleteKey(integerKeys[index]);
+                    }
+                }
+                if (hadGuid)
+                {
+                    EditorPrefs.SetString(GuidKey, previousGuid);
+                }
+                else
+                {
+                    EditorPrefs.DeleteKey(GuidKey);
+                }
+                Selection.instanceIDs = selection;
+            }
         }
 
         [Test]
@@ -306,13 +518,21 @@ namespace YLFramework.StateMachine.Acceptance
                 Assert.That(File.Exists(Physical(scenePath)) || File.Exists(Physical(scenePath + ".meta")), Is.False);
                 Assert.That(EditorSceneManager.SaveScene(scene, scenePath), Is.True);
                 CaptureAsset(run, scenePath);
+                foreach (var input in run.assets)
+                {
+                    File.Copy(Physical(input.path), Path.Combine(output, "FsmPlayer-" + Path.GetFileName(input.path)), false);
+                    File.Copy(Physical(input.path + ".meta"), Path.Combine(output, "FsmPlayer-" + Path.GetFileName(input.path) + ".meta"), false);
+                }
+                run.status = "PlayerInputSaved";
+                WriteNew(Path.Combine(output, "FsmPlayer-current-input.json"), JsonUtility.ToJson(run, true));
                 PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, ScriptingImplementation.Mono2x);
                 var build = BuildPipeline.BuildPlayer(new BuildPlayerOptions
                 {
                     scenes = new[] { scenePath },
                     locationPathName = executable,
                     target = BuildTarget.StandaloneWindows64,
-                    options = BuildOptions.Development
+                    options = BuildOptions.Development,
+                    extraScriptingDefines = new[] { "YL_STATE_MACHINE_ACCEPTANCE" }
                 });
                 Assert.That(build.summary.result, Is.EqualTo(UnityEditor.Build.Reporting.BuildResult.Succeeded));
             }
@@ -370,30 +590,33 @@ namespace YLFramework.StateMachine.Acceptance
             Assert.That(script, Is.Not.Null);
             Assert.That(script.GetClass().FullName, Is.EqualTo("YLFramework.StateMachine.Acceptance.StateMachinePlayerState"));
             Assert.That(script.GetClass().Assembly.GetName().Name, Is.EqualTo(ProbeAssembly));
-            var asset = ScriptableObject.CreateInstance<RuntimeFsmController>();
-            asset.name = "StateMachinePackageAcceptance";
-            asset.states.Add(new FsmStateNodeData { name = "Idle", isDefaultState = true });
-            asset.states.Add(new FsmStateNodeData { name = "Nested", isSubStateMachine = true });
-            asset.states.Add(new FsmStateNodeData { name = "Child", parents = new List<string> { "Nested" }, isDefaultState = true });
-            foreach (var node in asset.states)
+            string path = run.folder + "/StateMachinePackageAcceptance.asset";
+            Assert.That(File.Exists(Physical(path)) || File.Exists(Physical(path + ".meta")), Is.False);
+            var creator = ScriptableObject.CreateInstance<RuntimeFsmControllerCreator>();
+            var selection = Selection.instanceIDs;
+            try
+            {
+                creator.Action(0, path, null);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(creator);
+                Selection.instanceIDs = selection;
+            }
+            var asset = AssetDatabase.LoadAssetAtPath<RuntimeFsmController>(path);
+            var idle = FsmStateNodeFactory.CreateStateNode(asset, "Idle", new Rect(400, 100, 200, 40), true);
+            var nested = FsmStateNodeFactory.CreateStateNode(asset, "Nested", new Rect(400, 300, 200, 40), false, true);
+            var child = FsmStateNodeFactory.CreateStateNode(asset, "Child", new Rect(400, 100, 200, 40), true, false, new List<string> { "Nested" });
+            foreach (var node in new[] { idle, nested, child })
             {
                 node.AddStateScript(script);
                 Assert.That(node.stateScripts.Single().guid, Is.EqualTo(AssetDatabase.AssetPathToGUID(StateScript)));
             }
-            asset.parameters.Add(new FsmParameterData { name = "advance", parameterType = ParameterType.Bool });
-            asset.transitions.Add(new FsmTransitionData
-            {
-                fromStateName = "Idle",
-                toStateName = "Nested",
-                conditions = new List<FsmConditionData>
-                {
-                    new FsmConditionData { parameterName = "advance", compareType = CompareType.Equal, targetValue = 1 }
-                }
-            });
+            asset.AddParameters(new FsmParameterData { name = "advance", parameterType = ParameterType.Bool });
+            FsmTransitionFactory.CreateTransition(asset, "Idle", "Nested");
+            FsmConditionFactory.CreateCondition(asset, asset.GetTransitionData("Idle", "Nested"));
+            FsmConditionFactory.SetTargetValue(asset, asset.GetTransitionData("Idle", "Nested").conditions.Single(), 1);
             Assert.That(asset.ValidateConfiguration(out string error), Is.True, error);
-            string path = run.folder + "/StateMachinePackageAcceptance.asset";
-            Assert.That(File.Exists(Physical(path)) || File.Exists(Physical(path + ".meta")), Is.False);
-            AssetDatabase.CreateAsset(asset, path);
             EditorUtility.SetDirty(asset);
             AssetDatabase.SaveAssetIfDirty(asset);
             CaptureAsset(run, path);
@@ -498,7 +721,11 @@ namespace YLFramework.StateMachine.Acceptance
                 token = token,
                 folder = folder,
                 folderGuid = guid,
-                folderMetaSha256 = Hash(Physical(folder + ".meta"))
+                folderMetaSha256 = Hash(Physical(folder + ".meta")),
+                unityVersion = Application.unityVersion,
+                runtimeAssembly = typeof(FsmController).Assembly.GetName().Name,
+                editorAssembly = typeof(FsmStateCreator).Assembly.GetName().Name,
+                pid = System.Diagnostics.Process.GetCurrentProcess().Id
             };
         }
 

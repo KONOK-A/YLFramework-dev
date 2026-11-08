@@ -346,13 +346,12 @@ namespace YLFramework.Tests.Http
                 evidence.AssertLive();
             });
             request = Start(() => HttpManager.Get(_server.Url("/echo"), null, Headers()));
-#pragma warning disable CS0618
-            request.Completed += _ =>
+            Action<SendWebRequest> first = _ =>
             {
                 evidence.AssertReleased();
-                calls.Add("legacy");
+                calls.Add("first");
             };
-#pragma warning restore CS0618
+            request.AddCompleteEvent(first);
             request.AddCompleteEvent(value =>
             {
                 evidence.AssertReleased();
@@ -360,6 +359,7 @@ namespace YLFramework.Tests.Http
                 calls.Add("registered");
             });
             yield return WaitFor(request);
+            request.RemoveCompleteEvent(first);
             AssertSucceeded(request);
             Assert.That(request.ResponseHeaders["X-Fixture"], Is.EqualTo("loopback"));
             Assert.That(request.Data, Is.EqualTo(Encoding.UTF8.GetBytes(request.Text)));
@@ -368,7 +368,7 @@ namespace YLFramework.Tests.Http
                 evidence.AssertReleased();
                 calls.Add("late");
             });
-            Assert.That(calls, Is.EqualTo(new[] { "post", "legacy", "registered", "late" }));
+            Assert.That(calls, Is.EqualTo(new[] { "post", "first", "registered", "late" }));
             var text = request.Text;
             var data = (byte[])request.Data.Clone();
             request.Abort();
@@ -662,19 +662,18 @@ namespace YLFramework.Tests.Http
         }
 
         [UnityTest]
-        public IEnumerator CompletionExceptionKeepsLegacyOrderAndInterruptsLaterCallbacksButNotCleanup()
+        public IEnumerator CompletionExceptionKeepsRegistrationOrderAndInterruptsLaterCallbacksButNotCleanup()
         {
             NativeEvidence evidence = null;
             Pre(native => evidence = new NativeEvidence(native));
             var calls = new List<string>();
             var request = Start(() => HttpManager.Get(_server.Url("/echo"), null, null));
-#pragma warning disable CS0618
-            request.Completed += _ =>
+            Action<SendWebRequest> first = _ =>
             {
                 evidence.AssertReleased();
-                calls.Add("legacy");
+                calls.Add("first");
             };
-#pragma warning restore CS0618
+            request.AddCompleteEvent(first);
             request.AddCompleteEvent(_ =>
             {
                 evidence.AssertReleased();
@@ -684,35 +683,35 @@ namespace YLFramework.Tests.Http
             request.AddCompleteEvent(_ => calls.Add("must not run"));
             LogAssert.Expect(LogType.Exception, new Regex("InvalidOperationException: http fixture completion failure"));
             yield return WaitFor(request);
+            request.RemoveCompleteEvent(first);
             AssertSucceeded(request);
             Assert.That(request.Exception, Is.Null);
             evidence.AssertReleased();
-            Assert.That(calls, Is.EqualTo(new[] { "legacy", "throw" }));
+            Assert.That(calls, Is.EqualTo(new[] { "first", "throw" }));
             request.AddCompleteEvent(_ => calls.Add("late"));
             request.Abort();
             InvokeLateCompletion(request);
-            Assert.That(calls, Is.EqualTo(new[] { "legacy", "throw", "late" }));
+            Assert.That(calls, Is.EqualTo(new[] { "first", "throw", "late" }));
         }
 
         [UnityTest]
-        public IEnumerator LegacyCompletionExceptionInterruptsRegisteredEventsWithoutLeakingNative()
+        public IEnumerator RemovedCompletionCallbackCannotInterruptOtherCallbacksOrLeakNative()
         {
             NativeEvidence evidence = null;
             Pre(native => evidence = new NativeEvidence(native));
             var request = Start(() => HttpManager.Get(_server.Url("/echo"), null, null));
             var registered = false;
-#pragma warning disable CS0618
-            request.Completed += _ =>
+            Action<SendWebRequest> removed = _ =>
             {
                 evidence.AssertReleased();
-                throw new InvalidOperationException("http fixture legacy failure");
+                throw new InvalidOperationException("removed http fixture callback");
             };
-#pragma warning restore CS0618
+            request.AddCompleteEvent(removed);
             request.AddCompleteEvent(_ => registered = true);
-            LogAssert.Expect(LogType.Exception, new Regex("InvalidOperationException: http fixture legacy failure"));
+            request.RemoveCompleteEvent(removed);
             yield return WaitFor(request);
             AssertSucceeded(request);
-            Assert.That(registered, Is.False);
+            Assert.That(registered, Is.True);
             evidence.AssertReleased();
         }
 

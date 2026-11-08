@@ -13,6 +13,7 @@ using YLFramework.Serialization;
 namespace YLFramework.Tests
 {
     // 当前 Unity Test Runner 使用 NUnit 2；同步 EditMode 用例在主线程顺序执行。
+    [Category("YL.Module.Data")]
     public class SerializedDictionarySaveTests
     {
         public sealed class SettingsRecord
@@ -27,13 +28,13 @@ namespace YLFramework.Tests
             source.Entries.Add("first", new Payload { Number = 1 });
             source.Entries["first"] = new Payload { Number = 2 };
             source.Entries["second"] = null;
-            var json = JsonConvert.SerializeObject(source, SaveManager.SerializerSettings);
+            var json = JsonConvert.SerializeObject(source, SaveManager.DefaultSerializerSettings);
             Assert.That(JToken.DeepEquals(JToken.Parse(json), JToken.Parse("{\"Entries\":{\"first\":{\"Number\":2},\"second\":null}}")), Is.True);
-            var restored = JsonConvert.DeserializeObject<SettingsRecord>(json, SaveManager.SerializerSettings);
+            var restored = JsonConvert.DeserializeObject<SettingsRecord>(json, SaveManager.DefaultSerializerSettings);
             Assert.That(restored.Entries["first"].Number, Is.EqualTo(2));
             Assert.That(restored.Entries.TryGetValue("second", out var value), Is.True);
             Assert.That(value, Is.Null);
-            Assert.That(JsonConvert.SerializeObject(restored, SaveManager.SerializerSettings), Is.EqualTo(json));
+            Assert.That(JsonConvert.SerializeObject(restored, SaveManager.DefaultSerializerSettings), Is.EqualTo(json));
         }
 
         [Serializable]
@@ -60,9 +61,9 @@ namespace YLFramework.Tests
 
             var originalRoot = rootField.GetValue(null);
             var originalStore = storeField.GetValue(null);
-            var settings = SaveManager.SerializerSettings;
+            var settings = SaveManager.DefaultSerializerSettings;
             var originalSettings = CaptureSettings(settings);
-            var originalFormat = SaveManager.SerializationFormat;
+            var originalFormat = SaveManager.DefaultSerializationFormat;
             var output = Environment.GetEnvironmentVariable("YL_SAVE_TEST_OUTPUT") ??
                 Path.Combine(Directory.GetCurrentDirectory(), "Temp", "Extensions.Data.Save");
             var tempRoot = Path.Combine(output, "legacy-cases", Guid.NewGuid().ToString("N"));
@@ -82,7 +83,8 @@ namespace YLFramework.Tests
                 Assert.That(SaveManager.StorageRoot, Is.EqualTo(tempRoot));
                 Assert.That(storeField.GetValue(null), Is.Null);
 
-                var slot = SaveManager.CreateSaveItem();
+                var store = SaveManager.Store;
+                var slot = store.CreateSaveItem();
                 var source = new SerializedDictionary<string, int> { { "a", 1 }, { "remove", 3 } };
                 source["a"] = 2;
                 source.Add("b", 4);
@@ -94,8 +96,8 @@ namespace YLFramework.Tests
 
                 const string RootFileName = "root-dictionary";
                 const string RecordFileName = "nested-record";
-                SaveManager.SaveObject(source, RootFileName, slot.SaveId);
-                SaveManager.SaveObject(record, RecordFileName, slot.SaveId);
+                store.SaveObject(source, RootFileName, slot.SaveId);
+                store.SaveObject(record, RecordFileName, slot.SaveId);
                 var saveDirectory = Path.Combine(tempRoot, "SaveData");
                 var slotDirectory = Path.Combine(saveDirectory, slot.SaveId.ToString());
                 var rootPath = Path.Combine(slotDirectory, RootFileName + ".json");
@@ -107,8 +109,8 @@ namespace YLFramework.Tests
                     JToken.Parse("{\"a\":2,\"b\":4}")), Is.True);
                 Assert.That(JToken.DeepEquals(JToken.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(recordPath))),
                     JToken.Parse("{\"Direct\":{\"a\":2,\"b\":4},\"Nested\":{\"7\":{\"Number\":6},\"-2\":{\"Number\":8}}}")), Is.True);
-                Assert.That(SaveManager.LoadObject<SerializedDictionary<string, int>>(RootFileName, slot.SaveId), Is.SameAs(source));
-                Assert.That(SaveManager.LoadObject<Record>(RecordFileName, slot.SaveId), Is.SameAs(record));
+                Assert.That(store.LoadObject<SerializedDictionary<string, int>>(RootFileName, slot.SaveId), Is.SameAs(source));
+                Assert.That(store.LoadObject<Record>(RecordFileName, slot.SaveId), Is.SameAs(record));
 
                 // 不再保存这些修改；若 LoadObject 错误复用原实例，下面的磁盘值断言会失败。
                 source["a"] = -1;
@@ -118,8 +120,9 @@ namespace YLFramework.Tests
                 SaveManager.SetStorageRoot(tempRoot);
                 Assert.That(storeField.GetValue(null), Is.Null);
 
-                var restored = SaveManager.LoadObject<SerializedDictionary<string, int>>(RootFileName, slot.SaveId);
-                var restoredRecord = SaveManager.LoadObject<Record>(RecordFileName, slot.SaveId);
+                store = SaveManager.Store;
+                var restored = store.LoadObject<SerializedDictionary<string, int>>(RootFileName, slot.SaveId);
+                var restoredRecord = store.LoadObject<Record>(RecordFileName, slot.SaveId);
                 Assert.That(restored, Is.Not.Null);
                 Assert.That(restored, Is.Not.SameAs(source));
                 Assert.That(restored.Count, Is.EqualTo(2));
@@ -138,10 +141,10 @@ namespace YLFramework.Tests
                 Assert.That(restoredRecord.Nested[7], Is.Not.SameAs(record.Nested[7]));
                 Assert.That(restoredRecord.Nested[7].Number, Is.EqualTo(6));
                 Assert.That(restoredRecord.Nested[-2].Number, Is.EqualTo(8));
-                Assert.That(SaveManager.GetSaveItemCount(), Is.EqualTo(1));
-                Assert.That(SaveManager.GetSaveItemWithId(slot.SaveId), Is.Not.SameAs(slot));
-                Assert.That(SaveManager.LoadObject<SerializedDictionary<string, int>>(RootFileName, slot.SaveId), Is.SameAs(restored));
-                Assert.That(SaveManager.LoadObject<Record>(RecordFileName, slot.SaveId), Is.SameAs(restoredRecord));
+                Assert.That(store.GetAllSaveItems().Count, Is.EqualTo(1));
+                Assert.That(store.GetSaveItem(slot.SaveId), Is.Not.SameAs(slot));
+                Assert.That(store.LoadObject<SerializedDictionary<string, int>>(RootFileName, slot.SaveId), Is.SameAs(restored));
+                Assert.That(store.LoadObject<Record>(RecordFileName, slot.SaveId), Is.SameAs(restoredRecord));
 
                 var unitySource = new Record { Direct = restored, Nested = restoredRecord.Nested };
                 var unityJson = JsonUtility.ToJson(unitySource);
@@ -166,7 +169,7 @@ namespace YLFramework.Tests
                     storeField.SetValue(null, originalStore);
                 }
                 RestoreSettings(settings, originalSettings);
-                SaveManager.SerializationFormat = originalFormat;
+                SaveManager.DefaultSerializationFormat = originalFormat;
                 if (ownsRoot && passed && Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(tempRoot)))
                 {
                     Directory.Delete(global::YLFramework.Testing.PackageTestPaths.Physical(tempRoot), true);
@@ -178,8 +181,8 @@ namespace YLFramework.Tests
             }
             Assert.That(rootField.GetValue(null), Is.EqualTo(originalRoot));
             Assert.That(storeField.GetValue(null), Is.SameAs(originalStore));
-            Assert.That(SaveManager.SerializerSettings, Is.SameAs(settings));
-            Assert.That(SaveManager.SerializationFormat, Is.EqualTo(originalFormat));
+            Assert.That(SaveManager.DefaultSerializerSettings, Is.SameAs(settings));
+            Assert.That(SaveManager.DefaultSerializationFormat, Is.EqualTo(originalFormat));
             foreach (var pair in originalSettings)
             {
                 Assert.That(pair.Key.GetValue(settings), Is.EqualTo(pair.Value));

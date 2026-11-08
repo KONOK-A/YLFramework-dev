@@ -422,98 +422,53 @@ namespace YLFramework.Core.Editor.Tests
         }
 
         [Test]
-        [Category("YL.Integration.CrossModuleAuthoring")]
-        public void AcceptanceAuthoringFieldsKeepExactFormerNames()
+        [Category("YL.Special.CoreSession")]
+        public void CurrentUIAcceptancePrefabKeepsBothObjectReferencesAndIdentity()
         {
-            var contracts = new[]
-            {
-                "YLFramework.Tests.Extensions.Data.ExcelAssetOwnerFixture|Rows=rows",
-                "YLFramework.Tests.Extensions.Shared.E0ReorderableTestWindow|GuiCalls=guiCalls",
-                "YLFramework.Tests.Extensions.Shared.E0ReorderableListAsset|Items=items",
-                "YLFramework.Tests.Extensions.Behavior.BehaviorAuthoringTests+DrawerScopeWindow|Host=host;Complete=isComplete",
-                "YLFramework.Tests.Extensions.Behavior.BehaviorAuthoringTests+TransitionInspectorWindow|Helper=helper;NodeHelper=nodeHelper;Inspector=inspector;DrawCount=drawCount",
-                "YLFramework.Tests.ResourceBuild.ResourcePolishGuiWindow|RootHeight=rootHeight;LayoutTrace=layoutTrace",
-                "YLFramework.Tests.EditHostProbe|Initializations=initializations;Releases=releases",
-                "YLFramework.Tests.Extensions.Data.LocalizationActivationCounter|Enables=enables;Disables=disables",
-                "YLFramework.Tests.Extensions.Equipment.EquipmentResourceProbe|Loads=loads;Unloads=unloads",
-                "YLFramework.Tests.Audio.AudioBudgetStopOnDisable|Calls=calls;DisableCache=disableCache",
-                "YLFramework.Tests.RuntimeHostProbe|Releases=releases",
-                "YLFramework.Core.Tests.ColorInputGateProbe|Allowed=isAllowed;Reads=reads",
-                "YLFramework.Core.Editor.Tests.Settings.First.CoreEditorSettingsFixture|Marker=marker",
-                "YLFramework.Core.Editor.Tests.Settings.Second.CoreEditorSettingsFixture|Marker=marker",
-                "YLFramework.Core.Editor.Tests.CoreEditorGeneratedAssetFixture|Marker=marker",
-                "YLFramework.Core.Tests.RuntimeAcceptanceEntry|ColorPrefab=colorPrefab;ServerUrl=serverUrl",
-                "YLFramework.Core.Tests.AudioAcceptanceEntry|Group=group;Signal=signal;SecondSignal=secondSignal;MixerConfig=mixerConfig;ResourceKey=resourceKey",
-                "YLFramework.Core.Tests.UIPanelAcceptanceDragProbe|Drags=drags",
-                "YLFramework.Core.Tests.UIAcceptanceEntry|RootPrefab=rootPrefab;ColorPrefab=colorPrefab",
-                "YLFramework.Core.Tests.YLCoreSelectionInputProbe|Cancels=cancels",
-                "YLFramework.Core.Tests.YLCoreOtherInputGate|Allowed=isAllowed;Reads=reads",
-                "YLFramework.Core.Tests.YLCoreNativeDragProbe|Drags=drags",
-                "YLFramework.Tests.DomainAcceptance.DomainAcceptanceProbe|_resourcePrefix=resourcePrefix;_run=run;_expectedBackend=expectedBackend;_expectLegacyLogger=expectLegacyLogger"
-            };
-            foreach (var contract in contracts)
-            {
-                var parts = contract.Split('|');
-                var type = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType(parts[0], false))
-                    .FirstOrDefault(candidate => candidate != null);
-                Assert.That(type, Is.Not.Null, parts[0]);
-                foreach (var entry in parts[1].Split(';'))
-                {
-                    var names = entry.Split('=');
-                    var field = type.GetField(names[1], BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    Assert.That(field, Is.Not.Null, parts[0] + "." + names[1]);
-                    var aliases = field.GetCustomAttributes<UnityEngine.Serialization.FormerlySerializedAsAttribute>()
-                        .Select(attribute => attribute.oldName).ToArray();
-                    Assert.That(aliases, Is.EqualTo(new[] { names[0] }), parts[0] + "." + names[1]);
-                }
-            }
-        }
-
-        [Test]
-        [Category("YL.Integration.CrossModuleAuthoring")]
-        public void LegacyAcceptancePrefabKeepsReferencesAndIdentity()
-        {
-            var type = AppDomain.CurrentDomain.GetAssemblies()
-                .Select(assembly => assembly.GetType("YLFramework.Core.Tests.RuntimeAcceptanceEntry", false))
-                .FirstOrDefault(candidate => candidate != null);
+            var type = System.Reflection.Assembly.Load("YLFramework.UI.Acceptance").GetType("YLFramework.Core.Tests.UIAcceptanceEntry", true);
             Assert.That(type, Is.Not.Null);
-            Assert.That(type.GetField("colorPrefab"), Is.Not.Null);
-            string folder = "Assets/Tests/YLFramework/EditMode/Editor/Core/AuthoringMigration-" + Guid.NewGuid().ToString("N");
-            string path = folder + "/Legacy.prefab";
+            foreach (var name in new[] { "rootPrefab", "colorPrefab" })
+            {
+                var field = type.GetField(name);
+                Assert.That(field, Is.Not.Null);
+                Assert.That(field.GetCustomAttributes<UnityEngine.Serialization.FormerlySerializedAsAttribute>(), Is.Empty);
+            }
+            string folder = "Assets/Tests/YLFramework/EditMode/Editor/Core/CurrentAuthoring-" + Guid.NewGuid().ToString("N");
+            string path = folder + "/Current.prefab";
             GameObject host = null;
             GameObject contents = null;
             var scene = EditorSceneManager.NewPreviewScene();
             try
             {
                 AssetDatabase.CreateFolder("Assets/Tests/YLFramework/EditMode/Editor/Core", Path.GetFileName(folder));
-                host = new GameObject("Legacy Acceptance Authoring");
+                host = new GameObject("Current Acceptance Authoring");
                 host.SetActive(false);
                 UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(host, scene);
                 var component = host.AddComponent(type);
+                var colorReference = new GameObject("Referenced Color");
+                colorReference.transform.SetParent(host.transform, false);
                 using (var serialized = new SerializedObject(component))
                 {
-                    serialized.FindProperty("colorPrefab").objectReferenceValue = host;
-                    serialized.FindProperty("serverUrl").stringValue = "https://127.0.0.1/style-fixture";
+                    serialized.FindProperty("rootPrefab").objectReferenceValue = host;
+                    serialized.FindProperty("colorPrefab").objectReferenceValue = colorReference;
                     serialized.ApplyModifiedPropertiesWithoutUndo();
                 }
                 Assert.That(PrefabUtility.SaveAsPrefabAsset(host, path), Is.Not.Null);
                 byte[] meta = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"));
                 string guid = AssetDatabase.AssetPathToGUID(path);
                 string yaml = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path));
-                foreach (var names in new[] { new[] { "colorPrefab", "ColorPrefab" }, new[] { "serverUrl", "ServerUrl" } })
+                foreach (var name in new[] { "rootPrefab", "colorPrefab" })
                 {
-                    Assert.That(yaml, Does.Contain("\n  " + names[0] + ":"));
-                    yaml = yaml.Replace("\n  " + names[0] + ":", "\n  " + names[1] + ":");
+                    Assert.That(yaml, Does.Contain("\n  " + name + ":"));
                 }
                 var ids = System.Text.RegularExpressions.Regex.Matches(yaml, @"(?m)^--- !u!\d+ &(-?\d+)")
                     .Cast<System.Text.RegularExpressions.Match>().Select(match => match.Groups[1].Value).ToArray();
-                File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), yaml, new System.Text.UTF8Encoding(false));
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
                 contents = PrefabUtility.LoadPrefabContents(path);
                 using (var serialized = new SerializedObject(contents.GetComponent(type)))
                 {
-                    Assert.That(serialized.FindProperty("colorPrefab").objectReferenceValue, Is.EqualTo(contents));
-                    Assert.That(serialized.FindProperty("serverUrl").stringValue, Is.EqualTo("https://127.0.0.1/style-fixture"));
+                    Assert.That(serialized.FindProperty("rootPrefab").objectReferenceValue, Is.EqualTo(contents));
+                    Assert.That(serialized.FindProperty("colorPrefab").objectReferenceValue, Is.EqualTo(contents.transform.Find("Referenced Color").gameObject));
                 }
                 Assert.That(PrefabUtility.SaveAsPrefabAsset(contents, path), Is.Not.Null);
                 PrefabUtility.UnloadPrefabContents(contents);
@@ -521,7 +476,10 @@ namespace YLFramework.Core.Editor.Tests
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
                 using (var serialized = new SerializedObject(AssetDatabase.LoadAssetAtPath<GameObject>(path).GetComponent(type)))
                 {
-                    Assert.That(serialized.FindProperty("serverUrl").stringValue, Is.EqualTo("https://127.0.0.1/style-fixture"));
+                    var target = (Component)serialized.targetObject;
+                    Assert.That(serialized.FindProperty("rootPrefab").objectReferenceValue, Is.EqualTo(target.gameObject));
+                    Assert.That(serialized.FindProperty("colorPrefab").objectReferenceValue,
+                        Is.EqualTo(target.transform.Find("Referenced Color").gameObject));
                 }
                 Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
                 Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")), Is.EqualTo(meta));

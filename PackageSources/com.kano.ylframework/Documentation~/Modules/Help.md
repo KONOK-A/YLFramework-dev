@@ -4,7 +4,7 @@
 
 ## 模块定位
 
-HelpKit 是 Unity Editor 内的只读帮助窗口基础设施：项目模块显式注册帮助内容，窗口统一提供"使用指南 / API 参考 / 关于"三个页签；API 声明来自编译元数据，中文摘要来自模块覆盖与 XML 文档。
+HelpKit 是 Unity Editor 内的只读帮助窗口基础设施：项目模块显式注册帮助内容，窗口统一提供"使用指南 / API 参考 / 关于"三个页签；API 声明来自编译元数据。Action 的成员说明唯一来自 Runtime XML，不再用手写覆盖引擎维护第二份契约。
 
 - 主要能力：模块注册表、帮助内容模型、API 索引与签名格式化、XML 文档读取与合并、搜索与导航。
 - 不负责：运行时帮助、自动扫描程序集/模块、执行示例代码、代码生成。
@@ -33,7 +33,7 @@ Runtime / Editor 主体的 `autoReferenced` 为 true；具体程序集依赖和�
 - `HelpPage` / `HelpBlock`：页面与四种内容块（Text / Code / Notice / Link）；`RelatedTypes` 与 `FeaturedTypes` 关联 API。
 - `HelpApiTypeDefinition` / `HelpApiType` / `HelpApiMember`：显式类型 → 索引结果（声明、签名、成员、合并后的 `HelpDocumentation`）。
 - `HelpApiIndex.Build(module)`：一次索引构建；只处理显式选择的类型；成员仅 public / protected（含 protected internal）且 declared-only。
-- `HelpXmlDocumentation`：编译器成员 ID 映射 Reflection；支持 `inheritdoc`；模块 `Documentation` 的非空白字段优先于 XML。
+- `HelpXmlDocumentation`：编译器成员 ID 映射 Reflection；支持 `inheritdoc`；通用模块可选 `Documentation` 的非空白字段优先于 XML，Action 不设置该回调。
 - `HelpSearch`：空白分词 AND、大小写不敏感；空查询匹配全部。
 - `HelpWindow`：三页签（使用指南 / API 参考 / 关于）、模块下拉、搜索高亮、返回历史；窗口状态经 `SerializeField` 持久化。
 
@@ -65,7 +65,7 @@ Runtime / Editor 主体的 `autoReferenced` 为 true；具体程序集依赖和�
 ## 接入方式
 
 - 新增模块帮助 = 一个提供方类：`[InitializeOnLoad]` 静态构造中 `HelpRegistry.Register(id, 显示名, Func<HelpModule>)`，并提供模块菜单调用 `HelpWindow.Open(id)`。**不存在 provider 接口**，注册协议就是唯一契约。
-- 内容扩展：`HelpPage` / `HelpBlock` 工厂方法；`Documentation` 回调做中文覆盖；`XmlPaths` 指定 XML；`CollapsedGuideGroups` / `CollapsedApiGroups` 控制初始折叠。
+- 内容扩展：`HelpPage` / `HelpBlock` 工厂方法；`XmlPaths` 指定实际编译器 XML；通用 `Documentation` 是显式可选覆盖能力，不要求每个提供方维护一套成员模板。`CollapsedGuideGroups` / `CollapsedApiGroups` 控制初始折叠。
 - 无渲染扩展点：窗口与渲染为固定 IMGUI 实现，相关类型多为 internal。
 
 最小提供方放在 Editor 程序集中，显式登记指南内容；需要 API 索引时再填入 `ApiTypes`：
@@ -96,7 +96,7 @@ internal static class InventoryHelp
 ## 测试
 
 - `HelpWindowTests`：注册表的显式/惰性/重复 id 替换语义、模块切换不串搜索与页签、空注册时窗口完整可用、菜单与"窗口程序集不依赖业务模块"约束、布局尺寸。
-- `ApiHelpTests`：签名/声明格式化（可见性、泛型、默认值）、索引顺序与真实类型关联、XML 读取与合并规则、搜索匹配、XML 缺失回退。
+- `ApiHelpTests`：签名/声明格式化（可见性、泛型、默认值）、索引顺序与真实类型关联、XML 读取与合并规则、Action 索引逐字段等于 Runtime XML、搜索匹配、缺 XML 不伪造说明。可选 DOTween 说明必须在实际加载其程序集的 SDK 宿主验证，不把主包环境的空分支计为覆盖。
 - `FrameworkHelpProviderTests`：Core / Foundation-Tools 的正式注册、精选类型与指南关联、规则检索、缺 XML 声明、真实窗口搜索/页签/重复注册刷新、关闭订阅释放及不创建宿主/改写场景或生成文件。
 - 测试复用 `YLFramework.Tests.EditMode`，带 `UNITY_INCLUDE_TESTS`；Action / Audio 提供方的 API 库存、示例编译与 XML 回归位于各自测试目录，见 [Action](Action.md#测试与帮助)、[Audio](Audio.md#测试与帮助)。
 

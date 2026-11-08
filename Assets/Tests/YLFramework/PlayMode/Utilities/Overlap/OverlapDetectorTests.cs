@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -10,6 +11,242 @@ using Object = UnityEngine.Object;
 
 namespace YLFramework.Tests.Extensions.Behavior
 {
+    public class OverlapAreaDetectorTests
+    {
+        private Scene _scene;
+        private OverlapDetector2D _detector;
+
+        [SetUp]
+        public void Setup()
+        {
+            _scene = SceneManager.CreateScene("YL.Area." + Guid.NewGuid().ToString("N"), new CreateSceneParameters(LocalPhysicsMode.Physics2D));
+            _detector = Create(Vector3.zero).AddComponent<OverlapDetector2D>();
+            var filter = new ContactFilter2D();
+            filter.SetLayerMask(1);
+            _detector.Filter = new OverlapFilter2D(filter);
+        }
+
+        [UnityTearDown]
+        public IEnumerator Cleanup()
+        {
+            if (_scene.IsValid() && _scene.isLoaded)
+                yield return SceneManager.UnloadSceneAsync(_scene);
+        }
+
+        private GameObject Create(Vector3 position)
+        {
+            var value = new GameObject("YL.Area.Owned");
+            SceneManager.MoveGameObjectToScene(value, _scene);
+            value.transform.position = position;
+            return value;
+        }
+
+        private void Positions(params Vector3[] values)
+        {
+            var method = typeof(OverlapDetector2D).GetMethod("SetAreaPositions");
+            Assert.That(method, Is.Not.Null, "Area chains must use the existing owner-scene Detector pipeline.");
+            method.Invoke(_detector, new object[] { values });
+        }
+
+        private void Transforms(params Transform[] values)
+        {
+            var method = typeof(OverlapDetector2D).GetMethod("SetAreaTransforms");
+            Assert.That(method, Is.Not.Null);
+            method.Invoke(_detector, new object[] { values });
+        }
+
+        [Test]
+        public void PointTransformsTheLocalPointWithoutInventingVolume()
+        {
+            _detector.transform.localScale = new Vector3(-2, 1, 1);
+            _detector.transform.rotation = Quaternion.Euler(0, 0, 90);
+            _detector.Composite = new OverlapComposite2D(OverlapShape2D.Point(Vector2.right));
+            var target = Create(Vector3.down * 2).AddComponent<BoxCollider2D>();
+            Create(Vector3.up * 2).AddComponent<BoxCollider2D>();
+            Physics2D.SyncTransforms();
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastComplete.Count, Is.EqualTo(1));
+            Assert.That(_detector.LastComplete[0].Collider, Is.SameAs(target));
+        }
+
+        [Test]
+        public void Detector3DDefaultFilterUsesExplicitIgnoreAndNoLayers()
+        {
+            var query = Create(new Vector3(10000, 10000, 10000)).AddComponent<OverlapDetector3D>();
+            Create(query.transform.position).AddComponent<BoxCollider>();
+            Physics.SyncTransforms();
+            Assert.That(query.Sample(), Is.True);
+            Assert.That(query.LastComplete.Count, Is.EqualTo(1));
+            Assert.DoesNotThrow(() => query.Filter = default);
+            Assert.That(query.Filter.TriggerInteraction, Is.EqualTo(QueryTriggerInteraction.Ignore));
+            Assert.That(query.Sample(), Is.True);
+            Assert.That(query.LastComplete, Is.Empty);
+        }
+
+        [Test]
+        public void LocalAdjacentCornersBecomeWorldXYAabbsAndEmptyChainExitsWithoutClosingItself()
+        {
+            _detector.transform.position = new Vector3(50, 50, 3);
+            _detector.transform.rotation = Quaternion.Euler(0, 0, 90);
+            var target = Create(new Vector3(49, 50.5f, 17)).AddComponent<BoxCollider2D>();
+            target.size = Vector2.one * 0.2f;
+            Positions(Vector3.zero, new Vector3(1, 2, 0), new Vector3(3, 4, 0));
+            Physics2D.SyncTransforms();
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastComplete.Count, Is.EqualTo(1));
+            Assert.That(_detector.LastComplete[0].Collider, Is.SameAs(target));
+            var exits = 0;
+            _detector.Exited += (_, __) => exits++;
+            Positions();
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastComplete, Is.Empty);
+            Assert.That(exits, Is.EqualTo(1));
+            Assert.That(_detector.IsRunning, Is.True);
+            _detector.Composite = new OverlapComposite2D(OverlapShape2D.Circle(new Vector2(-1, 0.5f), 1));
+            _detector.transform.rotation = Quaternion.identity;
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastComplete.Count, Is.EqualTo(1), "Assigning Composite explicitly switches out of Area mode.");
+        }
+
+        [Test]
+        public void TransformNodesUseLiveWorldPositionsAndMissingPairsAreSkipped()
+        {
+            var a = Create(new Vector3(-1, -1)).transform;
+            var b = Create(new Vector3(1, 1)).transform;
+            var target = Create(Vector3.zero).AddComponent<BoxCollider2D>();
+            Transforms(a, b, null);
+            Physics2D.SyncTransforms();
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastComplete.Count, Is.EqualTo(1));
+            a.position += Vector3.right * 20;
+            b.position += Vector3.right * 20;
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastComplete, Is.Empty);
+            Object.DestroyImmediate(b.gameObject);
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastComplete, Is.Empty);
+            Assert.That(target, Is.Not.Null);
+        }
+
+        [TestCase(float.NaN)]
+        [TestCase(float.PositiveInfinity)]
+        public void NonFiniteAreaIsExplicitlyInvalidAndCannotPublishFalseExits(float nonFinite)
+        {
+            Create(Vector3.zero).AddComponent<BoxCollider2D>();
+            Positions(new Vector3(-1, -1), new Vector3(1, 1));
+            Physics2D.SyncTransforms();
+            Assert.That(_detector.Sample(), Is.True);
+            var exits = 0;
+            _detector.Exited += (_, __) => exits++;
+            Positions(Vector3.zero, new Vector3(nonFinite, 1));
+            Assert.That(_detector.Sample(), Is.False);
+            Assert.That(_detector.LastQuery.Status, Is.EqualTo(OverlapQueryStatus.Invalidated));
+            Assert.That(_detector.ConfigurationError, Is.Not.Empty);
+            Assert.That(_detector.LastComplete.Count, Is.EqualTo(1));
+            Assert.That(exits, Is.Zero);
+        }
+
+        [TestCase(0f, 1f)]
+        [TestCase(1f, 0f)]
+        [TestCase(0f, 0f)]
+        public void AllFiniteDegeneratePairsCommitEmptyAndExitThePreviousContactOnce(float width, float height)
+        {
+            Create(Vector3.zero).AddComponent<BoxCollider2D>();
+            Positions(new Vector3(-1, -1), new Vector3(1, 1));
+            Physics2D.SyncTransforms();
+            Assert.That(_detector.Sample(), Is.True);
+            var exits = 0;
+            _detector.Exited += (_, why) =>
+            {
+                Assert.That(why, Is.EqualTo(OverlapExitReason.Reconfigured));
+                Assert.That(_detector.LastComplete, Is.Empty);
+                exits++;
+            };
+            Positions(Vector3.zero, new Vector3(width, height));
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastQuery.Status, Is.EqualTo(OverlapQueryStatus.Complete));
+            Assert.That(_detector.LastComplete, Is.Empty);
+            Assert.That(_detector.ConfigurationError, Is.Empty);
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(exits, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AFiniteDegeneratePairDoesNotDiscardTheOtherValidWorldRegions()
+        {
+            var first = Create(Vector3.zero).AddComponent<BoxCollider2D>();
+            var second = Create(new Vector3(2, 3)).AddComponent<BoxCollider2D>();
+            Positions(new Vector3(-1, -1), new Vector3(1, 1), new Vector3(1, 5), new Vector3(3, 3));
+            Physics2D.SyncTransforms();
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastComplete.Count, Is.EqualTo(2));
+            Assert.That(_detector.LastComplete.Select(contact => contact.Collider), Is.EquivalentTo(new[] { first, second }));
+        }
+
+        [Test]
+        public void LiveTransformChainCollapsingToOnePointSeparatesWithoutAReconfiguration()
+        {
+            var from = Create(new Vector3(-1, -1)).transform;
+            var to = Create(new Vector3(1, 1)).transform;
+            Create(Vector3.zero).AddComponent<BoxCollider2D>();
+            Transforms(from, to);
+            Physics2D.SyncTransforms();
+            Assert.That(_detector.Sample(), Is.True);
+            var exits = 0;
+            _detector.Exited += (_, why) => { Assert.That(why, Is.EqualTo(OverlapExitReason.Separated)); exits++; };
+            to.position = from.position;
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastComplete, Is.Empty);
+            Assert.That(exits, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void FiniteNodesWhoseBoundsOverflowStillInvalidateWithoutFalseExits()
+        {
+            Create(Vector3.zero).AddComponent<BoxCollider2D>();
+            Positions(new Vector3(-1, -1), new Vector3(1, 1));
+            Physics2D.SyncTransforms();
+            Assert.That(_detector.Sample(), Is.True);
+            Positions(new Vector3(-float.MaxValue, 0), new Vector3(float.MaxValue, 0));
+            Assert.That(_detector.Sample(), Is.False);
+            Assert.That(_detector.LastComplete.Count, Is.EqualTo(1));
+            Assert.That(_detector.LastQuery.Status, Is.EqualTo(OverlapQueryStatus.Invalidated));
+        }
+
+        [Test]
+        public void NonFiniteUnpairedNodeInvalidatesInsteadOfCommittingAnEmptyChain()
+        {
+            Create(Vector3.zero).AddComponent<BoxCollider2D>();
+            Positions(new Vector3(-1, -1), new Vector3(1, 1));
+            Physics2D.SyncTransforms();
+            Assert.That(_detector.Sample(), Is.True);
+            Positions(new Vector3(float.NaN, 1));
+            Assert.That(_detector.Sample(), Is.False);
+            Assert.That(_detector.LastQuery.Status, Is.EqualTo(OverlapQueryStatus.Invalidated));
+            Assert.That(_detector.LastComplete.Count, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AreaUsesTheSameBoundedGrowthAndCompleteOnlyCommitForOverAHundredTargets()
+        {
+            _detector.ConfigureCapacity(8, 256, true);
+            for (int i = 0; i < 120; i++)
+            {
+                var target = Create(new Vector3(i % 12 * 0.1f, i / 12 * 0.1f)).AddComponent<BoxCollider2D>();
+                target.size = Vector2.one * 0.01f;
+            }
+            Positions(new Vector3(-1, -1), new Vector3(2, 2), new Vector3(-1, -1));
+            Physics2D.SyncTransforms();
+            Assert.That(_detector.Sample(), Is.True);
+            Assert.That(_detector.LastComplete.Count, Is.EqualTo(120));
+            Assert.That(_detector.BufferCapacity, Is.GreaterThan(120));
+            _detector.ConfigureCapacity(8, 8);
+            Assert.That(_detector.Sample(), Is.False);
+            Assert.That(_detector.LastQuery.Status, Is.EqualTo(OverlapQueryStatus.MayBeTruncated));
+            Assert.That(_detector.LastComplete.Count, Is.EqualTo(120));
+        }
+    }
+
     [TestFixture(false)]
     [TestFixture(true)]
     public class OverlapDetectorTests
@@ -80,6 +317,104 @@ namespace YLFramework.Tests.Extensions.Behavior
         }
 
         [Test]
+        public void ClosestPointIsACurrentRepresentativeSnapshotAndDestroyedExitKeepsTheLastPoint()
+        {
+            var type = _threeD ? typeof(OverlapContact<Collider>) : typeof(OverlapContact<Collider2D>);
+            var point = type.GetProperty("Point");
+            Assert.That(point, Is.Not.Null, "The current contact must carry the closest-point snapshot before old hit components retire.");
+            Assert.That(point.CanWrite, Is.False);
+            _rig.Component.transform.position = new Vector3(0.1f, -0.1f, 7);
+            var target = Target(_threeD ? new Vector3(0.5f, 0.1f, 7.3f) : new Vector3(0.5f, 0.1f, 17));
+            target.transform.rotation = Quaternion.Euler(0, 0, 35);
+            Sync();
+            Assert.That(_rig.Sample(), Is.True);
+            var expected = _threeD ? ((Collider)target).ClosestPoint(_rig.Component.transform.position) :
+                (Vector3)((Collider2D)target).ClosestPoint(_rig.Component.transform.position);
+            object contact = null;
+            foreach (var value in _rig.Snapshot)
+                contact = value;
+            Assert.That(Vector3.Distance((Vector3)point.GetValue(contact), expected), Is.LessThan(0.0001f));
+            if (_threeD)
+                Assert.That(((Vector3)point.GetValue(contact)).z, Is.GreaterThan(7));
+            else
+                Assert.That(((Vector3)point.GetValue(contact)).z, Is.Zero);
+            target.transform.position -= Vector3.right * 0.05f;
+            Sync();
+            Assert.That(_rig.Sample(), Is.True);
+            foreach (var value in _rig.Snapshot)
+                contact = value;
+            var last = (Vector3)point.GetValue(contact);
+            object exited = null;
+            var reason = OverlapExitReason.Separated;
+            if (_threeD)
+                ((OverlapDetector3D)_rig.Component).Exited += (value, why) => { exited = value; reason = why; };
+            else
+                ((OverlapDetector2D)_rig.Component).Exited += (value, why) => { exited = value; reason = why; };
+            Object.DestroyImmediate(target.gameObject);
+            Assert.That(_rig.Sample(), Is.True);
+            Assert.That(reason, Is.EqualTo(OverlapExitReason.TargetDestroyed));
+            Assert.That((Vector3)point.GetValue(exited), Is.EqualTo(last), "Never query ClosestPoint from a destroyed collider.");
+        }
+
+        [Test]
+        public void SerializedEventAdaptersUseTheCommittedContactAndRespectCallbackStop()
+        {
+            var enteredProperty = _rig.Component.GetType().GetProperty("EnteredEvent");
+            var stayedProperty = _rig.Component.GetType().GetProperty("StayedEvent");
+            var exitedProperty = _rig.Component.GetType().GetProperty("ExitedEvent");
+            Assert.That(enteredProperty, Is.Not.Null);
+            Assert.That(stayedProperty, Is.Not.Null);
+            Assert.That(exitedProperty, Is.Not.Null);
+            var trace = new List<string>();
+            var target = Target(Vector3.zero);
+            var stop = false;
+            if (_threeD)
+            {
+                ((UnityEngine.Events.UnityEvent<OverlapContact<Collider>>)enteredProperty.GetValue(_rig.Component)).AddListener(contact =>
+                {
+                    Assert.That(_rig.Count, Is.EqualTo(1));
+                    Assert.That(contact.Collider, Is.SameAs(target));
+                    trace.Add("enter");
+                    if (stop)
+                        _rig.Stop();
+                });
+                ((UnityEngine.Events.UnityEvent<OverlapContact<Collider>>)stayedProperty.GetValue(_rig.Component)).AddListener(_ => trace.Add("stay"));
+                ((UnityEngine.Events.UnityEvent<OverlapContact<Collider>, OverlapExitReason>)exitedProperty.GetValue(_rig.Component))
+                    .AddListener((_, why) => trace.Add("exit:" + why));
+            }
+            else
+            {
+                ((UnityEngine.Events.UnityEvent<OverlapContact<Collider2D>>)enteredProperty.GetValue(_rig.Component)).AddListener(contact =>
+                {
+                    Assert.That(_rig.Count, Is.EqualTo(1));
+                    Assert.That(contact.Collider, Is.SameAs(target));
+                    trace.Add("enter");
+                    if (stop)
+                        _rig.Stop();
+                });
+                ((UnityEngine.Events.UnityEvent<OverlapContact<Collider2D>>)stayedProperty.GetValue(_rig.Component)).AddListener(_ => trace.Add("stay"));
+                ((UnityEngine.Events.UnityEvent<OverlapContact<Collider2D>, OverlapExitReason>)exitedProperty.GetValue(_rig.Component))
+                    .AddListener((_, why) => trace.Add("exit:" + why));
+            }
+            Sync();
+            Assert.That(_rig.Sample(), Is.True);
+            Assert.That(_rig.Sample(), Is.True);
+            target.transform.position = Vector3.right * 20;
+            Sync();
+            Assert.That(_rig.Sample(), Is.True);
+            Assert.That(trace, Is.EqualTo(new[] { "enter", "stay", "exit:Separated" }));
+            target.transform.position = Vector3.zero;
+            Sync();
+            stop = true;
+            var before = _events.Count;
+            Assert.That(_rig.Sample(), Is.False);
+            Assert.That(_rig.Count, Is.Zero);
+            Assert.That(trace, Is.EqualTo(new[] { "enter", "stay", "exit:Separated", "enter", "exit:Stopped" }));
+            Assert.That(_events.Count, Is.EqualTo(before + 1), "Stop in the serialized adapter must truncate the stale CLR Enter wave.");
+            Assert.That(_events[_events.Count - 1], Does.EndWith(":Stopped"));
+        }
+
+        [Test]
         public void EnterStayExitCommitBeforeCallbacksAndNewContactsDoNotStay()
         {
             var target = Target(Vector3.zero);
@@ -95,6 +430,72 @@ namespace YLFramework.Tests.Extensions.Behavior
             _rig.Sample();
             Assert.That(_events[2], Is.EqualTo("Exit:" + id + ":Separated"));
             Assert.That(_rig.Count, Is.Zero);
+        }
+
+        [TestCase("stop", false)]
+        [TestCase("disable", false)]
+        [TestCase("restart", false)]
+        [TestCase("stop", true)]
+        [TestCase("disable", true)]
+        [TestCase("restart", true)]
+        public void SerializedMultiListenerBatchesFinishBeforeTheirReentrantExit(string command, bool onStay)
+        {
+            Target(Vector3.zero);
+            Sync();
+            if (onStay)
+                Assert.That(_rig.Sample(), Is.True);
+            var trace = new List<string>();
+            var phase = onStay ? "stay" : "enter";
+            var requested = false;
+            void First()
+            {
+                trace.Add(phase + ".A");
+                if (requested)
+                    return;
+                requested = true;
+                if (command == "disable")
+                    _rig.Component.enabled = false;
+                else
+                {
+                    _rig.Stop();
+                    if (command == "restart")
+                        _rig.Start();
+                }
+            }
+            void Second()
+            {
+                Assert.That(_rig.Count, Is.EqualTo(1), "The already-started UnityEvent shares one committed snapshot until its batch ends.");
+                trace.Add(phase + ".B");
+            }
+            if (_threeD)
+            {
+                var detector = (OverlapDetector3D)_rig.Component;
+                var callback = onStay ? detector.StayedEvent : detector.EnteredEvent;
+                callback.AddListener(_ => First());
+                callback.AddListener(_ => Second());
+                callback.AddListener(_ => trace.Add(phase + ".runtime"));
+                detector.ExitedEvent.AddListener((_, why) => trace.Add("exit:" + why));
+            }
+            else
+            {
+                var detector = (OverlapDetector2D)_rig.Component;
+                var callback = onStay ? detector.StayedEvent : detector.EnteredEvent;
+                callback.AddListener(_ => First());
+                callback.AddListener(_ => Second());
+                callback.AddListener(_ => trace.Add(phase + ".runtime"));
+                detector.ExitedEvent.AddListener((_, why) => trace.Add("exit:" + why));
+            }
+            var oldClrCount = _events.Count;
+            Assert.That(_rig.Sample(), Is.False);
+            Assert.That(_rig.Count, Is.Zero);
+            Assert.That(_rig.Component.GetType().GetProperty("IsRunning").GetValue(_rig.Component), Is.EqualTo(command == "restart"));
+            Assert.That(trace, Is.EqualTo(new[] { phase + ".A", phase + ".B", phase + ".runtime", "exit:" +
+                (command == "disable" ? OverlapExitReason.Disabled : OverlapExitReason.Stopped) }));
+            Assert.That(_events.Count, Is.EqualTo(oldClrCount + 1), "The old-generation CLR Enter/Stay must not follow the terminal Exit.");
+            _rig.Component.enabled = true;
+            _rig.Start();
+            Assert.That(_rig.Sample(), Is.True);
+            Assert.That(_rig.Count, Is.EqualTo(1));
         }
 
         [TestCase(2)]
@@ -629,6 +1030,38 @@ namespace YLFramework.Tests.Extensions.Behavior
             Assert.That(_rig.Sample(), Is.False);
             Assert.That(_rig.ConfigurationError, Is.Not.Empty);
             Assert.That(_rig.Status, Is.EqualTo(OverlapQueryStatus.Invalidated));
+        }
+
+        [UnityTest]
+        public IEnumerator UnscaledUpdateObservesAtZeroTimeScaleWithoutForcingFixedUpdates()
+        {
+            Assert.That(Enum.TryParse("UnscaledUpdate", out OverlapSamplingMode unscaled), Is.True);
+            var previous = Time.timeScale;
+            try
+            {
+                Time.timeScale = 0;
+                Target(Vector3.zero);
+                Sync();
+                _rig.Frequency(1000);
+                _rig.Mode(OverlapSamplingMode.FixedUpdate);
+                yield return null;
+                yield return null;
+                Assert.That(_rig.Count, Is.Zero, "The driver must not invent FixedUpdate ticks at zero time scale.");
+                _rig.Mode(unscaled);
+                var deadline = Time.realtimeSinceStartup + 2;
+                while (_rig.Count == 0 && Time.realtimeSinceStartup < deadline)
+                    yield return null;
+                Assert.That(_rig.Count, Is.EqualTo(1));
+                _rig.Mode(OverlapSamplingMode.Update);
+                var count = _events.Count;
+                yield return null;
+                yield return null;
+                Assert.That(_events.Count, Is.EqualTo(count), "Scaled Update must retain its clock semantics.");
+            }
+            finally
+            {
+                Time.timeScale = previous;
+            }
         }
 
         [UnityTest]

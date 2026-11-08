@@ -16,25 +16,9 @@ namespace YLFramework.Core
     {
         #region 加载
 
-        internal static View LoadView(Module module, string assetName, Transform parent = null, params object[] param)
-        {
-            return LoadViewLegacy<View>(module, assetName, parent, param);
-        }
-
-        internal static View LoadView(Module module, GameObject prefab, Transform parent = null, params object[] param)
-        {
-            return LoadViewLegacy<View>(module, prefab, parent, param);
-        }
-
-        internal static T LoadViewLegacy<T>(Module module, string assetName, Transform parent, object[] param) where T : View
-            => LoadViewSync<T>(module, assetName, null, parent, null, param, true);
-
-        internal static T LoadViewLegacy<T>(Module module, GameObject prefab, Transform parent, object[] param) where T : View
-            => LoadViewSync<T>(module, null, prefab, parent, null, param, false);
-
         /// <summary>同步取得并初始化实例层级；参数接管后由本调用归还，实例失败时丢弃而非归还缓存。</summary>
         private static T LoadViewSync<T>(Module module, string assetName, GameObject prefab, Transform parent,
-            LoadViewArgs args, object[] param, bool named) where T : View
+            LoadViewArgs args, bool named) where T : View
         {
             // 接管失败不进入finally，不能归还另一笔操作正在使用的参数。
             if (args != null)
@@ -119,7 +103,7 @@ namespace YLFramework.Core
                 }
 
                 instance.transform.localPosition = Vector3.zero;
-                InitializeHierarchy(module, new List<View>(instance.GetComponentsInChildren<View>(true)), view, assetName, args, param, instanceLease: instanceLease);
+                InitializeHierarchy(module, new List<View>(instance.GetComponentsInChildren<View>(true)), view, assetName, args, instanceLease: instanceLease);
                 return view;
             }
             catch (Exception error)
@@ -280,15 +264,9 @@ namespace YLFramework.Core
             }
         }
 
-        // 异步加载
-        internal static LoadViewRequest<T> LoadViewAsync<T>(Module module, string assetName, Transform parent = null, bool sameScene = false, params object[] param) where T : View
-        {
-            return StartAsync<T>(module, assetName, parent, null, param);
-        }
-
         /// <summary>接管参数并建立独立异步请求，入口拒绝时只归还本次成功接管的参数。</summary>
         internal static LoadViewRequest<T> StartAsync<T>(Module module, string assetName, Transform parent, LoadViewArgs args,
-            object[] param, GameObject directPrefab = null) where T : View
+            GameObject directPrefab = null) where T : View
         {
             if (args != null)
             {
@@ -310,7 +288,7 @@ namespace YLFramework.Core
                 }
 
                 FindBackendRoot(module, parent);
-                request = new LoadViewRequest<T>(module, assetName, parent, args, param, directPrefab);
+                request = new LoadViewRequest<T>(module, assetName, parent, args, directPrefab);
             }
             catch (Exception error)
             {
@@ -343,7 +321,7 @@ namespace YLFramework.Core
 
         /// <summary>在异步等待结束后同步取得及初始化实例，跨业务回调复检请求有效性，失败丢弃本次实例。</summary>
         internal static T CompleteAsync<T>(Module module, GameObject prefab, string assetName, Transform parent, Scene scene,
-            LoadViewArgs args, object[] param, Action validate, CorePrefabLease prefabLease = null, PanelManager.PanelOperation panelOperation = null) where T : View
+            LoadViewArgs args, Action validate, CorePrefabLease prefabLease = null, PanelManager.PanelOperation panelOperation = null) where T : View
         {
             var sourceView = ValidateView<T>(prefab);
             if (sourceView is Panel && panelOperation == null)
@@ -379,7 +357,7 @@ namespace YLFramework.Core
                 }
 
                 instance.transform.localPosition = Vector3.zero;
-                InitializeHierarchy(module, new List<View>(instance.GetComponentsInChildren<View>(true)), view, assetName, args, param, validate, instanceLease, panelOperation);
+                InitializeHierarchy(module, new List<View>(instance.GetComponentsInChildren<View>(true)), view, assetName, args, validate, instanceLease, panelOperation);
                 return view;
             }
             catch (Exception error)
@@ -405,7 +383,7 @@ namespace YLFramework.Core
         }
 
 
-        internal static void InitView(Module module, View view, string prefabName, LoadViewArgs loadViewArgs, params object[] param)
+        internal static void InitView(Module module, View view, string prefabName, LoadViewArgs loadViewArgs)
         {
             if (loadViewArgs != null)
             {
@@ -424,7 +402,7 @@ namespace YLFramework.Core
                     throw new InvalidOperationException("Cannot initialize an existing View session.");
                 }
 
-                InitializeHierarchy(module, new List<View>(view.GetComponentsInChildren<View>(true)), view, prefabName, loadViewArgs, param);
+                InitializeHierarchy(module, new List<View>(view.GetComponentsInChildren<View>(true)), view, prefabName, loadViewArgs);
             }
             finally
             {
@@ -436,7 +414,7 @@ namespace YLFramework.Core
         }
 
         /// <summary>为单个组件建立会话并执行加载钩子；失败只回滚本次会话，参数读取权限限于回调窗口。</summary>
-        private static void InitializeView(Module module, View view, string prefabName, LoadViewArgs args, object[] param,
+        private static void InitializeView(Module module, View view, string prefabName, LoadViewArgs args,
             View backendRoot = null, bool backend = false, Action validate = null, CoreInstanceLease instanceLease = null, PanelManager.PanelOperation panelOperation = null, Action onFailure = null)
         {
             if (!view)
@@ -484,9 +462,6 @@ namespace YLFramework.Core
                     committing.InitialOpen?.BeginCommit?.Invoke();
                 }
 
-                view.OnLoaded(param ?? Array.Empty<object>());
-                validate?.Invoke();
-                ValidateInitialization(module, view, session);
                 if (args == null)
                 {
                     args = LoadViewArgs.New();
@@ -604,7 +579,7 @@ namespace YLFramework.Core
 
             try
             {
-                InitializeHierarchy(module, new List<View> { view }, null, null, args, null);
+                InitializeHierarchy(module, new List<View> { view }, null, null, args);
             }
             finally
             {
@@ -624,7 +599,7 @@ namespace YLFramework.Core
             }
 
             var views = new List<View>(root.GetComponentsInChildren<View>(true));
-            InitializeHierarchy(module, views, null, null, null, null);
+            InitializeHierarchy(module, views, null, null, null);
             return views;
         }
 
@@ -642,7 +617,7 @@ namespace YLFramework.Core
                 views.AddRange(root.GetComponentsInChildren<View>(true));
             }
 
-            InitializeHierarchy(module, views, null, null, null, null);
+            InitializeHierarchy(module, views, null, null, null);
             return views;
         }
 
@@ -679,7 +654,7 @@ namespace YLFramework.Core
 
         /// <summary>预检整批层级后只初始化未注册会话；失败逆序撤销本批新增会话，不撤销已有会话。</summary>
         private static void InitializeHierarchy(Module module, List<View> views, View acquiredRoot, string assetName,
-            LoadViewArgs args, object[] param, Action validate = null, CoreInstanceLease instanceLease = null, PanelManager.PanelOperation panelOperation = null)
+            LoadViewArgs args, Action validate = null, CoreInstanceLease instanceLease = null, PanelManager.PanelOperation panelOperation = null)
         {
             var added = new List<KeyValuePair<View, object>>();
             var roots = new Dictionary<View, View>();
@@ -741,7 +716,7 @@ namespace YLFramework.Core
 
                     bool root = ReferenceEquals(view, acquiredRoot);
                     InitializeView(module, view, root ? assetName : null,
-                        root || views.Count == 1 ? args : null, root ? param : null,
+                        root || views.Count == 1 ? args : null,
                           root ? outerRoot : roots[view], root, validate, root ? instanceLease : null, root ? panelOperation : null,
                           panelOperation != null ? (Action)panelOperation.MarkFailing : null);
                     added.Add(new KeyValuePair<View, object>(view, view.Session));
@@ -813,18 +788,18 @@ namespace YLFramework.Core
         // 加载
         internal static T LoadView<T>(Module module, string assetName, Transform parent = null, LoadViewArgs loadViewArgs = null) where T : View
         {
-            return LoadViewSync<T>(module, assetName, null, parent, loadViewArgs, null, true);
+            return LoadViewSync<T>(module, assetName, null, parent, loadViewArgs, true);
         }
 
         internal static T LoadView<T>(Module module, GameObject prefab, Transform parent = null, LoadViewArgs loadViewArgs = null) where T : View
         {
-            return LoadViewSync<T>(module, null, prefab, parent, loadViewArgs, null, false);
+            return LoadViewSync<T>(module, null, prefab, parent, loadViewArgs, false);
         }
 
         // 异步加载
         internal static LoadViewRequest<T> LoadViewAsync<T>(Module module, string assetName, Transform parent = null, bool sameScene = false, LoadViewArgs loadViewArgs = null) where T : View
         {
-            return StartAsync<T>(module, assetName, parent, loadViewArgs, null);
+            return StartAsync<T>(module, assetName, parent, loadViewArgs);
         }
 
         #endregion

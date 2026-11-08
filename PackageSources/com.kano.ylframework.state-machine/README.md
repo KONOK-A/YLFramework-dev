@@ -21,12 +21,20 @@ requires an explicit `YLFramework.StateMachine` reference. Assembly-CSharp uses
 the runtime assembly's normal auto-reference. The generator does not edit a
 consumer's asmdef or silently overwrite unknown generated output.
 
-Existing configuration assets and components retain their script GUIDs, fields,
+Current configuration assets and components retain their script GUIDs, fields,
 state scripts, parameters and sub-state connections. Existing state creation,
 transition, trigger, reset and disable/destroy behavior is unchanged. Resource
 catalogs that record the old owning assembly must be rebuilt through the actual
 resource publishing flow; preserving a script GUID is not permission to accept
 an old assembly tuple or a Bundle built by a different Unity version.
+
+Assets use the current serialized field names only; historical field-name readers
+are no longer included. Before upgrading an owned older asset, open and save it
+with the version that still understands its format, preserving its `.meta` and
+GUID, then verify the configuration and prefab through the current authoring flow.
+Do not rewrite unknown or frozen historical inputs, infer script GUIDs from class
+names, or hand-edit YAML to manufacture a current asset. Rebuild any resource
+publication from verified current inputs.
 
 Removing this package does not delete user configurations or generated scripts.
 Consumers must remove their own component/API references before uninstalling it.

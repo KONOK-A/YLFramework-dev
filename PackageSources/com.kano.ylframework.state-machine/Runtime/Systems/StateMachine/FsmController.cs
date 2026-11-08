@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Serialization;
 
 namespace YLFramework.StateMachine
 {
@@ -27,7 +26,6 @@ namespace YLFramework.StateMachine
         #region 字段
 
         [SerializeField]
-        [FormerlySerializedAs("_runtimeFSMControllerLayer")]
         private List<RuntimeFsmControllerLayer> runtimeFsmControllerLayers = new List<RuntimeFsmControllerLayer>();
 
         internal object UserDataValue;

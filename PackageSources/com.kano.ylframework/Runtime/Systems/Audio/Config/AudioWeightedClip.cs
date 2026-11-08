@@ -8,11 +8,9 @@ namespace YLFramework.Audio
     public struct AudioWeightedClip
     {
         /// <summary>由调用方保活的候选 Clip；空引用和已销毁对象不参与抽选。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Clip")]
         public AudioClip clip;
 
         /// <summary>有限非负的相对权重；零表示排除此条目。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Weight")]
         public float weight;
 
         /// <summary>保存 Clip 和权重但不在此处校验；抽选器会校验所有条目。</summary>

@@ -82,15 +82,6 @@ namespace YLFramework.Editor.Audio
                                 EditorGUILayout.PropertyField(entry.FindPropertyRelative("projectId"));
                             }
 
-                            if (source.hasMultipleDifferentValues || source.intValue == (int)AudioClipSource.AssetBundle ||
-                                !string.IsNullOrEmpty(entry.FindPropertyRelative("bundleName").stringValue))
-                            {
-                                using (new EditorGUI.DisabledScope(true))
-                                {
-                                    EditorGUILayout.PropertyField(entry.FindPropertyRelative("bundleName"), new GUIContent("Legacy Bundle Name"));
-                                }
-                            }
-
                             if (AudioInspectorUtility.ShowWhen(selection, (int)AudioClipSelectionMode.Weighted))
                             {
                                 EditorGUILayout.PropertyField(entry.FindPropertyRelative("weight"));
@@ -110,11 +101,6 @@ namespace YLFramework.Editor.Audio
             }
 
             serializedObject.ApplyModifiedProperties();
-            if (targets.Length == 1 && GUILayout.Button("迁移旧资源定位到新配置副本"))
-            {
-                AudioClipLibraryMigration.Open((AudioClipLibrary)target);
-            }
-
             foreach (var selected in targets)
             {
                 foreach (var warning in GetWarnings((AudioClipLibrary)selected))
@@ -174,7 +160,6 @@ namespace YLFramework.Editor.Audio
                     entry.FindPropertyRelative("clip").objectReferenceValue = null;
                     entry.FindPropertyRelative("key").stringValue = "";
                     entry.FindPropertyRelative("projectId").stringValue = "";
-                    entry.FindPropertyRelative("bundleName").stringValue = "";
                     entry.FindPropertyRelative("weight").floatValue = 1f;
                     entry.isExpanded = true;
                     serialized.ApplyModifiedProperties();
@@ -276,15 +261,15 @@ namespace YLFramework.Editor.Audio
                             continue;
                         }
 
-                        if ((uint)entry.source > (uint)AudioClipSource.Resource)
-                        {
-                            warnings.Add(label + "Unknown Source prevents selection.");
-                            continue;
-                        }
                         var weighted = group.selection == AudioClipSelectionMode.Weighted;
                         if (weighted && (!AudioSoundOptions.IsFinite(entry.weight) || entry.weight < 0f))
                         {
                             warnings.Add(label + "Every weight must be finite and nonnegative, including excluded entries.");
+                        }
+                        if (entry.source != AudioClipSource.Clip && entry.source != AudioClipSource.ExternalProvider && entry.source != AudioClipSource.Resource)
+                        {
+                            warnings.Add(label + "Unsupported Source prevents selection for the entire group; retired and unknown values require explicit correction.");
+                            continue;
                         }
 
                         var selectable = false;
@@ -294,21 +279,17 @@ namespace YLFramework.Editor.Audio
                         }
                         else if (!string.IsNullOrWhiteSpace(entry.key))
                         {
-                            if (AudioClipLibraryMigration.IsLegacy(entry))
-                            {
-                                warnings.Add(label + "Legacy Resources/AssetBundle entry requires explicit ProjectId/address migration to a new copy; BundleName is never inferred.");
-                            }
-                            else if (entry.source == AudioClipSource.Resource)
+                            if (entry.source == AudioClipSource.Resource)
                             {
                                 try
                                 {
                                     _ = new ResourceAddress(entry.projectId, entry.key);
-                                    selectable = string.IsNullOrEmpty(entry.bundleName);
+                                    selectable = true;
                                 }
                                 catch (ArgumentException) { }
                                 if (!selectable)
                                 {
-                                    warnings.Add(label + "Resource requires a valid ProjectId, logical address and no legacy BundleName. Initialize ResourceSystem before playback.");
+                                    warnings.Add(label + "Resource requires a valid ProjectId and logical address. Initialize ResourceSystem before playback.");
                                 }
                             }
                             else

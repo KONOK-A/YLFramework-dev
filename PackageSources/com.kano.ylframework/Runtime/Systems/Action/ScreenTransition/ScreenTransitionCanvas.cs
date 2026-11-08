@@ -6,12 +6,11 @@ using YLFramework.Singletons;
 namespace YLFramework.Actions
 {
     // 屏幕过渡共用一块遮罩画布：优先收养场景中的现有实例，没有时从资源按 Prefab 创建；
-    // 所有 ScreenTransition 动作都通过它读写 ColorImage，因此并行过渡会互相影响。
+    // 所有 ScreenTransition 动作都通过它读写 colorImage，因此并行过渡会互相影响。
     internal class ScreenTransitionCanvas : MonoSingletonHost<ScreenTransitionCanvas>
     {
         internal const string ResourcePath = "ActionKit/ScreenTransitionCanvas";
         /// <summary>Prefab 中的全屏遮罩 Image，透明度由过渡动作直接写入。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("ColorImage")]
         public Image colorImage;
 
         // 关停期间禁止再创建画布；includeInactive 为 false，只收养激活中的现有实例。
@@ -34,7 +33,7 @@ namespace YLFramework.Actions
             var prefab = Resources.Load<GameObject>(ResourcePath);
             if (!prefab)
             {
-                throw new InvalidOperationException("ActionKit ScreenTransition resource is missing. Run YLFramework > Action > 创建屏幕过渡资源 in the Editor.");
+                throw new InvalidOperationException("ActionKit ScreenTransition resource is missing at Resources/" + ResourcePath + ".");
             }
             var root = Instantiate(prefab);
             var canvas = root.GetComponent<ScreenTransitionCanvas>();
@@ -46,7 +45,7 @@ namespace YLFramework.Actions
                 }
 
                 Destroy(root);
-                throw new InvalidOperationException("ActionKit ScreenTransition resource must contain ScreenTransitionCanvas and its ColorImage reference.");
+                throw new InvalidOperationException("ActionKit ScreenTransition resource must contain ScreenTransitionCanvas and its colorImage reference.");
             }
             return root;
         }

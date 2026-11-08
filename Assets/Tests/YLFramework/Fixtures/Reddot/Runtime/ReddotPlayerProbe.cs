@@ -29,7 +29,6 @@ namespace YLFramework.RedDots.Acceptance
             public long finalValue;
             public int rootNotifications;
             public int leafNotifications;
-            public int globalNotifications;
             public int maximumCallbackDepth;
             public bool allocationCounterReliable;
             public long allocationCalibrationBytes;
@@ -302,11 +301,11 @@ namespace YLFramework.RedDots.Acceptance
             _report.captureSequence = final.CaptureSequence;
             _report.diagnosticNodes = final.Nodes.Count;
             _report.diagnosticSources = final.Nodes.Sum(node => node.Sources.Count);
-            _report.diagnosticSubscribers = final.GlobalSubscriberCount + final.Nodes.Sum(node => node.SubscriberCount);
+            _report.diagnosticSubscribers = final.Nodes.Sum(node => node.SubscriberCount);
             _report.dirtyNodeCount = final.DirtyNodeCount;
             _report.batchDepth = final.BatchDepth;
             Require(final.Nodes.All(node => node.Value == 0) && _report.diagnosticSources == 0 && _report.diagnosticSubscribers == 0 &&
-                final.BatchDepth == 0 && final.DirtyNodeCount == 0 && !final.IsFlushing && !final.GlobalPending, "Probe left sources, listeners or notifications behind.");
+                final.BatchDepth == 0 && final.DirtyNodeCount == 0 && !final.IsFlushing, "Probe left sources, listeners or notifications behind.");
             var resource = ResourceSystem.Current;
             var resources = resource?.GetDiagnosticsSnapshot();
             _report.resourceWasNull = resource == null;
@@ -349,7 +348,6 @@ namespace YLFramework.RedDots.Acceptance
                 }
                 depth--;
             }, false);
-            var global = ReddotManager.RegisterChanged(() => result.globalNotifications++);
             try
             {
                 for (var index = 0; index < 64; index++)
@@ -395,7 +393,7 @@ namespace YLFramework.RedDots.Acceptance
                     subscriptions.Add(ReddotManager.Subscribe("Perf/G" + index / 16 + "/B" + index / 4 % 4 + "/L" + index % 4 + "/",
                         _ => result.leafNotifications++, false));
                 }
-                result.rootNotifications = result.leafNotifications = result.globalNotifications = result.maximumCallbackDepth = 0;
+                result.rootNotifications = result.leafNotifications = result.maximumCallbackDepth = 0;
                 echoed = false;
                 allocated();
                 var watch = Stopwatch.StartNew();
@@ -432,7 +430,7 @@ namespace YLFramework.RedDots.Acceptance
                 result.diagnosticSubscribers = nodes.Sum(node => node.SubscriberCount);
                 Require(result.finalValue == 24577 && sources.All(source => source.Value == 128) && result.readChecksum == 76800000,
                     "Measured workload values or warmed read checksum changed.");
-                Require(result.rootNotifications == (batch ? 129 : 24577) && result.globalNotifications == (batch ? 129 : 24577) &&
+                Require(result.rootNotifications == (batch ? 129 : 24577) &&
                     result.leafNotifications == (batch ? 8192 : 24576) && result.maximumCallbackDepth == 1, "Measured notification/reentry counts changed.");
                 Require(result.readAllocatedBytes == (result.allocationCounterReliable ? 0 : -1) && result.diagnosticNodes == 86 && result.diagnosticSources == 193 && result.diagnosticSubscribers == 65,
                     "Canonical reads allocated or diagnostic ownership counts changed.");
@@ -440,7 +438,6 @@ namespace YLFramework.RedDots.Acceptance
             }
             finally
             {
-                global.Unregister();
                 foreach (var subscription in subscriptions)
                 {
                     subscription.Dispose();

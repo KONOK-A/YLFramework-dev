@@ -13,7 +13,7 @@ OcclusionCullingSettings:
 --- !u!104 &2
 RenderSettings:
   m_ObjectHideFlags: 0
-  serializedVersion: 9
+  serializedVersion: 10
   m_Fog: 0
   m_FogColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
   m_FogMode: 3
@@ -42,8 +42,8 @@ RenderSettings:
 --- !u!157 &3
 LightmapSettings:
   m_ObjectHideFlags: 0
-  serializedVersion: 12
-  m_GIWorkflowMode: 1
+  serializedVersion: 13
+  m_BakeOnSceneLoad: 0
   m_GISettings:
     serializedVersion: 2
     m_BounceScale: 1
@@ -66,9 +66,6 @@ LightmapSettings:
     m_LightmapParameters: {fileID: 0}
     m_LightmapsBakeMode: 1
     m_TextureCompression: 1
-    m_FinalGather: 0
-    m_FinalGatherFiltering: 1
-    m_FinalGatherRayCount: 256
     m_ReflectionCompression: 2
     m_MixedBakeMode: 2
     m_BakeBackend: 1
@@ -151,8 +148,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8461416694b970e4b9f7aff9cb7c2775, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  RootPrefab: {fileID: 742006972473433799, guid: 5cdd75c99ad87f642a43d6e65b7b8635, type: 3}
-  ColorPrefab: {fileID: 4360802472594295892, guid: a6a470d31ae453c49a0d9ae92d0510e4, type: 3}
+  rootPrefab: {fileID: 742006972473433799, guid: 5cdd75c99ad87f642a43d6e65b7b8635, type: 3}
+  colorPrefab: {fileID: 4360802472594295892, guid: a6a470d31ae453c49a0d9ae92d0510e4, type: 3}
 --- !u!4 &29328535
 Transform:
   m_ObjectHideFlags: 0

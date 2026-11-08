@@ -48,6 +48,10 @@
 
 DataAssets 的 Runtime、作者工具、根/条目字段与登记租约合同已归独立 [`com.kano.ylframework.data-assets`](../../../com.kano.ylframework.data-assets/README.md)。主包不引用或自动启动该包；Excel 是它的可选作者消费者。
 
+当前 Unity 字段为根的 `displayName/configs/typeScriptGuid` 和条目的 `parent/id/configName/icon/description`。旧 `config_name/des/type_script_guid` Unity reader 已退役；同名 `ExcelColumnName` 仍是当前工作簿协议，不能随字段整理改列名或 JSON 键。真实旧字段资产须在旧定义仍可读时用 Unity 正式保存并保留 GUID/引用；不改写历史冻结夹具或原 Bundle/Catalog。
+
+当前发布验证通过既有作者 API 生成并保存新的 root/row、冷读对象引用、正式构建/发布 Bundle 与 Catalog，并验证 root 登记归还后 row 独立租约与两个实际 Player。运行时没有新增跨包配置基类；语言发布继续使用自己的当前根/语言输入。旧程序集夹具仍有其他领域消费者，留到其各自当前输入验证后收口，不把本批局部切换宣称为整组历史兼容。
+
 ## Excel 作者后端
 
 Runtime不要求MiniExcel。需要xlsx时显式安装`com.kano.ylframework.excel`；Git消费方声明main/DataAssets/Excel三包同SHA。Excel携带唯一Editor MiniExcel1.31.2及Apache-2.0许可，Json.NET由UPM解析，不执行NuGet下载。工作簿路径记忆与预览/导入面板在Excel，原GUID EditorPrefs保留；领域菜单在同装Gameplay后由[内置适配](Domain.md#domainexcel)启用，不另装DomainExcel。

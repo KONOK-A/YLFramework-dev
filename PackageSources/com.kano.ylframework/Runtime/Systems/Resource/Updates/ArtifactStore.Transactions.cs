@@ -91,19 +91,15 @@ namespace YLFramework.Resource
             receipt.RequireStable();
             var journal = new JObject
             {
-                ["Version"] = 1,
+                ["Version"] = 2,
                 ["OwnerId"] = _ownerId,
                 ["Phase"] = "Verified",
                 ["Transition"] = transition,
                 ["ActiveBefore"] = ValidIndex("active.json", false),
                 ["GoodBefore"] = ValidIndex("last-known-good.json", false)
             };
-            if (floorsAfter.Count != 0)
-            {
-                journal["Version"] = 2;
-                journal["ReleaseFloorsBefore"] = floorsBefore;
-                journal["ReleaseFloorsAfter"] = floorsAfter;
-            }
+            journal["ReleaseFloorsBefore"] = floorsBefore;
+            journal["ReleaseFloorsAfter"] = floorsAfter;
             Write(JournalPath, journal, () =>
             {
                 receipt.RequireStable();
@@ -149,7 +145,7 @@ namespace YLFramework.Resource
         // 从已校验转换的 From 或 To 一侧生成完整项目索引。
         private JObject TransitionIndex(JArray transition, string field) => new()
         {
-            ["Version"] = 1,
+            ["Version"] = 2,
             ["OwnerId"] = _ownerId,
             ["Projects"] = new JArray(transition.Cast<JObject>().Select(x => new JObject
             {
@@ -162,23 +158,20 @@ namespace YLFramework.Resource
         // 校验 journal 决策、完整转换与原索引，并拒绝降低已确认历史的门槛描述。
         private JObject ValidateJournal(JObject journal)
         {
-            var version = ResourceCatalogCodec.Integer(journal, "Version");
-            ResourceCatalogCodec.Fields(journal, version == 2 ? "Version,OwnerId,Phase,Transition,ActiveBefore,GoodBefore,ReleaseFloorsBefore,ReleaseFloorsAfter" : "Version,OwnerId,Phase,Transition,ActiveBefore,GoodBefore");
-            if (version != 1 && version != 2 || ResourceCatalogCodec.Text(journal, "OwnerId") != _ownerId ||
+            RequireControlVersion(journal);
+            ResourceCatalogCodec.Fields(journal, "Version,OwnerId,Phase,Transition,ActiveBefore,GoodBefore,ReleaseFloorsBefore,ReleaseFloorsAfter");
+            if (ResourceCatalogCodec.Text(journal, "OwnerId") != _ownerId ||
                 !new[] { "Verified", "Committed" }.Contains(ResourceCatalogCodec.Text(journal, "Phase")))
             {
                 throw new InvalidDataException("Invalid commit journal identity/state.");
             }
 
             ReadTransition(journal["Transition"]);
-            if (version == 2)
+            var before = ValidateFloors(journal["ReleaseFloorsBefore"]);
+            var after = ValidateFloors(journal["ReleaseFloorsAfter"]);
+            if (!JToken.DeepEquals(MergeFloors(before.Cast<JObject>().Concat(after.Cast<JObject>())), after))
             {
-                var before = ValidateFloors(journal["ReleaseFloorsBefore"]);
-                var after = ValidateFloors(journal["ReleaseFloorsAfter"]);
-                if (!JToken.DeepEquals(MergeFloors(before.Cast<JObject>().Concat(after.Cast<JObject>())), after))
-                {
-                    throw new InvalidDataException("Journal lowers confirmed release history.");
-                }
+                throw new InvalidDataException("Journal lowers confirmed release history.");
             }
             foreach (var field in new[] { "ActiveBefore", "GoodBefore" })
             {
@@ -233,8 +226,8 @@ namespace YLFramework.Resource
             var journal = ValidateJournal(Read(JournalPath));
             var transition = ReadTransition(journal["Transition"]);
             var committed = (string)journal["Phase"] == "Committed";
-            var floorsBefore = (long)journal["Version"] == 2 ? ValidateFloors(journal["ReleaseFloorsBefore"]) : new JArray();
-            var floorsAfter = (long)journal["Version"] == 2 ? ValidateFloors(journal["ReleaseFloorsAfter"]) : new JArray();
+            var floorsBefore = ValidateFloors(journal["ReleaseFloorsBefore"]);
+            var floorsAfter = ValidateFloors(journal["ReleaseFloorsAfter"]);
             var from = WithFloors(TransitionIndex(transition, "From"), floorsBefore);
             var to = WithFloors(TransitionIndex(transition, "To"), floorsAfter);
             try
@@ -399,18 +392,15 @@ namespace YLFramework.Resource
         // 验证准备记录的归属、完成状态、转换路径身份及可选远端授权。
         private void ValidatePreparedRecord(JObject record, string path)
         {
-            var version = ResourceCatalogCodec.Integer(record, "Version");
-            ResourceCatalogCodec.Fields(record, version == 2 ? "Version,OwnerId,State,Transition,Releases" : "Version,OwnerId,State,Transition");
-            if (version != 1 && version != 2 || ResourceCatalogCodec.Text(record, "OwnerId") != _ownerId ||
+            RequireControlVersion(record);
+            ResourceCatalogCodec.Fields(record, "Version,OwnerId,State,Transition,Releases");
+            if (ResourceCatalogCodec.Text(record, "OwnerId") != _ownerId ||
                 ResourceCatalogCodec.Text(record, "State") != "Complete" || PreparedPath(ReadTransition(record["Transition"])) != path)
             {
                 throw new InvalidDataException("Prepared closure record ownership/identity mismatch.");
             }
 
-            if (version == 2)
-            {
-                ReadReleaseRecords(record);
-            }
+            ReadReleaseRecords(record);
         }
 
         /// <summary>显式删除该完整转换的持久准备记录，不删除版本文件或改写 active。</summary>

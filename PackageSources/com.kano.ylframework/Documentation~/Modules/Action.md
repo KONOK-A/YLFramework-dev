@@ -47,7 +47,7 @@ DOTween wrapper使用`YLFramework.Integrations.DOTween`，消费者按需添加`
 - 组合节点：`Sequence`、`Parallel`、`Repeat`、`Condition`、`ConditionSequence`、`Lerp`、`Delay`、`DelayFrame`、`Callback`、`Coroutine`、`Task`、`Custom<TData>`。
 - 启动范围：`Start(owner)` / `StartCurrentScene()` / `StartGlobal()`，以及 `Pause` / `Resume`；扩展所在实际类型为 `IActionExtensions`。
 - 事件与注销：7 个全局消息返回 `YLFramework.Events` 的 `EasyEvent` / `EasyEvent<bool>`；订阅、注销句柄与生命周期触发器统一使用 [Events 模块](Events.md)，Action 不再自带订阅层。
-- ScreenTransition：`ActionKit.ScreenTransition.FadeIn` / `FadeOut` / `FadeInOut` + internal 共享画布 `ScreenTransitionCanvas`。
+- ScreenTransition：`ActionKit.ScreenTransition.FadeIn` / `FadeOut` + internal 共享画布 `ScreenTransitionCanvas`；`FadeInOut(onInFinish)` 返回普通 `ISequence`，不创建隐藏全局序列。
 
 <a id="main-entry-points"></a>
 
@@ -139,7 +139,7 @@ private void OnDisable() => _background.Cancel();
 
 ## 生命周期与资源
 
-- 模块操作与 Unity 宿主仅在 Unity 主线程使用，不提供线程安全。`Initialize()` 幂等懒初始化，`InitArchitecture()` 是同义入口；`Start` 或全局宿主访问会自动初始化。`Shutdown()` 取消模块管理的动作、释放自有宿主与事件；Session reset 清理前一 Play 会话残留，不恢复旧动作。
+- 模块操作与 Unity 宿主仅在 Unity 主线程使用，不提供线程安全。`Initialize()` 是唯一标准初始化入口，幂等懒初始化；`Start` 或全局宿主访问会自动初始化。`Shutdown()` 取消模块管理的动作、释放自有宿主与事件；Session reset 清理前一 Play 会话残留，不恢复旧动作。旧 `InitArchitecture()` 已退役，不保留同义入口。
 - 全局 `OnUpdate` / `OnFixedUpdate` / `OnLateUpdate` 的自动通知复用 `YLFramework.Update.UpdateManager`。每个初始化成功且启用的全局宿主持有三个精确订阅，组件 disabled 或对象 inactive 时断开，恢复后重新连接；借用 inactive 宿主不会被自动激活。连接轮次与执行会话检查拒绝退订后仍留在公共快照中的旧回调。
 - 七个属性继续返回模块自有 `EasyEvent` / `EasyEvent<bool>`；手动 Trigger、UnregisterAll、Dispose 及内部 fail-fast 语义保持。Action 监听抛异常会停止该消息的后续监听，公共源仍继续其他公共消费者并报告异常；清理 Action 消息或 Shutdown 不清理公共源的其他订阅。
 - 初始化补丁中取得宿主不会提前连接，成功提交后刷新已有宿主；初始化失败期间不自动广播。失败会清除本轮模块实例并传播异常，但不提供完整的补丁事务回滚。初始化配置期间调用 Shutdown 会抛错；执行回调内 Shutdown 先停止后续回调，最外层执行退出后再释放。Shutdown/重建终结旧消息代次，旧 token 不进入新宿主。
@@ -148,6 +148,20 @@ private void OnDisable() => _background.Cancel();
 - 对象执行器、当前场景宿主、跨场景全局宿主保留独立生命周期；不能用 TimerScope 清理 Action，也不将 Action Delay 改成 Timer 包装。
 - internal `ActionPool<T>` 无缓存数量上限，模块外不可配置，组合 YL 池并以 LIFO 复用；回收队列、回收标记与租约由 Action 管理。同一动作不能同时交给两个执行器；归还后不能继续使用原始动作或控制器引用。
 - [`ScreenTransitionCanvas.prefab`](../../Runtime/Systems/Action/Resources/ActionKit/ScreenTransitionCanvas.prefab) 是主包内正式资产，Resources key 为 `ActionKit/ScreenTransitionCanvas`，不依赖导入样例。消费方不运行产品资源重建命令、不写入只读包目录；自定义资源由使用工程明确持有。不新增 ResourceSystem 或外部资源后端的 Loader。
+
+## 屏幕过渡
+
+`FadeInOut(onInFinish = null)` 顺序拥有默认一秒 `FadeIn`、同步中段回调和默认一秒 `FadeOut`。调用方选择 `Start(owner)`、场景或全局宿主；父序列统一等待、暂停、取消和释放子动作，回调异常沿所选执行器的普通序列错误路径处理。需要自定义颜色、时长或步骤时，显式组合独立 FadeIn/FadeOut，不再使用退役的 `ScreenTransitionInOut<TIn,TOut>` 配置壳。
+
+```csharp
+// MonoBehaviour 方法中；完成通知表示动作时序，不代表已经验证视觉覆盖。
+ActionKit.ScreenTransition.FadeInOut(() => Debug.Log("遮罩已淡入")).Start(this);
+ActionKit.Sequence().Append(ActionKit.ScreenTransition.FadeIn().Duration(0.3f))
+    .Callback(() => Debug.Log("处理中段逻辑"))
+    .Append(ActionKit.ScreenTransition.FadeOut().Duration(0.3f)).Start(this);
+```
+
+所有过渡共享一个 Image，重叠执行仍会相互覆盖；取消不会复原显示状态。Fade 的 `Reset` 保留本轮配置用于重复执行，回收后恢复黑色、透明度 0 到 0、一秒时长和零进度，旧使用周期引用不能再操作。当前 Prefab 保留原有零缩放和无 GraphicRaycaster 的布局，实际显示与输入遮挡需另行验证，不把状态测试当作视觉验收。
 
 ## 测试与帮助
 
@@ -159,7 +173,7 @@ private void OnDisable() => _background.Cancel();
 - `Tests/EditMode/Editor/Help/ApiHelpTests.cs` 保留可信引擎 / BCL 引用筛选回归；全量示例与 core-only 真实 AssemblyBuilder fixture 分别验证，后者不链接 optional wrapper 或供应商 DLL，不代表干净工程导入。
 - 提供方 namespace `YLFramework.Editor.Actions`，稳定注册 id `actionkit`；factory 惰性构建只读内容，API 文档不会执行 demo。公共菜单 `YLFramework/帮助`。
 - API 筛选所属 namespace 的精确或点分边界，包含内建 Observable 及可用 DOTween 类型，不展示整个共享 Runtime。只有 DOTween 指南保留可选程序集门控。
-- XML 来自唯一 [`Runtime/csc.rsp`](../../Runtime/csc.rsp) 的 `Library/YLFramework.Runtime.xml`；optional 使用 `Library/YLFramework.Actions.DOTween.xml`，按真实 Assembly 去重。XML 是构建产物，不随产品包交付。
+- 成员摘要、参数、返回值和备注唯一来自 Runtime 源码 XML，不再维护 Action 手写覆盖引擎；Help 保留分类、关联指南、完整示例和模块文档导航。XML 来自 [`Runtime/csc.rsp`](../../Runtime/csc.rsp) 的 `Library/YLFramework.Runtime.xml`；optional 使用 `Library/YLFramework.Actions.DOTween.xml`，按真实 Assembly 去重。XML 是构建产物，不随产品包交付；缺失时仅保留真实声明，不猜测成员说明。
 - Action和DOTween自有适配源码随主UPM包安装，SDK与宏由应用独立准备；旧框架导出菜单退役，不提供单文件导出或独立Action/DOTween包，边界见[文档首页](../README.md#帮助与包内容)。
 
 ## 历史说明

@@ -68,9 +68,9 @@ namespace YLFramework.RedDots.Editor
                 return;
             }
             EditorGUILayout.LabelField($"Generation {_snapshot.Generation} | capture {_snapshot.CaptureSequence} | sampled {_sampleTime:F2}s");
-            EditorGUILayout.LabelField($"Nodes {_snapshot.Nodes.Count} | global subscribers {_snapshot.GlobalSubscriberCount} | " +
+            EditorGUILayout.LabelField($"Nodes {_snapshot.Nodes.Count} | " +
                 $"dirty {_snapshot.DirtyNodeCount} | batch {_snapshot.BatchDepth} | initial {_snapshot.PendingInitialCount}");
-            EditorGUILayout.LabelField($"Pending global {_snapshot.GlobalPending} | flushing {_snapshot.IsFlushing}");
+            EditorGUILayout.LabelField($"Flushing {_snapshot.IsFlushing}");
             using var scroll = new EditorGUILayout.ScrollViewScope(_scroll);
             _scroll = scroll.scrollPosition;
             foreach (var node in _snapshot.Nodes)

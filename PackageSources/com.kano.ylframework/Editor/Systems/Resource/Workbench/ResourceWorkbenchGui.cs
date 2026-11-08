@@ -11,19 +11,14 @@ namespace YLFramework.Editor.Resource
     internal sealed class ResourceWorkbenchRowState
     {
         /// <summary>选择所属项目配置的 GUID。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("ProjectGuid")]
         public string projectGuid;
         /// <summary>选择所属分组的技术标识。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Group")]
         public string group;
         /// <summary>已登记主文件或目录的 GUID。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Guid")]
         public string guid;
         /// <summary>选择时的分包设置与定义序列化内容，用于拒绝恢复已变化条目。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Definition")]
         public string definition;
         /// <summary>选择时显示的地址，恢复时须与当前行一致。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Address")]
         public string address;
     }
 
@@ -32,46 +27,32 @@ namespace YLFramework.Editor.Resource
     internal sealed class ResourceWorkbenchLayout
     {
         /// <summary>分组栏请求宽度，由绘制时约束到可用范围。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("GroupWidth")]
         public float groupWidth = 180;
         /// <summary>详情栏请求宽度。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("DetailWidth")]
         public float detailWidth = 340;
         /// <summary>宽窗口是否显示分组栏，不影响分组定义。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("ShowGroups")]
         public bool showGroups = true;
         /// <summary>宽窗口是否显示条目详情。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("ShowDetails")]
         public bool showDetails = true;
         /// <summary>窄窗口是否用详情替代列表。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("CompactDetails")]
         public bool compactDetails;
         /// <summary>当前是否显示项目设置页。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Settings")]
         public bool settings;
         /// <summary>底部完整输出是否展开。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Output")]
         public bool output;
         /// <summary>用户请求的输出高度，显示钳制不必覆盖此值。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("OutputHeight")]
         public float outputHeight;
         /// <summary>当前任务页索引。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Task")]
         public int task;
         /// <summary>资源表的列宽、可见性和排序记忆。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Columns")]
         public MultiColumnHeaderState columns;
         /// <summary>保存行选择时的项目 GUID。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("SelectionProjectGuid")]
         public string selectionProjectGuid;
         /// <summary>保存选择时的分组标识；为空表示全部分组视图。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("SelectionGroup")]
         public string selectionGroup;
         /// <summary>主资源表的搜索条件。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("EntrySearch")]
         public string entrySearch;
         /// <summary>须经当前定义身份复核才能恢复的行选择。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("SelectedRows")]
         public ResourceWorkbenchRowState[] selectedRows;
     }
 

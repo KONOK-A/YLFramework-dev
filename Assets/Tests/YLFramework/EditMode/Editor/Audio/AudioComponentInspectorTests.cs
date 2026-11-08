@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.IO;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
@@ -82,37 +81,20 @@ namespace YLFramework.Tests.Audio
         }
 
         [Test]
-        public void EditorAddedEmitterAndResetEnableGlobalPolicyWithoutRewritingExplicitMode()
+        public void EditorAddedEmitterDefaultsToGlobalAndInspectorPreservesExplicitOverride()
         {
             var emitter = Emitter();
             using (var serialized = new SerializedObject(emitter))
             {
-                Assert.IsTrue(serialized.FindProperty("useGlobalPlaySoundMode").boolValue, "Editor AddComponent invokes Reset.");
+                Assert.IsTrue(serialized.FindProperty("useGlobalPlaySoundMode").boolValue, "Editor and runtime share the same creation default.");
                 serialized.FindProperty("useGlobalPlaySoundMode").boolValue = false;
                 serialized.FindProperty("playSoundMode").intValue = (int)AudioKit.PlaySoundModes.IgnoreSameSoundInSoundFrames;
                 serialized.ApplyModifiedPropertiesWithoutUndo();
-                typeof(AudioEmitter).GetMethod("Reset", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(emitter, null);
+                Own(UnityEditor.Editor.CreateEditor(emitter));
                 serialized.Update();
-                Assert.IsTrue(serialized.FindProperty("useGlobalPlaySoundMode").boolValue);
+                Assert.IsFalse(serialized.FindProperty("useGlobalPlaySoundMode").boolValue);
                 Assert.AreEqual((int)AudioKit.PlaySoundModes.IgnoreSameSoundInSoundFrames, serialized.FindProperty("playSoundMode").intValue);
-                Assert.IsNull(AudioInspectorUtility.Options(serialized).PlaySoundMode);
-            }
-        }
-
-        [TestCase("Assets/Tests/YLFramework/Fixtures/Audio/LegacyEmitter2D.prefab")]
-        [TestCase("Assets/Tests/YLFramework/Fixtures/Audio/LegacyEmitter3D.prefab")]
-        public void RealLegacyPrefabsKeepExplicitPolicyWhenTheNewFieldIsMissing(string path)
-        {
-            Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Does.Not.Contain("  useGlobalPlaySoundMode:"));
-            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            Assert.IsNotNull(prefab, path);
-            var emitter = prefab.GetComponentInChildren<AudioEmitter>(true);
-            Assert.IsNotNull(emitter, path);
-            using (var serialized = new SerializedObject(emitter))
-            {
-                Assert.IsFalse(serialized.FindProperty("useGlobalPlaySoundMode").boolValue, "Missing serialized fields retain the compatibility initializer, not Reset.");
-                Assert.AreEqual((int)AudioKit.PlaySoundModes.EveryOne, serialized.FindProperty("playSoundMode").intValue);
-                Assert.AreEqual(AudioKit.PlaySoundModes.EveryOne, AudioInspectorUtility.Options(serialized).PlaySoundMode);
+                Assert.AreEqual(AudioKit.PlaySoundModes.IgnoreSameSoundInSoundFrames, AudioInspectorUtility.Options(serialized).PlaySoundMode);
             }
         }
 
@@ -163,23 +145,6 @@ namespace YLFramework.Tests.Audio
                 Assert.AreEqual(.5f, serialized.FindProperty("transitionDuration").floatValue);
             }
             Assert.IsFalse(AudioManager.HasInstance, "Reset selects defaults without applying shared audio configuration.");
-        }
-
-        [Test]
-        public void LegacyMusicPrefabKeepsLinearCurveAndNoAutomaticTransition()
-        {
-            const string path = "Assets/Tests/YLFramework/Fixtures/Audio/LegacyMusicPlayer.prefab";
-            Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Does.Not.Contain("  crossFadeCurve:"));
-            Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Does.Not.Contain("  crossFadeOnPlay:"));
-            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            Assert.IsNotNull(prefab);
-            var music = prefab.GetComponentInChildren<AudioMusicPlayer>(true);
-            Assert.IsNotNull(music);
-            using (var serialized = new SerializedObject(music))
-            {
-                Assert.AreEqual((int)AudioCrossfadeCurve.Linear, serialized.FindProperty("crossFadeCurve").intValue);
-                Assert.IsFalse(serialized.FindProperty("crossFadeOnPlay").boolValue);
-            }
         }
 
         [Test]
@@ -291,27 +256,52 @@ namespace YLFramework.Tests.Audio
         {
             var borrowedScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             var wasDirty = borrowedScene.isDirty;
-            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Tests/YLFramework/Fixtures/Audio/LegacyEmitter2D.prefab");
-            Assert.IsNotNull(prefab);
-            var source = prefab.GetComponentInChildren<AudioEmitter>(true);
-            var original = Weights(source);
-            var instance = Own((GameObject)PrefabUtility.InstantiatePrefab(prefab));
-            var emitter = Own(instance.GetComponentInChildren<AudioEmitter>(true));
-            using (var serialized = new SerializedObject(emitter))
+            string folder = "Assets/__YLAudioPrefabOverride_" + System.Guid.NewGuid().ToString("N");
+            var preview = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
+            try
             {
-                AudioInspectorUtility.AddWeightedClip(serialized);
-            }
+                Assert.IsNotEmpty(AssetDatabase.CreateFolder("Assets", System.IO.Path.GetFileName(folder)));
+                var input = Emitter();
+                UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(input.gameObject, preview);
+                SetWeights(input, 0f, 2.5f);
+                string path = folder + "/Current.prefab";
+                Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(input.gameObject, path));
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                Assert.IsNotNull(prefab);
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                var bytes = System.IO.File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path));
+                var meta = System.IO.File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"));
+                var source = prefab.GetComponentInChildren<AudioEmitter>(true);
+                var original = Weights(source);
+                CollectionAssert.AreEqual(new[] { 0f, 2.5f }, original);
+                var instance = Own((GameObject)PrefabUtility.InstantiatePrefab(prefab, preview));
+                var emitter = Own(instance.GetComponentInChildren<AudioEmitter>(true));
+                using (var serialized = new SerializedObject(emitter))
+                {
+                    AudioInspectorUtility.AddWeightedClip(serialized);
+                }
 
-            Assert.AreEqual(original.Length + 1, Weights(emitter).Length);
-            Assert.AreEqual(1f, Weights(emitter)[original.Length]);
-            Assert.IsTrue(PrefabUtility.HasPrefabInstanceAnyOverrides(instance, false));
-            using (var serialized = new SerializedObject(emitter))
+                Assert.AreEqual(original.Length + 1, Weights(emitter).Length);
+                Assert.AreEqual(1f, Weights(emitter)[original.Length]);
+                Assert.IsTrue(PrefabUtility.HasPrefabInstanceAnyOverrides(instance, false));
+                using (var serialized = new SerializedObject(emitter))
+                {
+                    Assert.IsTrue(serialized.FindProperty("weightedClips").prefabOverride);
+                }
+
+                CollectionAssert.AreEqual(original, Weights(source));
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+                CollectionAssert.AreEqual(bytes, System.IO.File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path)));
+                CollectionAssert.AreEqual(meta, System.IO.File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")));
+                Assert.AreEqual(wasDirty, borrowedScene.isDirty, "Inspector fixtures must not dirty the user's scene.");
+            }
+            finally
             {
-                Assert.IsTrue(serialized.FindProperty("weightedClips").prefabOverride);
+                UnityEditor.SceneManagement.EditorSceneManager.ClosePreviewScene(preview);
+                if (AssetDatabase.IsValidFolder(folder))
+                    Assert.IsTrue(AssetDatabase.DeleteAsset(folder));
             }
-
-            CollectionAssert.AreEqual(original, Weights(source));
-            Assert.AreEqual(wasDirty, borrowedScene.isDirty, "Inspector fixtures must not dirty the user's scene.");
         }
 
         [Test]

@@ -67,7 +67,8 @@ namespace YLFramework.Editor.Buff
             buffsConfig.ClearCache();
             buff.Rename();
             EditorUtility.SetDirty(buff);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(buff);
+            AssetDatabase.SaveAssetIfDirty(buffsConfig);
             AssetDatabase.Refresh();
             return id;
         }

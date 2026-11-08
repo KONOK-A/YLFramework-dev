@@ -13,13 +13,20 @@ Git packages. Core RedDots remains usable without Save.
 `ReddotManager` retains its original normalized, case-sensitive whole-segment
 paths. `AddPath` is an idempotent set, while `RegisterPath` returns an independently
 owned disposable registration. Reset invalidates old registrations and preserves
-subscriptions; a new play session clears both sources and subscriptions. The
-legacy `RegisterChanged` does not emit an initial state. Observer failures remain
+path subscriptions; a new play session clears both sources and subscriptions.
+The global `RegisterChanged` channel and its queue/counters are retired, not
+replaced by a synthetic root. Observer failures remain
 visible and a failed registration rolls its own source back.
 
 The original `Reddot` component and script GUIDs are preserved. It changes only
 the explicitly assigned indicator, never its own host or an ancestor. Existing
-serialized `path` / `indicator` fields and their former names remain unchanged.
+serialized `path` / `indicator` fields keep their current names; the retired
+`_path` / `_indicator` readers are no longer maintained. Save owned old-field
+components through Unity while their original definitions are still readable.
+The component only subscribes to its own path, refreshes the indicator and
+releases that subscription. Its business-mutating `Remove` method is retired;
+business owners explicitly use `ReddotManager.RemovePath` or dispose only their
+own registration/source, including persistent button handlers.
 
 The main package no longer contains these types. Update consumer assemblies and
 package installation together; preserving a script GUID does not preserve the old
@@ -45,8 +52,8 @@ using (ReddotManager.BeginBatch())
 }
 ```
 
-Subscriptions can emit an initial snapshot; the legacy `RegisterChanged` still
-does not. Unchanged values do not notify. Nested batches flush at their outermost
+Path subscriptions can emit an initial snapshot. Unchanged aggregate values do
+not notify, even if individual sources changed. Nested batches flush at their outermost
 Dispose; observer errors remain visible without leaving the dispatcher wedged.
 Reset invalidates old sources but preserves subscriptions and aggregation rules.
 New play sessions clear sources, subscriptions and rules. Old tokens cannot
@@ -74,6 +81,7 @@ automatic slot switching, PlayerPrefs or background persistence is introduced.
 Open **YLFramework > Red Dots > Diagnostics**. The Editor-only window shows the
 normalized path tree, value/rule, own value, collection/lease counts, numeric
 source IDs and values, subscribers, generation, dirty nodes and batch state.
+There are no global subscriber or pending-broadcast fields in the snapshot/UI.
 Source IDs are the actual business IDs; the core does not invent human labels or
 retain callback/Unity object references for debugging.
 

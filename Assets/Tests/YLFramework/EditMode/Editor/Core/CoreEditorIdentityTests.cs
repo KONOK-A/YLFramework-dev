@@ -1,9 +1,7 @@
 using System;
-using System.Collections.Generic;
 using System.Collections;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
@@ -37,196 +35,8 @@ namespace YLFramework.Core.Editor.Tests
         private const string EditorRoot = "Packages/com.kano.ylframework/Editor/Core";
         private const string EditorAssemblyName = "YLFramework.Editor";
 
-        [Serializable]
-        private sealed class AssemblyMoveTable
-        {
-            public int schemaVersion;
-            public AssemblyMove[] moves;
-        }
-
-        [Serializable]
-        private sealed class AssemblyMove
-        {
-            public string fullName;
-            public string legacyName;
-            public string sourceAssembly;
-            public string currentAssembly;
-            public string targetAssembly;
-            public string package;
-            public string scriptGuid;
-        }
-
-        [Serializable]
-        private sealed class FrozenFixture
-        {
-            public int schemaVersion;
-            public string captureKind;
-            public string unityVersion;
-            public string sourceAssembly;
-            public FrozenAsset[] assets;
-            public FrozenFile[] files;
-            public FrozenCatalog catalog;
-        }
-
-        [Serializable]
-        private sealed class FrozenAsset
-        {
-            public string path;
-            public string guid;
-            public long localId;
-            public string typeFullName;
-            public string scriptGuid;
-            public FrozenComponent[] components;
-        }
-
-        [Serializable]
-        private sealed class FrozenComponent
-        {
-            public string typeFullName;
-            public string scriptGuid;
-        }
-
-        [Serializable]
-        private sealed class FrozenFile
-        {
-            public string path;
-            public long length;
-            public string sha256;
-        }
-
-        [Serializable]
-        private sealed class FrozenCatalog
-        {
-            public string versionDirectory;
-            public string projectId;
-            public string catalogDigest;
-            public string platform;
-            public string unityCompatibility;
-            public string appContentCompatibilityId;
-        }
-
-        [Test]
-        public void PublicTypeOldAssetSurvivesAssemblyMoveWithCapturedGuidsAndCatalogIdentity()
-        {
-            const string Root = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblySplitV1/";
-            string Physical(string path) => Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(Root + path));
-            var captured = JsonUtility.FromJson<FrozenFixture>(File.ReadAllText(Physical("FixtureIdentity.json")));
-            Assert.That(captured.schemaVersion, Is.EqualTo(1));
-            Assert.That(captured.captureKind, Is.EqualTo("GeneratedCurrentLayoutBeforeAssemblySplit"));
-            Assert.That(captured.sourceAssembly, Is.EqualTo("YLFramework.Runtime"));
-            Assert.That(captured.assets, Has.Length.EqualTo(14));
-            var compiledTypes = new HashSet<Type>();
-            foreach (var file in captured.files)
-            {
-                string path = Physical(file.path);
-                Assert.That(new FileInfo(path).Length, Is.EqualTo(file.length), file.path);
-                using var input = File.OpenRead(path);
-                using var hash = SHA256.Create();
-                Assert.That(string.Concat(hash.ComputeHash(input).Select(value => value.ToString("x2"))), Is.EqualTo(file.sha256), file.path);
-            }
-            foreach (var expected in captured.assets)
-            {
-                if (expected.path.StartsWith("Content/Behavior/", StringComparison.Ordinal) ||
-                    expected.typeFullName.StartsWith("YLFramework.Skill.", StringComparison.Ordinal) ||
-                    expected.typeFullName.StartsWith("YLFramework.Buff.", StringComparison.Ordinal) ||
-                    expected.typeFullName.StartsWith("YLFramework.Mission.", StringComparison.Ordinal) ||
-                    expected.typeFullName.StartsWith("YLFramework.Equipment.", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                var asset = AssetDatabase.LoadMainAssetAtPath(Root + expected.path);
-                Assert.That(asset, Is.Not.Null, expected.path);
-                Assert.That(asset.GetType().FullName, Is.EqualTo(expected.typeFullName));
-                compiledTypes.Add(asset.GetType());
-                Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string guid, out long localId), Is.True);
-                Assert.That(guid, Is.EqualTo(expected.guid));
-                Assert.That(localId, Is.EqualTo(expected.localId));
-                if (asset is ScriptableObject data)
-                {
-                    Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(data))), Is.EqualTo(expected.scriptGuid));
-                }
-                if (asset is GameObject prefab)
-                {
-                    var components = prefab.GetComponentsInChildren<MonoBehaviour>(true);
-                    Assert.That(components, Has.Length.EqualTo(expected.components.Length));
-                    foreach (var component in components)
-                    {
-                        Assert.That(component, Is.Not.Null, "A serialized public component became a missing script.");
-                        string script = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(component)));
-                        Assert.That(expected.components.Any(item => item.typeFullName == component.GetType().FullName && item.scriptGuid == script), Is.True);
-                    }
-                }
-            }
-            var document = YLFramework.Resource.ResourceCatalogCodec.Read(File.ReadAllBytes(Physical(captured.catalog.versionDirectory + "/resource-catalog.json")),
-                captured.catalog.projectId, captured.catalog.platform, captured.catalog.unityCompatibility, captured.catalog.appContentCompatibilityId);
-            Assert.That(document.CatalogDigest, Is.EqualTo(captured.catalog.catalogDigest));
-            Assert.That(document.Assets.Any(asset => asset.AssetType == "YLFramework.DataAssets.ScriptableObjectData" && asset.AssetAssembly == "YLFramework.Runtime"), Is.True,
-                "This is the real old assembly tuple, not a silently rewritten compatible catalog.");
-            if (Application.unityVersion == captured.unityVersion)
-            {
-                var snapshot = YLFramework.Resource.ResourceLocalSnapshot.Open(Physical(captured.catalog.versionDirectory), captured.catalog.projectId,
-                    captured.catalog.catalogDigest, captured.catalog.platform, captured.catalog.appContentCompatibilityId);
-                Assert.That(snapshot.Document.CatalogDigest, Is.EqualTo(document.CatalogDigest));
-                var migratedData = compiledTypes.Single(type => type.FullName == "YLFramework.DataAssets.ScriptableObjectData");
-                Assert.That(migratedData.Assembly.GetName().Name, Is.EqualTo("YLFramework.DataAssets"));
-                var error = Assert.Throws<YLFramework.Resource.ResourceException>(() => snapshot.CreateCatalog(compiledTypes));
-                Assert.That(error.Kind, Is.EqualTo(YLFramework.Resource.ResourceError.TypeMismatch));
-                Assert.That(error.Message, Does.Contain("YLFramework.Skill.SkillConfigData"),
-                    "The actual frozen catalog starts with a moved Skill tuple, which must not survive in main or silently remap.");
-            }
-        }
-
-        [Test]
-        public void PublicAssemblyMoveMapKeepsEveryExistingAnchorAndItsScriptIdentity()
-        {
-            const string Path = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblyMoves.json";
-            var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(Path);
-            Assert.That(asset, Is.Not.Null, "Freeze explicit assembly ownership before moving any functional source.");
-            var table = JsonUtility.FromJson<AssemblyMoveTable>(asset.text);
-            Assert.That(table.schemaVersion, Is.EqualTo(1));
-            Assert.That(table.moves, Has.Length.EqualTo(26), "Keep all original anchors and the migrated feature identities.");
-            Assert.That(table.moves.Select(move => move.fullName).Distinct().Count(), Is.EqualTo(table.moves.Length));
-            Assert.That(table.moves.Select(move => move.scriptGuid).Distinct().Count(), Is.EqualTo(table.moves.Length));
-            foreach (var move in table.moves)
-            {
-                if (move.fullName == "YLFramework.Editor.Overlap.OverlapArea2DInspector")
-                {
-                    Assert.That(move.sourceAssembly, Is.EqualTo("YLFramework.Editor"));
-                    Assert.That(move.currentAssembly, Is.EqualTo("YLFramework.Overlap.Editor"));
-                    Assert.That(move.targetAssembly, Is.EqualTo("YLFramework.Overlap.Editor"));
-                    Assert.That(move.package, Is.EqualTo("com.kano.ylframework.overlap"));
-                    Assert.That(move.scriptGuid, Is.EqualTo("eb43a55cda803a04f983f8861a47ee99"));
-                    Assert.That(move.legacyName, Is.Null.Or.Empty);
-                }
-                else
-                {
-                    Assert.That(move.sourceAssembly, Is.EqualTo("YLFramework.Runtime"));
-                }
-                Assert.That(move.targetAssembly, Is.Not.Null.And.Not.Empty);
-                string currentPackage = move.currentAssembly == "YLFramework.Runtime" ? "com.kano.ylframework" : move.package;
-                bool installed = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Any(package => package.name == currentPackage);
-                if (!installed)
-                {
-                    Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(move.fullName) != null), Is.False,
-                        "An absent feature must not survive in the main package or a compatibility assembly.");
-                    Assert.That(AssetDatabase.GUIDToAssetPath(move.scriptGuid), Is.Empty, move.fullName);
-                    continue;
-                }
-                var owner = System.Reflection.Assembly.Load(move.currentAssembly);
-                Assert.That(owner.GetType(move.fullName)?.IsPublic, Is.True, move.fullName);
-                Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(assembly => assembly.GetType(move.fullName) != null), Is.EqualTo(1), move.fullName);
-                if (!string.IsNullOrEmpty(move.legacyName))
-                {
-                    Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(move.legacyName) != null), Is.False, move.legacyName);
-                }
-                string script = AssetDatabase.GUIDToAssetPath(move.scriptGuid);
-                Assert.That(script, Does.StartWith("Packages/" + currentPackage + "/"), move.fullName);
-                string definition = CompilationPipeline.GetAssemblyDefinitionFilePathFromScriptPath(script);
-                Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(definition)), Does.Contain('"' + move.currentAssembly + '"'), script);
-            }
-        }
-
-        [TestCase("YLFramework.Editor.Core.UIPanelAssetMigration", "YLFramework.Core." + "Editor.UIPanelAssetMigration")]
+        [TestCase("YLFramework.Editor.Core.UIPanelAssetValidator", "YLFramework.Core." + "Editor.UIPanelAssetMigration")]
+        [TestCase("YLFramework.Editor.Core.UIPanelAssetValidator", "YLFramework.Editor.Core.UIPanelAssetMigration")]
         [TestCase("YLFramework.Editor.Common.EditorAssetTool", "YLFramework.Core." + "Editor.EditorAssetTool")]
         [TestCase("YLFramework.Editor.Common.AssetNameTools", "YLFramework.Core." + "Editor.AssetNameTools")]
         [TestCase("YLFramework.Editor.Foundation.DisableEditDrawer", "YLFramework.Core." + "Editor.DisableEditDrawer")]
@@ -239,11 +49,12 @@ namespace YLFramework.Core.Editor.Tests
         }
 
         [Test]
-        public void NeutralEditorHelpersKeepTheirGuidsAndSingleEditorOwnerAtTheDeclaredPaths()
+        public void EditorHelpersAndValidatorKeepTheirGuidsAndSingleEditorOwnerAtTheDeclaredPaths()
         {
             const string Root = "Packages/com.kano.ylframework/Editor/";
             var moves = new[]
             {
+                (fullName: "YLFramework.Editor.Core.UIPanelAssetValidator", oldPath: "Core/UIPanelAssetMigration.cs", newPath: "Core/UIPanelAssetValidator.cs", guid: "924b8eff85e523a4ea3981aba8090b42"),
                 (fullName: "YLFramework.Editor.Foundation.DisableEditDrawer", oldPath: "Core/Inspectors/DisableEditDrawer.cs", newPath: "Foundation/Attributes/DisableEditDrawer.cs", guid: "fac117eb3216be84e9e4f3089011b84b"),
                 (fullName: "YLFramework.Editor.Common.SerializedObjectExtensions", oldPath: "Utilities/Serialization/SerializedObjectExtensions.cs", newPath: "Common/Inspector/SerializedObjectExtensions.cs", guid: "f658c2a8eb0ce3d41a46c6612f44b294"),
                 (fullName: "YLFramework.Editor.Common.SerializedPropertyExtensions", oldPath: "Utilities/Serialization/SerializedPropertyExtensions.cs", newPath: "Common/Inspector/SerializedPropertyExtensions.cs", guid: "75f4e5425829b58458510ac9994f3744"),
@@ -287,7 +98,7 @@ namespace YLFramework.Core.Editor.Tests
                 Assert.That(playerSources.Contains(Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(path)), StringComparer.OrdinalIgnoreCase), Is.False);
             }
             Assert.That(assembly.GetType("YLFramework.Editor.Common.TreeViewStateInfo")?.Assembly, Is.SameAs(assembly));
-            Assert.That(assembly.GetType("YLFramework.Editor.Common.PreviousProjectSettingsNameAttribute")?.Assembly, Is.SameAs(assembly));
+            Assert.That(assembly.GetType("YLFramework.Editor.Common.PreviousProjectSettingsNameAttribute"), Is.Null);
             var folders = new[]
             {
                 (path: "Common/Assets", guid: "134f6e674e0fea948af9f69a7c607018"),
@@ -394,8 +205,9 @@ namespace YLFramework.Core.Editor.Tests
                 foreach (bool negative in new[] { true, false })
                 {
                     string source = "using YLFramework.Core;class Probe:View{" + (negative
-                        ? "LoadViewArgs held;protected override void Start(){}void OnEnable(){}void Wrong(Model model){RegisterEvent(1,Changed);EventManager.AddEvent(1,Changed);var args=new LoadViewArgs();model.Id=1;}"
-                        : "protected override void Start(){base.Start();}void Awake(){RegisterEvent(1,Changed);}void Borrow(){var args=LoadViewArgs.New();}long Read(Model model)=>model.Id;") + "void Changed(){}}";
+                        ? "LoadViewArgs held;protected override void Start(){}void OnEnable(){}void Wrong(Model model){RegisterEvent(1,Changed);ProbeApi.Restricted();var args=new LoadViewArgs();model.Id=1;}"
+                        : "protected override void Start(){base.Start();}void Awake(){RegisterEvent(1,Changed);}void Borrow(){var args=LoadViewArgs.New();}long Read(Model model)=>model.Id;") +
+                        "void Changed(){}}static class ProbeApi{[YLFramework.Core.RoslynAnalyzers.WarnInClasses(typeof(View),\"fixture\")]public static void Restricted(){}}";
                     string path = Path.Combine(folder, negative ? "Negative.cs" : "Positive.cs");
                     string output = Path.ChangeExtension(path, ".dll");
                     File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), source);
@@ -536,7 +348,6 @@ namespace YLFramework.Core.Editor.Tests
             {
                 (type: typeof(ListenerInitOnLoad), guid: "6cecaeba7c13fae4c8c90a05af5f823a"),
                 (type: typeof(ListenerFileChange), guid: "265d2dc043a256645aa542bf5c56b144"),
-                (type: typeof(UIPanelAssetAuthoring), guid: "f24c66cae1f361046b9aa9dcc7dd6135"),
                 (type: typeof(YLFramework.Editor.Actions.ScreenTransitionResourceCreator), guid: "7e2e0867a2a7695498e517124e10722b")
             })
             {
@@ -594,8 +405,8 @@ namespace YLFramework.Core.Editor.Tests
                 e.method.DeclaringType.Namespace != null && e.method.DeclaringType.Namespace.StartsWith("YLFramework.Editor.Core", StringComparison.Ordinal)).ToArray();
             Assert.That(owned.Any(e => e.attribute.menuItem == CreateModuleCommand.MenuPath), Is.True);
             Assert.That(owned.Any(e => e.attribute.menuItem == "YLFramework/Core/Create Missing Default Resources"), Is.True);
-            Assert.That(owned.Single(e => e.attribute.menuItem == "YLFramework/Core/UI Panel/核验资产迁移").method.DeclaringType,
-                Is.EqualTo(typeof(UIPanelAssetMigration)), "Read-only validation has one product-owned menu, not a duplicate author menu.");
+            Assert.That(owned.Single(e => e.attribute.menuItem == "YLFramework/Core/UI Panel/核验正式资产").method.DeclaringType,
+                Is.EqualTo(typeof(UIPanelAssetValidator)), "Read-only validation has one product-owned menu, not a duplicate author menu.");
             foreach (var entry in owned)
             {
                 string path = NormalizeMenuPath(entry.attribute.menuItem);

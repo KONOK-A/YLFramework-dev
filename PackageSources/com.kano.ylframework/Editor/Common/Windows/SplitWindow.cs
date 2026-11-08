@@ -2,18 +2,15 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Scripting.APIUpdating;
 
 namespace YLFramework.Editor.Common
 {
     /// <summary>提供可拖动分隔线的左右分栏窗口框架，派生窗口分别绘制两侧内容。</summary>
-    [MovedFrom(true, sourceNamespace: "YLFramework.Editor.Utilities")]
     public class SplitWindow : EditorWindow
     {
         const int PanePadding = 1; // 内边距
 
         /// <summary>随窗口序列化的左栏宽度比例，拖动时限制在 0.1 至 0.8 之间。</summary>
-        [UnityEngine.Serialization.FormerlySerializedAs("horizontal_split_percent")]
         [SerializeField]
         protected float horizontalSplitPercent = 0.3f;
 

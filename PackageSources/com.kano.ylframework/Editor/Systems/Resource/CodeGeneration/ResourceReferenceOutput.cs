@@ -43,7 +43,7 @@ namespace YLFramework.Editor.Resource
                         if (configuration.EndsWith(".asmdef", StringComparison.OrdinalIgnoreCase) && JsonUtilityName(File.ReadAllText(configuration)) == AssemblyName)
                         {
                             throw new InvalidOperationException("生成程序集 " + AssemblyName + " 已存在于其他位置：" + configuration +
-                                "\n保留原生成物及 .meta；请按 Documentation~/Migration-UPM.md 人工迁移，不能创建第二份同名 asmdef。");
+                                "\n保留原生成物及 .meta；请按 Documentation~/Modules/Resource.md 人工迁移，不能创建第二份同名 asmdef。");
                         }
                         throw new InvalidOperationException("生成位置已有上级程序集配置，请先确定消费者承载：" + configuration);
                     }
@@ -112,7 +112,7 @@ namespace YLFramework.Editor.Resource
                 if (JsonUtilityName(asset.text) == AssemblyName)
                 {
                     throw new InvalidOperationException("生成程序集 " + AssemblyName + " 已存在于其他位置：" + other +
-                        "\n保留原生成物及 .meta；请按 Documentation~/Migration-UPM.md 人工迁移，不能创建第二份同名 asmdef。");
+                        "\n保留原生成物及 .meta；请按 Documentation~/Modules/Resource.md 人工迁移，不能创建第二份同名 asmdef。");
                 }
             }
             // 无变化也必须先查程序集占用，不能因提前返回接受重复身份。

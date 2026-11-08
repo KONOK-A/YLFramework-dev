@@ -12,25 +12,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7331c0230f1378c48bb33ed06489830c, type: 3}
   m_Name: LegacyProject
   m_EditorClassIdentifier: 
-  ProjectId: yl-multidirectory-legacy-20261018
-  DisplayName: "\u65E7\u5355\u76EE\u5F55\u517C\u5BB9\u5939\u5177"
-  SourceDirectories:
-  - Guid: b1927de65070f3446bc1901780c42cae
-    AddressPrefix: 
-  Compression: 0
-  ContentEncryption: 0
-  ContentKeyId: 
-  AutomaticAtlases: {fileID: 11400000, guid: 04ae99941ae25d64aa0582d571c5cabc, type: 2}
-  AutomaticAtlasConfigurationGuid: 04ae99941ae25d64aa0582d571c5cabc
-  Groups:
-  - Id: main
-    Packing: 0
-    Selections:
-    - Guid: 6b880057d99b5b848ae70e14f4c98431
-      Address: 
-      Aliases:
+  projectId: yl-multidirectory-legacy-20261018
+  displayName: "\u65E7\u5355\u76EE\u5F55\u517C\u5BB9\u5939\u5177"
+  sourceDirectories:
+  - guid: b1927de65070f3446bc1901780c42cae
+    addressPrefix: 
+  compression: 0
+  contentEncryption: 0
+  contentKeyId: 
+  automaticAtlases: {fileID: 11400000, guid: 04ae99941ae25d64aa0582d571c5cabc, type: 2}
+  automaticAtlasConfigurationGuid: 04ae99941ae25d64aa0582d571c5cabc
+  groups:
+  - id: main
+    packing: 0
+    selections:
+    - guid: 6b880057d99b5b848ae70e14f4c98431
+      address: 
+      aliases:
       - legacy-stable
-      Extensions: []
-  - Id: atlases
-    Packing: 0
-    Selections: []
+      extensions: []
+  - id: atlases
+    packing: 0
+    selections: []

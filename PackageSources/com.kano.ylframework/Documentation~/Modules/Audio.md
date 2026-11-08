@@ -38,7 +38,7 @@ AudioKit.PlaySound(soundClip); // 默认单次，允许重叠
 
 ### 按钮点击音
 
-添加 `AudioEmitter`，在 Clip 列表放入点击音，保持 2D、Loop 关闭。在 `Button.onClick` 中拖入该组件并选择 `AudioEmitter.Play`。普通 2D one-shot 不因按钮面板停用被截断；组件新建/Reset 默认继承全局去重策略，需要同帧重叠时显式选择 EveryOne。
+添加 `AudioEmitter`，在 Clip 列表放入点击音，保持 2D、Loop 关闭。在 `Button.onClick` 中拖入该组件并选择 `AudioEmitter.Play`。普通 2D one-shot 不因按钮面板停用被截断；编辑器和运行时新建均默认继承全局去重策略，需要同帧重叠时显式选择 EveryOne。
 
 ### 音量滑块与 Listener
 
@@ -58,7 +58,7 @@ musicSlider.onValueChanged.AddListener(value => AudioKit.Settings.MusicVolume.Va
 
 ### 统一初始默认值
 
-下表是无业务覆盖、无合法存档覆盖时的初始值。组件新建值指编辑器添加/Reset 后的预设，不用于覆盖旧场景或 Prefab。
+下表是无业务覆盖、无合法存档覆盖时的初始值。Emitter/MusicPlayer 的编辑器和运行时创建默认相同，不依赖 Reset；明确保存的场景或 Prefab 值优先，不自动覆盖。MixerController 的编辑器预设仍单独标明。
 
 | 配置 | 初始默认值 | 选择理由 |
 |---|---|---|
@@ -75,18 +75,18 @@ musicSlider.onValueChanged.AddListener(value => AudioKit.Settings.MusicVolume.Va
 | AutoFade | 首尾时长均 0 | 保留素材原有起止，淡变由业务显式启用 |
 | AutoPauseWhenTimeScaleZero | false | 只对显式开启的请求响应零 timeScale |
 | CrossFadeMusic API | curve=EqualPower；ignoreTimeScale=true；duration 必填 | 不相关 BGM 交接减少中点功率下陷，暂停游戏时间时仍可过渡 |
-| MusicPlayer Crossfade | 关闭；duration=1 秒；unscaled=true；编辑器新建/Reset curve=EqualPower | 常规音乐直接播放，启用过渡时有可用的初始预设 |
+| MusicPlayer Crossfade | 关闭；duration=1 秒；unscaled=true；编辑器/运行时新建 curve=EqualPower | 常规音乐直接播放，启用过渡时有可用的初始预设 |
 | 编辑器新建/Reset MixerController | applyOnAwake=false；transitionDuration=0.5 秒 | 全局路由显式开启，参数/Snapshot 用途不意外清路由；显式 Snapshot 过渡避免默认硬切 |
 
 EveryOne 才表示关闭去重；显式将窗口设为 0 可在 GlobalFrames 或 SoundFrames 下只做同帧去重。默认 5 帧的边界包含最后一帧，约为 60 FPS 下 83 ms、120 FPS 下 42 ms，不是固定秒数。EqualPower 不保证等响度或不叠加峰值，显式 Linear 仍适用于需要线性交接的素材。
 
-| 组件 | 编辑器新建/Reset | 旧资源及未触发 Reset 的字段初始化 |
+| 组件 | 创建默认 | 明确保存值及特殊预设 |
 |---|---|---|
-| AudioEmitter | useGlobalPlaySoundMode=true，继承全局 | false，保留原 playSoundMode=EveryOne |
-| AudioMusicPlayer | crossFadeCurve=EqualPower，Crossfade 仍关闭 | crossFadeCurve=Linear，保留旧缺字段资源；已有序列化选择不自动改写 |
-| AudioMixerController | applyOnAwake=false，transitionDuration=0.5 | 字段初始化 true/0，保留旧资产自动路由与即时 Snapshot 过渡行为 |
+| AudioEmitter | 编辑器/运行时均 useGlobalPlaySoundMode=true，继承全局 | 明确保存 false 时使用 playSoundMode，例如 EveryOne；不自动改写 |
+| AudioMusicPlayer | 编辑器/运行时均 crossFadeCurve=EqualPower，Crossfade 仍关闭 | 明确保存 Linear 仍按线性过渡；不自动改写 |
+| AudioMixerController | 编辑器新建/Reset 为 applyOnAwake=false、transitionDuration=0.5 | 字段初始化 true/0，保留其既有自动路由与即时 Snapshot 过渡行为 |
 
-运行时 AddComponent 不承诺触发 Reset；需要上述新建预设时应显式配置。新建 MixerController 仅绑定 Config 不自动应用或清空全局路由，必须勾选 Inspector 的 `Apply Routing On Awake`（applyOnAwake）并提供有效 Config，或显式调用 Apply。旧资源已有配置仍按其序列化值工作，不因新预设被重置。
+Emitter/MusicPlayer 不再保留仅区分新旧创建的 Reset 分支；缺失字段采用当前创建默认，明确保存的 false/Linear 保留。维护中资产须在旧定义仍可读时正式保存有效值并冷读验证，不能手改 YAML、把缺字段猜成显式零值或重存冻结历史夹具。MixerController 的运行时 AddComponent 不承诺触发 Reset；新建 MixerController 仅绑定 Config 不自动应用或清空全局路由，必须勾选 Inspector 的 `Apply Routing On Awake`（applyOnAwake）并提供有效 Config，或显式调用 Apply。
 
 <a id="options-使用"></a>
 
@@ -213,18 +213,17 @@ AudioKit.ClearClipCache(); // 活跃 Music 不受影响
 
 ## 素材组与组件
 
-`AudioClipLibrary` 是可共享的选曲资产，不是控制通道或第二个播放器。通过 `Assets/Create/YLFramework/Audio/Clip Library` 新建，`groups` 内填写区分大小写的组名 `name` 及 `entries`；一个组可以混用直接 Clip 和命名定位。`Uniform` 在有效条目中均匀选取，忽略存储的 `weight`；`Weighted` 只选正权重条目，`weight=0` 明确排除。每次提交只抽选一次并保存定位快照，不在异步完成后重新随机。作者字段的旧 PascalCase 键由 `FormerlySerializedAs` 读取，类型、引用及枚举数值不变。
+`AudioClipLibrary` 是可共享的选曲资产，不是控制通道或第二个播放器。通过 `Assets/Create/YLFramework/Audio/Clip Library` 新建，`groups` 内填写区分大小写的组名 `name` 及 `entries`；一个组可以混用直接 Clip 和命名定位。`Uniform` 在有效条目中均匀选取，忽略存储的 `weight`；`Weighted` 只选正权重条目，`weight=0` 明确排除。每次提交只抽选一次并保存定位快照，不在异步完成后重新随机。作者数据只保留当前小写字段；正式 Unity 保存和冷读应保全组名、选择、权重、Clip/Mixer 引用及 Prefab Variant override，不再提供旧 PascalCase reader。
 
 | Entry Source | 必要配置与责任 |
 |---|---|
 | Clip | 绑定外部 AudioClip；继续借用，外部 owner 保活 |
 | Resource | ProjectId 如 `game-audio`，Key 为 Catalog 逻辑地址如 `ui/click`；Resources/AB 由正式目录决定，Library 只读取已显式初始化的 ResourceSystem |
-| Resources / AssetBundle（旧值） | 仅保留旧序列化值供一次性显式迁移，不参与运行时选择；不把 BundleName 解释为 ProjectId，不回退旧 ResLoader |
 | ExternalProvider | Key 由显式后端定义；代码向 GroupPlayer.SetProvider 或 Library.TrySelect 传入同一个 provider 实例，不隐式回退/注册后端 |
 
-空 Clip/空 key、不可用定位不参与抽选；缺组、空/全坏组、重名组、非法选择/来源枚举或 Weighted 的负数/NaN/Infinity 权重返回失败，不停止旧播放。命名加载失败/迟到/取消继续使用 pending、资源租约与最新独占提交契约；异步错误查看 `LastRequest.Error/EndReason`。播放配置不合法仍按正式 API 抛错，不静默修复字段。
+有效来源编号明确为 `Clip=0`、`ExternalProvider=3`、`Resource=4`，不压缩为连续编号。退役值 1/2 和其他未知来源使整个组拒绝选择，即使该项权重为零、旁边有可用 Clip 也不跳过，不消耗随机或替换现有播放。空 Clip/空 key、不可用定位不参与抽选；缺组、空/全坏组、重名组、非法选择枚举或 Weighted 的负数/NaN/Infinity 权重返回失败。命名加载失败/迟到/取消继续使用 pending、资源租约与最新独占提交契约；异步错误查看 `LastRequest.Error/EndReason`。播放配置不合法仍按正式 API 抛错，不静默修复字段。
 
-旧配置通过 Library Inspector 的“迁移旧资源定位到新配置副本”入口逐条填写经过核对的 ProjectId 与逻辑地址。工具要求每个旧条目都有明确映射，只向既有 Assets 目录创建新 GUID 的 `.asset`，拒绝覆盖或遗留 `.meta`；原配置、直接 Clip、外部 Provider、组名、权重及选择规则不变。`BundleName` 原字段和旧枚举数字保留以读取既有配置，但不提供永久运行时转发。当前 Audio Provider 的 string key 表达主资产逻辑地址；转换遇到 SubAsset 映射会明确拒绝，不会静默丢弃身份。
+旧 `Resources/AssetBundle` 来源、`bundleName` 字段及一次性迁移窗口已经退出。需要保留的旧库必须先在仍可读的旧版本中核对资产归属与真实 Catalog 映射，再正式保存为当前来源与字段；不能把 BundleName 猜成 ProjectId。未知库或未知外部 root 阻塞其数据处置，不自动清空、修复或收养；冻结 Legacy 是只读历史证据，不能重用 GUID 生成当前样本。当前 Audio Provider 的 string key 表达主资产逻辑地址，不把 SubAsset 身份静默折叠为主资产。
 
 ### Inspector 最短配置
 
@@ -532,7 +531,7 @@ AudioKit.StopMusic(); // 同时清理尾轨。
 
 - EqualPower 更接近“强度接近且不相关”两首素材的恒定功率；不等于等响度，相关/同相素材仍可能叠加峰值，素材响度匹配与试听仍由业务负责。
 - outgoing 始终缩放 `capturedOutgoingGain` 而非重排曲线，连续切歌时从当前过渡增益连续退场，不跳变。
-- `duration=0` 立即替换，曲线不参与；`AudioMusicPlayer` 的 crossFadeCurve 字段初始化保留 Linear 以兼容旧缺字段资源，编辑器新建/Reset 设置 EqualPower，仅 Crossfade 开启时生效；Reset 不开启 Crossfade。
+- `duration=0` 立即替换，曲线不参与；`AudioMusicPlayer` 在编辑器和运行时均默认 EqualPower，明确保存 Linear 保持有效，仅 Crossfade 开启时生效，创建默认不自动开启 Crossfade。
 
 ## 自动首尾淡变
 
@@ -615,7 +614,7 @@ var characterVoice = AudioKit.PlayVoiceFollowing(voiceClip, character, options);
 
 ### 轻量加权选择
 
-`AudioWeightedClip` 是 `[Serializable]` struct，只有公开字段 `AudioClip clip`、`float weight` 和构造 `AudioWeightedClip(AudioClip clip, float weight=1f)`。使用配对项而不是两份平行列表；旧 Unity 资产的 `Clip/Weight` 通过 `FormerlySerializedAs` 保留：
+`AudioWeightedClip` 是 `[Serializable]` struct，只有公开字段 `AudioClip clip`、`float weight` 和构造 `AudioWeightedClip(AudioClip clip, float weight=1f)`。使用配对项而不是两份平行列表；当前 Unity 保存字段为小写 `clip/weight`，明确的零权重原样保留：
 
 ```csharp
 var weighted = new[]
@@ -825,7 +824,7 @@ Snapshot 过渡的 duration 必须有限且 >= 0；混合数组非空、等长�
 | `AudioMusicPlayer` | 单 Clip，`loop/playOnAwake` 默认 true；`crossFadeOnPlay` 默认 false。UnityEvent 绑定 `Play/Stop` | 只停止自己仍持有的目标和尾轨，不误停别人的新 BGM |
 | `AudioGroupPlayer` | 素材库、显式通道名、自动播放时机和命名加载，见 [素材组与组件](#素材组与组件) | 取消自身 pending 并停止本通道；销毁时撤销登记 |
 
-Emitter/MusicPlayer 的 `playOnAwake` 在首次 Start 执行，不是每次 OnEnable。它们不自行加载资源或建立第二个 Source 池；从序列化字段构造值配置，提交给同一内核。Inspector 的 Advanced 按需显示 Pitch/Priority、去重、路由、淡变和过渡等适用字段，折叠或隐藏不清配置。新建/Reset 与旧资源的默认值差异见 [默认值与配置](#默认值与配置)，运行时 AddComponent 应显式配置，不能假定 Reset 已执行。
+Emitter/MusicPlayer 的 `playOnAwake` 在首次 Start 执行，不是每次 OnEnable。它们不自行加载资源或建立第二个 Source 池；从序列化字段构造值配置，提交给同一内核。Inspector 的 Advanced 按需显示 Pitch/Priority、去重、路由、淡变和过渡等适用字段，折叠或隐藏不清配置。编辑器与运行时统一的创建默认、明确保存 false/Linear 的优先级见 [默认值与配置](#默认值与配置)，不依赖 Reset。
 
 Emitter 先校验配置、抽选一次并检查 Clip/位置/目标，再停止需替换的旧自有循环。空、全坏或全零权重候选、无效目标不改变旧播放，非法配置抛错；拒播不重抽。`priority` 只透传 Sound 接纳优先级，不映射 `AudioSource.priority`。`Started` 是无参 UnityEvent，先登记本次句柄与停用策略再通知，允许事件内 Stop、失活或递归 Play；拒播没有事件。
 

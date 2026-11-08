@@ -239,12 +239,12 @@ namespace YLFramework.Actions
         }
 
         /// <summary>
-        /// 推进动作一次，按当前阶段调用 OnStart、OnExecute 或 OnFinish。
+        /// 推进动作一次，按当前阶段调用对应钩子；取消后再标记 Finished 也可能返回 true。
         /// </summary>
         /// <param name="self">仍属于当前使用周期的动作。</param>
         /// <param name="dt">本次时间增量，单位为秒；首次启动不调用 OnExecute，但可同步完成并调用 OnFinish。</param>
-        /// <returns>本次已到达完成分支且使用周期仍匹配时为 true，否则为 false。</returns>
-        /// <remarks>手动调用不负责回收；Finished 后再次调用会再次执行 OnFinish。回调先完成再取消时也可返回 true，调用方仍需检查 IsDeinitialized。ActionKit 关停期间调用一律返回 false，且不再触发任何钩子。</remarks>
+        /// <returns>本次已到达完成分支且使用周期仍匹配时为 true，否则为 false；true 不一定表示成功，仍须检查 IsDeinitialized。</returns>
+        /// <remarks>已清理的同代动作不调用结束钩子；手动调用不负责回收，未清理的 Finished 动作再次调用会再次执行 OnFinish。ActionKit 关停期间调用一律返回 false，且不再触发任何钩子。</remarks>
         public static bool Execute(this IAction self, float dt)
         {
             var actionId = self.ActionId;

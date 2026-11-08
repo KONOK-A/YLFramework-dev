@@ -200,11 +200,19 @@ namespace YLFramework.Tests.ResourceBuild
         }
 
         [Test]
-        public void UnsupportedBackendDoesNotImportCngOrFallBackToPlaintext()
+        public void SelectedBackendHasItsActualCngContractAndNeverFallsBackToPlaintext()
         {
             if ((bool)ContentType("ResourceBundleEnvelope").GetProperty("IsSupported", Members).GetValue(null))
             {
-                Assert.Ignore("This assertion targets an intentionally unsupported compilation configuration.");
+                Assert.That(ContentType("CngSegmentAead").GetMethods(Members).Any(method =>
+                    method.GetCustomAttributes(typeof(System.Runtime.InteropServices.DllImportAttribute), false).Length != 0), Is.True);
+                var raw = Data(1);
+                var cipher = Encrypt(raw);
+                Assert.That(cipher.Take(8), Is.EqualTo(System.Text.Encoding.ASCII.GetBytes("YLRENC01")));
+                using var stream = Open(new MemoryStream(cipher));
+                Assert.That(stream.ReadByte(), Is.EqualTo(raw[0]));
+                Assert.That(stream.ReadByte(), Is.EqualTo(-1));
+                return;
             }
 
             Assert.That(ContentType("CngSegmentAead").GetMethods(Members).Any(method =>

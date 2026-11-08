@@ -52,9 +52,9 @@ namespace YLFramework.Integrations.DOTween
         {
         }
 
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>分配动作，启动时才调用 Tween 工厂。</summary>
-        /// <remarks>每次重新执行应提供新的有效 Tween，不要复用已被 Kill 的实例。</remarks>
-        /// <param name="tweenGetter">启动时取得独占 Tween 的非空工厂。</param>
+        /// <param name="tweenGetter">每次启动取得新的独立根 Tween 的非空工厂；动作接管本次执行与取消，不复用已 Kill 的实例。</param>
         /// <returns>尚未启动的池化动作；释放后不得继续使用原引用。</returns>
         public static DOTweenAction Allocate(Func<Tween> tweenGetter)
         {
@@ -73,8 +73,8 @@ namespace YLFramework.Integrations.DOTween
             return action;
         }
 
-        /// <summary>读取或设置暂停标记，并同步到仍由动作持有的 Tween。</summary>
-        /// <remarks>恢复只撤销动作发起的暂停，不接管外部暂停。</remarks>
+        /// <inheritdoc cref="OnFinish" />
+        /// <summary>读取或设置暂停标记，只恢复由此动作暂停的 Tween，不接管外部暂停。</summary>
         public bool IsPaused
         {
             get => _isPaused;
@@ -84,24 +84,27 @@ namespace YLFramework.Integrations.DOTween
                 _lease?.SetPaused(value);
             }
         }
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>读取或设置动作已释放的标记。</summary>
         public bool IsDeinitialized
         {
             get; set;
         }
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>读取或设置当前分配的动作标识，用于隔离旧 Tween 回调。</summary>
         public ulong ActionId
         {
             get; set;
         }
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>读取或设置动作执行状态。</summary>
         public ActionStatus Status
         {
             get; set;
         }
 
-        /// <summary>重置执行状态，按启动阶段保留或关闭 Tween 持有关系。</summary>
-        /// <remarks>首次启动前保留 ToAction 的原绑定；启动后重置会安排 Kill(false)，重放应使用工厂创建新 Tween。</remarks>
+        /// <inheritdoc cref="OnFinish" />
+        /// <summary>立即恢复 NotStart 并保留 getter；首次启动前保留原预绑定，启动后 Reset 再 Start 会取消旧绑定，物理 Kill 通过 Post 延后。</summary>
         public void Reset()
         {
             _executionVersion++;
@@ -116,8 +119,8 @@ namespace YLFramework.Integrations.DOTween
             Release(true);
         }
 
-        /// <summary>释放动作并排队回收，不触发正常完成。</summary>
-        /// <remarks>对仍持有的 Tween 安排延迟 Kill(false)；返回时不保证 Tween 已停止。</remarks>
+        /// <inheritdoc cref="OnFinish" />
+        /// <summary>立即标记 IsDeinitialized、清空 getter 并排队回收，不触发正常完成；物理 Kill 通过 Post 延后。</summary>
         public void Deinit()
         {
             if (IsDeinitialized)
@@ -145,7 +148,8 @@ namespace YLFramework.Integrations.DOTween
             lease?.Close(kill);
         }
 
-        /// <summary>在 Unity 主线程取得或使用已绑定的 Tween，并从头播放。</summary>
+        /// <inheritdoc cref="OnFinish" />
+        /// <summary>首先校验真实 Unity 主线程与原始上下文，再调用工厂或只复用预绑定的原生命周期并从头播放。</summary>
         public void OnStart()
         {
             var context = RequireContext();
@@ -217,10 +221,19 @@ namespace YLFramework.Integrations.DOTween
             }
         }
 
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>检查 Tween 的完成或取消状态，不用 dt 推进播放。</summary>
         /// <param name="dt">执行器提供的秒数增量，此桥接不使用该值。</param>
         public void OnExecute(float dt) => _lease?.Poll();
-        /// <summary>正常完成时只解除桥接回调，不主动 Kill Tween。</summary>
+        /// <summary>正常完成时只解除自身 hooks，不 Kill Tween，保留 getter 到 Deinit。</summary>
+        /// <remarks>
+        /// 仅接管独立根 Tween 或 DG.Tweening.Sequence 本身，不支持内部子 Tween。DOTween 推进时钟，IgnoreTimeScale 不自动改变 Tween clock。
+        /// 绑定和启动要求真实主线程及原始 UnitySynchronizationContext，核对完整类型名、程序集身份、sealed 与主线程 ID；不支持自定义同步 Post 或人工 pump，错误上下文不调用 factory、不 Pause Tween。
+        /// ToAction 在 Pause 前预绑定同一生命周期；首次启动前 Reset 保留原绑定，启动后 Reset 不重新认领。外部 Pause 只是等待，Resume 只恢复动作自己发起的暂停。
+        /// Deinit 立即生效，Reset 立即恢复 NotStart；物理 Kill(false) 通过 Post 延后，pending marker 阻止重认领，回调在实际主线程复核 ownership 后才清理，不能干扰其他 owner。
+        /// Shutdown 不保证同步物理 Kill；Domain Reload 或 Post 未执行时可能没有物理清理。ownership 无法证实时不保证物理清理，不对外部 source owner 承诺终止。
+        /// onComplete/onKill 是 multicast，即使 safeMode 也不能承诺逐 callback 异常隔离；适配不能完全区分先完成与先 Kill 的所有外部改写，前序 delegate 抛错可能漏掉完成或取消信号。
+        /// </remarks>
         public void OnFinish() => Release(false);
 
         // 同时核对分配标识、执行版本和租约引用，隔离重入及池复用后的旧通知。
@@ -526,19 +539,19 @@ namespace YLFramework.Integrations.DOTween
     /// <summary>DOTween 与 ActionKit 动作的桥接扩展。</summary>
     public static class ActionKitDOTweenExtension
     {
-        /// <summary>立即绑定并暂停已有 Tween，动作启动时从头播放。</summary>
-        /// <remarks>绑定需 Unity 主线程及原始同步上下文；该绑定仅用于首次执行，重复执行应改用 Tween 工厂。</remarks>
-        /// <param name="self">有效且未被其他动作持有的 Tween，绑定后由动作独占管理。</param>
-        /// <returns>尚未启动的池化动作。</returns>
+        /// <inheritdoc cref="DOTweenAction.OnFinish" />
+        /// <summary>在 Pause 前预绑定已有独立根 Tween，动作首次启动时从头播放。</summary>
+        /// <param name="self">有效且未被其他动作持有的 Tween；首次启动后 Reset 后不可重新认领原生命周期。</param>
+        /// <returns>尚未启动的单次绑定动作，首次启动后 Reset 后再 Start 取消，不重新认领原 Tween。</returns>
         public static IAction ToAction(this Tween self)
         {
             return DOTweenAction.Bind(self);
         }
 
+        /// <inheritdoc cref="DOTweenAction.OnFinish" />
         /// <summary>将启动时创建 Tween 的动作追加到序列，并返回原序列。</summary>
-        /// <remarks>工厂每次执行应创建新的有效 Tween；播放的时间模式仍由 DOTween 控制。</remarks>
         /// <param name="self">接收动作的非空序列。</param>
-        /// <param name="tweenGetter">每次执行时取得独占 Tween 的非空工厂。</param>
+        /// <param name="tweenGetter">每次执行时创建新的独占根 Tween 的非空工厂；播放时间模式仍由 DOTween 控制。</param>
         /// <returns>追加动作后的原序列。</returns>
         public static ISequence DOTween(this ISequence self, Func<Tween> tweenGetter)
         {

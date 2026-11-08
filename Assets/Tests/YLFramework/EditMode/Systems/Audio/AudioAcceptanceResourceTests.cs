@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.TestTools;
 using YLFramework.Audio;
@@ -159,6 +160,148 @@ namespace YLFramework.Tests.Audio
                     UnityEngine.Object.Destroy(library);
                     UnityEngine.Object.Destroy(mixer);
                     UnityEngine.Object.Destroy(direct);
+                }
+            }
+        }
+    }
+
+    [Category("YL.Special.AudioNative")]
+    public class AudioCurrentPlayerTests
+    {
+        [Test]
+        public void CurrentSavedAudioInputsExecuteOriginalDspAcceptanceInTwoNativeMonoPlayers()
+        {
+            global::YLFramework.Tests.Resource.ResourceSessionTests.EnsureRestorableScenes();
+            Assert.That(EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling, Is.False);
+            var previous = EditorSceneManager.GetSceneManagerSetup();
+            var output = global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput();
+            var token = Guid.NewGuid().ToString("N");
+            const string Parent = "Assets";
+            var folder = Parent + "/__YLAudioCurrent-" + token;
+            Assert.That(AssetDatabase.IsValidFolder(Parent), Is.True);
+            Assert.That(AssetDatabase.LoadMainAssetAtPath(folder), Is.Null);
+            Assert.That(System.IO.Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(folder)), Is.False);
+            var guid = AssetDatabase.CreateFolder(Parent, "__YLAudioCurrent-" + token);
+            Assert.That(guid, Is.Not.Empty);
+            var completed = false;
+            try
+            {
+                var mixerPath = folder + "/Current.mixer";
+                Assert.That(AssetDatabase.CopyAsset("Assets/Tests/YLFramework/Fixtures/Audio/AudioMixerFixture.mixer", mixerPath), Is.True);
+                var mixer = AssetDatabase.LoadAssetAtPath<UnityEngine.Audio.AudioMixer>(mixerPath);
+                var config = ScriptableObject.CreateInstance<AudioMixerConfig>();
+                using (var serialized = new SerializedObject(config))
+                {
+                    serialized.FindProperty("mixer").objectReferenceValue = mixer;
+                    foreach (var name in new[] { "music", "voice", "sound" })
+                    {
+                        var groupName = char.ToUpperInvariant(name[0]) + name.Substring(1);
+                        serialized.FindProperty(name + "Group").objectReferenceValue = mixer.FindMatchingGroups(groupName).Single(group =>
+                            string.Equals(group.name, name, StringComparison.OrdinalIgnoreCase));
+                    }
+                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                }
+                var configPath = folder + "/CurrentMixerConfig.asset";
+                AssetDatabase.CreateAsset(config, configPath);
+                var resourceKey = "AudioCurrentSignal-" + token;
+                Assert.That(AssetDatabase.CreateFolder(folder, "Resources"), Is.Not.Empty);
+                var signalPath = folder + "/Resources/" + resourceKey + ".wav";
+                AudioResourceBundleTests.WriteWave(signalPath);
+                AssetDatabase.ImportAsset(signalPath, ImportAssetOptions.ForceSynchronousImport);
+                var signal = AssetDatabase.LoadAssetAtPath<AudioClip>(signalPath);
+                Assert.That(signal, Is.Not.Null);
+                var secondSignalPath = folder + "/CurrentSecond.wav";
+                AudioResourceBundleTests.WriteWave(secondSignalPath);
+                AssetDatabase.ImportAsset(secondSignalPath, ImportAssetOptions.ForceSynchronousImport);
+                var secondSignal = AssetDatabase.LoadAssetAtPath<AudioClip>(secondSignalPath);
+                Assert.That(secondSignal, Is.Not.Null);
+                var library = ScriptableObject.CreateInstance<AudioClipLibrary>();
+                library.groups.Add(new AudioClipGroup
+                {
+                    name = "current",
+                    entries = new List<AudioClipEntry> { new AudioClipEntry { source = AudioClipSource.Resource, projectId = "yl-audio-acceptance", key = "signal" } }
+                });
+                var libraryPath = folder + "/CurrentLibrary.asset";
+                AssetDatabase.CreateAsset(library, libraryPath);
+                var identities = new[] { libraryPath, configPath, mixerPath, signalPath, secondSignalPath }.ToDictionary(path => path, AssetDatabase.AssetPathToGUID);
+                global::YLFramework.Testing.EditorFixtures.StandaloneFixturePlayer.BuildAndRun(
+                    output, folder, typeof(AudioKit).Assembly.GetName().Name, null, scene =>
+                    {
+                        library = AssetDatabase.LoadAssetAtPath<AudioClipLibrary>(libraryPath);
+                        config = AssetDatabase.LoadAssetAtPath<AudioMixerConfig>(configPath);
+                        signal = AssetDatabase.LoadAssetAtPath<AudioClip>(signalPath);
+                        secondSignal = AssetDatabase.LoadAssetAtPath<AudioClip>(secondSignalPath);
+                        Assert.That(library && config && signal && secondSignal, Is.True,
+                            "Populate must cold-read saved inputs after the shared helper switches to its empty owned scene.");
+                        var root = new GameObject("CurrentAudioAcceptance");
+                        root.SetActive(false);
+                        root.AddComponent<AudioListener>();
+                        root.AddComponent<Camera>();
+                        var group = root.AddComponent<AudioGroupPlayer>();
+                        using (var serialized = new SerializedObject(group))
+                        {
+                            serialized.FindProperty("library").objectReferenceValue = library;
+                            serialized.FindProperty("groupName").stringValue = "current";
+                            serialized.FindProperty("channelName").stringValue = "audio/current";
+                            serialized.FindProperty("options").FindPropertyRelative("Loop").boolValue = true;
+                            serialized.ApplyModifiedPropertiesWithoutUndo();
+                        }
+                        var emitter = root.AddComponent<AudioEmitter>();
+                        using (var serialized = new SerializedObject(emitter))
+                        {
+                            serialized.FindProperty("clips").arraySize = 1;
+                            serialized.FindProperty("clips").GetArrayElementAtIndex(0).objectReferenceValue = signal;
+                            serialized.FindProperty("useGlobalPlaySoundMode").boolValue = false;
+                            serialized.FindProperty("playSoundMode").intValue = (int)AudioKit.PlaySoundModes.EveryOne;
+                            serialized.FindProperty("playOnAwake").boolValue = false;
+                            serialized.FindProperty("loop").boolValue = false;
+                            serialized.ApplyModifiedPropertiesWithoutUndo();
+                        }
+                        var music = root.AddComponent<AudioMusicPlayer>();
+                        using (var serialized = new SerializedObject(music))
+                        {
+                            serialized.FindProperty("clip").objectReferenceValue = signal;
+                            serialized.FindProperty("playOnAwake").boolValue = false;
+                            serialized.FindProperty("loop").boolValue = true;
+                            serialized.FindProperty("crossFadeOnPlay").boolValue = true;
+                            serialized.FindProperty("crossFadeDuration").floatValue = 1f;
+                            serialized.FindProperty("crossFadeCurve").intValue = (int)AudioCrossfadeCurve.Linear;
+                            serialized.ApplyModifiedPropertiesWithoutUndo();
+                        }
+                        var entryType = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("YLFramework.Core.Tests.AudioAcceptanceEntry")).Single(type => type != null);
+                        var entry = root.AddComponent(entryType);
+                        entryType.GetField("signal").SetValue(entry, signal);
+                        entryType.GetField("secondSignal").SetValue(entry, secondSignal);
+                        entryType.GetField("group").SetValue(entry, group);
+                        entryType.GetField("mixerConfig").SetValue(entry, config);
+                        entryType.GetField("resourceKey").SetValue(entry, resourceKey);
+                        entryType.GetField("emitter").SetValue(entry, emitter);
+                        entryType.GetField("musicPlayer").SetValue(entry, music);
+                        entryType.GetField("runToken").SetValue(entry, token);
+                        var player = File.ReadAllText(Path.Combine(output, "standalone-player-location.txt"));
+                        entryType.GetField("ownedPlayerDirectory").SetValue(entry, player);
+                        root.SetActive(true);
+                        var scenePath = folder + "/Player.unity";
+                        Assert.That(EditorSceneManager.SaveScene(scene, scenePath), Is.True);
+                        identities.Add(scenePath, AssetDatabase.AssetPathToGUID(scenePath));
+                        foreach (var pair in identities)
+                        {
+                            Assert.That(AssetDatabase.AssetPathToGUID(pair.Key), Is.EqualTo(pair.Value));
+                            var target = System.IO.Path.Combine(output, "Audio-player-" + System.IO.Path.GetFileName(pair.Key));
+                            System.IO.File.Copy(global::YLFramework.Testing.PackageTestPaths.Physical(pair.Key), target, false);
+                            System.IO.File.Copy(global::YLFramework.Testing.PackageTestPaths.Physical(pair.Key + ".meta"), target + ".meta", false);
+                        }
+                    }, graphics: true);
+                completed = true;
+            }
+            finally
+            {
+                EditorSceneManager.RestoreSceneManagerSetup(previous);
+                if (completed)
+                {
+                    Assert.That(AssetDatabase.GUIDToAssetPath(guid), Is.EqualTo(folder));
+                    Assert.That(AssetDatabase.AssetPathToGUID(folder), Is.EqualTo(guid));
+                    Assert.That(AssetDatabase.DeleteAsset(folder), Is.True);
                 }
             }
         }

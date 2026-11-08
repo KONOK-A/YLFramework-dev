@@ -10,6 +10,17 @@ $implementation=Join-Path $PSScriptRoot 'Prepare-HybridCLRNativeSource.ps1'
 $loaded=Test-Path -LiteralPath $implementation
 if ($loaded) { . $implementation }
 $cases=[Collections.Generic.List[object]]::new()
+$tokens=$null; $parseErrors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($implementation,[ref]$tokens,[ref]$parseErrors)
+$paths=@($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -cin @('WorkspaceRoot','Il2CppRepository','HybridClrRepository') })
+$cases.Add(@{ Name='native-source-paths-are-explicit-not-machine-defaults'; Passed=($parseErrors.Count -eq 0 -and $paths.Count -eq 3 -and @($paths | Where-Object DefaultValue).Count -eq 0); ExpectedRejection=$false })
+if (@($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -ceq 'WorkspaceRoot' }).Count -eq 1) {
+    $unused=Join-Path $TempRoot 'MustNotBeCreated'
+    $rejected=$false
+    try { & $implementation -Operation Prepare -Run 'missing-source' -WorkspaceRoot $unused }
+    catch { $rejected=$_.Exception.Message.StartsWith('Native source: explicit workspace, exact run and both pinned source repositories are required.',[StringComparison]::Ordinal) }
+    $cases.Add(@{ Name='missing-explicit-source-rejects-before-owning-output'; Passed=($rejected -and -not [IO.Path]::Exists($unused)); ExpectedRejection=$true })
+}
 $fixture=@{ Schema='B08NativeSource-v1'; Variant='ParameterOwner'; Unity='6000.3.27f1'; SdkVersion='9.0.3'
     SdkCommit='6cadd24d101f4cbd00cd80190106f6621132d24d'; Il2CppCommit='6eb38b29c3a7448b3ac6c4dee450de375b5d158d'; HybridClrCommit='bf01f8eed56a077781c3a7b25f418603c7645588'
     SourceDirectory=(Join-Path $TempRoot 'Patched/libil2cpp'); BeforeCrLfSha256='6c2902bfcbdbaf253486d5af13c0e2b1e372af5c5a934a74c1a172fe8f2b823f'
@@ -28,7 +39,7 @@ foreach ($spec in @(
     @{ Name='wrong-preimage'; Reject=$true; Change={param($m) $m.BeforeCrLfSha256='c'*64} },
     @{ Name='wrong-postimage'; Reject=$true; Change={param($m) $m.AfterCrLfSha256='c'*64} },
     @{ Name='extra-native-change'; Reject=$true; Change={param($m) $m.ChangedFiles+= 'vm/Method.cpp'} },
-    @{ Name='source-in-frozen-library'; Reject=$true; Change={param($m) $m.SourceDirectory='G:\Unity\U63-20261027-c63a1\h17\Library\HybridCLR\libil2cpp'} },
+    @{ Name='source-in-frozen-library'; Reject=$true; Change={param($m) $m.SourceDirectory=Join-Path $TempRoot 'Library/HybridCLR/libil2cpp'} },
     @{ Name='traversal-file'; Reject=$true; Change={param($m) $m.Files[0].Path='../outside.cpp'} },
     @{ Name='missing-license'; Reject=$true; Change={param($m) $m.Licenses=@('MIT-il2cpp_plus')} }
 )) {

@@ -118,7 +118,14 @@ namespace YLFramework.Overlap.Acceptance
             public bool stopPool;
             public bool callbackInvalidation;
             public bool fakeNull;
-            public bool legacyBoxSphere;
+            public bool currentBoxSphere;
+            public bool persistentContactEvents;
+            public bool serializedLifecycleBatches;
+            public int serializedLifecycleCases;
+            public bool closestPoint3DZ;
+            public bool destroyedLastPoint;
+            public bool areaInvalidation;
+            public bool unscaledUpdate;
             public bool triggerPrerequisite;
             public bool inactiveConvexGate;
             public int convexGatePositives;
@@ -301,6 +308,9 @@ namespace YLFramework.Overlap.Acceptance
             var curved = CurvedGeometry(instance);
             while (curved.MoveNext())
                 yield return curved.Current;
+            var current = CurrentContactEvents(instance);
+            while (current.MoveNext())
+                yield return current.Current;
             var targets = new List<GameObject>();
             for (int i = 0; i < 3; i++)
                 targets.Add(Target(instance.transform, new Vector3(1.6f + i * 0.4f, 0, 0)));
@@ -362,22 +372,16 @@ namespace YLFramework.Overlap.Acceptance
                 Require(rig.Sample(), "Reentrant release corrupted the next sample.");
             }
             _report.callbackInvalidation = true;
-            var legacyHost = new GameObject("Legacy3D") { transform = { position = new Vector3(2, 0, 0) } };
-            legacyHost.transform.SetParent(instance.transform, true);
-            var box = legacyHost.AddComponent<OverlapBox3D>();
-            box.IsRunning = false;
-            box.LayerMask = 1 << 11;
-            box.Size = Vector3.one * 3;
-            box.CheckOverlap();
-            var sphere = legacyHost.AddComponent<OverlapSphere3D>();
-            sphere.IsRunning = false;
-            sphere.LayerMask = 1 << 11;
-            sphere.Radius = 2;
-            sphere.CheckOverlap();
-            Vector2 oldPoint = box.results[0].point;
-            Require(box.results.Count == 4 && sphere.results.Count == 4 && box.LastQueryStatus == OverlapQueryStatus.Complete &&
-                !float.IsNaN(oldPoint.x), "Legacy Box/Sphere or the original XY point protocol regressed.");
-            _report.legacyBoxSphere = true;
+            var unionHost = new GameObject("BoxSphereUnion") { transform = { position = new Vector3(2, 0, 0) } };
+            unionHost.transform.SetParent(instance.transform, true);
+            var union = unionHost.AddComponent<OverlapDetector3D>();
+            union.Filter = new OverlapFilter3D(1 << 11);
+            union.Composite = new OverlapComposite3D(OverlapShape3D.Box(Vector3.zero, Vector3.one * 3, Quaternion.identity),
+                OverlapShape3D.Sphere(Vector3.zero, 2));
+            Require(union.Sample() && union.LastComplete.Count == 4 && union.LastQuery.Status == OverlapQueryStatus.Complete,
+                "Current Box/Sphere union failed to deduplicate real collider identities.");
+            union.Stop();
+            _report.currentBoxSphere = true;
             Destroy(targets[0]);
             yield return null;
             Sync();
@@ -406,6 +410,177 @@ namespace YLFramework.Overlap.Acceptance
             _report.leaseCount = diagnostic?.LeaseCount ?? 0;
             _report.recordCount = diagnostic?.RecordCount ?? 0;
             Require(_report.resourceWasNull && _report.leaseCount == 0 && _report.recordCount == 0, "Overlap leaked Resource state.");
+        }
+
+        private IEnumerator CurrentContactEvents(GameObject instance)
+        {
+            var root = instance.transform.Find("CurrentEvents");
+            var receiver = root.GetComponent<OverlapPlayerEventReceiver>();
+            var two = root.Find("Area2D").GetComponent<OverlapDetector2D>();
+            var three = root.Find("Detector3D").GetComponent<OverlapDetector3D>();
+            Require(!root.gameObject.activeSelf && receiver.entered2D + receiver.entered3D == 0 &&
+                two.EnteredEvent.GetPersistentEventCount() == 2 && two.StayedEvent.GetPersistentEventCount() == 2 &&
+                two.ExitedEvent.GetPersistentEventCount() == 1 && three.EnteredEvent.GetPersistentEventCount() == 2 &&
+                three.StayedEvent.GetPersistentEventCount() == 2 && three.ExitedEvent.GetPersistentEventCount() == 1,
+                "Cold current prefab lost its ten persistent Contact callbacks across six channels.");
+            root.gameObject.SetActive(true);
+            Sync();
+            Require(two.Sample() && three.Sample() && receiver.entered2D == 1 && receiver.entered3D == 1,
+                "Cold persistent Enter methods were not called by the actual Detector.");
+            Require(two.Sample() && three.Sample() && receiver.stayed2D == 1 && receiver.stayed3D == 1,
+                "Cold persistent Stay methods were not called by the actual Detector.");
+            Require(Vector3.Distance(receiver.point2D, new Vector3(0.25f, 120, 0)) < 0.00001f &&
+                Vector3.Distance(receiver.point3D, new Vector3(0.25f, 140, 7.5f)) < 0.00001f,
+                "Closest points must be relative to Detector position, with 2D Z zero and real 3D Z. Actual=" +
+                receiver.point2D.ToString("F8") + "/" + receiver.point3D.ToString("F8") + "; targets=" +
+                two.LastComplete[0].Collider.name + "/" + three.LastComplete[0].Collider.name);
+            _report.closestPoint3DZ = true;
+            Vector3 point2D = receiver.point2D, point3D = receiver.point3D;
+            Destroy(root.Find("Target2D").gameObject);
+            Destroy(root.Find("Target3D").gameObject);
+            yield return null;
+            Sync();
+            Require(two.Sample() && three.Sample() && receiver.exited2D == 1 && receiver.exited3D == 1 &&
+                receiver.reason2D == OverlapExitReason.TargetDestroyed && receiver.reason3D == OverlapExitReason.TargetDestroyed &&
+                receiver.exitPoint2D == point2D && receiver.exitPoint3D == point3D,
+                "Destroyed persistent Exit must carry captured identity/reason and the last submitted point.");
+            _report.persistentContactEvents = _report.destroyedLastPoint = true;
+            var target = new GameObject("Unscaled2D") { layer = 11 };
+            target.transform.SetParent(root, false);
+            target.transform.position = new Vector3(0.75f, 120);
+            target.AddComponent<BoxCollider2D>();
+            var target3D = new GameObject("Unscaled3D") { layer = 11 };
+            target3D.transform.SetParent(root, false);
+            target3D.transform.position = new Vector3(0.75f, 140, 8);
+            target3D.AddComponent<BoxCollider>();
+            Sync();
+            Require(two.Sample() && two.LastComplete.Count == 1, "Live Area Transform input lost its adjacent-pair hit.");
+            var to = root.Find("To");
+            to.localPosition = new Vector3(-2, 2);
+            Require(two.Sample() && two.LastQuery.Status == OverlapQueryStatus.Complete && two.LastComplete.Count == 0 &&
+                receiver.exited2D == 2, "A finite all-degenerate Area must commit empty and release the previous contact once.");
+            Require(two.Sample() && receiver.exited2D == 2, "Empty Area must not repeat Exit.");
+            two.SetAreaPositions(new[] { new Vector3(-2, -2), new Vector3(2, 2) });
+            Require(two.Sample() && two.LastComplete.Count == 1, "Local Area positions did not recover before invalid-input checking.");
+            two.SetAreaPositions(new[] { new Vector3(float.NaN, 1) });
+            Require(!two.Sample() && two.LastQuery.Status == OverlapQueryStatus.Invalidated && two.LastComplete.Count == 1 &&
+                receiver.exited2D == 2, "An unpaired nonfinite node must not commit false Exit.");
+            two.SetAreaPositions(new[] { new Vector3(-2, -2), new Vector3(2, 2) });
+            Require(two.Sample() && two.LastComplete.Count == 1, "Local Area positions did not recover.");
+            _report.areaInvalidation = true;
+            float scale = Time.timeScale;
+            try
+            {
+                two.SamplingMode = OverlapSamplingMode.UnscaledUpdate;
+                three.SamplingMode = OverlapSamplingMode.FixedUpdate;
+                int stays = receiver.stayed2D;
+                Time.timeScale = 0;
+                yield return new WaitForSecondsRealtime(0.08f);
+                Require(receiver.stayed2D > stays && receiver.entered3D == 1,
+                    "Unscaled Update must run while FixedUpdate stays paused at zero timeScale.");
+                three.SamplingMode = OverlapSamplingMode.UnscaledUpdate;
+                yield return new WaitForSecondsRealtime(0.08f);
+                Require(receiver.entered3D == 2 && receiver.stayed3D > 1, "3D unscaled Update did not resume real sampling.");
+                _report.unscaledUpdate = true;
+            }
+            finally
+            {
+                Time.timeScale = scale;
+                two.SamplingMode = OverlapSamplingMode.Manual;
+                three.SamplingMode = OverlapSamplingMode.Manual;
+            }
+            two.SetAreaTransforms(new[] { root.Find("From"), null, to });
+            Require(two.Sample() && two.LastComplete.Count == 0, "Missing Transform nodes must skip adjacent pairs, not bridge across them.");
+            two.SetAreaPositions(Array.Empty<Vector3>());
+            Require(two.Sample() && two.LastQuery.Status == OverlapQueryStatus.Complete && two.LastComplete.Count == 0,
+                "An empty Area chain must submit complete empty.");
+            two.SetAreaPositions(new[] { new Vector3(-2, -2), new Vector3(2, 2) });
+            foreach (var command in new[] { "stop", "disable", "restart" })
+            {
+                foreach (bool stay in new[] { false, true })
+                {
+                    CheckTwo(stay, command);
+                    CheckThree(stay, command);
+                }
+            }
+            _report.serializedLifecycleBatches = _report.serializedLifecycleCases == 12;
+            two.Stop();
+            three.Stop();
+            root.gameObject.SetActive(false);
+
+            void CheckTwo(bool stay, string command)
+            {
+                two.enabled = true;
+                two.Stop();
+                two.StartDetection();
+                if (stay)
+                    Require(two.Sample() && two.LastComplete.Count == 1, "Persistent Stay must start with a real committed contact.");
+                var phase = stay ? "stay" : "enter";
+                receiver.BeginLifecycle(two, phase, command);
+                var callback = stay ? two.StayedEvent : two.EnteredEvent;
+                UnityEngine.Events.UnityAction<OverlapContact<Collider2D>> runtime = _ =>
+                {
+                    Require(two.LastComplete.Count == 1, "Persistent 2D lifecycle cleared the atomic batch snapshot too early.");
+                    receiver.lifecycleTrace.Add(phase + ".runtime");
+                };
+                callback.AddListener(runtime);
+                try
+                {
+                    Require(!two.Sample() && two.LastComplete.Count == 0 && two.IsRunning == (command == "restart"), "2D serialized lifecycle did not terminate its old generation.");
+                    CheckTrace(phase, command);
+                    receiver.EndLifecycle();
+                    if (command == "restart")
+                        Require(two.Sample() && two.LastComplete.Count == 1, "2D restart did not observe a fresh generation.");
+                }
+                finally
+                {
+                    callback.RemoveListener(runtime);
+                    receiver.EndLifecycle();
+                    two.enabled = true;
+                    two.Stop();
+                }
+            }
+
+            void CheckThree(bool stay, string command)
+            {
+                three.enabled = true;
+                three.Stop();
+                three.StartDetection();
+                if (stay)
+                    Require(three.Sample() && three.LastComplete.Count == 1, "Persistent 3D Stay must start with a real contact.");
+                var phase = stay ? "stay" : "enter";
+                receiver.BeginLifecycle(three, phase, command);
+                var callback = stay ? three.StayedEvent : three.EnteredEvent;
+                UnityEngine.Events.UnityAction<OverlapContact<Collider>> runtime = _ =>
+                {
+                    Require(three.LastComplete.Count == 1, "Persistent 3D lifecycle cleared the atomic batch snapshot too early.");
+                    receiver.lifecycleTrace.Add(phase + ".runtime");
+                };
+                callback.AddListener(runtime);
+                try
+                {
+                    Require(!three.Sample() && three.LastComplete.Count == 0 && three.IsRunning == (command == "restart"), "3D serialized lifecycle did not terminate its old generation.");
+                    CheckTrace(phase, command);
+                    receiver.EndLifecycle();
+                    if (command == "restart")
+                        Require(three.Sample() && three.LastComplete.Count == 1, "3D restart did not observe a fresh generation.");
+                }
+                finally
+                {
+                    callback.RemoveListener(runtime);
+                    receiver.EndLifecycle();
+                    three.enabled = true;
+                    three.Stop();
+                }
+            }
+
+            void CheckTrace(string phase, string command)
+            {
+                var reason = command == "disable" ? OverlapExitReason.Disabled : OverlapExitReason.Stopped;
+                Require(receiver.lifecycleTrace.SequenceEqual(new[] { phase + ".A", phase + ".B", phase + ".runtime", "exit:" + reason }),
+                    "Persistent lifecycle batch interleaved an old callback after Exit: " + string.Join(",", receiver.lifecycleTrace));
+                _report.serializedLifecycleCases++;
+            }
         }
 
         private void QueriesAndCasts(Transform parent, Rig two, Rig three)

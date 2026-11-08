@@ -93,7 +93,6 @@ namespace YLFramework.Editor.Buff
     }
 
     /// <summary>保存 Editor 的效果分类、资产登记与 C# 类型分组，并提供 ID 查询缓存。</summary>
-    [PreviousProjectSettingsName("YLFramework.BuffSystem.BuffSystemSettings")]
     public class BuffSystemSettings : ProjectSettingsScriptableObject<BuffSystemSettings>
     {
 

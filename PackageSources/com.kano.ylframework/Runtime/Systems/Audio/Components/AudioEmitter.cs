@@ -31,8 +31,8 @@ namespace YLFramework.Audio
         [SerializeField] private bool loop;
         [Tooltip("Play once in the first Start, not on every enable. Disabling stops owned loops and following sounds, but not fixed/2D one-shots.")]
         [SerializeField] private bool playOnAwake;
-        [Tooltip("Inherit AudioKit.PlaySoundMode. Reset enables this for newly added Editor components; missing fields in old assets keep the explicit mode.")]
-        [SerializeField] private bool useGlobalPlaySoundMode = false;
+        [Tooltip("Inherit AudioKit.PlaySoundMode by default in Editor and runtime. An explicitly saved false uses the component's playSoundMode.")]
+        [SerializeField] private bool useGlobalPlaySoundMode = true;
         [SerializeField] private AudioKit.PlaySoundModes playSoundMode = AudioKit.PlaySoundModes.EveryOne;
         [SerializeField] private PositionMode positionMode;
         [Tooltip("Leave empty to follow this component's Transform.")]
@@ -60,12 +60,6 @@ namespace YLFramework.Audio
 
         private readonly List<Playback> _playbacks = new List<Playback>();
         private Action<AudioClip, AudioHandle> _startedCallback;
-
-        /// <summary>为新添加的 Editor 组件默认启用全局去重模式继承，不改旧资产缺省字段值。</summary>
-        private void Reset()
-        {
-            useGlobalPlaySoundMode = true;
-        }
 
         /// <summary>按配置只在首次 Start 自动播放，不在每次启用时重复触发。</summary>
         private void Start()

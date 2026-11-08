@@ -4,7 +4,6 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using dnlib.DotNet;
 using Newtonsoft.Json;
@@ -20,6 +19,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
     public class HybridCLRBuildPipelineTests
     {
         private string _root;
+        private string _rootGuid;
         private string _temporary;
         private HybridCLRBuildProfile _profile;
         private string _workspaceRoot;
@@ -30,7 +30,8 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         {
             var id = Guid.NewGuid().ToString("N");
             _root = "Assets/Tests/YLFramework/Fixtures/HybridCLRBuild-" + id;
-            AssetDatabase.CreateFolder("Assets/Tests/YLFramework/Fixtures", "HybridCLRBuild-" + id);
+            Assert.That(Directory.Exists(_root) || File.Exists(_root + ".meta"), Is.False);
+            _rootGuid = AssetDatabase.CreateFolder("Assets/Tests/YLFramework/Fixtures", "HybridCLRBuild-" + id);
             _temporary = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kilo", "YLHybridCLRBuild-" + id);
             Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary));
             var project = ScriptableObject.CreateInstance<ResourceProject>();
@@ -54,6 +55,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         [TearDown]
         public void TearDown()
         {
+            Assert.That(AssetDatabase.AssetPathToGUID(_root), Is.EqualTo(_rootGuid));
             AssetDatabase.DeleteAsset(_root);
             if (Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary)))
             {
@@ -84,11 +86,25 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Assert.That(PlayerSettings.GetApiCompatibilityLevel(BuildTargetGroup.Standalone), Is.EqualTo(compatibility));
         }
 
+        [TestCase("recipe")]
+        [TestCase("development")]
+        [TestCase("generatedAssetDirectory")]
+        [TestCase("baselineDirectory")]
+        [TestCase("hotUpdateAssemblies")]
+        [TestCase("baseProfile")]
+        public void CurrentProfileFieldsDoNotRetainLegacySerializedReaders(string name)
+        {
+            var field = typeof(HybridCLRBuildProfile).GetField(name);
+            Assert.That(field, Is.Not.Null);
+            Assert.That(field.GetCustomAttributes<UnityEngine.Serialization.FormerlySerializedAsAttribute>(), Is.Empty,
+                "Current formally saved profile inputs must not require the retired field reader: " + name);
+        }
+
         [TestCase(false, false)]
         [TestCase(false, true)]
         [TestCase(true, false)]
         [TestCase(true, true)]
-        public void LegacyProfileNamesRetainBooleansRootsReferencesAndSettingsFingerprint(bool development, bool selectRoots)
+        public void CurrentSavedProfilesColdReadBooleansRootsReferencesAndSettingsFingerprint(bool development, bool selectRoots)
         {
             _profile.development = development;
             EditorUtility.SetDirty(_profile);
@@ -98,9 +114,9 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             child.development = development;
             child.generatedAssetDirectory = _root + "/ChildGenerated";
             child.baselineDirectory = _profile.baselineDirectory;
-            child.hotUpdateAssemblies = selectRoots ? new[] { "Legacy.Entry", "Legacy.Support" } : Array.Empty<string>();
+            child.hotUpdateAssemblies = selectRoots ? new[] { "Current.Entry", "Current.Support" } : Array.Empty<string>();
             child.baseProfile = _profile;
-            string path = _root + "/LegacyProfile.asset";
+            string path = _root + "/CurrentProfile.asset";
             AssetDatabase.CreateAsset(child, path);
             AssetDatabase.SaveAssetIfDirty(child);
             var fingerprintMethod = typeof(HybridCLRBuildPipeline).GetMethod("SettingsFingerprint",
@@ -114,7 +130,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                 try
                 {
                     settings.hotUpdateAssemblyDefinitions = Array.Empty<UnityEditorInternal.AssemblyDefinitionAsset>();
-                    settings.hotUpdateAssemblies = new[] { "Legacy.Entry", "Legacy.Support" };
+                    settings.hotUpdateAssemblies = new[] { "Current.Entry", "Current.Support" };
                     settings.preserveHotUpdateAssemblies = Array.Empty<string>();
                     return (string)fingerprintMethod.Invoke(null, new object[] { value });
                 }
@@ -127,39 +143,60 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             }
 
             string fingerprint = Fingerprint(child);
-            var names = new[]
+            var paths = new[]
             {
-                ("Recipe", "recipe"), ("Development", "development"),
-                ("GeneratedAssetDirectory", "generatedAssetDirectory"), ("BaselineDirectory", "baselineDirectory"),
-                ("HotUpdateAssemblies", "hotUpdateAssemblies"), ("BaseProfile", "baseProfile")
+                path, AssetDatabase.GetAssetPath(_profile), AssetDatabase.GetAssetPath(_profile.recipe),
+                AssetDatabase.GetAssetPath(_profile.recipe.project)
             };
-            string yaml = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path));
-            foreach (var name in names)
-            {
-                yaml = Regex.Replace(yaml, @"(?m)^  " + name.Item2 + @":", "  " + name.Item1 + ":");
-                Assert.That(Regex.Matches(yaml, @"(?m)^  " + name.Item1 + @":").Count, Is.EqualTo(1));
-            }
+            var guids = paths.Select(AssetDatabase.AssetPathToGUID).ToArray();
+            var bytes = paths.Select(value => File.ReadAllBytes(value)).ToArray();
+            var metas = paths.Select(value => File.ReadAllBytes(value + ".meta")).ToArray();
+            Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(child, out string childGuid, out long childId), Is.True);
+            Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(child))),
+                Is.EqualTo("fa0a9e25cfd87fc4987e563e9e6a591d"));
+            var recipe = _profile.recipe;
+            var project = recipe.project;
+            var generated = child.generatedAssetDirectory;
+            var baseline = child.baselineDirectory;
+            Resources.UnloadAsset(child);
+            Resources.UnloadAsset(_profile);
+            Resources.UnloadAsset(recipe);
+            Resources.UnloadAsset(project);
+            Assert.That((bool)child || (bool)_profile || (bool)recipe || (bool)project, Is.False);
 
-            File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), yaml, new UTF8Encoding(false));
-            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
             var reloaded = AssetDatabase.LoadAssetAtPath<HybridCLRBuildProfile>(path);
-            var serialized = new SerializedObject(reloaded);
-            foreach (var name in names)
+            _profile = reloaded.baseProfile;
+            using (var serialized = new SerializedObject(reloaded))
             {
-                Assert.That(serialized.FindProperty(name.Item2), Is.Not.Null, "Migration target field missing: " + name.Item2);
+                Assert.That(serialized.FindProperty("recipe").objectReferenceValue, Is.SameAs(_profile.recipe));
+                Assert.That(serialized.FindProperty("baseProfile").objectReferenceValue, Is.SameAs(_profile));
+                Assert.That(serialized.FindProperty("development").boolValue, Is.EqualTo(development));
             }
-
-            Assert.That(serialized.FindProperty("recipe").objectReferenceValue, Is.SameAs(_profile.recipe));
-            Assert.That(serialized.FindProperty("baseProfile").objectReferenceValue, Is.SameAs(_profile));
-            Assert.That(serialized.FindProperty("development").boolValue, Is.EqualTo(development));
-            Assert.That(reloaded.generatedAssetDirectory, Is.EqualTo(_root + "/ChildGenerated"));
-            Assert.That(reloaded.baselineDirectory, Is.EqualTo(_profile.baselineDirectory));
-            Assert.That(reloaded.hotUpdateAssemblies, Is.EqualTo(selectRoots ? new[] { "Legacy.Entry", "Legacy.Support" } : Array.Empty<string>()));
+            Assert.That(ReferenceEquals(reloaded, child), Is.False);
+            Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(reloaded, out string restoredGuid, out long restoredId), Is.True);
+            Assert.That(restoredGuid, Is.EqualTo(childGuid));
+            Assert.That(restoredId, Is.EqualTo(childId));
+            Assert.That(reloaded.generatedAssetDirectory, Is.EqualTo(generated));
+            Assert.That(reloaded.baselineDirectory, Is.EqualTo(baseline));
+            Assert.That(reloaded.hotUpdateAssemblies, Is.EqualTo(selectRoots ? new[] { "Current.Entry", "Current.Support" } : Array.Empty<string>()));
+            Assert.That(_profile.development, Is.EqualTo(development));
+            Assert.That(reloaded.recipe.project.projectId, Does.StartWith("hot-"));
+            Assert.That(reloaded.recipe.appContentCompatibilityId, Is.EqualTo("base-v1"));
             Assert.That(Fingerprint(reloaded), Is.EqualTo(fingerprint));
-            EditorUtility.SetDirty(reloaded);
-            AssetDatabase.SaveAssetIfDirty(reloaded);
-            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
-            Assert.That(Fingerprint(AssetDatabase.LoadAssetAtPath<HybridCLRBuildProfile>(path)), Is.EqualTo(fingerprint));
+            var output = Environment.GetEnvironmentVariable("YL_TEST_OUTPUT_ROOT");
+            Assert.That(Directory.Exists(output), Is.True, "Run this contract through the declared owned native host.");
+            var evidence = Path.Combine(output, "HybridCLRCurrentProfiles-" + development + "-" + selectRoots);
+            Assert.That(Directory.Exists(evidence), Is.False);
+            Directory.CreateDirectory(evidence);
+            for (var i = 0; i < paths.Length; i++)
+            {
+                Assert.That(AssetDatabase.AssetPathToGUID(paths[i]), Is.EqualTo(guids[i]));
+                CollectionAssert.AreEqual(bytes[i], File.ReadAllBytes(paths[i]));
+                CollectionAssert.AreEqual(metas[i], File.ReadAllBytes(paths[i] + ".meta"));
+                File.WriteAllBytes(Path.Combine(evidence, Path.GetFileName(paths[i])), bytes[i]);
+                File.WriteAllBytes(Path.Combine(evidence, Path.GetFileName(paths[i]) + ".meta"), metas[i]);
+                TestContext.WriteLine("Current profile input: {0}; GUID={1}", paths[i], guids[i]);
+            }
         }
 
         [Test]

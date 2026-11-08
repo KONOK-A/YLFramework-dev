@@ -682,7 +682,7 @@ namespace YLFramework.Core
                         }
 
                         result = ViewManager.CompleteAsync<Panel>(winner.Owner, winner.Prefab, winner.Name ?? winner.Prefab.name,
-                        winner.Root.GetLayer(winner.Settings.layer), winner.Root.gameObject.scene, winner.Args, null,
+                        winner.Root.GetLayer(winner.Settings.layer), winner.Root.gameObject.scene, winner.Args,
                         winner.Validate, productionLease, winner);
                         resultSession = result.Session;
                         existing = _states[result];

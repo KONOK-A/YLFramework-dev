@@ -60,20 +60,6 @@ function Read-YLIntegrationJson([string] $Path) {
 
 function Get-YLIntegrationPackageContent([string] $Root, [string] $PackageId, [switch] $NormalizeManifest, [switch] $AllowManagedFingerprint,
     [ValidateSet('Git', 'Registry', 'LocalTarball')][string] $FingerprintSource = 'Git') {
-    function Convert-CanonicalToken([Newtonsoft.Json.Linq.JToken] $Token) {
-        if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
-            $result = [Newtonsoft.Json.Linq.JObject]::new()
-            [string[]]$names = @($Token.Properties() | ForEach-Object Name); [Array]::Sort($names, [StringComparer]::Ordinal)
-            foreach ($name in $names) { $result.Add($name, (Convert-CanonicalToken $Token[$name])) }
-            return ,$result
-        }
-        if ($Token -is [Newtonsoft.Json.Linq.JArray]) {
-            $result = [Newtonsoft.Json.Linq.JArray]::new()
-            foreach ($item in $Token) { $result.Add((Convert-CanonicalToken $item)) }
-            return ,$result
-        }
-        return ,$Token.DeepClone()
-    }
     $Root = Get-YLTestPath $Root
     $metadata = Read-YLIntegrationJson (Join-Path $Root 'package.json')
     if ($null -eq $metadata['name'] -or $metadata['name'].Type -ne [Newtonsoft.Json.Linq.JTokenType]::String -or [string]$metadata['name'] -cne $PackageId -or
@@ -91,8 +77,8 @@ function Get-YLIntegrationPackageContent([string] $Root, [string] $PackageId, [s
                 $fingerprint.Remove()
             }
             if ($NormalizeManifest) {
-                $json = (Convert-CanonicalToken $manifest).ToString([Newtonsoft.Json.Formatting]::None)
-                $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))).ToLowerInvariant()
+                $json = (ConvertTo-YLPackageCanonicalToken $manifest).ToString([Newtonsoft.Json.Formatting]::None)
+                $hash = Get-YLPackageManifestHash $json
             }
         }
         $files.Add($relative, @{ path = $relative; sha256 = $hash })
@@ -206,22 +192,6 @@ function Get-YLIntegrationPackageFiles([string] $Repository, [object[]] $Package
             [IO.Path]::GetRelativePath($Repository, $path).Replace('\', '/')
         }
     }
-}
-
-function Get-YLIntegrationHybridSdk([string] $Repository) {
-    $id = 'com.code-philosophy.hybridclr'
-    try {
-        $manifest = [IO.File]::ReadAllText((Join-Path $Repository 'Packages/manifest.json')) | ConvertFrom-Json -AsHashtable -DateKind String
-        $lock = [IO.File]::ReadAllText((Join-Path $Repository 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable -DateKind String
-        $approval = [IO.File]::ReadAllText((Join-Path $Repository 'PackageSources/com.kano.ylframework.hybridclr/Dependencies.json')) | ConvertFrom-Json -AsHashtable -DateKind String
-        $url = $manifest['dependencies'][$id]; $entry = $lock['dependencies'][$id]; $approved = $approval['package']
-        if ($url -isnot [string] -or $url -cne 'https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3' -or
-            $entry -isnot [Collections.IDictionary] -or $entry['source'] -isnot [string] -or $entry['source'] -cne 'git' -or
-            $entry['version'] -isnot [string] -or $entry['version'] -cne $url -or $entry['hash'] -isnot [string] -or $entry['hash'] -cnotmatch '^[0-9a-f]{40}$' -or
-            $approved['name'] -cne $id -or $approved['version'] -cne '9.0.3' -or $approved['url'] -cne $url -or
-            $approved['commit'] -isnot [string] -or $approved['commit'] -cne $entry['hash'] -or $approved['bundled'] -isnot [bool] -or $approved['bundled']) { throw 'The official 9.0.3 SDK declaration, approved commit and actual root lock must match.' }
-        return @{ declaration = $url; revision = $entry['hash']; version = '9.0.3' }
-    } catch { throw "PrerequisiteNotMet: HybridCLR SDK: $($_.Exception.Message)" }
 }
 
 $sourceArguments = @{ PackageSource = $PackageSource }

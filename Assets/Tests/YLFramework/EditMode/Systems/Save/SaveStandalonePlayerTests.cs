@@ -25,14 +25,19 @@ namespace YLFramework.Tests.SavePackage
             public bool mainAbsent;
             public bool coldReopened;
             public bool backupRecovered;
+            public bool isIL2CPP;
+            public bool developmentBuild;
         }
 
-        [Test]
+        [TestCase(ScriptingImplementation.Mono2x)]
+        [TestCase(ScriptingImplementation.IL2CPP)]
         [Category("YL.Package.SaveStandalone")]
-        public void NoMainPackagePlayerPersistsAcrossProcessesAndExplicitlyRecoversBackup()
+        public void NoMainPackagePlayerPersistsAcrossProcessesAndExplicitlyRecoversBackup(ScriptingImplementation implementation)
         {
             Assert.That(Application.isBatchMode && !EditorApplication.isPlaying, Is.True);
-            string output = global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput();
+            string output = Path.Combine(global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput(), "SavePlayer-" + implementation);
+            Assert.That(Directory.Exists(output), Is.False);
+            Directory.CreateDirectory(output);
             string project = Directory.GetParent(Application.dataPath).FullName;
             Assert.That(File.Exists(Path.Combine(project, ".yl-owner.json")), Is.True);
             string player = Path.Combine(project, "P", Guid.NewGuid().ToString("N").Substring(0, 8));
@@ -72,6 +77,7 @@ namespace YLFramework.Tests.SavePackage
             }
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             var backend = PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone);
+            var stripping = PlayerSettings.GetManagedStrippingLevel(BuildTargetGroup.Standalone);
             string executable = Path.Combine(player, "P.exe");
             try
             {
@@ -79,19 +85,25 @@ namespace YLFramework.Tests.SavePackage
                 new GameObject("StandaloneSaveProbe").AddComponent(type);
                 string scenePath = folder + "/Player.unity";
                 Assert.That(EditorSceneManager.SaveScene(scene, scenePath), Is.True);
-                PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, ScriptingImplementation.Mono2x);
+                PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, implementation);
+                if (implementation == ScriptingImplementation.IL2CPP)
+                {
+                    PlayerSettings.SetManagedStrippingLevel(BuildTargetGroup.Standalone, ManagedStrippingLevel.Medium);
+                }
                 var build = BuildPipeline.BuildPlayer(new BuildPlayerOptions
                 {
                     scenes = new[] { scenePath },
                     locationPathName = executable,
                     target = BuildTarget.StandaloneWindows64,
-                    options = BuildOptions.Development
+                    options = BuildOptions.Development,
+                    extraScriptingDefines = new[] { "YL_SAVE_ACCEPTANCE" }
                 });
                 Assert.That(build.summary.result, Is.EqualTo(UnityEditor.Build.Reporting.BuildResult.Succeeded));
             }
             finally
             {
                 PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, backend);
+                PlayerSettings.SetManagedStrippingLevel(BuildTargetGroup.Standalone, stripping);
                 const string Empty = "Assets/YLTestingProfile/Empty.unity";
                 if (File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Empty)))
                 {
@@ -103,7 +115,14 @@ namespace YLFramework.Tests.SavePackage
                 }
             }
             string managed = Path.Combine(player, "P_Data/Managed");
-            Assert.That(File.Exists(Path.Combine(managed, "YLFramework.Save.dll")), Is.True);
+            if (implementation == ScriptingImplementation.Mono2x)
+            {
+                Assert.That(File.Exists(Path.Combine(managed, "YLFramework.Save.dll")), Is.True);
+            }
+            else
+            {
+                Assert.That(File.Exists(Path.Combine(player, "GameAssembly.dll")), Is.True);
+            }
             Assert.That(File.Exists(Path.Combine(managed, "YLFramework.Runtime.dll")), Is.False);
             int previousPid = 0;
             for (int run = 1; run <= 2; run++)
@@ -132,6 +151,8 @@ namespace YLFramework.Tests.SavePackage
                 Assert.That(report.unityVersion, Is.EqualTo(Application.unityVersion));
                 Assert.That(report.runtimeAssembly, Is.EqualTo("YLFramework.Save"));
                 Assert.That(report.mainAbsent && report.coldReopened, Is.True);
+                Assert.That(report.isIL2CPP, Is.EqualTo(implementation == ScriptingImplementation.IL2CPP));
+                Assert.That(report.developmentBuild, Is.True);
                 if (run == 2)
                 {
                     Assert.That(report.backupRecovered, Is.True);

@@ -73,11 +73,9 @@ namespace YLFramework.Tests.Extensions.Data.Save
 
         [TestCase(0)]
         [TestCase(7)]
-        public void SynchronousSaveOnAnUnknownSlotLogsTheExistingErrorAndDoesNotWrite(int saveId)
+        public void SynchronousSaveOnAnUnknownSlotThrowsWithoutLoggingOrWriting(int saveId)
         {
-            LogAssert.Expect(LogType.Error, "#YLFramework 没有该存档项，非法访问 :" + saveId);
-
-            SaveManager.SaveObject(new Payload { Number = 42 }, "player", saveId);
+            Assert.Throws<KeyNotFoundException>(() => SaveManager.Store.SaveObject(new Payload { Number = 42 }, "player", saveId));
 
             LogAssert.NoUnexpectedReceived();
             AssertEmptyRoot();
@@ -85,11 +83,9 @@ namespace YLFramework.Tests.Extensions.Data.Save
 
         [TestCase(0)]
         [TestCase(7)]
-        public void SynchronousLoadOnAnUnknownSlotLogsTheExistingErrorAndReturnsNull(int saveId)
+        public void SynchronousLoadOnAnUnknownSlotThrowsWithoutLoggingOrWriting(int saveId)
         {
-            LogAssert.Expect(LogType.Error, "#YLFramework 没有该存档项，非法访问 :" + saveId);
-
-            Assert.That(SaveManager.LoadObject<Payload>("player", saveId), Is.Null);
+            Assert.Throws<KeyNotFoundException>(() => SaveManager.Store.LoadObject<Payload>("player", saveId));
 
             LogAssert.NoUnexpectedReceived();
             AssertEmptyRoot();
@@ -97,13 +93,13 @@ namespace YLFramework.Tests.Extensions.Data.Save
 
         [TestCase(0)]
         [TestCase(7)]
-        public void TryLoadAndDeleteOnAnUnknownSlotReturnFalseWithoutLogging(int saveId)
+        public void QueryAndDeleteOnAnUnknownSlotReturnFalseWithoutLogging(int saveId)
         {
             for (var attempt = 0; attempt < 2; attempt++)
             {
-                Assert.That(SaveManager.TryLoadObject(out Payload value, "player", saveId), Is.False);
-                Assert.That(value, Is.Null);
-                Assert.That(SaveManager.DeleteObject("player", saveId), Is.False);
+                Assert.That(SaveManager.Store.HasSaveItem(saveId), Is.False);
+                Assert.That(SaveManager.Store.HasObject("player", saveId), Is.False);
+                Assert.That(SaveManager.Store.DeleteObject("player", saveId), Is.False);
             }
 
             LogAssert.NoUnexpectedReceived();
@@ -112,9 +108,9 @@ namespace YLFramework.Tests.Extensions.Data.Save
 
         [TestCase(0)]
         [TestCase(7)]
-        public void ReadOnAnUnknownSlotThrowsInsteadOfUsingTheSynchronousLoadLogBoundary(int saveId)
+        public void ReadOnAnUnknownSlotHasTheSameExplicitErrorAsBothLoadPaths(int saveId)
         {
-            Assert.Throws<KeyNotFoundException>(() => SaveManager.ReadObject<Payload>("player", saveId));
+            Assert.Throws<KeyNotFoundException>(() => SaveManager.Store.ReadObject<Payload>("player", saveId));
 
             LogAssert.NoUnexpectedReceived();
             AssertEmptyRoot();
@@ -124,10 +120,10 @@ namespace YLFramework.Tests.Extensions.Data.Save
         [TestCase(7)]
         public void AsynchronousObjectOperationsOnAnUnknownSlotThrowInsteadOfLogging(int saveId)
         {
-            Assert.ThrowsAsync<KeyNotFoundException>(() => SaveManager.SaveObjectAsync(
+            Assert.ThrowsAsync<KeyNotFoundException>(() => SaveManager.Store.SaveObjectAsync(
                 new Payload { Number = 42 }, "player", saveId));
-            Assert.ThrowsAsync<KeyNotFoundException>(() => SaveManager.LoadObjectAsync<Payload>("player", saveId));
-            Assert.ThrowsAsync<KeyNotFoundException>(() => SaveManager.ReadObjectAsync<Payload>("player", saveId));
+            Assert.ThrowsAsync<KeyNotFoundException>(() => SaveManager.Store.LoadObjectAsync<Payload>("player", saveId));
+            Assert.ThrowsAsync<KeyNotFoundException>(() => SaveManager.Store.ReadObjectAsync<Payload>("player", saveId));
 
             LogAssert.NoUnexpectedReceived();
             AssertEmptyRoot();
@@ -135,8 +131,8 @@ namespace YLFramework.Tests.Extensions.Data.Save
 
         private void AssertEmptyRoot()
         {
-            Assert.That(SaveManager.GetSaveItemCount(), Is.Zero);
-            Assert.That(SaveManager.CurrentSaveId, Is.Null);
+            Assert.That(SaveManager.Store.GetAllSaveItems().Count, Is.Zero);
+            Assert.That(SaveManager.Store.CurrentSaveId, Is.Null);
             var entries = Directory.GetFileSystemEntries(
                 global::YLFramework.Testing.PackageTestPaths.Physical(_root), "*", SearchOption.AllDirectories);
             Assert.That(entries.Length, Is.EqualTo(1));

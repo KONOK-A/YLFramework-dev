@@ -12,42 +12,42 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b8d754bdbc05bfb45bb058ffdf82c0bc, type: 3}
   m_Name: AutomaticAtlases
   m_EditorClassIdentifier: 
-  Rules:
-  - Id: menu
-    GroupId: atlases
-    Grouping: 0
-    Address: atlases/menu
-    Sources:
+  rules:
+  - id: menu
+    groupId: atlases
+    grouping: 0
+    address: atlases/menu
+    sources:
     - {fileID: 2800000, guid: d84d040e79e1b1442a3f13ddd201be42, type: 3}
-    AllowRotation: 0
-    TightPacking: 0
-    Padding: 4
-    MaxTextureSize: 2048
-    Readable: 0
-    MipMaps: 0
-    SRgb: 1
-    FilterMode: 1
-    Compression: 0
-  - Id: icons
-    GroupId: atlases
-    Grouping: 1
-    Address: atlases/icons
-    Sources:
+    allowRotation: 0
+    tightPacking: 0
+    padding: 4
+    maxTextureSize: 2048
+    readable: 0
+    mipMaps: 0
+    srgb: 1
+    filterMode: 1
+    compression: 0
+  - id: icons
+    groupId: atlases
+    grouping: 1
+    address: atlases/icons
+    sources:
     - {fileID: 2800000, guid: fcf23c63f624c824cb56070535545268, type: 3}
     - {fileID: 2800000, guid: c3c0b355ebe41fc4bb94794478e9a619, type: 3}
-    AllowRotation: 0
-    TightPacking: 0
-    Padding: 4
-    MaxTextureSize: 2048
-    Readable: 0
-    MipMaps: 0
-    SRgb: 1
-    FilterMode: 1
-    Compression: 0
-  ProjectGuid: fb278890e808af04babc4d76bba4278f
-  GenerationParentGuid: 1dff41cb058803e4095407a75d2055b1
-  DirectoryGuid: 2e5fd897981dcdc4abe3928fc0e82ac9
-  ConfigurationGuid: ce277850e4ff294488317c3f4eefd553
-  ConfigurationMetaHash: e81104541708bcddf6bccc4bee543673ba6b8fbb862c20af3e4f2123441b4a4f
-  DirectoryMetaHash: 52ac7726a3a063c6b93ad4d16b0d51080d776c2a73c06753dff1654bce8972ce
-  Outputs: []
+    allowRotation: 0
+    tightPacking: 0
+    padding: 4
+    maxTextureSize: 2048
+    readable: 0
+    mipMaps: 0
+    srgb: 1
+    filterMode: 1
+    compression: 0
+  projectGuid: fb278890e808af04babc4d76bba4278f
+  generationParentGuid: 1dff41cb058803e4095407a75d2055b1
+  directoryGuid: 2e5fd897981dcdc4abe3928fc0e82ac9
+  configurationGuid: ce277850e4ff294488317c3f4eefd553
+  configurationMetaHash: e81104541708bcddf6bccc4bee543673ba6b8fbb862c20af3e4f2123441b4a4f
+  directoryMetaHash: 52ac7726a3a063c6b93ad4d16b0d51080d776c2a73c06753dff1654bce8972ce
+  outputs: []

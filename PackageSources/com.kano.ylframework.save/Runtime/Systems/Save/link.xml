@@ -1,6 +1,6 @@
 <linker>
   <assembly fullname="YLFramework.Save">
     <type fullname="YLFramework.Save.SaveIndex" preserve="all" />
-    <type fullname="YLFramework.Save.SaveManager/SaveItem" preserve="all" />
+    <type fullname="YLFramework.Save.SaveItem" preserve="all" />
   </assembly>
 </linker>

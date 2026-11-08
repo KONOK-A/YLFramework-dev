@@ -7,10 +7,8 @@ namespace YLFramework.RedDots
     [AddComponentMenu("YLFramework/Reddot")]
     public sealed class Reddot : MonoBehaviour
     {
-        [global::UnityEngine.Serialization.FormerlySerializedAs("_path")]
         [SerializeField, Tooltip("按段匹配，例如 Mail/Gift；空路径不显示。")]
         private string path;
-        [global::UnityEngine.Serialization.FormerlySerializedAs("_indicator")]
         [SerializeField, Tooltip("只控制此指示器。不能是本物体或其祖先，避免关闭监听宿主。")]
         private GameObject indicator;
         private IDisposable _subscription;
@@ -78,7 +76,5 @@ namespace YLFramework.RedDots
             }
         }
 
-        /// <summary>仅移除普通集合路径；独立来源须由业务所有者自行释放。</summary>
-        public void Remove() => ReddotManager.RemovePath(path);
     }
 }

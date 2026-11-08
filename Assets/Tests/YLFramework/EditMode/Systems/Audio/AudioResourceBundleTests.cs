@@ -218,6 +218,9 @@ namespace YLFramework.Tests.Audio
 
                 yield return null;
             } while (Time.realtimeSinceStartupAsDouble < outputDeadline);
+            var sourceSamples = new float[1024];
+            music.Voice.Source.GetOutputData(sourceSamples, 0);
+            TestContext.WriteLine($"AudioNative actual device: batch={Application.isBatchMode}, graphics={SystemInfo.graphicsDeviceType}, sampleRate={AudioSettings.outputSampleRate}, speakers={AudioSettings.driverCapabilities}, editorMute={EditorUtility.audioMasterMute}, sourceEnergy={sourceSamples.Sum(x => x * x)}, listenerEnergy={samples.Sum(x => x * x)}, listeners={Object.FindObjectsOfType<AudioListener>().Length}.");
             Assert.That(samples.Sum(x => x * x), Is.GreaterThan(.0001f),
                 $"Actual AudioSource output must contain the fixture signal: volume={music.Voice.Source.volume}, mute={music.Voice.Source.mute}, virtual={music.Voice.Source.isVirtual}, listenerPause={AudioListener.pause}, listenerVolume={AudioListener.volume}, data={clip.loadState}, time={music.Voice.Source.timeSamples}.");
             music.Pause();
@@ -417,6 +420,7 @@ namespace YLFramework.Tests.Audio
             private readonly bool _wasMusicOn;
             private readonly bool _wasVoiceOn;
             private readonly bool _wasSoundOn;
+            private readonly bool _editorMute;
             private readonly float _musicVolume;
             private readonly float _voiceVolume;
             private readonly float _soundVolume;
@@ -431,6 +435,8 @@ namespace YLFramework.Tests.Audio
                 _musicVolume = settings.MusicVolume.Value;
                 _voiceVolume = settings.VoiceVolume.Value;
                 _soundVolume = settings.SoundVolume.Value;
+                _editorMute = EditorUtility.audioMasterMute;
+                EditorUtility.audioMasterMute = false;
                 EnablePlayback();
                 AudioKit.PlaySoundMode = AudioKit.PlaySoundModes.EveryOne;
                 _listener = new GameObject("Audio86b.Listener", typeof(AudioListener));
@@ -447,6 +453,7 @@ namespace YLFramework.Tests.Audio
             }
             public void Dispose()
             {
+                EditorUtility.audioMasterMute = _editorMute;
                 AudioKit.Shutdown();
                 var settings = AudioKit.Settings;
                 settings.IsMusicOn.SetValueWithoutCallback(_wasMusicOn);

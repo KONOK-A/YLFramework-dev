@@ -66,7 +66,6 @@ namespace YLFramework.Core
         private Scene _targetScene;
         private readonly List<KeyValuePair<View, object>> _parentSessions = new List<KeyValuePair<View, object>>();
         private LoadViewArgs _args;
-        private object[] _param;
         private GameObject _directPrefab;
         private bool _hasDirectPrefab;
         private bool _isExecuting;
@@ -77,7 +76,7 @@ namespace YLFramework.Core
         private readonly int _threadId = Thread.CurrentThread.ManagedThreadId;
 
         /// <summary>捕获模块、父会话及资源查找上下文，接收已接管参数并登记退出监听，不立即加载实例。</summary>
-        internal LoadViewRequest(Module module, string name, Transform target, LoadViewArgs claimedArgs, object[] parameters, GameObject prefab = null)
+        internal LoadViewRequest(Module module, string name, Transform target, LoadViewArgs claimedArgs, GameObject prefab = null)
         {
             _owner = module;
             _lifecycle = module.ViewLifecycle;
@@ -95,7 +94,6 @@ namespace YLFramework.Core
                 }
             }
             _args = claimedArgs;
-            _param = parameters;
             _directPrefab = prefab;
             _hasDirectPrefab = !ReferenceEquals(prefab, null);
             _provider = _hasDirectPrefab ? null : CoreResourceAccess.Provider;
@@ -244,7 +242,6 @@ namespace YLFramework.Core
             _parentSessions.Clear();
             _projects = null;
             _assetName = null;
-            _param = null;
             _directPrefab = null;
             _targetScene = default;
             try
@@ -430,7 +427,7 @@ namespace YLFramework.Core
             }
 
             ValidateWaiting();
-            var result = ViewManager.CompleteAsync<T>(_owner, prefab, _assetName, _parent, _targetScene, _args, _param, ValidateWaiting, _prefabLease);
+            var result = ViewManager.CompleteAsync<T>(_owner, prefab, _assetName, _parent, _targetScene, _args, ValidateWaiting, _prefabLease);
             // 初始化已结束再提交；完成通知可以关闭或开启下一笔会话。
             _isExecuting = false;
             Finish(result, null, LoadViewStatus.Succeeded);

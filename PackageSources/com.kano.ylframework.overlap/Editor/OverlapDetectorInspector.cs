@@ -121,7 +121,8 @@ namespace YLFramework.Editor.Overlap
         }
 
         internal static OverlapShape2D World2D(OverlapDetector2D detector, int index) =>
-            detector.Composite.ToWorld(index, detector.transform.localToWorldMatrix);
+            detector.TryGetWorldShape(index, out var shape) ? shape :
+                throw new InvalidOperationException("Missing Area node: this adjacent pair is skipped.");
 
         internal static OverlapShape3D World3D(OverlapDetector3D detector, int index) =>
             detector.Composite.ToWorld(index, detector.transform.localToWorldMatrix);
@@ -139,9 +140,11 @@ namespace YLFramework.Editor.Overlap
                 {
                     _ = two.Filter;
                     OverlapQueryWorkspace2D.ValidateConfiguration(two.MaxShapesPerCollider, two.MaxVerticesPerShape, two.GeometryTolerance);
-                    for (int i = 0; i < two.Composite.Count; i++)
+                    int count = two.InputShapeCount;
+                    two.ValidateAreaNodes();
+                    for (int i = 0; i < count; i++)
                     {
-                        World2D(two, i);
+                        two.TryGetWorldShape(i, out _);
                     }
                     if (two.Filter.ContactFilter.useTriggers && !Physics2D.queriesHitTriggers)
                     {
@@ -177,8 +180,17 @@ namespace YLFramework.Editor.Overlap
             {
                 if (TwoD)
                 {
-                    DrawComposite2D();
-                    DrawPropertiesExcluding(serializedObject, "m_Script", "composite");
+                    var source = serializedObject.FindProperty("areaSource");
+                    EditorGUILayout.PropertyField(source, new GUIContent("Geometry Input"));
+                    if (source.hasMultipleDifferentValues || source.intValue == 0)
+                        DrawComposite2D();
+                    if (source.hasMultipleDifferentValues || source.intValue == 1)
+                        EditorGUILayout.PropertyField(serializedObject.FindProperty("areaPositions"), true);
+                    if (source.hasMultipleDifferentValues || source.intValue == 2)
+                        EditorGUILayout.PropertyField(serializedObject.FindProperty("areaTransforms"), true);
+                    if (source.hasMultipleDifferentValues || source.intValue != 0)
+                        EditorGUILayout.HelpBox("Area uses adjacent world XY AABBs, without closing the chain. Missing Transform pairs and finite zero-width/height pairs are skipped. Empty or wholly degenerate chains commit complete empty; nonfinite nodes or overflowing bounds are Invalidated. Edit nodes here; Union center handles do not edit Area.", MessageType.Info);
+                    DrawPropertiesExcluding(serializedObject, "m_Script", "composite", "areaSource", "areaPositions", "areaTransforms");
                 }
                 else
                 {
@@ -273,15 +285,15 @@ namespace YLFramework.Editor.Overlap
             }
             EditorGUILayout.LabelField("Selected-Child Preview (Editor Only)", EditorStyles.boldLabel);
             EditorGUI.BeginChangeCheck();
-            _child = EditorGUILayout.IntField("Child / center handle", _child);
-            if (TwoD && error.Length == 0 && _child >= 0 && _child < ((OverlapDetector2D)target).Composite.Count &&
+            _child = EditorGUILayout.IntField(TwoD && ((OverlapDetector2D)target).UsesArea ? "Adjacent Area pair" : "Child / center handle", _child);
+            if (TwoD && !((OverlapDetector2D)target).UsesArea && error.Length == 0 && _child >= 0 && _child < ((OverlapDetector2D)target).InputShapeCount &&
                 !TryLocalCenter2D(Detector.transform.localToWorldMatrix, World2D((OverlapDetector2D)target, _child).Center, out _))
             {
                 EditorGUILayout.HelpBox(ProjectionError, MessageType.Warning);
             }
             _previewCapacity = EditorGUILayout.IntField("Caller buffer capacity", _previewCapacity);
             _cast = EditorGUILayout.Toggle("Draw / sample Cast", _cast);
-            if (TwoD && error.Length == 0 && _child >= 0 && _child < ((OverlapDetector2D)target).Composite.Count &&
+            if (TwoD && !((OverlapDetector2D)target).UsesArea && error.Length == 0 && _child >= 0 && _child < ((OverlapDetector2D)target).InputShapeCount &&
                 World2D((OverlapDetector2D)target, _child).Kind == OverlapShapeKind2D.Sector)
             {
                 EditorGUILayout.HelpBox("Sector / annular sector / ring Cast is unsupported. Only the overlap region is queried/drawn; no swept sector or visibility/occlusion is implied.", MessageType.Info);
@@ -453,6 +465,12 @@ namespace YLFramework.Editor.Overlap
                 if (TwoD)
                 {
                     var detector = (OverlapDetector2D)target;
+                    if (detector.InputShapeCount == 0 || _child >= 0 && _child < detector.InputShapeCount &&
+                        !detector.TryGetWorldShape(_child, out _))
+                    {
+                        _previewStatus = "Complete empty preview: no geometry for this input / missing adjacent Area pair.";
+                        return;
+                    }
                     var shape = World2D(detector, _child);
                     var filter = detector.Filter;
                     if (_raw2D == null || _raw2D.Length != _previewCapacity)
@@ -574,6 +592,8 @@ namespace YLFramework.Editor.Overlap
             Vector3 local;
             if (detector is OverlapDetector2D two)
             {
+                if (two.UsesArea)
+                    throw new InvalidOperationException("Edit Area nodes through serialized positions / Transform references, not a Union center handle.");
                 if (!TryLocalCenter2D(detector.transform.localToWorldMatrix, world, out var projected))
                 {
                     throw new InvalidOperationException(ProjectionError);
@@ -691,7 +711,9 @@ namespace YLFramework.Editor.Overlap
             {
                 return;
             }
-            int count = TwoD ? ((OverlapDetector2D)target).Composite.Count : ((OverlapDetector3D)target).Composite.Count;
+            if (TwoD && ((OverlapDetector2D)target).UsesArea)
+                return;
+            int count = TwoD ? ((OverlapDetector2D)target).InputShapeCount : ((OverlapDetector3D)target).Composite.Count;
             if (_child < 0 || _child >= count)
                 return;
             Vector3 center = TwoD ? (Vector3)World2D((OverlapDetector2D)target, _child).Center : World3D((OverlapDetector3D)target, _child).Center;
@@ -801,8 +823,9 @@ namespace YLFramework.Editor.Overlap
             using var scope = new Handles.DrawingScope(Color.green, Matrix4x4.identity);
             if (detector is OverlapDetector2D two)
             {
-                for (int i = 0; i < two.Composite.Count; i++)
-                    Draw(World2D(two, i), Vector3.zero);
+                for (int i = 0; i < two.InputShapeCount; i++)
+                    if (two.TryGetWorldShape(i, out var shape))
+                        Draw(shape, Vector3.zero);
             }
             else
             {

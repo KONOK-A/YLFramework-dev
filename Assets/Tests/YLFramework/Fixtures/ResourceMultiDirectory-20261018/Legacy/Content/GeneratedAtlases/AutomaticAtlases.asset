@@ -12,32 +12,32 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b8d754bdbc05bfb45bb058ffdf82c0bc, type: 3}
   m_Name: AutomaticAtlases
   m_EditorClassIdentifier: 
-  Rules:
-  - Id: legacy
-    GroupId: atlases
-    Grouping: 0
-    Address: atlases/legacy
-    Sources:
+  rules:
+  - id: legacy
+    groupId: atlases
+    grouping: 0
+    address: atlases/legacy
+    sources:
     - {fileID: 2800000, guid: 707e4de43e112d44a88abf2c9a6e22fe, type: 3}
-    AllowRotation: 0
-    TightPacking: 0
-    Padding: 4
-    MaxTextureSize: 2048
-    Readable: 0
-    MipMaps: 0
-    SRgb: 1
-    FilterMode: 1
-    Compression: 0
-  ProjectGuid: 03c2c114ddbd9f94694267dcf9f888bc
-  GenerationParentGuid: b1927de65070f3446bc1901780c42cae
-  DirectoryGuid: 662bb56dcceeb9e4f87e13ff0ab1b14d
-  ConfigurationGuid: 04ae99941ae25d64aa0582d571c5cabc
-  ConfigurationMetaHash: ae05c08cc6632c6f01bbc4fa65397834fcf15334fb129035f8d74ea3eea4eaf8
-  DirectoryMetaHash: 5bf48d54a6370213ced8c3d21c996bb8f8f93e06f7fdf81bd0cd7e1b56107503
-  Outputs:
-  - Key: legacy
-    FileName: legacy.spriteatlasv2
-    Guid: 596ce1eca1693db4785ffbac0c2a4f2d
-    InputHash: f69286897ce8ef88ae1ac681653625c7c8c3995249b6217d382f7a5f9ecbdbe3
-    AssetHash: 5d95a7fd131783c0a9ccdce80703c187926201dec420aafd62bfe69c44ed46fe
-    MetaHash: bfa3c9ff369fde6d09cbd173d93cedc434acef0fad50474da99a7a0c19aea80f
+    allowRotation: 0
+    tightPacking: 0
+    padding: 4
+    maxTextureSize: 2048
+    readable: 0
+    mipMaps: 0
+    srgb: 1
+    filterMode: 1
+    compression: 0
+  projectGuid: 03c2c114ddbd9f94694267dcf9f888bc
+  generationParentGuid: b1927de65070f3446bc1901780c42cae
+  directoryGuid: 662bb56dcceeb9e4f87e13ff0ab1b14d
+  configurationGuid: 04ae99941ae25d64aa0582d571c5cabc
+  configurationMetaHash: ae05c08cc6632c6f01bbc4fa65397834fcf15334fb129035f8d74ea3eea4eaf8
+  directoryMetaHash: 5bf48d54a6370213ced8c3d21c996bb8f8f93e06f7fdf81bd0cd7e1b56107503
+  outputs:
+  - key: legacy
+    fileName: legacy.spriteatlasv2
+    guid: 596ce1eca1693db4785ffbac0c2a4f2d
+    inputHash: f69286897ce8ef88ae1ac681653625c7c8c3995249b6217d382f7a5f9ecbdbe3
+    assetHash: 5d95a7fd131783c0a9ccdce80703c187926201dec420aafd62bfe69c44ed46fe
+    metaHash: bfa3c9ff369fde6d09cbd173d93cedc434acef0fad50474da99a7a0c19aea80f

@@ -62,7 +62,7 @@ namespace YLFramework.Tests.ResourceBuild
             var current = Snapshot();
             var candidate = Snapshot(true);
             var envelope = ResourceReleaseSigner.Create(new ResourceRelease(Path.GetDirectoryName(candidate.DirectoryPath), candidate.Document),
-                "test", 7, "isolated-test", signing, DateTimeOffset.UtcNow.AddDays(1), channelSupportsContentEncryption: true);
+                "test", 7, "isolated-test", signing, DateTimeOffset.UtcNow.AddDays(1));
             var files = candidate.Document.Bundles.Cast<ResourceCatalogFile>().Concat(candidate.Document.SupportFiles).Select(x => x.RelativeFile)
                 .Concat(new[] { ".ylr-complete.json", "resource-catalog.json" }).ToDictionary(
                     x => "/" + candidate.Document.CatalogDigest + "/" + x,

@@ -30,6 +30,8 @@ PowerShell、Node 外部控制器不放在 `Assets` 中。固定接收工程、S
 - 离线包 DLL 按来源工程真实 manifest/lock/UPM resolution 精确验证；`-Unity` 必须与该来源导入上下文一致。切换 Native 消费方版本不等于重建来源工程的离线引用，不能拿缺失或另一 Editor 上下文的包缓存冒充已解析前置。
 - Native 宿主只安装模块声明需要的包与源码，不恢复历史游戏或接收工程。图形模块不能使用无图形模式替代。
 
+`Test-YLDevelopmentHost.ps1` 使用源工程的实际设置验证作者场景边界；源设置启用 `DOTWEEN` 时，显式传入 `-DOTweenArchive <approved-archive>`。工具复用既有 SHA-256/完整文件集校验，只在自有结果目录解压并部署批准的 SDK，不复制用户插件或清除源工程符号；归档纳入输入身份，运行前后核对宿主 SDK。该 SDK 只满足编译前置，不代表执行过 DOTween 行为专项。
+
 MCP 仅为开发工程工具，依赖声明与锁定结果保留在 `Packages/manifest.json` / `packages-lock.json`。`Assets/Plugins/NuGet/` 中的 DLL、`.meta`、安装状态及同级 `NuGet.meta` 由 MCP 恢复器生成，只在本机保留，不纳入 Git 或框架测试输入。普通 Editor 首次打开时会自动还原，需能够访问 OpenUPM 和 NuGet。
 
 示例从当前进程环境变量取值并显式传参。运行者须先将它们设为本机实际 Editor 路径和明确的独立工作根，不复制其他机器或历史验收的路径：
@@ -39,7 +41,7 @@ $unity = $env:YL_TEST_UNITY
 $workspace = $env:YL_TEST_WORKSPACE
 ```
 
-Unity 2022 与 Unity 6 使用各自真实可执行文件，支持的完整 ProductVersion 统一以 `TestSuites.json` 为准。它们与来源工程 `ProjectVersion.txt` 是不同身份；没有对应声明时不能仅替换路径声称兼容。
+必验兼容矩阵仅为 Unity 2022.3 与 Unity 6.3，本轮代表版本分别为 `2022.3.62f3`、`6000.3.27f1`，不要求中国版与国际版各跑一套。`TestSuites.json` 中保留的地区版 profile 仅供显式选择，缺少该 Editor 不构成双版本验收阻塞。实际执行仍使用各自真实可执行文件，完整 ProductVersion 按声明精确匹配；它们与来源工程 `ProjectVersion.txt` 是不同身份，没有对应声明时不能仅替换路径声称已验证。
 
 2022 自动化宿主的包基线位于 `Profiles/Unity2022`，这里只保存依赖配置，不是第二个 Unity 工程。人工兼容验证工程独立放在仓库外，导入正式框架包，不共享开发工程的源码目录或 Library。
 
@@ -70,7 +72,9 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -Action Run -Suite Special -Module Domain -Unity $unity -WorkspaceRoot $workspace
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -Action Run -Suite Special -Module Save -Unity $unity -WorkspaceRoot $workspace
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -Action Run -Suite Special -Module Resource -Unity $unity -WorkspaceRoot $workspace
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -Action Run -Suite Special -Module ResourceUpdates -Unity $unity -WorkspaceRoot $workspace
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -Action Run -Suite Special -Module Audio -Unity $unity -WorkspaceRoot $workspace
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -Action Run -Suite Special -Module AudioNative -Unity $unity -WorkspaceRoot $workspace
 ```
 
 `Discover` 只发现并保存选集，状态是 `Completed`，不是测试通过。
@@ -78,45 +82,53 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 源文件、元数据、执行器、引用、包、配置或实际叶子改变时，旧选集必须拒绝，不能沿用旧数量判断通过。
 
 `-Module` 必须明确存在，不能用任意 namespace 或未声明的 `All` 扩大范围。
-`Integration`、`Special` 是层级分类，不表示每个模块都有这些执行配置；未声明的组合直接失败。
+执行层级只有 `Quick`、`Daily`、`Special`；未声明的模块/层级组合直接失败。空的 `Integration` suite 已移除，`Test-YLIntegrationPackages.ps1`、Distribution 与 SDK 等真实工具仍使用各自明确入口。
 
 ## 模块边界
 
 | 模块 | 层级 | 真实边界 |
 | --- | --- | --- |
 | Reddot | Quick / Daily | 独立main+reddot闭包的逻辑、原生程序集/GUID与真实指示组件订阅生命周期。切片不能替代完整Runtime编译；主包Player用核心EventChannel验证，不再强装可选红点。 |
-| Foundation | Daily / Special | 完整 Runtime / Editor 加基础测试；双次 Play 会话单独执行。 |
-| Core | Daily | 完整 MVC / UI / 资源夹具；不隐式安装旧宿主扩展或原游戏资产。 |
-| Domain | Quick / Daily / Special | Skill/Buff/Mission/Equipment/Reddot/Logging完整组合，含实际Excel/作者工具消费者；Quick只编译逻辑，原生作者源只在Daily/Special编译。 |
-| Gameplay | Daily / Special | 最小main+Gameplay，四独立Runtime行为/迁移身份；Special原双Play与正式四域新tuple发布、双进程Mono Player，不安装Excel/DataAssets/Save。 |
-| Equipment | Daily / Special | 最小main+Gameplay但只运行原Equipment契约，Special单独运行其原独立退出hook/同域双Play，不让Domain组合掩盖。 |
-| Behavior | Quick / Daily / Special | 日常Overlap / CharacterMotor / MovingPlatform / 两套FSM；Special在显式自有Desktop宿主执行两个原生窗口事件合同。 |
-| Overlap | Quick / Daily | 自有闭包仅main+overlap。Quick只编译真实`OverlapQueryCycle.cs`并执行原离线守卫/源码边界；完整包输入仍绑定identity。Daily通过独立`YLFramework.Overlap.Tests.EditMode` / `YLFramework.Overlap.Tests.PlayMode`运行原2D/3D形状、100容量、OnDisable无Exit及重入物理回归，不用stub代替物理。 |
+| Foundation | Daily / Special | 完整 Runtime / Editor、基础与序列化测试，以及普通 Logging EditMode/真实 PlayMode 生命周期；双次 Play 会话和 LoggingOnly 隔离源码证据单独执行。 |
+| Core | Daily / Special | 完整 MVC / UI / 资源及 HTTP 完成、取消与释放合同。Special 单独用原 UIAcceptance 场景做真实输入/渲染和无 Domain Reload 的两次 Play/退出清理；Daily 排除此会话。仅显式注入目标 manifest/lock 一致的 Input System，工具自有宿主启用 Both，自建设备使用临时输入设置并还原；不改开发工程或引入原游戏资产。系统剪贴板仍单跑 CoreClipboard。 |
+| Domain | Quick / Special | Quick 保留 Gameplay/Reddot/Logging 的 Mono 逻辑证据；Special 在 main+Gameplay+Reddot 组合中验证原双 Play 清理，不再重复 Daily 四域，也不为旧 probe 安装 DataAssets/Localization/Save/Excel。Quick 不是原生 Logging 或生命周期通过。 |
+| Gameplay | Daily / Special | 最小 main+Gameplay。Daily 统一 Skill/Buff/Mission/Equipment 行为和真实纯 Gameplay 作者门禁；Special 保留原双 Play、正式四域新 tuple 发布及双进程 Mono Player，不安装 Excel/DataAssets/Save。 |
+| Equipment | Special | main+Gameplay 中独立验证原 Equipment 退出 hook/同域双 Play 和设置捕获 admission；普通运行时与作者门禁归 Gameplay Daily，不用组合会话冒充该独立 hook 证据。 |
+| Behavior | Quick / Daily / Special | Quick 保留角色/平台受控数学与 dual-FSM 逻辑；Daily 只运行当前作者交互及 dual-FSM 组合，不重跑 Overlap/Movement2D/StateMachine 独立原生目录。Special 保留两个真实 Desktop 窗口事件合同。 |
+| BehaviorPlayer | Special | 当前BehaviorAcceptanceBuilder正式作者输入、新GUID持久Contact Prefab及BehaviorPlayerProbe走既有StandaloneFixturePlayer的双进程Development Mono门禁。与Daily及原生鼠标Special隔离；不使用旧主工程PID/SessionState/外部接收根，不代表IL2CPP或非Development构建。 |
+| Overlap | Daily | 自有闭包仅main+overlap。独立`YLFramework.Overlap.Tests.EditMode` / `YLFramework.Overlap.Tests.PlayMode`验证当前Query/Workspace/Detector、Area作者输入、Contact事件和complete-only容量/重入/退出合同。旧managed guard及Quick/Overlap已退役，不造stub物理替代。 |
 | OverlapEditor | Daily | main+overlap；单选预览不写配置、不推进运行联系人，真实本地中心Handle/Undo/Prefab override与Filter冷重开。多选只编辑序列化配置。 |
-| OverlapPlayer | Special | 仅main+overlap；复用Shared的null-Resource分支，在两个独立Windows64 Mono进程执行真实2D/3D查询/Cast/Union/生命周期和多密度测量。独立PlayerNative选集，不进Daily/Quick；64KiB正控不通过的GC计数明确unsupported/-1。 |
+| OverlapPlayer | Special | 仅main+overlap；正式生成新GUID Prefab、冷读六个持久Contact事件，在两个独立Windows64 Mono进程验证Point3DZ、Destroyed最后点、Unscaled/Fixed暂停、Area退化/非有限不提交及缺节点相邻对跳过；保留真实Query/Cast/Union/生命周期和多密度测量。独立PlayerNative选集，不进Daily/Quick；64KiB正控不通过的GC计数明确unsupported/-1。 |
 | OverlapMovement | Daily | 明确main+movement2d+overlap三包；真实角色落地/平台载人及Overlap观察、legacy Box/Sphere与new Detector共存，不调用历史BehaviorMainAcceptance或接管运动算法。 |
-| Save | Daily / Special | 仅 Save + Newtonsoft，不安装主包。Daily 执行原生门面合同与真实双进程 Mono Player 冷重开/显式备份恢复；Special 以 .NET 执行 BCL 合同，不替代 Unity 或 Player。 |
+| Save | Daily / Special | 仅 Save + Newtonsoft，不安装主包。Daily 验默认 Store 所有权/配置与统一错误，并复用原 probe 分别执行 Development Mono、Medium stripping Development IL2CPP 的两个真实进程，检查冷重开/显式备份恢复；IL2CPP 需要该精确 Editor 的 Windows IL2CPP/本机 C++ 构建前置。Special 以固定 .NET 10 执行 BCL 合同，不替代 Unity、Player 或非 Development 验收。 |
 | StateMachine | Daily / Special | 仅配置式FSM包及主包。Daily验原生状态/图/生命周期；Special在自有空场景宿主经过两次真实编译重载验Create And Add绑定，再构建运行双进程Mono Player。不是无输入模拟或旧Resource tuple兼容声明。 |
 | Movement2D | Daily / Special | 仅main+movement2d。Daily保原角色/平台Edit与真Physics2D，补公共回调停用/池化/暂停边界；Special序列化17持久UnityEvent并运行两个独立Mono Player，严格核四个YL程序集、角色/路径/乘客指标，不借FSM或旧Behavior夹具。 |
-| Data | Daily / Special | Save native JSON、Localization、DataAssets 作者和资源生命周期；会话前置不能由主工程代替。 |
+| Data | Daily / Special | Daily 以 `YL.Module.Data` 正分类执行 Save/主包字典、当前源码身份、Data+Language 作者冷读到显式 SaveStore 的真实组合消费；不重跑独立 Save/Localization/DataAssets 全目录。Special 保留组合宿主中的原会话和正式发布/Player 输入，不能由普通作者测试或主工程代替。 |
 | DataAssets | Daily / Special | 仅主包+DataAssets：身份、作者、请求与租约、双Play、旧资产副本重建及真实Mono Player；不是完整Data组合。 |
 | Localization | Daily / Special | 仅主包+Localization：回退、显示、ResourceImage责任、作者、双Play及正式内容Player；不借DataAssets/Excel依赖。 |
 | Excel | Daily | 显式安装现有可选适配与 MiniExcel，执行真实 XLSX、AssetDatabase 和预览合同；只声明 EditMode。 |
 | ExcelGameplay | Daily | Excel+Gameplay的显式组合，保原Domain.Excel.Tests与全部32领域列/旧XLSX/Undo协议；普通Excel模块不装Gameplay。 |
 | Action | Daily | Action / Observable 的真实取消、释放、池化复用、场景结束与屏幕过渡；共享依赖检查不借用其他测试类。 |
-| DOTween | Daily | 仅主包加显式批准的完整Standard SDK，执行原两个测试程序集及真实PlayMode上下文/所有权/取消/池化合同；用`-DOTweenArchive`指定归档，不要求普通Action安装SDK。 |
-| ActionHelp | Daily | 精确执行现有`KnownIntegrationAndOwnershipBoundariesAreExplicit` EditMode用例，验证主包条件适配/外置SDK/独立程序集文案；不是完整历史Help/XML套件。 |
+| DOTween | Daily | 仅主包加显式批准的完整Standard SDK，执行原两个测试程序集、真实PlayMode上下文/所有权/取消/池化合同及同宿主的原Help API/XML消费者；冷编译XML并要求可选程序集实际命中。用`-DOTweenArchive`指定归档，不要求普通Action/Help安装SDK。 |
+| HybridCLR | Daily | 仅主包+HybridCLR，显式导入`HybridCLR Module`样例并运行原EditMode/PlayMode程序集。只注入`Dependencies.json`批准且根manifest/lock一致的Git SDK，输入绑定三者；不复制开发宿主的整份依赖。Editor编译、模拟与会话测试不是native安装、AOT metadata或热更Player验收。 |
 | Help | Daily | 仅主包，完整API/XML/搜索/真实Editor窗口及旧Common状态夹具。沿用现有`outputEnvironment`把`BEE_CACHE_DIRECTORY`限定到本次自有结果目录，真实冷编译生成XML，不借共享缓存或手造文档；不代表DOTween SDK帮助已执行。 |
 | Audio | Daily / Special | 日常 AudioKit / source / owner / 作者与资源生命周期；Special执行连续Play、authority/provider与无输出采样的Bundle会话，真实音频输出/DSP仍独立。 |
+| AudioNative | Special | 仅主包，以 Framework / SessionNative 执行原 AudioResourceBundleTests 的真实 Bundle、PCM Listener 输出和生命周期，以及当前正式保存输入的双进程图形 NativePlayer。原实现基线须先独立记录再纳入当前 Player；日常、AudioSession 或仅编译均不能替代。不修改系统音量，夹具只在自有 Editor 进程暂时解除并恢复 master mute。 |
 | Resource | Daily / Special | 有界真实Catalog / Codec / Bundle构建；Special保留原场景安全、双次Play及租约隔离断言，使用碰撞拒绝的短宿主名。 |
+| ResourceUpdates | Special | 仅主包，在自有保存场景宿主精确运行更新/构建/签名/下载/Envelope/原生CNG及v2控制回归，覆盖恢复、root floor、取消及晚到stage owner租约；不以Resource会话或只编译替代。TLS夹具须在实际调用的进程环境显式提供`YL_RESOURCE_TEST_PFX`和`YL_RESOURCE_TEST_PASSWORD`，不要写入会被替换为仓库路径的`sourceEnvironment`；缺失即前置失败，不改系统信任。原21源181叶基线保留独立selection/结果，不混计新增控制叶。 |
+| ResourceCurrentPublication | Special | 仅主包，18份已正式保存的维护作者资产字节/元数据身份、current字段false/true正式保存冷读、reader退役形状及真实Build/Publish/Deploy后的两个独立Windows Player；Probe有独立Runtime asmdef，不依赖测试程序集进入Player。冻结ResourceV1/Namespace原件不写入，旧纹理与历史作者GUI不进入此闭包。 |
 
 准确范围以当前 `TestSuites.json` 和发现产物为准。模块声明不是所有平台或所有环境已验收的承诺。
 
-`MigrationFixtures` 是历史拆分前快照的producer，只能在独立核实的拆分前检出中重建。冻结`FixtureIdentity.json`只记录捕获时间、Unity版本与原程序集，不包含sourceCommit；精确来源不能从该文件虚构。当前源码保留真实依赖以支持编译与`-Action Discover -Suite Special -Module MigrationFixtures`；当前拆包布局运行该producer会在输出前拒绝，不得为验证新包重写原冻结输入或其旧Catalog tuple。当前旧数据消费者由Core、Gameplay、Behavior、ExcelGameplay等独立执行；新Resource内容的重建/发布/Player另由DataAssets、Data与Gameplay的Special验证，不冒称旧Bundle跨引擎兼容。
+测试 Player 的 Runtime probe 程序集仅在 Editor 或各自的 `YL_*_ACCEPTANCE` 构建符号下启用，符号通过该专项的 `BuildPlayerOptions.extraScriptingDefines` 传入，不写入源工程全局设置。普通 `PlayerWithoutTestAssemblies` 图不得包含任何 `Assets/Tests/YLFramework` 源；实际验收 Player 仍须正向验证探针程序集与双进程结果，不能以排除探针代替测试通过。
 
-Behavior继续选择两个独立Overlap测试程序集，并显式安装Overlap包；新增冻结`AssemblySplitV1/Content/Behavior/Components.prefab`冷读回归使用`LoadPrefabContents/UnloadPrefabContents`且不保存，核原Area/Circle脚本GUID、新Runtime、字段/对象引用、原空UnityEvents与无missing script。冻结Prefab还有movement2d/RedDots组件，所以该回归只在真实Behavior组合执行，不为Overlap-only强装其他功能。它不改写历史`typeAssembly`、Catalog或Bundle，也不声明旧Bundle跨Unity版本兼容；记录旧程序集tuple的正式Resource内容仍须重建。
+历史拆分前的 `MigrationFixtures` producer、专属测试程序集与导出器已退役，不是当前 selector。冻结 `FixtureIdentity.json` 的原字节、GUID 和旧 Catalog tuple 不改写；它未记录 sourceCommit，不能虚构精确来源。当前数据、领域、物理和 FSM 输入由各自正式作者保存或生成，再独立验证运行/发布/Player；不能拿旧快照重存或旧 Bundle 作为当前通过证据。
 
-Data 组合保留主包字典与 Save 的实际消费者测试和组合 Player，但明确排除要求主包缺席的 `YL.Package.SaveStandalone` 用例；该用例仍由 Save Daily 完整执行，不能通过 Skip 或允许主包存在来替代独立包验收。
+Behavior 显式安装当前 Overlap/Movement2D/StateMachine/RedDots 组合，但普通物理测试分别由独立模块负责；Quick 的两个数学测试文件仅沿现有 `testSupport` 参与离线编译，不混入原生 Daily。当前持久 Contact、Variant/Undo、UnityEvent、窗口输入及 BehaviorPlayer 合同仍由真实作者/独立专项验证，不把冻结 `Components.prefab` 或旧 Bundle 当作当前输入，也不改写冻结原件。
+
+Data 的原生源码输入保留独立目录作为来源身份和原 Special 会话/发布的编译支持；Daily 的执行范围由明确类别限定，不能把编译这些源码称为又执行了整套独立模块。组合仍保留原声明的 Special 包环境，并明确排除要求主包缺席的 `YL.Package.SaveStandalone`；该用例由 Save Daily 完整执行。DataAssets/Localization 的最小包安装、正式发布与 Player 仍须各自实际验收，不能凭同名源码或旧计数宣称与组合宿主等价。
+
+`ActionHelp` 模块别名已移除，其原用例仍在完整 Help 中执行；实际可选 SDK 的 API/XML 消费仍由 DOTween 模块独立验证。删除别名不代表执行过任一原生选集。
 
 Resource原生构建与Audio的原生Bundle会话受Windows Mono路径预算限制，需要足够短的工作根，不要放入深层恢复根；短宿主名只是目录标签，完整key与owner收据仍必须一致，冲突直接拒绝，不能减少归属检查或放宽产品路径限制。
 
@@ -246,11 +258,9 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLOptiona
 
 `Special / LoggingOnly` 是只含 Logger 与 SingletonSessionState 的源码隔离宿主，明确不编译任何领域 Editor；它验证两次真实 Play 退出后日志句柄关闭，不代表正式 UPM 分包安装。Slice 输入按显式源码归属复制到受管 `Assets`，不能留下未注册的 `PackageSources` 或隐式引入无关 Shared 夹具。
 
-`Special / MigrationFixtures` 只用于在全新工具宿主捕获当前布局的资产、Prefab、正式 ExcelAuthoring 工作簿与 Resource 发布。选集不支持 NUnit `Explicit`；生产用例用独立 Special 模块，不进入 Daily。Resource 构建需要非常短的外部工作根，普通 Temp 路径即使短 Host key 仍可能超过 Windows Mono 上限。生成根存在即拒绝覆盖；只有完整 Passed 回执可交给 `Tools/Testing/Tests/Export-YLAssemblyMigrationFixtures.ps1 -WorkspaceRoot $shortWorkspace -ResultRoot $passedResult`，导出也拒绝已有目标。输入标明生成式基线及精确 Unity 版本，旧 Bundle 不宣称跨 Unity 版本互通。
-
 ## Registry 与冻结产物
 
-`Test-YLDistribution.ps1` 与 `Test-YLIntegrationPackages.ps1` 共用既有 owner、lease、process 和结果合同，不采用 npm publish 或开发宿主依赖作为发行证明。自有包的五份登记模板位于 `Tools/Packaging/OpenUPM/`，使用 OpenUPM `trackingMode: githubRelease`、Git Tag 字面过滤前缀 `upm/` 和各自的稳定资产匹配前缀 `<包ID>-`，不是仓库根目录 Git tracking。该匹配字段不展开 `{version}`；实际预览 Tag 仍为 `upm/v0.1.0-preview.1`，实际资产仍为 `<包ID>-0.1.0-preview.1.tgz`。这些模板本身不代表已在 OpenUPM 登记或发布。
+`Test-YLDistribution.ps1` 与 `Test-YLIntegrationPackages.ps1` 共用既有 owner、lease、process 和结果合同，不采用 npm publish 或开发宿主依赖作为发行证明。现有三份登记模板位于 `Tools/Packaging/OpenUPM/`，对应 `com.kano.ylframework`、`com.kano.ylframework.excel` 和 `com.kano.ylframework.hybridclr`，不是全部自有包的模板。它们使用 OpenUPM `trackingMode: githubRelease`、Git Tag 字面过滤前缀 `upm/` 和各自的稳定资产匹配前缀 `<包ID>-`，不是仓库根目录 Git tracking。该匹配字段不展开 `{version}`；实际预览 Tag 仍为 `upm/v0.1.0-preview.1`，实际资产仍为 `<包ID>-0.1.0-preview.1.tgz`。这些模板本身不代表已在 OpenUPM 登记或发布。
 
 ### 打包与回执
 
@@ -290,7 +300,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegra
   -RegistryUrl https://package.openupm.com -RegistryVersion 0.1.0-preview.1 -ReleaseManifest $releaseManifest
 ```
 
-分别使用标准版`2022.3.62f3`与`6000.3.27f1`；China版是独立profile，不按共享FileVersion前缀冒用。`-Integration`可选`Excel`、`ExcelGameplay`、`ReddotSave`、`DOTween`、`HybridCLR`、`MovementOverlap`、`AllPackages`，旧DomainExcel明确拒绝。`-PackageId com.kano.ylframework.excel`仍是普通Excel，不强装Gameplay。主包还需真实Windows64 Mono构建/运行。
+按前置中声明的双版本矩阵执行。`-Integration`可选`Excel`、`ExcelGameplay`、`ReddotSave`、`DOTween`、`HybridCLR`、`MovementOverlap`、`AllPackages`，旧DomainExcel明确拒绝。`-PackageId com.kano.ylframework.excel`仍是普通Excel，不强装Gameplay。主包还需真实Windows64 Mono构建/运行。
 
 `MovementOverlap`固定有序根为movement2d、overlap，自有闭包精确为main+movement2d+overlap。`AllPackages`固定按Catalog顺序声明完整11根，不接受子集、重排或任意多根；同时启用Excel/Gameplay与RedDots/Save条件程序集，分别核验MiniExcel后端与外置HybridCLR SDK `9.0.3`的身份。DOTween SDK/宏仍缺席，不暗中下载或开启；其四状态另跑显式DOTween profile。File/Git保留相同组合与真实编译图校验，LocalTarball使用完整冻结负载，Registry仍须真正发布和元数据前置，不能借新profile声称公开可用。
 

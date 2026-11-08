@@ -36,10 +36,8 @@ namespace YLFramework.Core.Tests
             get; private set;
         }
 
-#pragma warning disable CS0618
         public override Dictionary<string, Type> PreloadConfigTables =>
             TableName == null ? new Dictionary<string, Type>() : new Dictionary<string, Type> { { TableName, typeof(YLCoreSmokeRow[]) } };
-#pragma warning restore CS0618
 
         public override string DefaultStartUpScene => SceneOverride ?? (StartWithScene ? SceneName : string.Empty);
 
@@ -81,7 +79,6 @@ namespace YLFramework.Core.Tests
     {
         public bool AllowClose;
         public override bool IsBaseModule => !AllowClose;
-        [Obsolete("已过时!")]
         public override Dictionary<string, Type> PreloadConfigTables =>
             new Dictionary<string, Type> { { YLCoreSmokeModule.Table, typeof(YLCoreSmokeRow[]) } };
         public override void OnStart()

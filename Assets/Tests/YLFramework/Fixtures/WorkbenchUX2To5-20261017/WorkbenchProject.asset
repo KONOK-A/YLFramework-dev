@@ -12,74 +12,74 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7331c0230f1378c48bb33ed06489830c, type: 3}
   m_Name: WorkbenchProject
   m_EditorClassIdentifier: 
-  ProjectId: yl-workbench-ux2to5-20261017
-  DisplayName: "Workbench UX2-5 \xB7 owned"
-  SourceDirectories:
-  - Guid: 87797fb94a8f28a48a2d9790886b4230
-    AddressPrefix: 
-  Compression: 0
-  ContentEncryption: 0
-  ContentKeyId: 
-  AutomaticAtlases: {fileID: 11400000, guid: dd8f3a0dc97546947ac90352523bee1b, type: 2}
-  AutomaticAtlasConfigurationGuid: dd8f3a0dc97546947ac90352523bee1b
-  Groups:
-  - Id: cards
-    Packing: 1
-    Selections:
-    - Guid: 5146678a25d12c9439e572441f731064
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: e8adfd0cf0a96244da9307ad24999284
-      Address: 
-      Aliases: []
-      Extensions: []
-  - Id: messages
-    Packing: 0
-    Selections:
-    - Guid: f8cffcafecd74c44ea9bdd128681de09
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: 738d96a18dec7a64bb9e00c4d9202e9a
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: df6e63ba23cd9474bbceb0befd8c365d
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: 63f4fdb1df02ad048afc5c70189ae19f
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: a1776324808f92b40baf6593ad7632c3
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: 984932692a777294ebd82a79aa5ed2d3
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: 200be6921cdcd544bb2440b8cd149de8
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: c61d89422b8f1794f94022b94c519323
-      Address: 
-      Aliases: []
-      Extensions: []
-  - Id: scenes
-    Packing: 0
-    Selections:
-    - Guid: 3a1c66afcfecd824e952e7711e8516db
-      Address: 
-      Aliases: []
-      Extensions: []
-  - Id: atlases
-    Packing: 0
-    Selections:
-    - Guid: 93723fc48dfe6e148b67ef1d7c985000
-      Address: 
-      Aliases: []
-      Extensions: []
+  projectId: yl-workbench-ux2to5-20261017
+  displayName: "Workbench UX2-5 \xB7 owned"
+  sourceDirectories:
+  - guid: 87797fb94a8f28a48a2d9790886b4230
+    addressPrefix: 
+  compression: 0
+  contentEncryption: 0
+  contentKeyId: 
+  automaticAtlases: {fileID: 11400000, guid: dd8f3a0dc97546947ac90352523bee1b, type: 2}
+  automaticAtlasConfigurationGuid: dd8f3a0dc97546947ac90352523bee1b
+  groups:
+  - id: cards
+    packing: 1
+    selections:
+    - guid: 5146678a25d12c9439e572441f731064
+      address: 
+      aliases: []
+      extensions: []
+    - guid: e8adfd0cf0a96244da9307ad24999284
+      address: 
+      aliases: []
+      extensions: []
+  - id: messages
+    packing: 0
+    selections:
+    - guid: f8cffcafecd74c44ea9bdd128681de09
+      address: 
+      aliases: []
+      extensions: []
+    - guid: 738d96a18dec7a64bb9e00c4d9202e9a
+      address: 
+      aliases: []
+      extensions: []
+    - guid: df6e63ba23cd9474bbceb0befd8c365d
+      address: 
+      aliases: []
+      extensions: []
+    - guid: 63f4fdb1df02ad048afc5c70189ae19f
+      address: 
+      aliases: []
+      extensions: []
+    - guid: a1776324808f92b40baf6593ad7632c3
+      address: 
+      aliases: []
+      extensions: []
+    - guid: 984932692a777294ebd82a79aa5ed2d3
+      address: 
+      aliases: []
+      extensions: []
+    - guid: 200be6921cdcd544bb2440b8cd149de8
+      address: 
+      aliases: []
+      extensions: []
+    - guid: c61d89422b8f1794f94022b94c519323
+      address: 
+      aliases: []
+      extensions: []
+  - id: scenes
+    packing: 0
+    selections:
+    - guid: 3a1c66afcfecd824e952e7711e8516db
+      address: 
+      aliases: []
+      extensions: []
+  - id: atlases
+    packing: 0
+    selections:
+    - guid: 93723fc48dfe6e148b67ef1d7c985000
+      address: 
+      aliases: []
+      extensions: []

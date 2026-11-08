@@ -95,7 +95,8 @@ namespace YLFramework.Editor.Skill
             skillsConfig.ClearCache();
             skillConfigData.Rename();
             EditorUtility.SetDirty(skillConfigData);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(skillConfigData);
+            AssetDatabase.SaveAssetIfDirty(skillsConfig);
             AssetDatabase.Refresh();
             return id;
         }

@@ -41,6 +41,23 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                 Is.EquivalentTo(new[] { typeof(HybridCLRPlayerBuildGuard) }));
         }
 
+        [Test]
+        public void PreparedResourceInputsMatchTheCurrentPlayModeAssembly()
+        {
+            var path = HybridCLRTestFixtures.Root + "/Good.json";
+            Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Is.True,
+                "The host must prepare current Resource inputs before running tests, not rely on an earlier session test.");
+            var manifest = global::YLFramework.Integrations.HybridCLR.HybridCLRManifest.Parse(
+                File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path)));
+            var assembly = AppDomain.CurrentDomain.GetAssemblies().Single(value => value.GetName().Name == "YLFramework.HybridCLR.Tests.PlayMode");
+            var bytes = File.ReadAllBytes(assembly.Location);
+            var payload = manifest.HotUpdateAssemblies.Single();
+            Assert.That(payload.Identity, Is.EqualTo(assembly.GetName().FullName));
+            Assert.That(payload.Mvid, Is.EqualTo(assembly.ManifestModule.ModuleVersionId.ToString("D")));
+            Assert.That(payload.Sha256, Is.EqualTo(global::YLFramework.Integrations.HybridCLR.HybridCLRManifest.Hash(bytes)));
+            Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(HybridCLRTestFixtures.Root + "/Entry.bytes")), Is.EqualTo(bytes));
+        }
+
         [TestCase(AssembliesType.Editor, "YLFramework.Runtime")]
         [TestCase(AssembliesType.Editor, "YLFramework.Editor")]
         [TestCase(AssembliesType.Player, "YLFramework.Runtime")]
@@ -82,17 +99,34 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Assert.That(definition.Value<bool>("autoReferenced"), Is.False);
             Assert.That(definition.Value<bool>("overrideReferences"), Is.True);
             var constraints = definition["defineConstraints"].Values<string>().ToArray();
-            CollectionAssert.AreEquivalent(test ? new[] { VersionDefine, "UNITY_INCLUDE_TESTS" } : new[] { VersionDefine }, constraints);
-            var version = definition["versionDefines"].Single();
+            var expectedConstraints = new List<string> { VersionDefine };
+            if (test)
+            {
+                expectedConstraints.AddRange(new[] { "UNITY_INCLUDE_TESTS", "YL_HYBRIDCLR_PACKAGE" });
+                if (editorOnly)
+                {
+                    expectedConstraints.Add("YL_TEST_HYBRIDCLR_SAMPLES");
+                }
+            }
+            CollectionAssert.AreEquivalent(expectedConstraints, constraints);
+            var versions = definition["versionDefines"].ToArray();
+            Assert.That(versions.Length, Is.EqualTo(test ? 2 : 1));
+            var version = versions.Single(value => value.Value<string>("name") == PackageName);
             Assert.That(version.Value<string>("name"), Is.EqualTo(PackageName));
             Assert.That(version.Value<string>("expression"), Is.EqualTo("[9.0.3,9.0.4)"));
             Assert.That(version.Value<string>("define"), Is.EqualTo(VersionDefine));
+            if (test)
+            {
+                var product = versions.Single(value => value.Value<string>("name") == "com.kano.ylframework.hybridclr");
+                Assert.That(product.Value<string>("expression"), Is.EqualTo("0.1.0-preview.1"));
+                Assert.That(product.Value<string>("define"), Is.EqualTo("YL_HYBRIDCLR_PACKAGE"));
+            }
             CollectionAssert.AreEqual(editorOnly ? new[] { "Editor" } : Array.Empty<string>(), definition["includePlatforms"].Values<string>());
             var expectedReferences = test
                 ? (editorOnly
                     ? new[] { "YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "YLFramework.HybridCLR.Editor",
-                        "YLFramework.HybridCLR.Sample.Editor", "HybridCLR.Editor", "UnityEngine.TestRunner", "UnityEditor.TestRunner" }
-                    : new[] { "YLFramework.Runtime", "YLFramework.HybridCLR", "UnityEngine.TestRunner" })
+                        "YLFramework.HybridCLR.Sample.Editor", "HybridCLR.Editor", "UnityEngine.TestRunner", "UnityEditor.TestRunner", "YLFramework.Tests.Fixtures" }
+                    : new[] { "YLFramework.Runtime", "YLFramework.HybridCLR", "UnityEngine.TestRunner", "YLFramework.Tests.Fixtures" })
                 : (editorOnly
                     ? new[] { "YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "HybridCLR.Runtime", "HybridCLR.Editor" }
                     : new[] { "YLFramework.Runtime", "HybridCLR.Runtime" });

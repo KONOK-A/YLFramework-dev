@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Globalization;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -12,7 +11,6 @@ using YLFramework.Foundation;
 using YLFramework.Mission;
 using YLFramework.Skill;
 using YLFramework.Resource;
-using Newtonsoft.Json.Linq;
 using YLFramework.Editor.Buff;
 using YLFramework.Editor.Equipment;
 using YLFramework.Editor.Skill;
@@ -27,17 +25,38 @@ namespace YLFramework.Integrations.DomainExcel.Editor
     /// </remarks>
     public static class DomainExcelCommands
     {
-        /// <summary>预览 skills 工作表的定义变更，并校验新增或更新行的技能脚本类型。</summary>
+        /// <summary>预览 skills 工作表，对全部类型化暂存行校验技能脚本，未变化的非法行也不能提交。</summary>
         /// <param name="root">已保存、无未保存改动的技能配表根，须在非 Play 模式使用。</param>
         /// <param name="path">包含 skills 工作表的 .xlsx 路径。</param>
         /// <returns>须由调用方确认、取消或释放的一次性计划；领域校验异常可直接抛出。</returns>
         public static ExcelImportPlan PreviewImport(SkillsConfig root, string path)
         {
             Clean(root);
-            var plan = ExcelAuthoring.PreviewScriptableObjects(path, root.skills, root, Folder(SkillsConfigController.GetSkillConfigDataPath(root)), "skills", data => data.parent = root, DataType<SkillConfigData>(root.typeScriptGuid));
-            return ValidateRows<SkillBase>(plan, "skillClassFullName");
+            var rows = new List<SkillConfigData>();
+            var plan = ExcelAuthoring.PreviewScriptableObjects(path, root.skills, root, Folder(SkillsConfigController.GetSkillConfigDataPath(root)),
+                "skills", data => data.parent = root, DataType<SkillConfigData>(root.typeScriptGuid), data =>
+                {
+                    RequireType<SkillBase>(data.skillClassFullName, data.id);
+                    rows.Add(data);
+                });
+            try
+            {
+                if (plan.CanCommit)
+                    plan.AddValidation(() =>
+                    {
+                        Clean(root);
+                        foreach (var data in rows)
+                            RequireType<SkillBase>(data.skillClassFullName, data.id);
+                    });
+                return plan;
+            }
+            catch
+            {
+                plan.Dispose();
+                throw;
+            }
         }
-        /// <summary>预览 buffs 工作表的定义变更，并校验新增或更新行的 Buff 脚本类型。</summary>
+        /// <summary>预览 buffs 工作表，对全部暂存行校验 Buff 脚本，并在提交前复核真实效果资产。</summary>
         /// <param name="root">已保存、无未保存改动的 Buff 配表根，须在非 Play 模式使用。</param>
         /// <param name="path">包含 buffs 工作表的 .xlsx 路径。</param>
         /// <returns>须由调用方确认、取消或释放的一次性计划；领域校验异常可直接抛出。</returns>
@@ -46,10 +65,37 @@ namespace YLFramework.Integrations.DomainExcel.Editor
         {
             Clean(root);
             var folder = BuffsConfigController.GetBuffConfigDataPath(root);
-            var plan = ExcelAuthoring.PreviewScriptableObjects(path, root.buffs, root, Folder(folder), "buffs", data => data.parent = root, DataType<BuffConfigData>(root.typeScriptGuid));
-            return ValidateRows<BuffBase>(plan, "buffClassFullName");
+            var rows = new Dictionary<BuffConfigData, int[]>();
+            var plan = ExcelAuthoring.PreviewScriptableObjects(path, root.buffs, root, Folder(folder), "buffs", data => data.parent = root,
+                DataType<BuffConfigData>(root.typeScriptGuid), data =>
+                {
+                    RequireType<BuffBase>(data.buffClassFullName, data.id);
+                    if (data.effects == null || data.effects.Any(effect => !effect))
+                        throw new InvalidOperationException($"Buff {data.id} 的效果引用无效。");
+                    rows.Add(data, data.effects.Select(effect => effect.id).ToArray());
+                });
+            try
+            {
+                if (plan.CanCommit)
+                    plan.AddValidation(() =>
+                    {
+                        Clean(root);
+                        foreach (var entry in rows)
+                        {
+                            RequireType<BuffBase>(entry.Key.buffClassFullName, entry.Key.id);
+                            if (entry.Key.effects.Any(effect => !effect) || !entry.Key.effects.Select(effect => effect.id).SequenceEqual(entry.Value))
+                                throw new InvalidOperationException($"Buff {entry.Key.id} 的效果资产在预览后变化。");
+                        }
+                    });
+                return plan;
+            }
+            catch
+            {
+                plan.Dispose();
+                throw;
+            }
         }
-        /// <summary>预览 missions 工作表的定义变更，检查变更行的任务脚本及条件参数引用。</summary>
+        /// <summary>预览 missions 工作表的全部暂存行，并在预览及提交前复核当前参数定义。</summary>
         /// <param name="root">已保存、无未保存改动且已有所需参数定义的任务配表根。</param>
         /// <param name="path">包含 missions 工作表的 .xlsx 路径。</param>
         /// <returns>须由调用方确认、取消或释放的一次性计划；领域校验异常可直接抛出。</returns>
@@ -58,11 +104,32 @@ namespace YLFramework.Integrations.DomainExcel.Editor
         {
             Clean(root);
             var folder = "Assets/YLFrameworkData/Mission/" + AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(root));
-            var plan = ExcelAuthoring.PreviewScriptableObjects(path, root.missions, root, Folder(folder), "missions", data => data.parent = root, DataType<MissionConfigData>(root.typeScriptGuid));
-            return ValidateRows<MissionBase>(plan, "missionTypeClassFullName", root);
+            var rows = new List<MissionConfigData>();
+            var plan = ExcelAuthoring.PreviewScriptableObjects(path, root.missions, root, Folder(folder), "missions", data => data.parent = root,
+                DataType<MissionConfigData>(root.typeScriptGuid), data =>
+                {
+                    ValidateMission(root, data);
+                    rows.Add(data);
+                });
+            try
+            {
+                if (plan.CanCommit)
+                    plan.AddValidation(() =>
+                    {
+                        Clean(root);
+                        foreach (var data in rows)
+                            ValidateMission(root, data);
+                    });
+                return plan;
+            }
+            catch
+            {
+                plan.Dispose();
+                throw;
+            }
         }
 
-        /// <summary>预览装备定义并同步暂存脚本 GUID，检查变更行模式、脚本或地址及跨根 ID 冲突。</summary>
+        /// <summary>预览全部类型化装备行并同步暂存脚本 GUID，在提交前复核外部资产与跨根 ID。</summary>
         /// <param name="root">已保存、无未保存改动的装备配表根，使用本根独占的条目目录。</param>
         /// <param name="path">包含 equipments 工作表的 .xlsx 路径。</param>
         /// <returns>一次性计划；可提交时已登记提交前跨根 ID 复核，工作簿错误可阻止提交。</returns>
@@ -70,6 +137,7 @@ namespace YLFramework.Integrations.DomainExcel.Editor
         public static ExcelImportPlan PreviewImport(EquipmentsConfig root, string path)
         {
             Clean(root);
+            var rows = new List<EquipmentConfigData>();
             // 即使目录尚不存在，也明确选择本根的独占条目目录；预览/取消不创建目录。
             var plan = ExcelAuthoring.PreviewScriptableObjects(path, root.Equipments, root,
                 EquipmentsConfigController.GetEquipmentConfigDataPath(root), "equipments", data => data.parent = root,
@@ -77,46 +145,19 @@ namespace YLFramework.Integrations.DomainExcel.Editor
                 {
                     var type = data.equipmentType == EquipmentType.Script ? AssemblyTool.GetType(data.equipmentClassFullName) : null;
                     data.equipmentClassGuid = YLFramework.Editor.Equipment.ScriptBindController.IsEquipmentType(type) ? YLFramework.Editor.Equipment.ScriptBindController.GetScriptGuid(type) : "";
+                    ValidateEquipment(data);
+                    rows.Add(data);
                 });
             try
             {
-                foreach (var change in plan.Changes.Where(change => change.After != null))
-                {
-                    var row = JObject.Parse(change.After.Substring(change.After.IndexOf(':') + 1));
-                    var mode = row["equipmentType"].ToObject<EquipmentType>();
-                    if (mode == EquipmentType.Script)
-                    {
-                        var name = (string)row["equipmentClassFullName"];
-                        if (!YLFramework.Editor.Equipment.ScriptBindController.IsEquipmentType(AssemblyTool.GetType(name)))
-                            throw new InvalidOperationException($"装备 {change.Key} 脚本类型无效: {name}");
-                    }
-                    else if (mode == EquipmentType.Asset)
-                    {
-                        try
-                        {
-                            _ = new ResourceAddress((string)row["projectName"], (string)row["assetName"]);
-                        }
-                        catch (ArgumentException error)
-                        {
-                            throw new InvalidOperationException($"装备 {change.Key} 资源地址无效。", error);
-                        }
-                    }
-                    else
-                        throw new InvalidOperationException($"装备 {change.Key} equipmentType 无效: {mode}");
-                }
                 if (plan.CanCommit)
                 {
-                    var ids = new HashSet<int>(root.Equipments.Where(data => data).Select(data => data.id));
-                    foreach (var change in plan.Changes)
-                    {
-                        var id = int.Parse(change.Key, CultureInfo.InvariantCulture);
-                        if (change.Kind == ExcelChangeKind.Delete)
-                            ids.Remove(id);
-                        else
-                            ids.Add(id);
-                    }
+                    var ids = new HashSet<int>(rows.Select(data => data.id));
                     plan.AddValidation(() =>
                     {
+                        Clean(root);
+                        foreach (var data in rows)
+                            ValidateEquipment(data);
                         foreach (var other in EquipmentsConfigController.GetAllEquipmentsConfig().Where(config => config != root))
                             foreach (var data in other.Equipments.Where(data => data))
                                 if (ids.Contains(data.id))
@@ -161,34 +202,27 @@ namespace YLFramework.Integrations.DomainExcel.Editor
         [MenuItem("Assets/YLFramework/Domain Excel/Open Equipment Workbook Folder", true)]
         private static bool HasEquipmentWorkbook() => SelectedRoot() is EquipmentsConfig root && File.Exists(GetEquipmentWorkbook(root));
 
-        // 仅校验新增或更新差异中的领域脚本及可选任务参数引用，失败时释放暂存计划。
-        private static ExcelImportPlan ValidateRows<T>(ExcelImportPlan plan, string classField, MissionsConfig missions = null)
+        private static void ValidateMission(MissionsConfig root, MissionConfigData data)
         {
-            try
+            RequireType<MissionBase>(data.missionTypeClassFullName, data.id);
+            if (data.conditions == null)
+                throw new InvalidOperationException($"任务 {data.id} 的条件必须为数组。");
+            foreach (var condition in data.conditions)
+                if (condition == null || !root.parameters.Exists(parameter => parameter != null && parameter.name == condition.paramName))
+                    throw new InvalidOperationException($"任务 {data.id} 的参数不存在: {condition?.paramName}，请先显式导入参数。");
+        }
+
+        private static void ValidateEquipment(EquipmentConfigData data)
+        {
+            if (data.equipmentType == EquipmentType.Script)
             {
-                foreach (var change in plan.Changes.Where(change => change.After != null))
-                {
-                    // B差异是原字段状态：conditions为JSON数组，不再是导出器生成的字符串。
-                    var row = JObject.Parse(change.After.Substring(change.After.IndexOf(':') + 1));
-                    RequireType<T>((string)row[classField], int.Parse(change.Key, System.Globalization.CultureInfo.InvariantCulture));
-                    if (!missions)
-                        continue;
-                    if (!(row["conditions"] is JArray conditions))
-                        throw new InvalidOperationException($"任务 {change.Key} 的条件必须为数组。");
-                    foreach (var condition in conditions)
-                    {
-                        var name = (string)condition["param_name"];
-                        if (!missions.parameters.Exists(parameter => parameter.name == name))
-                            throw new InvalidOperationException($"任务 {change.Key} 的参数不存在: {name}，请先显式导入参数。");
-                    }
-                }
-                return plan;
+                if (!YLFramework.Editor.Equipment.ScriptBindController.IsEquipmentType(AssemblyTool.GetType(data.equipmentClassFullName)))
+                    throw new InvalidOperationException($"装备 {data.id} 脚本类型无效: {data.equipmentClassFullName}");
             }
-            catch
-            {
-                plan.Dispose();
-                throw;
-            }
+            else if (data.equipmentType == EquipmentType.Asset)
+                _ = new ResourceAddress(data.projectName, data.assetName);
+            else
+                throw new InvalidOperationException($"装备 {data.id} equipmentType 无效: {data.equipmentType}");
         }
 
         // 参数单独工作簿/事务，不以连续两次覆盖冒充多sheet原子导入导出。
@@ -209,7 +243,12 @@ namespace YLFramework.Integrations.DomainExcel.Editor
             var plan = PreviewParameters(path, root.parameters);
             try
             {
-                ValidateParameterReferences(root, plan);
+                if (plan.CanCommit)
+                    plan.AddValidation(() =>
+                    {
+                        Clean(root);
+                        ValidateParameterReferences(root, plan);
+                    });
                 return plan;
             }
             catch
@@ -273,7 +312,7 @@ namespace YLFramework.Integrations.DomainExcel.Editor
             else if (root is EquipmentsConfig equipment)
                 ExportEquipment(equipment, path);
         }
-        // 为任务根创建独立参数预览窗口，交由窗口确认保存。
+        // 参数复用公共预览，计划负责两阶段只读校验；成功后才保存根并刷新缓存。
         [MenuItem("Assets/YLFramework/Domain Excel/Preview Import Mission Parameters")]
         private static void ImportParameters()
         {
@@ -283,11 +322,13 @@ namespace YLFramework.Integrations.DomainExcel.Editor
             var path = EditorUtility.OpenFilePanel("预览params工作表", string.Empty, "xlsx");
             if (path.Length == 0)
                 return;
-            var window = ScriptableObject.CreateInstance<ParameterPreview>();
-            window.Root = root;
-            window.Plan = PreviewParameters(root, path);
-            window.titleContent = new GUIContent("Mission Parameters Preview");
-            window.ShowUtility();
+            var window = ExcelAuthoringCommands.ShowPreview(PreviewParameters(root, path));
+            window.Applied += () =>
+            {
+                EditorUtility.SetDirty(root);
+                AssetDatabase.SaveAssetIfDirty(root);
+                root.ClearCache();
+            };
         }
         // 将所选任务根的参数定义导出到单独工作簿。
         [MenuItem("Assets/YLFramework/Domain Excel/Export Mission Parameters")]
@@ -363,64 +404,6 @@ namespace YLFramework.Integrations.DomainExcel.Editor
                 equipment.ClearCache();
         }
 
-        /// <summary>独立确认任务参数定义变更，并在提交前复核当前任务引用的作者窗口。</summary>
-        /// <remarks>列表计划成功后再保存根资产，后续保存不在计划的提交或回滚范围内。</remarks>
-        private sealed class ParameterPreview : EditorWindow
-        {
-            internal MissionsConfig Root;
-            internal ExcelImportPlan Plan;
-            private Vector2 _scroll;
-            private string _error;
-            // 展示参数差异，确认时复核根和条件引用，再提交列表并保存根资产。
-            private void OnGUI()
-            {
-                if (Plan == null)
-                {
-                    EditorGUILayout.HelpBox("请关闭并重新预览。", MessageType.Info);
-                    return;
-                }
-                _scroll = EditorGUILayout.BeginScrollView(_scroll);
-                foreach (var error in Plan.Errors)
-                    EditorGUILayout.HelpBox(error, MessageType.Error);
-                if (_error != null)
-                    EditorGUILayout.HelpBox(_error, MessageType.Error);
-                foreach (var change in Plan.Changes)
-                {
-                    EditorGUILayout.LabelField(change.Kind + ": " + change.Key, EditorStyles.boldLabel);
-                    EditorGUILayout.SelectableLabel((change.Before ?? "<new>") + "\n=>\n" + (change.After ?? "<deleted>"), EditorStyles.textArea, GUILayout.MinHeight(60));
-                }
-                EditorGUILayout.EndScrollView();
-                using (new EditorGUI.DisabledScope(!Plan.CanCommit || _error != null))
-                    if (GUILayout.Button("确认导入参数") && EditorUtility.DisplayDialog("确认参数差异", "仅导入所列参数差异，不导入任务。", "导入", "取消"))
-                    {
-                        try
-                        {
-                            // 再查当前任务引用，不能让预览期间新增的条件引用变成悬空参数。
-                            Clean(Root);
-                            ValidateParameterReferences(Root, Plan);
-                            if (Plan.Commit(true) == ExcelCommitResult.Applied)
-                            {
-                                EditorUtility.SetDirty(Root);
-                                AssetDatabase.SaveAssetIfDirty(Root);
-                                Root.ClearCache();
-                                Close();
-                            }
-                        }
-                        catch (Exception error)
-                        {
-                            _error = error.Message;
-                        }
-                    }
-                if (GUILayout.Button("取消"))
-                    Close();
-            }
-            // 关闭或停用窗口时释放计划，取消尚未处理的参数导入。
-            private void OnDisable()
-            {
-                Plan?.Dispose();
-                Plan = null;
-            }
-        }
     }
 }
 #endif

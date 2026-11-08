@@ -8,7 +8,7 @@
     "overrideReferences": true,
     "precompiledReferences": ["Newtonsoft.Json.dll"],
     "autoReferenced": false,
-    "defineConstraints": [],
+    "defineConstraints": ["UNITY_EDITOR || YL_SAVE_ACCEPTANCE"],
     "versionDefines": [],
     "noEngineReferences": false
 }

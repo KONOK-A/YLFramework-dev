@@ -37,7 +37,7 @@ namespace YLFramework.Core.Tests
             .GetField("_pool", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
 
         [Test]
-        public void RemoveAllEventsTerminatesOldSnapshotAndAllowsNewSignaturesWithoutDisposingDefault()
+        public void ClearKeysTerminatesOldSnapshotAndAllowsNewSignaturesWithoutDisposingDefault()
         {
             var instance = typeof(EventBus).GetField("_default", BindingFlags.Static | BindingFlags.NonPublic);
             var previous = instance.GetValue(null);
@@ -46,29 +46,29 @@ namespace YLFramework.Core.Tests
             try
             {
                 var calls = new List<string>();
-                EventManager.AddEvent(101, () =>
+                bus.Register(101, () =>
                 {
                     calls.Add("clear");
-                    EventManager.RemoveAllEvent();
+                    bus.ClearKeys();
                 });
-                var oldToken = EventManager.AddEvent(101, () => calls.Add("old snapshot"));
-                EventManager.AddEvent(102, () => calls.Add("old other key"));
-                EventManager.AddEvent("101", () => calls.Add("old string key"));
-                EventManager.TriggerEvent(101);
-                EventManager.TriggerEvent(102);
-                EventManager.TriggerEvent("101");
+                var oldToken = bus.Register(101, () => calls.Add("old snapshot"));
+                bus.Register(102, () => calls.Add("old other key"));
+                bus.Register("101", () => calls.Add("old string key"));
+                bus.Send(101);
+                bus.Send(102);
+                bus.Send("101");
 
                 Assert.That(calls, Is.EqualTo(new[] { "clear" }));
                 Assert.That(bus.KeyCount, Is.Zero);
                 Assert.That(bus.IsDisposed, Is.False);
                 Assert.That(EventBus.Default, Is.SameAs(bus));
-                EventManager.AddEvent<int>(101, value => calls.Add("new " + value));
+                bus.Register<int>(101, value => calls.Add("new " + value));
                 oldToken.Unregister();
                 oldToken.Unregister();
-                EventManager.TriggerEvent(101, 7);
+                bus.Send(101, 7);
                 Assert.That(calls, Is.EqualTo(new[] { "clear", "new 7" }));
-                EventManager.RemoveAllEvent();
-                EventManager.RemoveAllEvent();
+                bus.ClearKeys();
+                bus.ClearKeys();
                 Assert.That(bus.KeyCount, Is.Zero);
                 Assert.That(EventBus.Default, Is.SameAs(bus));
             }

@@ -31,7 +31,6 @@ namespace YLFramework.Tests.Extensions.Data
         {
             string name = "YLExcel-" + Guid.NewGuid().ToString("N");
             _assetFolder = "Assets/" + name;
-            YLFramework.Tests.DataAssets.DataAcceptanceOwnership.Own(_assetFolder);
             AssetDatabase.CreateFolder("Assets", name);
             _diskFolder = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Temp/Extensions.Data.Excel/Unity", name);
             Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(_diskFolder));

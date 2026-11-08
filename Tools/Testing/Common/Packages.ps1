@@ -2,6 +2,27 @@
 #requires -PSEdition Core
 . (Join-Path $PSScriptRoot 'Workspace.ps1')
 
+# Callers own JSON parsing and package-manager metadata authorization.
+function ConvertTo-YLPackageCanonicalToken([Newtonsoft.Json.Linq.JToken] $Token) {
+    if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
+        $result = [Newtonsoft.Json.Linq.JObject]::new()
+        [string[]]$names = @($Token.Properties() | ForEach-Object Name)
+        [Array]::Sort($names, [StringComparer]::Ordinal)
+        foreach ($name in $names) { $result.Add($name, (ConvertTo-YLPackageCanonicalToken $Token[$name])) }
+        return ,$result
+    }
+    if ($Token -is [Newtonsoft.Json.Linq.JArray]) {
+        $result = [Newtonsoft.Json.Linq.JArray]::new()
+        foreach ($item in $Token) { $result.Add((ConvertTo-YLPackageCanonicalToken $item)) }
+        return ,$result
+    }
+    return ,$Token.DeepClone()
+}
+
+function Get-YLPackageManifestHash([string] $CanonicalJson) {
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($CanonicalJson))).ToLowerInvariant()
+}
+
 function Read-YLPackageCatalog {
     param([string] $Path = ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../Packaging/PackageCatalog.json'))))
     $catalog = Read-YLPackageEvidenceJson $Path
@@ -133,6 +154,23 @@ function Get-YLIntegrationDotweenSdk([string] $Repository, [string] $Archive, [s
                 version = $vendor['version']; archiveSha256 = $vendor['archiveSha256']; assemblySha256 = $vendor['assemblySha256']; files = $approvedFiles }
         } finally { $zip.Dispose() }
     } catch { throw "PrerequisiteNotMet: DOTween SDK: $($_.Exception.Message)" }
+}
+
+function Get-YLIntegrationHybridSdk([string] $Repository) {
+    $id = 'com.code-philosophy.hybridclr'
+    $inputs = @('Packages/manifest.json', 'Packages/packages-lock.json', 'PackageSources/com.kano.ylframework.hybridclr/Dependencies.json')
+    try {
+        $manifest = Read-YLPackageEvidenceJson (Join-Path $Repository $inputs[0])
+        $lock = Read-YLPackageEvidenceJson (Join-Path $Repository $inputs[1])
+        $approval = Read-YLPackageEvidenceJson (Join-Path $Repository $inputs[2])
+        $url = $manifest['dependencies'][$id]; $entry = $lock['dependencies'][$id]; $approved = $approval['package']
+        if ($url -isnot [string] -or $url -cne 'https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3' -or
+            $entry -isnot [Collections.IDictionary] -or $entry['source'] -isnot [string] -or $entry['source'] -cne 'git' -or
+            $entry['version'] -isnot [string] -or $entry['version'] -cne $url -or $entry['hash'] -isnot [string] -or $entry['hash'] -cnotmatch '^[0-9a-f]{40}$' -or
+            $approved['name'] -cne $id -or $approved['version'] -cne '9.0.3' -or $approved['url'] -cne $url -or
+            $approved['commit'] -isnot [string] -or $approved['commit'] -cne $entry['hash'] -or $approved['bundled'] -isnot [bool] -or $approved['bundled']) { throw 'The official 9.0.3 SDK declaration, approved commit and actual root lock must match.' }
+        return @{ declaration = $url; revision = $entry['hash']; version = '9.0.3'; inputs = $inputs }
+    } catch { throw "PrerequisiteNotMet: HybridCLR SDK: $($_.Exception.Message)" }
 }
 
 function Get-YLInstalledPackageReference {
@@ -657,17 +695,6 @@ function Assert-YLHybridClrRegistryInstalled {
     $actual = @(Get-YLTestTreeFiles $Root)
     $expected = @{}; foreach ($file in $Sdk.files) { $expected[$file.path] = $file }
     if ($actual.Count -ne $expected.Count) { throw 'Installed HybridCLR SDK file set differs from the verified Registry tarball.' }
-    function Canonical([Newtonsoft.Json.Linq.JToken] $Token) {
-        if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
-            $value = [Newtonsoft.Json.Linq.JObject]::new()
-            [string[]]$names = @($Token.Properties() | ForEach-Object Name); [Array]::Sort($names, [StringComparer]::Ordinal)
-            foreach ($name in $names) { $value.Add($name, (Canonical $Token[$name])) }; return ,$value
-        }
-        if ($Token -is [Newtonsoft.Json.Linq.JArray]) {
-            $value = [Newtonsoft.Json.Linq.JArray]::new(); foreach ($item in $Token) { $value.Add((Canonical $item)) }; return ,$value
-        }
-        return ,$Token.DeepClone()
-    }
     foreach ($path in $actual) {
         $relative = [IO.Path]::GetRelativePath($Root, $path).Replace('\', '/')
         if (-not $expected.ContainsKey($relative)) { throw 'Installed HybridCLR SDK has an unapproved file.' }
@@ -681,8 +708,8 @@ function Assert-YLHybridClrRegistryInstalled {
                 $fingerprint.Remove()
             }
             foreach ($property in $manifest.Properties()) { if ($property.Name.StartsWith('_', [StringComparison]::Ordinal)) { throw 'Unknown installed SDK package-manager metadata.' } }
-            $text = (Canonical $manifest).ToString([Newtonsoft.Json.Formatting]::None)
-            $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text))).ToLowerInvariant()
+            $text = (ConvertTo-YLPackageCanonicalToken $manifest).ToString([Newtonsoft.Json.Formatting]::None)
+            $digest = Get-YLPackageManifestHash $text
         } else { $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() }
         if ($digest -cne $expected[$relative].contentSha256) { throw "Installed HybridCLR SDK content differs from the verified tarball: $relative" }
     }

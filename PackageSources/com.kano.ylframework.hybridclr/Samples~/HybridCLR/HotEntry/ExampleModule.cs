@@ -27,13 +27,11 @@ namespace YLFramework.Samples.HybridCLR.HotUpdate
             {
             }
         }
-#pragma warning disable CS0672, CS0618
         /// <summary>沿用 Core 的配置预加载入口，将样例 JSON 解释为热更 Model 数组。</summary>
         public override Dictionary<string, Type> PreloadConfigTables => new Dictionary<string, Type>
         {
             { "sample/message.json", typeof(ExampleMessage[]) }
         };
-#pragma warning restore CS0672, CS0618
         /// <summary>验证 Core 已创建样例 Model，并调用 Support 中的泛型及 async 能力。</summary>
         public override void OnStart()
         {

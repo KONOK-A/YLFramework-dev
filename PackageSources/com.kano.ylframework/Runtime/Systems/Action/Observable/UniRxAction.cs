@@ -41,6 +41,7 @@ namespace YLFramework.Actions
         {
         }
 
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>分配动作，启动时才调用事件源工厂。</summary>
         /// <param name="observableGetter">非空的事件源工厂，每次启动时调用一次。</param>
         /// <returns>尚未订阅的池化动作；工厂引用保留到 Deinit。</returns>
@@ -57,28 +58,33 @@ namespace YLFramework.Actions
             return action;
         }
 
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>执行器的暂停标记，不会暂停事件源或阻止外部通知。</summary>
         public bool IsPaused
         {
             get; set;
         }
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>读取或设置动作已释放的标记。</summary>
         public bool IsDeinitialized
         {
             get; set;
         }
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>读取或设置当前分配的动作标识，用于隔离迟到通知。</summary>
         public ulong ActionId
         {
             get; set;
         }
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>读取或设置动作执行状态。</summary>
         public ActionStatus Status
         {
             get; set;
         }
 
-        /// <summary>重置执行状态并释放旧订阅，下次启动会重新调用事件源工厂。</summary>
+        /// <inheritdoc cref="OnFinish" />
+        /// <summary>重置执行状态，释放旧 subscription 并保留 factory，下次启动重新取得事件源。</summary>
         public void Reset()
         {
             _executionVersion++;
@@ -87,7 +93,8 @@ namespace YLFramework.Actions
             ReleaseSubscription();
         }
 
-        /// <summary>释放订阅并排队回收动作，不触发正常完成；订阅释放失败时延迟丢弃，不重试释放。</summary>
+        /// <inheritdoc cref="OnFinish" />
+        /// <summary>清空 factory 引用、释放订阅并排队回收动作，不触发正常完成；释放失败时延迟丢弃，不重试释放。</summary>
         public void Deinit()
         {
             if (IsDeinitialized)
@@ -130,6 +137,7 @@ namespace YLFramework.Actions
             }
         }
 
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>调用事件源工厂并订阅，通知可在 Subscribe 返回前同步到达。</summary>
         public void OnStart()
         {
@@ -181,9 +189,17 @@ namespace YLFramework.Actions
             }
         }
 
+        /// <inheritdoc cref="OnFinish" />
         /// <summary>在启动线程处理待投递的通知，不用时间增量推进事件源。</summary>
+        /// <param name="dt">执行器提供的秒数增量；事件源不按此值推进。</param>
         public void OnExecute(float dt) => _subscription?.Deliver();
-        /// <summary>正常完成时释放订阅，不释放事件源本身。</summary>
+        /// <summary>正常完成时释放订阅，保留 factory 到 Deinit，不释放事件源本身。</summary>
+        /// <remarks>
+        /// 首个 OnNext 正常完成；空 OnCompleted 取消，OnError 记录异常并取消。只释放本次 subscription，不 Dispose source 本体。
+        /// 同步 Subscribe 返回前也可能通知或取消，晚到句柄只释放一次；旧订阅通知不能改变新租约。Dispose 错误可见，Deinit 仍安排回收，但清理失败的对象丢弃。
+        /// Unity 主线程启动时捕获 SynchronizationContext，异线程通知投递回来；没有上下文时由启动线程的 OnExecute 消费。Pause 不暂停 source，也不阻止通知。
+        /// Reset 释放旧 subscription 并保留 factory，OnFinish 保留 factory 到 Deinit，Deinit 清空 factory 引用。
+        /// </remarks>
         public void OnFinish() => ReleaseSubscription();
 
         /// <summary>确认通知槽仍属于当前未清理的动作使用周期，拒绝旧槽的迟到信号。</summary>
@@ -317,10 +333,11 @@ namespace YLFramework.Actions
     /// <summary>BCL Observable 与 ActionKit 动作的桥接扩展。</summary>
     public static class ActionKitUniRxExtension
     {
+        /// <inheritdoc cref="M:YLFramework.Actions.UniRxAction`1.OnFinish" />
         /// <summary>将事件源包装为启动时订阅、首值到达时标记完成的动作。</summary>
         /// <typeparam name="T">事件源的值类型。</typeparam>
         /// <param name="self">要订阅的非空事件源；每轮启动会重新订阅同一个 source。</param>
-        /// <remarks>只释放订阅，不释放事件源；空完成和错误属于取消而非正常完成。</remarks>
+        /// <returns>尚未订阅的动作；只释放订阅，空完成和错误属于取消而非正常完成。</returns>
         /// <exception cref="System.ArgumentNullException">self 为 null。</exception>
         public static IAction ToAction<T>(this IObservable<T> self)
         {
@@ -332,11 +349,12 @@ namespace YLFramework.Actions
             return UniRxAction<T>.Allocate(() => self);
         }
 
+        /// <inheritdoc cref="M:YLFramework.Actions.UniRxAction`1.OnFinish" />
         /// <summary>将等待首值的事件源工厂动作追加到序列，并返回原序列。</summary>
         /// <typeparam name="T">事件源的值类型。</typeparam>
         /// <param name="self">要追加子动作的非空组合。</param>
         /// <param name="observableGetter">每次启动时取得事件源的非空工厂。</param>
-        /// <remarks>每次启动时调用工厂；空完成或错误会取消该步骤，不推进正常完成流程。</remarks>
+        /// <returns>追加动作后的原序列；每次启动取得事件源，空完成或错误会取消该步骤。</returns>
         /// <exception cref="System.ArgumentNullException">self 或 observableGetter 为 null。</exception>
         public static ISequence UniRx<T>(this ISequence self, Func<IObservable<T>> observableGetter)
         {

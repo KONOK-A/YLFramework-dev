@@ -20,6 +20,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         public void CreatingAProfileCreatesSavedResourceBindingsWithoutChangingGlobalSettings()
         {
             var root = NewToolRoot();
+            var rootGuid = AssetDatabase.AssetPathToGUID(root);
             var settings = File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/HybridCLRSettings.asset")) ? File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/HybridCLRSettings.asset")) : null;
             var backend = PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone);
             try
@@ -35,6 +36,46 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                 Assert.That(selection.extensions, Is.EquivalentTo(new[] { ".bytes", ".json" }));
                 Assert.That(EditorUtility.IsDirty(profile) || EditorUtility.IsDirty(profile.recipe) || EditorUtility.IsDirty(profile.recipe.project), Is.False);
                 Assert.DoesNotThrow(() => HybridCLRBuildPipeline.ValidateInputPaths(profile));
+                var paths = new[] { AssetDatabase.GetAssetPath(profile), AssetDatabase.GetAssetPath(profile.recipe), AssetDatabase.GetAssetPath(profile.recipe.project) };
+                var guids = paths.Select(AssetDatabase.AssetPathToGUID).ToArray();
+                var bytes = paths.Select(File.ReadAllBytes).ToArray();
+                var metas = paths.Select(path => File.ReadAllBytes(path + ".meta")).ToArray();
+                var projectId = profile.recipe.project.projectId;
+                var generated = profile.generatedAssetDirectory;
+                var baseline = profile.baselineDirectory;
+                var development = profile.development;
+                var recipe = profile.recipe;
+                var project = recipe.project;
+                Resources.UnloadAsset(profile);
+                Resources.UnloadAsset(recipe);
+                Resources.UnloadAsset(project);
+                Assert.That((bool)profile || (bool)recipe || (bool)project, Is.False);
+                var restored = AssetDatabase.LoadAssetAtPath<HybridCLRBuildProfile>(paths[0]);
+                Assert.That(restored.recipe.project.projectId, Is.EqualTo(projectId));
+                Assert.That(restored.development, Is.EqualTo(development));
+                Assert.That(restored.baseProfile, Is.Null);
+                Assert.That(restored.hotUpdateAssemblies, Is.Empty);
+                Assert.That(restored.generatedAssetDirectory, Is.EqualTo(generated));
+                Assert.That(restored.baselineDirectory, Is.EqualTo(baseline));
+                Assert.That(restored.recipe.appContentCompatibilityId, Is.EqualTo("base-v1"));
+                Assert.That(restored.recipe.action, Is.EqualTo(ResourceBuildAction.BuildAndPublish));
+                Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(restored.recipe)), Is.EqualTo(guids[1]));
+                Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(restored.recipe.project)), Is.EqualTo(guids[2]));
+                Assert.That(AssetDatabase.GUIDToAssetPath(restored.recipe.project.groups.Single().selections.Single().guid), Is.EqualTo(generated + "/hybridclr"));
+                var output = Environment.GetEnvironmentVariable("YL_TEST_OUTPUT_ROOT");
+                Assert.That(Directory.Exists(output), Is.True);
+                var evidence = Path.Combine(output, "HybridCLRFormalProfileProducer");
+                Assert.That(Directory.Exists(evidence), Is.False);
+                Directory.CreateDirectory(evidence);
+                for (var i = 0; i < paths.Length; i++)
+                {
+                    Assert.That(AssetDatabase.AssetPathToGUID(paths[i]), Is.EqualTo(guids[i]));
+                    CollectionAssert.AreEqual(bytes[i], File.ReadAllBytes(paths[i]));
+                    CollectionAssert.AreEqual(metas[i], File.ReadAllBytes(paths[i] + ".meta"));
+                    File.WriteAllBytes(Path.Combine(evidence, Path.GetFileName(paths[i])), bytes[i]);
+                    File.WriteAllBytes(Path.Combine(evidence, Path.GetFileName(paths[i]) + ".meta"), metas[i]);
+                    TestContext.WriteLine("Formal profile input: {0}; GUID={1}", paths[i], guids[i]);
+                }
                 Assert.That(PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone), Is.EqualTo(backend));
                 Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/HybridCLRSettings.asset")), Is.EqualTo(settings != null));
                 if (settings != null)
@@ -44,6 +85,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             }
             finally
             {
+                Assert.That(AssetDatabase.AssetPathToGUID(root), Is.EqualTo(rootGuid));
                 AssetDatabase.DeleteAsset(root);
             }
         }
@@ -366,12 +408,12 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                 var style = (GUIStyle)typeof(HybridCLRWindow).GetField("_navigationStyle", flags).GetValue(window);
                 Assert.That(EditorGUIUtility.GetBuiltinSkin(EditorSkin.Inspector).FindStyle(style.name), Is.Not.Null,
                     "Renaming a native Editor style loses its skin-based selected-state painting.");
-                foreach (var target in new[] { 1, 2, 3, 0 })
+                foreach (var target in new[] { 1, 2, 0 })
                 {
                     window.Repaint();
                     yield return null;
                     var area = NavigationArea(window);
-                    var point = new Vector2(area.x + area.width * (target + .5f) / 4, area.center.y);
+                    var point = new Vector2(area.x + area.width * (target + .5f) / 3, area.center.y);
                     window.SendEvent(new Event { type = EventType.MouseDown, button = 0, mousePosition = point });
                     window.SendEvent(new Event { type = EventType.MouseUp, button = 0, mousePosition = point });
                     yield return null;

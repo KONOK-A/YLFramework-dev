@@ -44,8 +44,7 @@ namespace YLFramework.Editor.Actions
                 About = CreateAbout(),
                 ApiTypes = types.Select(type => new HelpApiTypeDefinition(type, ActionKitApiHelpReference.TypeGroup(type))).ToArray(),
                 XmlPaths = assemblies.ToDictionary(assembly => assembly, assembly => Path.GetFullPath(Path.Combine(
-                    Application.dataPath, "..", "Library", assembly.GetName().Name + ".xml"))),
-                Documentation = ActionKitApiHelpReference.Describe
+                    Application.dataPath, "..", "Library", assembly.GetName().Name + ".xml")))
             };
         }
 
@@ -80,6 +79,7 @@ namespace YLFramework.Editor.Actions
                 blocks.Add(HelpBlock.Notice("注意事项", topic.Notes));
             }
 
+            blocks.Add(Document("完整 Action 说明", "Modules/Action.md"));
             return new HelpPage(topic.Id, topic.Title, topic.Group, topic.Summary, blocks.ToArray())
             {
                 Keywords = topic.TypeNames,
@@ -97,7 +97,11 @@ namespace YLFramework.Editor.Actions
                     "沿用 YLFramework 的依赖契约，动作核心不要求 DOTween；可选包装程序集为 YLFramework.Actions.DOTween。\n\n" +
                     "Unity 版本：" + Application.unityVersion + "\nRuntime 程序集版本：" + typeof(ActionKit).Assembly.GetName().Version +
                     "\n程序集版本来自编译元数据，不代表单独的模块发布版本。\n\n" +
-                    "帮助窗口只供查阅和复制，不执行示例、不创建动作宿主。API 声明来自当前编译程序集；说明按模块源码整理。"))
+                    "帮助窗口只供查阅和复制，不执行示例、不创建动作宿主。API 声明来自当前编译程序集；成员说明仅来自 Runtime XML，窗口只保留索引、指南与文档导航。"))
         };
+
+        private static HelpBlock Document(string title, string path) => HelpBlock.Link(title,
+            new Uri(global::YLFramework.Editor.Common.FrameworkPackagePaths.FullPath(typeof(ActionKitHelpProvider).Assembly,
+                "Documentation~/" + path)).AbsoluteUri);
     }
 }

@@ -372,7 +372,10 @@ namespace YLFramework.Core
             {
                 try
                 {
-                    EventManager.TriggerEventAll(CoreEvents.ViewRemoved, view);
+                    if (EventBus.TryGetDefault(out var bus))
+                    {
+                        bus.SendAll(CoreEvents.ViewRemoved, view);
+                    }
                 }
                 catch (Exception error)
                 {

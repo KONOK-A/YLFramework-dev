@@ -12,53 +12,53 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b8d754bdbc05bfb45bb058ffdf82c0bc, type: 3}
   m_Name: AutomaticAtlases
   m_EditorClassIdentifier: 
-  Rules:
-  - Id: menu
-    GroupId: atlases
-    Grouping: 0
-    Address: atlases/menu
-    Sources:
+  rules:
+  - id: menu
+    groupId: atlases
+    grouping: 0
+    address: atlases/menu
+    sources:
     - {fileID: 2800000, guid: 3cad305ddd20a234c952a8fc4bf12ed8, type: 3}
-    AllowRotation: 0
-    TightPacking: 0
-    Padding: 8
-    MaxTextureSize: 128
-    Readable: 0
-    MipMaps: 0
-    SRgb: 1
-    FilterMode: 1
-    Compression: 0
-  - Id: icons
-    GroupId: atlases
-    Grouping: 0
-    Address: atlases/icons
-    Sources:
+    allowRotation: 0
+    tightPacking: 0
+    padding: 8
+    maxTextureSize: 128
+    readable: 0
+    mipMaps: 0
+    srgb: 1
+    filterMode: 1
+    compression: 0
+  - id: icons
+    groupId: atlases
+    grouping: 0
+    address: atlases/icons
+    sources:
     - {fileID: 2800000, guid: 8735be4d9318a914ba55d2e5c0497439, type: 3}
-    AllowRotation: 0
-    TightPacking: 0
-    Padding: 4
-    MaxTextureSize: 128
-    Readable: 0
-    MipMaps: 0
-    SRgb: 1
-    FilterMode: 1
-    Compression: 0
-  ProjectGuid: 20dcfb86d6324d6409ba7cb3767de028
-  GenerationParentGuid: 87797fb94a8f28a48a2d9790886b4230
-  DirectoryGuid: 08ef960a3e3b0e944b03c11b158b53a1
-  ConfigurationGuid: dd8f3a0dc97546947ac90352523bee1b
-  ConfigurationMetaHash: 5f3659d1b42439090a8931ae438db70254836f9095a70c5d0cca9ae4f937b236
-  DirectoryMetaHash: ee269cc50b4b4d781cf72e629c08670844e847b3a14f5bbfbaf527633f3ca30a
-  Outputs:
-  - Key: icons
-    FileName: icons.spriteatlasv2
-    Guid: 477ab1a7c44148d4eb47ccf52d16fb49
-    InputHash: 7d922fe1cdb135f9cebeb67dbe6c2dc41b064acb598e14c1a6d88188b8e74f60
-    AssetHash: 557496475ee23925f419d6a1d595b7302c0d79c804996c0bc95f04058b45652f
-    MetaHash: 97e6bcc81d503af70dc0786fa529519580cdab66b88318f4516e5eb41da22e5f
-  - Key: menu
-    FileName: menu.spriteatlasv2
-    Guid: 6c04505aa9c326548a6afcb129e10de9
-    InputHash: 0bf5ef570d5f2f4f607ba47a2689929afb07d2ae98516991ecf56060b98fbcad
-    AssetHash: 9bd217cd70d089fc2efb4aa4238cd705408c8f980a210c591f4d8622f2eccb0f
-    MetaHash: 78faee7f6d6ecd9e2f9961e4fb9c5b52df5a1c13622ec21550d0bdf4b178f2a0
+    allowRotation: 0
+    tightPacking: 0
+    padding: 4
+    maxTextureSize: 128
+    readable: 0
+    mipMaps: 0
+    srgb: 1
+    filterMode: 1
+    compression: 0
+  projectGuid: 20dcfb86d6324d6409ba7cb3767de028
+  generationParentGuid: 87797fb94a8f28a48a2d9790886b4230
+  directoryGuid: 08ef960a3e3b0e944b03c11b158b53a1
+  configurationGuid: dd8f3a0dc97546947ac90352523bee1b
+  configurationMetaHash: 5f3659d1b42439090a8931ae438db70254836f9095a70c5d0cca9ae4f937b236
+  directoryMetaHash: ee269cc50b4b4d781cf72e629c08670844e847b3a14f5bbfbaf527633f3ca30a
+  outputs:
+  - key: icons
+    fileName: icons.spriteatlasv2
+    guid: 477ab1a7c44148d4eb47ccf52d16fb49
+    inputHash: 7d922fe1cdb135f9cebeb67dbe6c2dc41b064acb598e14c1a6d88188b8e74f60
+    assetHash: 557496475ee23925f419d6a1d595b7302c0d79c804996c0bc95f04058b45652f
+    metaHash: 97e6bcc81d503af70dc0786fa529519580cdab66b88318f4516e5eb41da22e5f
+  - key: menu
+    fileName: menu.spriteatlasv2
+    guid: 6c04505aa9c326548a6afcb129e10de9
+    inputHash: 0bf5ef570d5f2f4f607ba47a2689929afb07d2ae98516991ecf56060b98fbcad
+    assetHash: 9bd217cd70d089fc2efb4aa4238cd705408c8f980a210c591f4d8622f2eccb0f
+    metaHash: 78faee7f6d6ecd9e2f9961e4fb9c5b52df5a1c13622ec21550d0bdf4b178f2a0

@@ -172,7 +172,6 @@ namespace YLFramework.Core
 
             Step = StartingModuleSteps.PreloadConfigTables;
 
-#pragma warning disable CS0618 // 类型或成员已过时
             var tables = module.PreloadConfigTables;
             if (tables != null && tables.Count != 0)
             {
@@ -230,7 +229,6 @@ namespace YLFramework.Core
                     Progress = currentCount / allCount * 0.5f; // 更新进度
                 }
             }
-#pragma warning restore CS0618 // 类型或成员已过时
 
 
             Step = StartingModuleSteps.LoadScene;

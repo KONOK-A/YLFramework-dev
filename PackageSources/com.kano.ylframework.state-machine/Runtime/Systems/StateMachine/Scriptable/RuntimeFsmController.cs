@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Serialization;
 
 namespace YLFramework.StateMachine
 {
@@ -23,13 +22,13 @@ namespace YLFramework.StateMachine
         /// 图编辑器当前浏览的子状态机路径，从外到内排列。
         /// </summary>
         [HideInInspector]
-        [FormerlySerializedAs("Layers")] public List<string> layers = new List<string>();
+        public List<string> layers = new List<string>();
 
         /// <summary>
         /// 运行时配置克隆对应的源资产 GUID，仅供编辑器定位源配置，不代表自动回写。
         /// </summary>
         [HideInInspector]
-        [FormerlySerializedAs("originGUID")] public string originGuid;
+        public string originGuid;
 
         /// <summary>向当前浏览路径追加尚未包含的层级名称并请求保存。</summary>
         /// <param name="layer">要进入的子状态机名称。</param>

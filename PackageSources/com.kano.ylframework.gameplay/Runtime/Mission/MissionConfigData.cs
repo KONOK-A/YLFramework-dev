@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Serialization;
 using YLFramework.Foundation;
 
 namespace YLFramework.Mission
@@ -73,7 +72,7 @@ namespace YLFramework.Mission
         /// </summary>
         [Tooltip("任务名称")]
         [Header("任务名称")]
-        [FormerlySerializedAs("mission_name"), global::YLFramework.Excel.ExcelColumnName("mission_name")] public string missionName;
+        [global::YLFramework.Excel.ExcelColumnName("mission_name")] public string missionName;
 
         /// <summary>
         /// 任务图标
@@ -113,14 +112,14 @@ namespace YLFramework.Mission
         [Tooltip("任务类型文件对应的guid")]
         [HideInInspector]
         [YLFramework.Excel.ExcelIgnore]
-        [FormerlySerializedAs("mission_type_guid")] public string missionTypeGuid;
+        public string missionTypeGuid;
 
         /// <summary>
         /// 任务类全名称
         /// </summary>
         [Tooltip("任务类全名称")]
 
-        [FormerlySerializedAs("mission_type_class_fullname"), global::YLFramework.Excel.ExcelColumnName("mission_type_class_fullname")] public string missionTypeClassFullName;
+        [global::YLFramework.Excel.ExcelColumnName("mission_type_class_fullname")] public string missionTypeClassFullName;
 
         /// <summary>
         /// 任务完成后是否重置参数(该参数在没有其他正在执行中的任务引用的情况下,默认:true)
@@ -128,7 +127,7 @@ namespace YLFramework.Mission
         /// <remarks>由条件满足驱动完成时，在状态通知后尝试归零；直接将任务状态设为 Completed 不执行这段重置。</remarks>
         [Tooltip("任务完成后是否重置参数(该参数在没有其他正在执行中的任务引用的情况下,默认:true)")]
         [Header("任务完成后是否重置参数(该参数在没有其他正在执行中的任务引用的情况下,默认:true)")]
-        [FormerlySerializedAs("reset_param_on_completed"), global::YLFramework.Excel.ExcelColumnName("reset_param_on_completed")] public bool resetParamOnCompleted = true;
+        [global::YLFramework.Excel.ExcelColumnName("reset_param_on_completed")] public bool resetParamOnCompleted = true;
 
     }
 }

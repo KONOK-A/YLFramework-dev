@@ -128,6 +128,38 @@ namespace YLFramework.Tests.DataAssets
         }
 
         [Test]
+        public void DestroyedBorrowedRowInvalidatesTheCurrentIndexWithoutClosingItsRoot()
+        {
+            using var owner = ScriptableObjectManager.AddConfig(_root);
+            Assert.That(owner.Config.GetScriptableObjectData(17), Is.SameAs(_child));
+            Object.DestroyImmediate(_child);
+            Assert.That(ReferenceEquals(_child, null), Is.False, "The test must retain a Unity fake-null wrapper.");
+            Assert.That(_child == null, Is.True);
+            Assert.That(owner.Config.GetScriptableObjectData(17), Is.Null);
+            Assert.That(owner.Config.GetName(17), Is.Null);
+            Assert.That(owner.Config.TryGetIdRange(out _, out _), Is.False);
+            Assert.That(ScriptableObjectManager.RegistrationCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void DestroyedLoadedRootIsPrunedAndOnlyItsOwnedLeaseIsReturned()
+        {
+            var system = Initialize();
+            var name = _root.name;
+            var owner = Own(ScriptableObjectManager.Load(system, _address));
+            Assert.That(system.GetDiagnosticsSnapshot().LeaseCount, Is.EqualTo(1));
+            Object.DestroyImmediate(_root);
+            Assert.That(ReferenceEquals(_root, null), Is.False);
+            Assert.That(owner.IsValid, Is.False);
+            Assert.Throws<InvalidOperationException>(() => _ = owner.Config);
+            Assert.That(ScriptableObjectManager.RegistrationCount, Is.Zero);
+            Assert.That(ScriptableObjectManager.GetConfig(name), Is.Null);
+            Assert.That(owner.IsDisposed, Is.True);
+            Assert.That(system.GetDiagnosticsSnapshot().LeaseCount, Is.Zero);
+            Assert.That(_source.Releases, Is.EqualTo(1));
+        }
+
+        [Test]
         public void TwoOwnersKeepRootAndChildAliveUntilLastLeaseReturns()
         {
             _source.Immediate = true;

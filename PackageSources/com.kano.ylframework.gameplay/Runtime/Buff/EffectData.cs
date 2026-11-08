@@ -1,5 +1,4 @@
 using UnityEngine;
-using UnityEngine.Serialization;
 using YLFramework.Foundation;
 
 namespace YLFramework.Buff
@@ -16,7 +15,7 @@ namespace YLFramework.Buff
 
         /// <summary>效果的显示名称。</summary>
         [Tooltip("名称")]
-        [FormerlySerializedAs("effect_name"), global::YLFramework.Excel.ExcelColumnName("effect_name")] public string effectName;
+        [global::YLFramework.Excel.ExcelColumnName("effect_name")] public string effectName;
 
         /// <summary>业务分类编号，与效果的 C# 派生类型不同。</summary>
         [Tooltip("类型")]

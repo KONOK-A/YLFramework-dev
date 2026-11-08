@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -10,6 +11,7 @@ using YLFramework.Serialization;
 namespace YLFramework.Tests.Extensions.Data.Save
 {
     [Category("YL.Module.SaveBcl")]
+    [Category("YL.Module.Data")]
     public class SaveManagerFacadeTests
     {
         public class Record
@@ -23,58 +25,62 @@ namespace YLFramework.Tests.Extensions.Data.Save
         }
 
         [Test]
-        public void ExistingObjectOverloadsAndSerializedDictionaryDiskContractUseOneOwner()
+        public void ExplicitObjectKeysAndSerializedDictionaryDiskContractUseOneDefaultOwner()
         {
             WithRoot(root =>
             {
-                var item = SaveManager.CreateSaveItem();
+                var store = SaveManager.Store;
+                var item = store.CreateSaveItem();
                 var data = new Record { Direct = { { "a", 2 }, { "b", 4 } }, Nested = { { 7, new Payload { Number = 6 } } } };
-                var settings = SaveManager.SerializerSettings;
-                SaveManager.SaveObject(data, "record", item);
-                SaveManager.SaveObject(data.Direct, "dictionary", item.SaveId);
-                SaveManager.SaveObject(data, item);
-                Assert.That(SaveManager.LoadObject<Record>("record", item), Is.SameAs(data));
-                Assert.That(SaveManager.LoadObject<Record>(item), Is.SameAs(data));
-                Assert.That(SaveManager.TryLoadObject(out Record cached, "record", item.SaveId), Is.True);
+                var settings = SaveManager.DefaultSerializerSettings;
+                store.SaveObject(data, "record", item.SaveId);
+                store.SaveObject(data.Direct, "dictionary", item.SaveId);
+                store.SaveObject(data, "Record", item.SaveId);
+                Assert.That(store.LoadObject<Record>("record", item.SaveId), Is.SameAs(data));
+                Assert.That(store.LoadObject<Record>("Record", item.SaveId), Is.SameAs(data));
+                var cached = store.LoadObject<Record>("record", item.SaveId);
                 Assert.That(cached, Is.SameAs(data));
                 Assert.That(JToken.DeepEquals(JToken.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(root, "SaveData/0/dictionary.json")))), JToken.Parse("{\"a\":2,\"b\":4}")), Is.True);
                 Assert.That(JToken.DeepEquals(JToken.Parse(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(root, "SaveData/0/record.json")))), JToken.Parse("{\"Direct\":{\"a\":2,\"b\":4},\"Nested\":{\"7\":{\"Number\":6}}}")), Is.True);
                 data.Direct["a"] = -1;
                 data.Nested[7].Number = -1;
                 SaveManager.SetStorageRoot(root);
-                var restored = SaveManager.LoadObject<Record>("record", item.SaveId);
+                store = SaveManager.Store;
+                var restored = store.LoadObject<Record>("record", item.SaveId);
                 Assert.That(restored, Is.Not.SameAs(data));
                 Assert.That(restored.Direct["a"], Is.EqualTo(2));
                 Assert.That(restored.Nested[7].Number, Is.EqualTo(6));
-                Assert.That(SaveManager.LoadObject<SerializedDictionary<string, int>>("dictionary", item.SaveId)["b"], Is.EqualTo(4));
-                Assert.That(SaveManager.LoadObject<Record>(item.SaveId).Direct["a"], Is.EqualTo(2));
-                Assert.That(SaveManager.GetSaveItemWithId(0), Is.Not.SameAs(item));
-                Assert.That(SaveManager.GetSaveItemCount(), Is.EqualTo(1));
-                Assert.That(SaveManager.SerializerSettings, Is.SameAs(settings));
-                Assert.That(SaveManager.RenameSaveItem(0, "named"), Is.True);
-                Assert.That(SaveManager.SetSaveItemNote(0, "note"), Is.True);
-                Assert.That(SaveManager.GetAllSaveItems(SaveManager.SaveOrder.Name)[0].DisplayName, Is.EqualTo("named"));
-                Assert.That(SaveManager.GetAllSaveItems(s => s.SaveId)[0].Note, Is.EqualTo("note"));
+                Assert.That(store.LoadObject<SerializedDictionary<string, int>>("dictionary", item.SaveId)["b"], Is.EqualTo(4));
+                Assert.That(store.LoadObject<Record>("Record", item.SaveId).Direct["a"], Is.EqualTo(2));
+                Assert.That(store.GetSaveItem(0), Is.Not.SameAs(item));
+                Assert.That(store.GetAllSaveItems().Count, Is.EqualTo(1));
+                Assert.That(SaveManager.DefaultSerializerSettings, Is.SameAs(settings));
+                Assert.That(store.RenameSaveItem(0, "named"), Is.True);
+                Assert.That(store.SetSaveItemNote(0, "note"), Is.True);
+                Assert.That(store.GetAllSaveItems().OrderBy(slot => slot.DisplayName ?? string.Empty).First().DisplayName, Is.EqualTo("named"));
+                Assert.That(store.GetAllSaveItems().OrderBy(slot => slot.SaveId).First().Note, Is.EqualTo("note"));
             });
         }
 
         [Test]
-        public void AsyncFacadeCapturesExplicitRootAndModelsBeforeDispatch()
+        public void AsyncDefaultStoreCapturesExplicitRootAndModelsBeforeDispatch()
         {
             WithRoot(root =>
             {
-                var item = SaveManager.CreateSaveItemAsync(6).GetAwaiter().GetResult();
+                var store = SaveManager.Store;
+                var item = store.CreateSaveItemAsync(6).GetAwaiter().GetResult();
                 var payload = new Payload { Number = 81 };
-                SaveManager.SaveObjectAsync(payload, "player", 6).GetAwaiter().GetResult();
+                store.SaveObjectAsync(payload, "player", 6).GetAwaiter().GetResult();
                 SaveManager.Close();
-                Assert.That(SaveManager.LoadObjectAsync<Payload>("player", 6).GetAwaiter().GetResult().Number, Is.EqualTo(81));
-                SaveManager.SaveGlobalSettingAsync(new Payload { Number = 4 }, "options").GetAwaiter().GetResult();
-                Assert.That(SaveManager.LoadGlobalSetting<Payload>("options").Number, Is.EqualTo(4));
-                SaveManager.DeleteObject<Payload>("player", item);
-                Assert.That(SaveManager.TryLoadObject(out Payload missing, "player", item), Is.False);
+                store = SaveManager.Store;
+                Assert.That(store.LoadObjectAsync<Payload>("player", 6).GetAwaiter().GetResult().Number, Is.EqualTo(81));
+                store.SaveGlobalSettingAsync(new Payload { Number = 4 }, "options").GetAwaiter().GetResult();
+                Assert.That(store.LoadGlobalSetting<Payload>("options").Number, Is.EqualTo(4));
+                store.DeleteObject("player", item.SaveId);
+                var missing = store.LoadObject<Payload>("player", item.SaveId);
                 Assert.That(missing, Is.Null);
-                SaveManager.DeleteSaveItemAsync(6).GetAwaiter().GetResult();
-                Assert.That(SaveManager.GetSaveItemCount(), Is.EqualTo(0));
+                store.DeleteSaveItemAsync(6).GetAwaiter().GetResult();
+                Assert.That(store.GetAllSaveItems().Count, Is.EqualTo(0));
             });
         }
 

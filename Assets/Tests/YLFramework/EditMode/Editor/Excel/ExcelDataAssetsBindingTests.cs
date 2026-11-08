@@ -25,7 +25,6 @@ namespace YLFramework.Tests.Extensions.Data
         {
             string name = "YLExcelBinding-" + Guid.NewGuid().ToString("N");
             _folder = "Assets/" + name;
-            YLFramework.Tests.DataAssets.DataAcceptanceOwnership.Own(_folder);
             AssetDatabase.CreateFolder("Assets", name);
             _root = ScriptableObject.CreateInstance<ScriptableObjectConfigs>();
             AssetDatabase.CreateAsset(_root, _folder + "/Root.asset");
@@ -42,7 +41,6 @@ namespace YLFramework.Tests.Extensions.Data
                 Object.DestroyImmediate(sample);
             }
             _entries = ScriptableObjectConfigsController.GetDataPath(_root);
-            YLFramework.Tests.DataAssets.DataAcceptanceOwnership.Own(_entries);
             _original = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(_folder + "/Root.asset"));
             string output = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Temp/Extensions.Data.Excel/Unity", name);
             Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(output));

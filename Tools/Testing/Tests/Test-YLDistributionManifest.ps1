@@ -4,7 +4,7 @@
 param([string] $TemporaryRoot = [IO.Path]::GetTempPath())
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '../Common/Workspace.ps1')
+. (Join-Path $PSScriptRoot '../Common/Packages.ps1')
 $entry = Join-Path $PSScriptRoot 'Test-YLDistribution.ps1'
 $ast = [Management.Automation.Language.Parser]::ParseFile($entry, [ref]$null, [ref]$null)
 $audit = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-DistributionPackageContent' }, $true)

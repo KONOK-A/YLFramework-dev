@@ -12,14 +12,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7331c0230f1378c48bb33ed06489830c, type: 3}
   m_Name: SameDisplayNameProject
   m_EditorClassIdentifier: 
-  ProjectId: ux1-workbench-alternate
-  DisplayName: "UX1 \u8D44\u6E90\u5DE5\u4F5C\u53F0\u4F53\u9A8C"
-  SourceDirectories:
-  - Guid: fa54ff5bace436743b81f6032d404c16
-    AddressPrefix: 
-  Compression: 0
-  ContentEncryption: 0
-  ContentKeyId: 
-  AutomaticAtlases: {fileID: 0}
-  AutomaticAtlasConfigurationGuid: 
-  Groups: []
+  projectId: ux1-workbench-alternate
+  displayName: "UX1 \u8D44\u6E90\u5DE5\u4F5C\u53F0\u4F53\u9A8C"
+  sourceDirectories:
+  - guid: fa54ff5bace436743b81f6032d404c16
+    addressPrefix: 
+  compression: 0
+  contentEncryption: 0
+  contentKeyId: 
+  automaticAtlases: {fileID: 0}
+  automaticAtlasConfigurationGuid: 
+  groups: []

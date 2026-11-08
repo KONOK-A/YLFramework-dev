@@ -56,7 +56,7 @@ namespace YLFramework.Core.Tests
             var editor = typeof(CreateModuleCommand).Assembly;
             Assert.That(editor.GetType("YLFramework.Editor.Core.ListenerInitOnLoad"), Is.Null);
             Assert.That(editor.GetType("YLFramework.Editor.Core.ListenerFileChange"), Is.Null);
-            Assert.That(typeof(UIPanelAssetMigration).GetMethod("MigrateAssets"), Is.Null);
+            Assert.That(typeof(UIPanelAssetValidator).GetMethod("MigrateAssets"), Is.Null);
             Assert.That(File.Exists(FrameworkPackagePaths.FullPath(editor, "Documentation~/README.md")), Is.True);
         }
 

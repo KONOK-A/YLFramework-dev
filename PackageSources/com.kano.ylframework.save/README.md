@@ -14,9 +14,11 @@ Consumers using `overrideReferences` also explicitly list `Newtonsoft.Json.dll`
 when calling APIs whose signatures expose its settings, even for optional args.
 
 `SaveStore` is the storage owner. Dispose it before another owner opens the same
-root. `SaveManager` is the existing Unity facade: capture the default persistent
-path on the Unity main thread, or set an explicit root before worker use.
-Changing the facade root closes/cancels/drains its previous owner; it does not
+root. `SaveStore` is the sole business API. `SaveManager.Store` publicly borrows
+the default owner; callers must not dispose that borrowed instance. The manager
+only captures the Unity main-thread path, exposes default configuration and
+handles root/session lifetime. Set an explicit root before worker use.
+Changing the default root closes/cancels/drains its previous owner; it does not
 copy or migrate files. Async writes serialize snapshots on the calling thread
 before asynchronous IO; custom converters must not call Unity APIs on workers.
 
@@ -26,18 +28,23 @@ explicit before another write; corruption without a valid backup and unsupported
 index versions remain errors. No multi-file transaction, cloud service, automatic
 old-format migration or new encryption layer is added by this ownership move.
 
-Unknown slots retain the existing contract: synchronous facade SaveObject and
-LoadObject log the existing Unity error and return, while ReadObject, async APIs
-and SaveStore reads/writes throw. Queries and deletes keep their false/empty or
+Slot-requiring synchronous and asynchronous SaveStore reads/writes consistently
+throw for an unknown slot. No logging-and-return facade remains. Use explicit
+file keys and slot IDs, not inferred type names or SaveItem overloads. Queries and deletes keep their false/empty or
 idempotent outcomes. They do not silently create a slot.
 
-SaveItem instances are borrowed mutable metadata. Direct mutation changes only
+SaveItem is now a top-level type in the same namespace. Its instances are borrowed mutable metadata. Direct mutation changes only
 the current in-memory object, not the disk immediately; cold reopen before any
 index write discards it. A later index write snapshots current in-memory
 metadata, including such mutations. Explicit rename/note APIs persist at once.
 An already open owner does not merge external edits to the index. These existing
 boundaries are regression-tested rather than normalized into a new format.
 
-The included link.xml follows the new assembly for SaveIndex/SaveItem metadata;
+DefaultSerializerSettings is the shared configuration instance, set before
+concurrent use. DefaultSerializationFormat applies only when the default Store
+is created; Store.SerializationFormat controls the current instance. Getter,
+Close and root changes do not overwrite instance formatting or reset defaults.
+
+The included link.xml preserves SaveIndex and the top-level SaveItem metadata;
 consumers still preserve their own AOT DTOs/converters. Removing/upgrading this
 package never deletes project save data or resolves recovery on the user's behalf.

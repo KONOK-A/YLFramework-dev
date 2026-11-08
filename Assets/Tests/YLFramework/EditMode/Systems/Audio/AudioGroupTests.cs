@@ -148,7 +148,7 @@ namespace YLFramework.Tests.Audio
             _player.PlayGroup("missing");
             _library.groups[0].entries.Clear();
             _player.Play();
-            _library.groups[0].entries.Add(new AudioClipEntry { source = AudioClipSource.AssetBundle, key = "resources://wrong", bundleName = "bundle" });
+            _library.groups[0].entries.Add(new AudioClipEntry { source = (AudioClipSource)2, key = "resources://wrong" });
             _player.Play();
             _library.groups[0].entries[0] = new AudioClipEntry { clip = _clip };
             _library.groups.Add(new AudioClipGroup { name = "direct" });
@@ -158,12 +158,49 @@ namespace YLFramework.Tests.Audio
         }
 
         [Test]
-        public void LegacyBundleNeverGuessesProjectIdentityOrCreatesAProvider()
+        public void RetiredBundleValueNeverGuessesProjectIdentityOrCreatesAProvider()
         {
-            _library.groups[0].entries[0] = new AudioClipEntry { source = AudioClipSource.AssetBundle, key = "ambience.wav", bundleName = "ambience" };
+            _library.groups[0].entries[0] = new AudioClipEntry { source = (AudioClipSource)2, key = "ambience.wav" };
             Assert.IsFalse(_library.TrySelect("direct", out _));
             Assert.IsFalse(_library.TrySelect("direct", out _));
             Assert.IsNull(YLFramework.Resource.ResourceSystem.Current);
+        }
+
+        [TestCase(1, false)]
+        [TestCase(2, false)]
+        [TestCase(-1, false)]
+        [TestCase(5, false)]
+        [TestCase(99, false)]
+        [TestCase(1, true)]
+        [TestCase(2, true)]
+        [TestCase(-1, true)]
+        [TestCase(5, true)]
+        [TestCase(99, true)]
+        public void RetiredOrUnknownSourceRejectsTheWholeGroupWithoutRandomOrPlaybackSideEffects(int source, bool weighted)
+        {
+            _player.Play();
+            var previous = _player.LastHandle;
+            var group = _library.groups[0];
+            group.selection = weighted ? AudioClipSelectionMode.Weighted : AudioClipSelectionMode.Uniform;
+            group.entries.Add(new AudioClipEntry
+            {
+                source = (AudioClipSource)source,
+                key = "audio/valid-address",
+                projectId = "explicit-project",
+                weight = 0
+            });
+            var random = UnityEngine.Random.state;
+            Assert.That(_library.TrySelect("direct", out var selection), Is.False,
+                "An unsupported source is invalid input even beside an eligible Clip or with zero selection weight.");
+            Assert.That(selection.Clip, Is.Null);
+            Assert.That(selection.IsNamed, Is.False);
+            Assert.That(UnityEngine.Random.state, Is.EqualTo(random));
+            _player.Play();
+            Assert.That(previous.IsValid, Is.True);
+            Assert.That(_player.LastHandle, Is.EqualTo(previous));
+            Assert.That(_player.Channel.RequestCount, Is.EqualTo(1));
+            Assert.That(YLFramework.Resource.ResourceSystem.Current, Is.Null,
+                "A numeric source must never infer a Resource project or initialize a second authority.");
         }
 
         [Test]

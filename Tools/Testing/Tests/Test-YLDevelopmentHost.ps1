@@ -4,7 +4,8 @@
 param(
     [Parameter(Mandatory)][string] $WorkspaceRoot,
     [Parameter(Mandatory)][string] $Unity,
-    [ValidateRange(1, 86400)][int] $TimeoutSeconds = 900
+    [ValidateRange(1, 86400)][int] $TimeoutSeconds = 900,
+    [string] $DOTweenArchive
 )
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
@@ -33,7 +34,6 @@ function Get-YLDevelopmentHostInputs([string] $Repository) {
     foreach ($relative in @(
         'Assets/Tests/YLFramework/EditMode/Editor/Distribution/FrameworkStructureTests.cs',
         'Assets/Tests/YLFramework/EditMode/Editor/Distribution/DevelopmentHostBoundaryTests.cs',
-        'Assets/Tests/YLFramework/Fixtures/NamespaceMigration/ProductMoves.json',
         'Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs',
         'Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef',
         'Assets/Scenes/YLFrameworkDev.unity', 'Assets/Settings/UniversalRP.asset', 'Assets/Settings/Renderer2D.asset',
@@ -66,12 +66,8 @@ function Get-YLDevelopmentHostBoundary([string] $Repository) {
     } else { @() }
     $absences = [ordered]@{}
     foreach ($relative in @('Assets/Games/MainModule', 'Assets/Games/MainModule.meta', 'Assets/Scenes/Main.unity',
-        'Assets/Scenes/Main.unity.meta', 'Assets/StreamingAssets/MainModule', 'Assets/Atlas(AutoGenerate)/MainModule', 'AssetBundles/MainModule')) {
-        $absences[$relative] = [IO.Path]::Exists((Join-Path $Repository $relative))
-    }
-    $moves = [IO.File]::ReadAllText((Join-Path $Repository 'Assets/Tests/YLFramework/Fixtures/NamespaceMigration/ProductMoves.json')) | ConvertFrom-Json -DateKind String
-    foreach ($move in $moves.Moves) {
-        $relative = 'Assets/YLFramework/' + $move.From
+        'Assets/Scenes/Main.unity.meta', 'Assets/StreamingAssets/MainModule', 'Assets/Atlas(AutoGenerate)/MainModule', 'AssetBundles/MainModule',
+        'Assets/YLFramework/Runtime', 'Assets/YLFramework/Editor', 'Assets/YLFramework/Plugins', 'Assets/YLFramework/Prefabs')) {
         $absences[$relative] = [IO.Path]::Exists((Join-Path $Repository $relative))
     }
     return [ordered]@{
@@ -89,6 +85,11 @@ $Unity = Get-YLTestPath -Path $Unity -ReadOnly
 $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
 $editor = Get-YLTestEditorProfile -Editors $configuration.editors -VersionInfo ([Diagnostics.FileVersionInfo]::GetVersionInfo($Unity))
 $definition = Get-YLDevelopmentHostDefinition -Repository $repository -Editor $editor
+$toolchain = @($Unity)
+if ($DOTweenArchive) {
+    $DOTweenArchive = Get-YLTestPath -Path $DOTweenArchive -ReadOnly
+    $toolchain += $DOTweenArchive
+}
 $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $repository
 $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key "DevelopmentHost-$($editor.productVersion)"
 $lease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
@@ -97,13 +98,19 @@ $summary = [ordered]@{
     schemaVersion = 1; purpose = 'YLTesting.DevelopmentHost'; ownerId = $run.id; action = 'Run'; status = 'Failed'; reason = $null; endUtc = $null
     sourceProfile = $definition.sourceProfile; sourceRoot = $repository; host = $null; processes = @(); inputIdentity = $null; sourceRecheck = $null
     selection = $null; xml = @(); testResult = $null; unity = @{ executable = $Unity; version = $editor.version; productVersion = $editor.productVersion }
-    scope = 'Read-only source dependency/file boundaries plus actual owned author-scene EditMode assertions; no SDK, Player, rendering or Unity 2022 compatibility acceptance.'
+    sdk = $null
+    scope = 'Read-only source dependency/file boundaries plus actual owned author-scene EditMode assertions; explicit approved SDK compilation prerequisites only, not SDK behavior, Player, rendering or Unity 2022 compatibility acceptance.'
 }
 try {
+    $sdk = $null
+    if ($DOTweenArchive) {
+        $sdk = Get-YLIntegrationDotweenSdk -Repository $repository -Archive $DOTweenArchive -OwnedSdkRoot (Join-Path $run.path 'ApprovedSdk')
+        $summary.sdk = @{ source = 'ApprovedArchive'; version = $sdk.version; archive = $DOTweenArchive; archiveSha256 = $sdk.archiveSha256; assemblySha256 = $sdk.assemblySha256; behavior = 'NotRun' }
+    }
     $boundary = Get-YLDevelopmentHostBoundary $repository
     $profile = $definition.sourceProfile + '|' + (ConvertTo-Json -InputObject $boundary -Depth 10 -Compress)
     $paths = @(Get-YLDevelopmentHostInputs $repository)
-    $identity = Get-YLTestInputIdentity -Repository $repository -Paths $paths -Toolchain @($Unity) -Profile $profile
+    $identity = Get-YLTestInputIdentity -Repository $repository -Paths $paths -Toolchain $toolchain -Profile $profile
     $summary.inputIdentity = $identity; $summary['sourceBoundary'] = $boundary
     $hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key ('DH-' + $run.id.Substring(0, 12))
     $hostLease = Lock-YLTestDirectory -Workspace $workspace -Path $hostRecord.path
@@ -115,6 +122,9 @@ try {
             $relative.StartsWith('PackageSources/com.kano.ylframework/', [StringComparison]::Ordinal)) {
             $files[$relative] = [IO.File]::ReadAllBytes((Join-Path $repository $relative))
         }
+    }
+    if ($null -ne $sdk) {
+        foreach ($relative in $sdk.files.Keys) { $files['Assets/Plugins/Demigiant/DOTween/' + $relative] = [IO.File]::ReadAllBytes((Join-Path $sdk.root $relative)) }
     }
     $manifest = [IO.File]::ReadAllText((Join-Path $repository 'Packages/manifest.json')) | ConvertFrom-Json -AsHashtable -DateKind String
     $dependencies = [ordered]@{
@@ -176,9 +186,10 @@ try {
     }
 
     $discovery = Invoke-DevelopmentHostOperation Discover
-    $afterDiscovery = Get-YLTestInputIdentity -Repository $repository -Paths @(Get-YLDevelopmentHostInputs $repository) -Toolchain @($Unity) -Profile ($definition.sourceProfile + '|' + (ConvertTo-Json -InputObject (Get-YLDevelopmentHostBoundary $repository) -Depth 10 -Compress))
+    if ($null -ne $sdk) { $null = Get-YLIntegrationDotweenSdk -Repository $repository -Archive $DOTweenArchive -OwnedSdkRoot (Join-Path $hostRecord.path 'Assets/Plugins/Demigiant/DOTween') }
+    $afterDiscovery = Get-YLTestInputIdentity -Repository $repository -Paths @(Get-YLDevelopmentHostInputs $repository) -Toolchain $toolchain -Profile ($definition.sourceProfile + '|' + (ConvertTo-Json -InputObject (Get-YLDevelopmentHostBoundary $repository) -Depth 10 -Compress))
     if ($afterDiscovery.sha256 -cne $identity.sha256) { throw 'Source inputs drifted during author-host discovery.' }
-    $tools = @(@($Unity, (Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($discovery.response.compiledInputs) | Sort-Object -Unique)
+    $tools = @($toolchain + @((Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($discovery.response.compiledInputs) | Sort-Object -Unique)
     $effective = Get-YLTestInputIdentity -Repository $repository -Paths $paths -Toolchain $tools -Profile $profile
     $selection = New-YLTestSelection -InputIdentity $effective -Tests @($discovery.response.tests)
     foreach ($class in @('FrameworkStructureTests', 'DevelopmentHostBoundaryTests')) {
@@ -188,7 +199,8 @@ try {
     if (@($selection.tests | Where-Object { $_.mode -cne 'EditMode' -or $_.assembly -cne 'YLFramework.DevelopmentHost.Tests' }).Count -ne 0) { throw 'Unexpected author test execution boundary.' }
     $summary.selection = Join-Path $run.path 'selection.json'; Write-YLTestJson -Path $summary.selection -Value $selection
     $execution = Invoke-DevelopmentHostOperation Run -Tests @($selection.tests)
-    $currentTools = @(@($Unity, (Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($execution.response.compiledInputs) | Sort-Object -Unique)
+    if ($null -ne $sdk) { $null = Get-YLIntegrationDotweenSdk -Repository $repository -Archive $DOTweenArchive -OwnedSdkRoot (Join-Path $hostRecord.path 'Assets/Plugins/Demigiant/DOTween') }
+    $currentTools = @($toolchain + @((Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($execution.response.compiledInputs) | Sort-Object -Unique)
     $current = Get-YLTestInputIdentity -Repository $repository -Paths @(Get-YLDevelopmentHostInputs $repository) -Toolchain $currentTools -Profile ($definition.sourceProfile + '|' + (ConvertTo-Json -InputObject (Get-YLDevelopmentHostBoundary $repository) -Depth 10 -Compress))
     $summary.testResult = Read-YLTestXml -Path (Join-Path $execution.output 'results-EditMode.xml') -Selection $selection -InputIdentity $current -Mode EditMode -ProcessResult $execution.process
     $summary.status = 'Passed'
@@ -197,7 +209,7 @@ finally {
     try {
         if ($null -ne $identity) {
             try {
-                $recheck = Get-YLTestInputIdentity -Repository $repository -Paths @(Get-YLDevelopmentHostInputs $repository) -Toolchain @($Unity) -Profile ($definition.sourceProfile + '|' + (ConvertTo-Json -InputObject (Get-YLDevelopmentHostBoundary $repository) -Depth 10 -Compress))
+                $recheck = Get-YLTestInputIdentity -Repository $repository -Paths @(Get-YLDevelopmentHostInputs $repository) -Toolchain $toolchain -Profile ($definition.sourceProfile + '|' + (ConvertTo-Json -InputObject (Get-YLDevelopmentHostBoundary $repository) -Depth 10 -Compress))
                 $summary.sourceRecheck = @{ before = $identity.sha256; after = $recheck.sha256; unchanged = ($identity.sha256 -ceq $recheck.sha256) }
                 if ($identity.sha256 -cne $recheck.sha256) { throw 'Source inputs drifted during author-host verification; preserve this failed result and rerun when stable.' }
             } catch { $summary.status = 'Failed'; $summary.reason = [string]$summary.reason + ' Source recheck: ' + $_.Exception.Message }

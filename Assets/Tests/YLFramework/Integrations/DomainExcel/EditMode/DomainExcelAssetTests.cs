@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -24,12 +25,9 @@ namespace YLFramework.Domain.Excel.Tests
         public void Setup()
         {
             _folder = "Assets/DomainExcelFixture-" + Guid.NewGuid().ToString("N");
-            // 同一组回归可由不同验收 owner 运行，只登记本用例新建的独占目录。
+            // Equipment 的当前构建保护只登记本用例新建的独占目录。
             var equipmentOwner = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("YLFramework.Tests.EquipmentAcceptance.EquipmentSettings")).FirstOrDefault(t => t != null);
             equipmentOwner?.GetMethod("OwnPath").Invoke(null, new object[] { _folder });
-            if (SessionState.GetBool("YLFramework.Domain.MainAcceptance.Protection", false))
-                Type.GetType("YLFramework.Tests.DomainMain.DomainMainAcceptance, Assembly-CSharp-Editor", true)
-                    .GetMethod("OwnPath").Invoke(null, new object[] { _folder });
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(_folder));
             _path = Path.Combine(Path.GetTempPath(), "domain-excel-native-" + Guid.NewGuid().ToString("N") + ".xlsx");
         }
@@ -40,6 +38,76 @@ namespace YLFramework.Domain.Excel.Tests
                 AssetDatabase.DeleteAsset(_folder);
             if (File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(_path)))
                 File.Delete(global::YLFramework.Testing.PackageTestPaths.Physical(_path));
+        }
+
+        [Test]
+        public void UnchangedImportedSkillStillRequiresAValidRuntimeClass()
+        {
+            var root = ScriptableObject.CreateInstance<SkillsConfig>();
+            AssetDatabase.CreateAsset(root, _folder + "/unchanged.asset");
+            var row = ScriptableObject.CreateInstance<SkillConfigData>();
+            row.id = 120;
+            row.parent = root;
+            row.skillName = "unchanged invalid row";
+            row.skillClassFullName = "Missing.Current.SkillClass";
+            AssetDatabase.AddObjectToAsset(row, root);
+            root.skills.Add(row);
+            EditorUtility.SetDirty(root);
+            AssetDatabase.SaveAssetIfDirty(root);
+            ExcelAuthoring.ScriptableObjectToExcel(root.skills, _path, "skills");
+            using (var canonical = ExcelAuthoring.PreviewScriptableObjects(_path, root.skills, root, sheetName: "skills"))
+            {
+                Assert.That(canonical.Commit(true), Is.EqualTo(ExcelCommitResult.Applied));
+            }
+            ExcelAuthoring.ScriptableObjectToExcel(root.skills, _path, "skills");
+            using (var echo = ExcelAuthoring.PreviewScriptableObjects(_path, root.skills, root, sheetName: "skills"))
+            {
+                Assert.That(echo.Changes, Is.Empty, "The regression must present an unchanged workbook row, not an incidental serialization difference.");
+            }
+            using var plan = DomainExcelCommands.PreviewImport(root, _path);
+            Assert.That(plan.CanCommit, Is.False, "Every imported staged row must be checked, not only display differences.");
+            Assert.That(plan.Errors.Any(error => error.Contains("Missing.Current.SkillClass")), Is.True);
+            Assert.That(plan.Commit(true), Is.EqualTo(ExcelCommitResult.Failed));
+            Assert.That(root.skills.Single(), Is.SameAs(row));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RootParameterPlanRechecksDirtyStateAndNewConditionReferencesBeforeWriting(bool newReference)
+        {
+            var root = ScriptableObject.CreateInstance<MissionsConfig>();
+            root.parameters.Add(new MissionParameter { name = "keep" });
+            root.parameters.Add(new MissionParameter { name = "remove" });
+            AssetDatabase.CreateAsset(root, _folder + "/parameters.asset");
+            var row = ScriptableObject.CreateInstance<MissionConfigData>();
+            row.id = 130;
+            row.parent = root;
+            row.missionTypeClassFullName = typeof(MissionBase).FullName;
+            AssetDatabase.AddObjectToAsset(row, root);
+            root.missions.Add(row);
+            EditorUtility.SetDirty(root);
+            AssetDatabase.SaveAssetIfDirty(root);
+            DomainExcelCommands.ExportParameters(new[] { new MissionParameter { name = "keep" } }, _path);
+            var preview = typeof(DomainExcelCommands).GetMethod("PreviewParameters", BindingFlags.Static | BindingFlags.NonPublic,
+                null, new[] { typeof(MissionsConfig), typeof(string) }, null);
+            using var plan = (ExcelImportPlan)preview.Invoke(null, new object[] { root, _path });
+            Assert.That(plan.CanCommit, Is.True);
+            if (newReference)
+            {
+                row.conditions.Add(new MissionCondition { paramName = "remove" });
+                EditorUtility.SetDirty(row);
+                AssetDatabase.SaveAssetIfDirty(row);
+            }
+            else
+            {
+                root.displayName = "unsaved root change";
+                EditorUtility.SetDirty(root);
+            }
+            Assert.That(plan.Commit(true), Is.EqualTo(ExcelCommitResult.Failed));
+            Assert.That(root.parameters.Select(parameter => parameter.name), Is.EqualTo(new[] { "keep", "remove" }));
+            Assert.That(plan.Errors, Is.Not.Empty);
+            Assert.That(typeof(DomainExcelCommands).GetNestedType("ParameterPreview", BindingFlags.NonPublic), Is.Null,
+                "Parameter imports use the existing public Excel preview, not a second window.");
         }
 
         [Test]
@@ -159,7 +227,10 @@ namespace YLFramework.Domain.Excel.Tests
                 Assert.That(root.missions[0].parent, Is.SameAs(root));
                 data.conditions[0].paramName = "missing";
                 ExcelAuthoring.ScriptableObjectToExcel(new[] { data }, _path, "missions");
-                Assert.That(() => DomainExcelCommands.PreviewImport(root, _path), Throws.InvalidOperationException.With.Message.Contains("missing"));
+                using var invalid = DomainExcelCommands.PreviewImport(root, _path);
+                Assert.That(invalid.CanCommit, Is.False);
+                Assert.That(invalid.Errors.Any(error => error.Contains("missing")), Is.True);
+                Assert.That(invalid.Commit(true), Is.EqualTo(ExcelCommitResult.Failed));
                 Assert.That(root.missions[0].conditions[0].paramName, Is.EqualTo("amount"));
             }
             finally

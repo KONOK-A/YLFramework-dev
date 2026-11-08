@@ -9,27 +9,20 @@ namespace YLFramework.Editor.Resource
     public sealed class ResourceBuildRecipe : ScriptableObject
     {
         /// <summary>提供资源选择、压缩和加密策略的项目定义。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Project")]
         public ResourceProject project;
         /// <summary>执行时必须已经激活且与 Editor 主机匹配的目标平台。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Target")]
         [Tooltip("明确目标，执行时必须已激活、安装且匹配主机；不隐式切平台。")]
         public BuildTarget target = BuildTarget.StandaloneWindows64;
         /// <summary>由应用约定并写入发布 Catalog 的资源兼容标识。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("AppContentCompatibilityId")]
         public string appContentCompatibilityId = "app-v1";
         /// <summary>选择只构建，或构建成功后再执行本地发布。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Action")]
         public ResourceBuildAction action;
         /// <summary>显式要求调用 Unity 强制重建，而不是整体跳过构建。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("ForceRebuild")]
         public bool forceRebuild;
         /// <summary>本地发布成功后生成地址常量；生成失败不撤销发布。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("GenerateReferences")]
         [Tooltip("仅 BuildAndPublish 可请求常量生成；生成失败不撤销已成功发布。")]
         public bool generateReferences;
         /// <summary>常量源码及专属程序集的 Assets 相对输出目录，不接管未知内容。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("ReferenceDirectory")]
         public string referenceDirectory = ResourceReferenceOutput.DirectoryPath;
     }
 

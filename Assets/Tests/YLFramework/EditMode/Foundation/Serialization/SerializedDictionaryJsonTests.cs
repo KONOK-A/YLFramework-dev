@@ -10,6 +10,7 @@ using YLFramework.Serialization;
 
 namespace YLFramework.Tests
 {
+    [Category("YL.Module.UnityJson")]
     public class SerializedDictionaryJsonTests
     {
         public enum SampleKey
@@ -77,6 +78,69 @@ namespace YLFramework.Tests
             Assert.Throws<JsonSerializationException>(() => JsonConvert.DeserializeObject<SerializedDictionary<string, int>>("{\"a\":1"));
             Assert.That(JsonConvert.SerializeObject(new SerializedDictionary<string, int>()), Is.EqualTo("{}"));
             Assert.That(JsonConvert.DeserializeObject<SerializedDictionary<string, int>>("{}").Count, Is.Zero);
+        }
+
+        [Test]
+        public void JsonNetTreeMutationAndCloneRoundTripWithoutSharingChildren()
+        {
+            var tree = JObject.Parse("{\"score\":10,\"items\":[true,null],\"obsolete\":1}");
+            tree["score"] = tree.Value<int>("score") + 1;
+            tree.Remove("obsolete");
+            ((JArray)tree["items"]).Add(new JObject { ["name"] = "player" });
+            tree["optional"] = JValue.CreateNull();
+            var expected = JToken.Parse("{\"score\":11,\"items\":[true,null,{\"name\":\"player\"}],\"optional\":null}");
+            Assert.That(JToken.DeepEquals(tree, expected), Is.True);
+            var copy = tree.DeepClone();
+            copy["items"][2]["name"] = "copy";
+            Assert.That((string)tree["items"][2]["name"], Is.EqualTo("player"));
+            Assert.That(JToken.DeepEquals(tree, JToken.Parse(tree.ToString(Formatting.None))), Is.True);
+        }
+
+        [TestCase("{}", JTokenType.Object)]
+        [TestCase("[]", JTokenType.Array)]
+        [TestCase("\"text\"", JTokenType.String)]
+        [TestCase("9223372036854775807", JTokenType.Integer)]
+        [TestCase("-9223372036854775808", JTokenType.Integer)]
+        [TestCase("1.25", JTokenType.Float)]
+        [TestCase("true", JTokenType.Boolean)]
+        [TestCase("null", JTokenType.Null)]
+        public void JsonNetTreePreservesContainerScalarAndNullKinds(string json, JTokenType kind)
+        {
+            var value = JToken.Parse(json);
+            Assert.That(value.Type, Is.EqualTo(kind));
+            Assert.That(JToken.DeepEquals(value, JToken.Parse(value.ToString(Formatting.None))), Is.True);
+        }
+
+        [Test]
+        public void JsonNetTreePreservesUnicodeEscapesAndExplicitNullWithoutDeletingTheProperty()
+        {
+            var tree = JObject.Parse("{\"text\":\"\\u4e2d\\u6587\\n\\\"\\\\\"}");
+            Assert.That((string)tree["text"], Is.EqualTo("\u4e2d\u6587\n\"\\"));
+            tree["text"] = JValue.CreateNull();
+            Assert.That(tree.ContainsKey("text"), Is.True);
+            Assert.That(tree["text"].Type, Is.EqualTo(JTokenType.Null));
+            Assert.That(tree.Remove("text"), Is.True);
+            Assert.That(tree.ContainsKey("text"), Is.False);
+        }
+
+        [Test]
+        public void JsonNetDuplicateNamesAreExplicitlyReplaceableOrRejected()
+        {
+            const string json = "{\"value\":1,\"value\":2}";
+            Assert.That(JObject.Parse(json).Value<int>("value"), Is.EqualTo(2));
+            Assert.Throws<JsonReaderException>(() => JObject.Parse(json, new JsonLoadSettings
+            {
+                DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error
+            }));
+        }
+
+        [TestCase("{\"value\":1")]
+        [TestCase("[1,2")]
+        [TestCase("{\"value\":}")]
+        [TestCase("{} trailing")]
+        public void InvalidJsonCannotBeMistakenForAnEmptyOrPartiallySuccessfulTree(string json)
+        {
+            Assert.Throws<JsonReaderException>(() => JToken.Parse(json));
         }
 
         [Test]

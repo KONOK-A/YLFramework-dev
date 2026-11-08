@@ -107,7 +107,6 @@ namespace YLFramework.Character2D
         [Tooltip("当前角色受到的重力大小(仅在开启检测地面时有效,如果未开启检测地面,当前角色不会受到重力影响!)")]
         public float gravityScale = 1;
         /// <summary>组件积分下落速度时采用的速度上限大小。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("MaxFallingVelocity")]
         [Tooltip("下落的最大速度(默认:20)")]
         [Range(1, 100)]
         public float maxFallingVelocity = 20;
@@ -145,7 +144,6 @@ namespace YLFramework.Character2D
         private Vector2 _velocity;
 
         /// <summary>落地重置计数前允许成功发起的跳跃次数上限。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("MaxJumpCount")]
         [Tooltip("角色最多连续跳跃次数")]
         public int maxJumpCount = 1;
 
@@ -904,13 +902,8 @@ namespace YLFramework.Character2D
 
             float r = circle.radius * Mathf.Max(Mathf.Abs(circle.transform.lossyScale.x), Mathf.Abs(circle.transform.lossyScale.y));
 
-#if UNITY_6000_0_OR_NEWER
             ContactFilter2D contactFilter = CreateLegacyFilter(CheckLayerMask.value, float.NegativeInfinity, float.PositiveInfinity);
             return Physics2D.defaultPhysicsScene.CircleCast(point, r, dir, Distance, contactFilter, Hits);
-
-#else
-            return Physics2D.CircleCastNonAlloc(point, r, dir, Hits, Distance, CheckLayerMask.value);
-#endif
         }
 
         /// <summary>沿指定方向投射缩放和旋转后的矩形，不使用旋转后的包围盒尺寸。</summary>
@@ -923,12 +916,8 @@ namespace YLFramework.Character2D
             Vector2 size = CharacterMotorMath.ScaledColliderSize(box.size, box.transform.lossyScale);
             float angle = GetColliderCastAngle(box);
 
-#if UNITY_6000_0_OR_NEWER
             ContactFilter2D contactFilter = CreateLegacyFilter(CheckLayerMask.value, float.NegativeInfinity, float.PositiveInfinity);
             return Physics2D.defaultPhysicsScene.BoxCast(point, size, angle, dir, Distance, contactFilter, Hits);
-#else
-            return Physics2D.BoxCastNonAlloc(point, size, angle, dir, Hits, Distance, CheckLayerMask.value);
-#endif
 
         }
 
@@ -943,12 +932,8 @@ namespace YLFramework.Character2D
             float angle = GetColliderCastAngle(capsule);
             CapsuleDirection2D d = capsule.direction;
 
-#if UNITY_6000_0_OR_NEWER
             ContactFilter2D contactFilter = CreateLegacyFilter(CheckLayerMask.value, float.NegativeInfinity, float.PositiveInfinity);
             return Physics2D.defaultPhysicsScene.CapsuleCast(point, size, d, angle, dir, Distance, contactFilter, Hits);
-#else
-            return Physics2D.CapsuleCastNonAlloc(point, size, d, angle, dir, Hits, Distance, CheckLayerMask.value);
-#endif
         }
 
         /// <summary>取得包含刚体物理旋转差值和子碰撞体相对旋转的投射角度。</summary>

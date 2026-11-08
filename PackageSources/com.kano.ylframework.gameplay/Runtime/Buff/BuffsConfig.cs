@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Serialization;
 using YLFramework.Foundation;
 
 namespace YLFramework.Buff
@@ -16,7 +15,7 @@ namespace YLFramework.Buff
 
         /// <summary>编辑器生成条目 ID 时使用的起始基数。</summary>
         [HideInInspector]
-        [FormerlySerializedAs("start_id"), global::YLFramework.Excel.ExcelColumnName("start_id")] public int startId;
+        [global::YLFramework.Excel.ExcelColumnName("start_id")] public int startId;
 
         /// <summary>供作者工具或业务界面展示的配表名称。</summary>
         [Header("显示名称")]
@@ -30,7 +29,7 @@ namespace YLFramework.Buff
 
 
         /// <summary>编辑器限制新建配置类型所用的脚本 GUID；为空时使用基础配置类型。</summary>
-        [FormerlySerializedAs("type_script_guid"), global::YLFramework.Excel.ExcelColumnName("type_script_guid")] public string typeScriptGuid;
+        [global::YLFramework.Excel.ExcelColumnName("type_script_guid")] public string typeScriptGuid;
 
         /// <summary>
         /// 查询Buff配置信息

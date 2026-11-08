@@ -145,7 +145,14 @@ namespace YLFramework.Domain.Excel.Tests
             data.equipmentClassFullName = "Missing.Equipment";
             ExcelAuthoring.ScriptableObjectToExcel(new[] { data }, path, "equipments");
             var bytes = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(AssetDatabase.GetAssetPath(root)));
-            Assert.Throws<InvalidOperationException>(() => Preview());
+            using (var invalid = Preview())
+            {
+                Assert.That(invalid.CanCommit, Is.False);
+                Assert.That(string.Join("\n", invalid.Errors), Does.Contain("Missing.Equipment"));
+                Assert.That(invalid.Commit(true), Is.EqualTo(ExcelCommitResult.Failed));
+                Assert.That(root.Equipments, Is.Empty);
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(AssetDatabase.GetAssetPath(root))));
+            }
             data.equipmentClassFullName = typeof(ScriptForExcel).FullName;
             // 正式SO导出器本身拒绝重复ID；用平表作者API模拟外部用户写入的坏工作簿。
             ExcelAuthoring.ListToExcel<EquipmentConfigData>(new[] { data, data }, path, "equipments");
@@ -226,7 +233,12 @@ namespace YLFramework.Domain.Excel.Tests
             row.equipmentType = EquipmentType.Asset;
             row.projectName = "";
             ExcelAuthoring.ScriptableObjectToExcel(new[] { row }, path, "equipments");
-            Assert.Throws<InvalidOperationException>(() => Preview());
+            using (var invalidAddress = Preview())
+            {
+                Assert.That(invalidAddress.CanCommit, Is.False);
+                Assert.That(invalidAddress.Errors, Is.Not.Empty);
+                Assert.That(invalidAddress.Commit(true), Is.EqualTo(ExcelCommitResult.Failed));
+            }
             Assert.That(root.Equipments, Is.Empty);
             Assert.That(AssetDatabase.IsValidFolder(entries), Is.False);
         }

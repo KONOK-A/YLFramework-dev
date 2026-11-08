@@ -12,10 +12,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: efbfe2b778a7a3642844022cb04d1672, type: 3}
   m_Name: WorkbenchRecipe
   m_EditorClassIdentifier: 
-  Project: {fileID: 11400000, guid: 20dcfb86d6324d6409ba7cb3767de028, type: 2}
-  Target: 19
-  AppContentCompatibilityId: workbench-ux-app-v1
-  Action: 1
-  ForceRebuild: 0
-  GenerateReferences: 0
-  ReferenceDirectory: Assets/YLFrameworkData
+  project: {fileID: 11400000, guid: 20dcfb86d6324d6409ba7cb3767de028, type: 2}
+  target: 19
+  appContentCompatibilityId: workbench-ux-app-v1
+  action: 1
+  forceRebuild: 0
+  generateReferences: 0
+  referenceDirectory: Assets/YLFrameworkData

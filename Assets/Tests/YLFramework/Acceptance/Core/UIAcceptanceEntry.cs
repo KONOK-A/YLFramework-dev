@@ -18,7 +18,6 @@ namespace YLFramework.Core.Tests
 
     public sealed class UIPanelAcceptanceDragProbe : MonoBehaviour, UnityEngine.EventSystems.IDragHandler
     {
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Drags")]
         public int drags;
         public void OnDrag(UnityEngine.EventSystems.PointerEventData data) => drags++;
     }
@@ -26,9 +25,7 @@ namespace YLFramework.Core.Tests
     /// <summary>真实 Play / Mono Player 共用的定向验收入口；不参与框架分发。</summary>
     public sealed class UIAcceptanceEntry : MonoBehaviour
     {
-        [global::UnityEngine.Serialization.FormerlySerializedAs("RootPrefab")]
         public GameObject rootPrefab;
-        [global::UnityEngine.Serialization.FormerlySerializedAs("ColorPrefab")]
         public GameObject colorPrefab;
         public static int Round;
         public static string Result;
@@ -144,7 +141,12 @@ namespace YLFramework.Core.Tests
             yield return null;
             QueueMouse(Point(wheel, new Vector2(-0.44f, 0.7621024f)), true);
             yield return null;
-            Check(_first.CurrentColor.g > 0.99f && _changes == 1, "module-dispatched Overlay hue selection");
+            Check(_first.CurrentColor.g > 0.99f && _changes == 1,
+                $"module-dispatched Overlay hue selection: color={_first.CurrentColor} changes={_changes} focused={system.isFocused} " +
+                $"point={input.point.action.ReadValue<Vector2>()} pressed={input.leftClick.action.IsPressed()} " +
+                $"hit={input.GetLastRaycastResult(_mouse.deviceId).gameObject} screen={Screen.width}x{Screen.height} " +
+                $"raw={_mouse.position.ReadValue()} mouseEnabled={_mouse.enabled} actionEnabled={input.point.action.enabled} " +
+                $"applicationFocus={Application.isFocused} updateMode={InputSystem.settings.updateMode}");
             _root.GetComponent<AutomaticAdaptationCanvasScaler>().Configure(new Vector2(1000, 800), false, 0.25f);
             yield return null;
             Canvas.ForceUpdateCanvases();

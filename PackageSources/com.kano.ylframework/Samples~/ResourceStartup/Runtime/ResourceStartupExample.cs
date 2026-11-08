@@ -14,31 +14,22 @@ namespace YLFramework.Samples.Resource
     public sealed class ResourceStartupExample : MonoBehaviour
     {
         /// <summary>显式选择资源来源；Editor 模拟模式须由配套编辑器工厂装配。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Mode")]
         public ResourceLoadMode mode = ResourceLoadMode.EditorSimulation;
         /// <summary>资源项目的稳定标识，用于本轮地址解析和可选 Audio 后端选择。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("ProjectId")]
         public string projectId;
         /// <summary>所选 Bundle 发布的平台名称，须与快照和内置部署的平台一致。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Platform")]
         public string platform = "StandaloneWindows64";
         /// <summary>应用预期的资源兼容标识，打开快照时须与发布目录声明一致。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("AppCompatibility")]
         public string appCompatibility = "startup-sample-v1";
         /// <summary>非内置模式下明确选择的本地发布绝对目录，其末级目录名须为所选摘要。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("SnapshotDirectory")]
         public string snapshotDirectory;
         /// <summary>应用明确绑定的发布 Catalog 字节 SHA-256，不通过扫描目录自动选择版本。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("CatalogDigest")]
         public string catalogDigest;
         /// <summary>Bundle 模式是否读取已部署的内置版本；此开关不执行部署。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("UseBuiltIn")]
         public bool useBuiltIn;
         /// <summary>本轮启动是否请求绑定 Core 资源后端，不替换应用已有的其他后端。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("BindCore")]
         public bool bindCore = true;
         /// <summary>本轮是否装配所选项目的 Audio 后端并尝试播放 tone，不改共享音效偏好。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("UseAudio")]
         public bool useAudio = true;
 
         /// <summary>应用在运行前注入并拥有其生命周期；不保存到Scene，生产密钥来源由应用提供。</summary>

@@ -15,6 +15,7 @@ using YLFramework.Resource;
 
 namespace YLFramework.Tests.ResourceBuild
 {
+    [Category("YL.Special.ResourceUpdates")]
     public partial class ResourceContentBuildTests
     {
         private const string App = "fixture-v1";

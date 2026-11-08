@@ -62,17 +62,19 @@ https://github.com/KONOK-A/YLFramework-dev.git?path=/PackageSources/com.kano.ylf
 4. 应用显式准备标准 `Assets/StreamingAssets` 父目录（不手建或认领其下的 YL 受管根），再在 `YLFramework/Integrations/HybridCLR` 窗口或 `HybridCLRBuildPipeline.BuildBasePlayer` 提交新 Player 路径和与 enabled scenes 相同的场景列表。流程依次检查编译、生成、剥离、完整桥、metadata/manifest、正式 Resource 发布、显式内置部署、真实 Player 和最终 AOT 基线。任一步失败都不是基座成功，读取报告的首因及已完成阶段；部署失败按正式 Resource Recover 验证 journal，不手工补拷或删除旧发布。
 5. 更改热更代码后，只调用 `PublishPatch`。它读取持久冻结 AOT 和完成标记；不调用 Strip/GenerateAll、不构建 Player、不改变基座。新增全局登记、未预登记的 AOT/原生需求、损坏基线或身份不符需新兼容号和新基座；项目入口可在既有基座已登记集合内重新选择。静态 analyzer 不能承诺任意反射/动态泛型均安全。
 
-Recipe.Project 必须明确选择 `Generated/hybridclr` 下的 `.bytes`/`.json`，以生成根为 SourceDirectory，得到规范地址 `hybridclr/manifest.json`、`hybridclr/assemblies/*.dll.bytes`、`hybridclr/metadata/*.dll.bytes`。不要选择 owner 记录、原生生成目录或原始 `.dll`。不要修改受管生成文件、遗留未知文件、链接或认领已有用户目录；写入保留 GUID、manifest 最后提交，中断时保留诊断而不冒充可恢复成功。
+`Profile.recipe.project` 必须明确选择 `Generated/hybridclr` 下的 `.bytes`/`.json`，以生成根为 SourceDirectory，得到规范地址 `hybridclr/manifest.json`、`hybridclr/assemblies/*.dll.bytes`、`hybridclr/metadata/*.dll.bytes`。不要选择 owner 记录、原生生成目录或原始 `.dll`。不要修改受管生成文件、遗留未知文件、链接或认领已有用户目录；写入保留 GUID、manifest 最后提交，中断时保留诊断而不冒充可恢复成功。
 
 `BuildBasePlayer`、`PublishPatch` 接受应用注入的 `IResourceContentKeyProvider`；保密密钥不存 profile。签名更新继续使用既有 Resource 签名、Check/Prepare/Activate、发布版本与下载验证，不建立第二套下载器或密钥系统。
 
 这些 Editor 入口使用 `YLFramework.Integrations.HybridCLR.Editor`；资源构建/发布入口使用 `YLFramework.Editor.Resource`。功能域 namespace 升级涉及 AOT API、泛型或裁剪输入时，必须用本轮新基座、metadata 与补丁完成闭环；程序集名称相同不代表旧基座兼容，不覆盖或复用冻结制品来冒充新验收。
 
+Profile 仅保存当前字段 `recipe/development/generatedAssetDirectory/baselineDirectory/hotUpdateAssemblies/baseProfile`，不再读取旧 PascalCase 字段名。正式配置工具保存的 Profile、Recipe、Project 引用以及显式 `false`、空程序集根和脚本 GUID 保持不变；外部工程若仍保存旧字段，应在旧定义可读时先用 Unity 正式保存，再更新此包。
+
 ## Project Selection And Shared Base
 
-`Profile.HotUpdateAssemblies` 是项目入口的精确程序集名，不是第二份编译登记。空数组保持已有配置的“官方全量”语义；非空时从实际编译 DLL 的引用求热更依赖闭包，只发布该闭包和它需要的 metadata。动态反射入口无法由静态引用推断，应显式选择。原生编译、裁剪、桥接和冻结登记始终覆盖官方全局并集；baseline 的 `InitialManifest` 表示全局登记，不等于某个项目实际发布的 manifest。
+`Profile.hotUpdateAssemblies` 是项目入口的精确程序集名，不是第二份编译登记。空数组保持已有配置的“官方全量”语义；非空时从实际编译 DLL 的引用求热更依赖闭包，只发布该闭包和它需要的 metadata。动态反射入口无法由静态引用推断，应显式选择。原生编译、裁剪、桥接和冻结登记始终覆盖官方全局并集；baseline 的 `InitialManifest` 表示全局登记，不等于某个项目实际发布的 manifest。
 
-项目 B 可显式将 `BaseProfile` 指向未绑定其他配置的基座拥有者 A。两者必须使用同一个规范化基线目录、目标平台、Development 和兼容号；各自保留自己的 ProjectId、Recipe、生成目录及文件归属。只允许一层绑定，拒绝自引用、链式绑定和错误拥有者。B 首发使用 `PublishPatch`，不再构建 Player；热更集合、metadata 和 native 需求均须是 A 冻结登记的子集。目录里存在 AOT 文件不等于该 metadata 已登记。原 schema1 和未指定新字段的已有 Profile 继续按原来的全量/自有基座方式工作。
+项目 B 可显式将 `baseProfile` 指向未绑定其他配置的基座拥有者 A。两者必须使用同一个规范化基线目录、目标平台、Development 和兼容号；各自保留自己的 ProjectId、Recipe、生成目录及文件归属。只允许一层绑定，拒绝自引用、链式绑定和错误拥有者。B 首发使用 `PublishPatch`，不再构建 Player；热更集合、metadata 和 native 需求均须是 A 冻结登记的子集。目录里存在 AOT 文件不等于该 metadata 已登记。原 schema1 和未指定新字段的已有 Profile 继续按原来的全量/自有基座方式工作。
 
 共享 DLL 保留完整 identity/MVID/hash/length。相同编译快照的 A/B 投影使用相同字节；不同时间发布若改变共享 DLL，不保证任意历史版本可以混用，需由应用协调版本。Runtime 仍在不可逆加载前拒绝共享 DLL 冲突，不通过项目名前缀绕过程序集身份。
 
@@ -119,8 +121,10 @@ EditorFast 要求已有 ResourceSystem 与 Core provider 绑定，仅使用 AppD
 
 ## 验证与测试边界
 
-框架或相关程序集重编译后，源码仓库的 loader / Module 测试须先以当前程序集执行 `YLFramework.Tests.Integrations.HybridCLR.HybridCLRTestFixtures.Prepare()` 生成本机输入，不复用旧 bytes / manifest；执行方式见源码仓库的[测试工具说明](https://github.com/KONOK-A/YLFramework-dev/blob/main/Tools/Testing/README.md)。默认产品包不提供这些仓库工具或夹具。
+框架或相关程序集重编译后，源码仓库的 `Daily/HybridCLR` 通过统一工具自有宿主显式导入样例，并以当前程序集执行测试输入准备，不复用旧 bytes / manifest。发现、实际选集、owner/run 和正常进程退出由同一测试工具验证；固定接收目录、历史叶数和 2022 非零退出例外已退役，不注册另一套自动 runner。执行方式见源码仓库的[测试工具说明](https://github.com/KONOK-A/YLFramework-dev/blob/main/Tools/Testing/README.md)。默认产品包不提供这些仓库工具或夹具。
 
 原生验证需要对应 Editor / SDK / 后端的真实基座、metadata、热更程序集、Module 与 Prefab 执行链。EditorSimulation / EditorFast 不能代替 Native，最小本地闭环不能代替 HTTPS 更新、版本替换 / 回滚或任意反射泛型覆盖。
+
+仓库 `Tools/HybridCLR/Prepare-HybridCLRNativeSource.ps1` 的 Prepare 操作必须显式传入 WorkspaceRoot、Run、Il2CppRepository、HybridClrRepository；输出沿现有测试 workspace/owner/lease，不读取旧机器交付目录。Verify 操作只接受明确 SourceManifest，继续核对固定来源、前后镜像、hash、差量和许可证。原生源码准备或 Verify 的绿色不表示 native 编译、安装或热更 Player 已执行；2022 SDK 原生前置和 Unity6.3 定点来源分别证明，受影响基座只能新建，不覆盖冻结 AOT 产物。
 
 构建、运行、签名网络更新、裁剪级别和平台结果分别报告，并绑定当前源码、依赖、基座与制品。原专项的失败、修复和测试记录从 [历史索引](../com.kano.ylframework/Documentation~/IntegrationPlan.md) 查找，不在使用说明中复制旧叶子数量或将旧 Player 解释为当前成功。源码仓库跨包链接按兄弟目录组织，安装后从各包实际磁盘根打开隐藏的 `Documentation~` 文档，不通过 AssetDatabase 加载或猜测 PackageCache 哈希目录。

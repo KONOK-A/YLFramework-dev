@@ -9,15 +9,11 @@ namespace YLFramework.Audio
     public enum AudioClipSource
     {
         /// <summary>直接借用条目中的 Clip，由调用方保活。</summary>
-        Clip,
-        /// <summary>仅保留旧 Resources 定位值供显式迁移；运行时不选择此模式。</summary>
-        Resources,
-        /// <summary>仅保留旧 AssetBundle 定位值供显式迁移；运行时不选择此模式。</summary>
-        AssetBundle,
+        Clip = 0,
         /// <summary>使用调用方显式传入的 Provider 和条目的完整 key。</summary>
-        ExternalProvider,
+        ExternalProvider = 3,
         /// <summary>使用已初始化 ResourceSystem 中的 ProjectId 与逻辑地址。</summary>
-        Resource
+        Resource = 4
     }
     /// <summary>组内抽选规则；Weighted 的零权重排除条目。</summary>
     public enum AudioClipSelectionMode
@@ -28,27 +24,19 @@ namespace YLFramework.Audio
         Weighted
     }
 
-    /// <summary>直接借用的 Clip 或 ProjectId/逻辑地址。旧 Resources/AssetBundle 枚举值仅供显式迁移读取。</summary>
+    /// <summary>直接借用的 Clip 或明确的命名地址。退役和未知来源值使整个组拒绝选择。</summary>
     [Serializable]
     public sealed class AudioClipEntry
     {
         /// <summary>明确的素材定位方式；默认直接 Clip。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Source")]
         public AudioClipSource source;
         /// <summary>仅 Clip 模式使用，调用方负责保活，不自动卸载。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Clip")]
         public AudioClip clip;
         /// <summary>Resource 模式的逻辑地址；ExternalProvider 模式为该后端的完整 key。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Key")]
         public string key;
         /// <summary>Resource 模式的稳定资源项目身份，不从旧 BundleName 或外部项目名称推断。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("ProjectId")]
         public string projectId;
-        /// <summary>保留既有序列化值供一次性显式转换；运行时不使用或推断其含义。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("BundleName")]
-        [HideInInspector] public string bundleName;
         /// <summary>Weighted 模式的有限非负相对权重；0 排除，Uniform 忽略。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Weight")]
         public float weight = 1f;
     }
 
@@ -57,13 +45,10 @@ namespace YLFramework.Audio
     public sealed class AudioClipGroup
     {
         /// <summary>区分大小写的组名；同库内重名使该组选择失败。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Name")]
         public string name;
         /// <summary>均匀或加权抽选一次。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Selection")]
         public AudioClipSelectionMode selection;
         /// <summary>直接 Clip 与明确命名定位可混用的候选。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Entries")]
         public List<AudioClipEntry> entries = new List<AudioClipEntry>();
     }
 
@@ -95,12 +80,11 @@ namespace YLFramework.Audio
     public sealed class AudioClipLibrary : ScriptableObject
     {
         /// <summary>序列化素材组；不包含控制通道、音源或播放资源租约。</summary>
-        [global::UnityEngine.Serialization.FormerlySerializedAs("Groups")]
         public List<AudioClipGroup> groups = new List<AudioClipGroup>();
 
         /// <summary>精确按组名抽选一次。缺组、重名、非法权重或定位失败返回 false，不创建播放/通道。</summary>
         /// <remarks>均匀模式忽略 Weight；空 Clip/空 key 为不可选条目。非法枚举、负数/非有限加权权重使整组失败。
-        /// ExternalProvider 只使用显式传入的实例；Resource 必须先显式初始化 ResourceSystem。旧配置须显式迁移。</remarks>
+        /// ExternalProvider 只使用显式传入的实例；Resource 必须先显式初始化 ResourceSystem。退役和未知来源不推断身份或跳过选择。</remarks>
         /// <param name="groupName">区分大小写的素材组名，不是播放控制通道名。</param>
         /// <param name="selection">成功时的定位快照；失败时为默认值。</param>
         /// <param name="externalProvider">仅供 ExternalProvider 条目使用的显式后端。</param>
@@ -141,7 +125,7 @@ namespace YLFramework.Audio
                     continue;
                 }
 
-                if ((uint)entry.source > (uint)AudioClipSource.Resource ||
+                if (entry.source != AudioClipSource.Clip && entry.source != AudioClipSource.ExternalProvider && entry.source != AudioClipSource.Resource ||
                     weighted && (!AudioSoundOptions.IsFinite(entry.weight) || entry.weight < 0))
                 {
                     return false;
@@ -219,7 +203,7 @@ namespace YLFramework.Audio
                 return externalProvider != null;
             }
 
-            if (entry.source != AudioClipSource.Resource || !string.IsNullOrEmpty(entry.bundleName))
+            if (entry.source != AudioClipSource.Resource)
             {
                 return false;
             }

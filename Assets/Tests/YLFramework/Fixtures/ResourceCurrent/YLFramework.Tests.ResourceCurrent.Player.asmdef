@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Tests.ResourceCurrent.Player",
+    "rootNamespace": "YLFramework.Tests.ResourceBuild",
+    "references": ["YLFramework.Runtime"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": ["UNITY_EDITOR || YL_RESOURCE_CURRENT_ACCEPTANCE"],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

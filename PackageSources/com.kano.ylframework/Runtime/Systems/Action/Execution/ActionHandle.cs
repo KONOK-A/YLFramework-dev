@@ -1,6 +1,6 @@
 namespace YLFramework.Actions
 {
-    /// <summary>一次命名根动作执行的只读值类型句柄；结束或池复用后不会控制新任务。</summary>
+    /// <summary>一次命名根动作执行的只读值类型安全句柄；结束或池复用后不会控制新任务。</summary>
     /// <remarks>只用于标准 StartNamed 路径。每次操作复核动作标识、控制器代次及名字登记；默认值无效。仅在 Unity 主线程使用。</remarks>
     public readonly struct ActionHandle
     {

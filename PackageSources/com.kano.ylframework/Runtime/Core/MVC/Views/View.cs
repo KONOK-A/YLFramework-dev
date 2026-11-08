@@ -261,16 +261,7 @@ namespace YLFramework.Core
         internal void ResumeEvents() => RegisterEvents();
 
 
-        /// <summary>
-        /// 初始化中的旧版参数回调，先于 LoadViewArgs 回调执行；返回后仍须通过会话有效性检查。
-        /// </summary>
-        /// <param name="param">加载View时传递的参数</param>
-        public virtual void OnLoaded(params object[] param)
-        {
-        }
-
-
-        /// <summary>仅在本回调期间借读参数；不得保存容器、修改或再次传入加载入口。</summary>
+        /// <summary>本会话唯一的业务初始化回调；仅在回调期间借读参数，不得保存容器、修改或再次传入加载入口。</summary>
         public virtual void OnLoaded(LoadViewArgs args)
         {
         }

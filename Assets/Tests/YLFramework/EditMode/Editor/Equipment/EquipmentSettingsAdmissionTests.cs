@@ -9,6 +9,7 @@ using UnityEngine;
 
 namespace YLFramework.Tests.Extensions.Equipment
 {
+    [Category("YL.Special.EquipmentSession")]
     public class EquipmentSettingsAdmissionTests
     {
         private static Type Helper => System.Reflection.Assembly.Load("YLFramework.Tests.Tools.Editor").GetType("YLFramework.Tests.EquipmentAcceptance.EquipmentSettings", true);

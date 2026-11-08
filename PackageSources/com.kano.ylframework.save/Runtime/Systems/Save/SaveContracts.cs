@@ -96,7 +96,7 @@ namespace YLFramework.Save
         /// <summary>必须显式存在且等于当前引擎格式的索引版本。</summary>
         [JsonProperty(Required = Required.Always)] public int DataVersion = SaveStore.FormatVersion;
         /// <summary>以槽号为键的元数据表，键必须与对应条目的 SaveId 一致。</summary>
-        [JsonProperty(Required = Required.Always)] public Dictionary<int, SaveManager.SaveItem> SaveItemDict = new Dictionary<int, SaveManager.SaveItem>();
+        [JsonProperty(Required = Required.Always)] public Dictionary<int, SaveItem> SaveItemDict = new Dictionary<int, SaveItem>();
         /// <summary>可空的当前槽号；JSON 保留既有 CurrentSaveID 键，非空时必须属于索引。</summary>
         [JsonProperty("CurrentSaveID")] public int? CurrentSaveId;
 
@@ -107,7 +107,7 @@ namespace YLFramework.Save
             {
                 DataVersion = DataVersion,
                 CurrentSaveId = CurrentSaveId,
-                SaveItemDict = new Dictionary<int, SaveManager.SaveItem>(SaveItemDict)
+                SaveItemDict = new Dictionary<int, SaveItem>(SaveItemDict)
             };
         }
 
@@ -139,91 +139,64 @@ namespace YLFramework.Save
         }
     }
 
-    /// <summary>统一存档入口的排序与槽元数据契约。</summary>
-    public static partial class SaveManager
+    /// <summary>槽元数据。直接修改仅作用于内存；持久化使用 RenameSaveItem / SetSaveItemNote。</summary>
+    [Serializable, JsonObject(MemberSerialization.OptIn)]
+    public class SaveItem
     {
-        /// <summary>获取槽列表时使用的排序方式，名称排序以空字符串替代 null。</summary>
-        public enum SaveOrder
+        [JsonProperty("SaveID", Required = Required.Always)] private int _saveId;
+        [JsonProperty("CreateTime", Required = Required.Always)] private DateTime _createTime;
+        [JsonProperty("LastSaveTime", Required = Required.Always)] private DateTime _lastSaveTime;
+        /// <summary>不可通过本条目修改的槽号；持久化仍使用既有 SaveID 键。</summary>
+        public int SaveId => _saveId;
+        /// <summary>创建条目时记录的时间，引擎新建槽时使用本地时间。</summary>
+        public DateTime CreateTime => _createTime;
+        /// <summary>内存中的最近保存时间；冷启动时还会用对象文件修改时间向后校准。</summary>
+        public DateTime LastSaveTime => _lastSaveTime;
+        /// <summary>可空显示名称；直接赋值只改内存，持久化使用 SaveStore.RenameSaveItem。</summary>
+        [JsonProperty("DisplayName", NullValueHandling = NullValueHandling.Ignore)]
+        public string DisplayName
         {
-            /// <summary>保持引擎返回的当前枚举顺序，不保证按槽号排列。</summary>
-            None,
-            /// <summary>按创建时间从早到晚排列。</summary>
-            CreateTime,
-            /// <summary>按创建时间从晚到早排列。</summary>
-            CreateTimeDescending,
-            /// <summary>按最近保存时间从早到晚排列。</summary>
-            SaveTime,
-            /// <summary>按最近保存时间从晚到早排列。</summary>
-            SaveTimeDescending,
-            /// <summary>按槽号从小到大排列。</summary>
-            SaveId,
-            /// <summary>按槽号从大到小排列。</summary>
-            SaveIdDescending,
-            /// <summary>按显示名称升序排列，使用字符串默认比较规则。</summary>
-            Name,
-            /// <summary>按显示名称降序排列，使用字符串默认比较规则。</summary>
-            NameDescending
+            get; set;
+        }
+        /// <summary>可空备注；直接赋值只改内存，持久化使用 SaveStore.SetSaveItemNote。</summary>
+        [JsonProperty("Note", NullValueHandling = NullValueHandling.Ignore)]
+        public string Note
+        {
+            get; set;
         }
 
-        /// <summary>槽元数据。直接修改仅作用于内存；持久化使用 RenameSaveItem / SetSaveItemNote。</summary>
-        [Serializable, JsonObject(MemberSerialization.OptIn)]
-        public class SaveItem
+        /// <summary>创建槽元数据，并将初始最近保存时间设为创建时间。</summary>
+        /// <param name="saveId">槽号，合法性由索引或存储引擎校验。</param>
+        /// <param name="createTime">条目创建时间。</param>
+        [JsonConstructor]
+        public SaveItem(int saveId, DateTime createTime)
         {
-            [JsonProperty("SaveID", Required = Required.Always)] private int _saveId;
-            [JsonProperty("CreateTime", Required = Required.Always)] private DateTime _createTime;
-            [JsonProperty("LastSaveTime", Required = Required.Always)] private DateTime _lastSaveTime;
-            /// <summary>不可通过本条目修改的槽号；持久化仍使用既有 SaveID 键。</summary>
-            public int SaveId => _saveId;
-            /// <summary>创建条目时记录的时间，引擎新建槽时使用本地时间。</summary>
-            public DateTime CreateTime => _createTime;
-            /// <summary>内存中的最近保存时间；冷启动时还会用对象文件修改时间向后校准。</summary>
-            public DateTime LastSaveTime => _lastSaveTime;
-            /// <summary>可空显示名称；直接赋值只改内存，持久化应走管理器的重命名入口。</summary>
-            [JsonProperty("DisplayName", NullValueHandling = NullValueHandling.Ignore)]
-            public string DisplayName
-            {
-                get; set;
-            }
-            /// <summary>可空备注；直接赋值只改内存，持久化应走管理器的备注入口。</summary>
-            [JsonProperty("Note", NullValueHandling = NullValueHandling.Ignore)]
-            public string Note
-            {
-                get; set;
-            }
-
-            /// <summary>创建槽元数据，并将初始最近保存时间设为创建时间。</summary>
-            /// <param name="saveId">槽号，合法性由索引或存储引擎校验。</param>
-            /// <param name="createTime">条目创建时间。</param>
-            [JsonConstructor]
-            public SaveItem(int saveId, DateTime createTime)
-            {
-                _saveId = saveId;
-                _createTime = createTime;
-                _lastSaveTime = createTime;
-            }
-            /// <summary>更新本条目的内存保存时间并返回自身，不单独写入索引。</summary>
-            /// <param name="lastSaveTime">要记录的保存时间。</param>
-            public SaveItem UpdateSaveTime(DateTime lastSaveTime)
-            {
-                _lastSaveTime = lastSaveTime;
-                return this;
-            }
-            /// <summary>更新本条目的内存显示名称并返回自身，不单独写入索引。</summary>
-            /// <param name="displayName">新的显示名称，允许为 null。</param>
-            public SaveItem Rename(string displayName)
-            {
-                DisplayName = displayName;
-                return this;
-            }
-            /// <summary>更新本条目的内存备注并返回自身，不单独写入索引。</summary>
-            /// <param name="note">新的备注，允许为 null。</param>
-            public SaveItem SetNote(string note)
-            {
-                Note = note;
-                return this;
-            }
-            /// <summary>复制元数据值，隔离提交索引前的条目修改。</summary>
-            internal SaveItem Copy() => new SaveItem(SaveId, CreateTime) { _lastSaveTime = LastSaveTime, DisplayName = DisplayName, Note = Note };
+            _saveId = saveId;
+            _createTime = createTime;
+            _lastSaveTime = createTime;
         }
+        /// <summary>更新本条目的内存保存时间并返回自身，不单独写入索引。</summary>
+        /// <param name="lastSaveTime">要记录的保存时间。</param>
+        public SaveItem UpdateSaveTime(DateTime lastSaveTime)
+        {
+            _lastSaveTime = lastSaveTime;
+            return this;
+        }
+        /// <summary>更新本条目的内存显示名称并返回自身，不单独写入索引。</summary>
+        /// <param name="displayName">新的显示名称，允许为 null。</param>
+        public SaveItem Rename(string displayName)
+        {
+            DisplayName = displayName;
+            return this;
+        }
+        /// <summary>更新本条目的内存备注并返回自身，不单独写入索引。</summary>
+        /// <param name="note">新的备注，允许为 null。</param>
+        public SaveItem SetNote(string note)
+        {
+            Note = note;
+            return this;
+        }
+        /// <summary>复制元数据值，隔离提交索引前的条目修改。</summary>
+        internal SaveItem Copy() => new SaveItem(SaveId, CreateTime) { _lastSaveTime = LastSaveTime, DisplayName = DisplayName, Note = Note };
     }
 }

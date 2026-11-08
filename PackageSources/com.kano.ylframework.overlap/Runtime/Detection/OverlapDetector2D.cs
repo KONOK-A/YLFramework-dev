@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.SceneManagement;
 
 namespace YLFramework.Overlap
@@ -10,13 +11,23 @@ namespace YLFramework.Overlap
     [DisallowMultipleComponent]
     public sealed class OverlapDetector2D : MonoBehaviour
     {
+        private enum AreaSource
+        {
+            Composite, Positions, Transforms
+        }
         [SerializeField] private OverlapComposite2D composite = new OverlapComposite2D();
+        [SerializeField] private AreaSource areaSource;
+        [SerializeField] private Vector3[] areaPositions = Array.Empty<Vector3>();
+        [SerializeField] private Transform[] areaTransforms = Array.Empty<Transform>();
         [SerializeField] private OverlapSamplingMode samplingMode;
         [SerializeField] private float frequency = 10;
         [SerializeField] private int initialCapacity = 32;
         [SerializeField] private int maxCapacity = 256;
         [SerializeField] private bool growBuffer;
         [SerializeField] private bool runOnEnable = true;
+        [SerializeField] private UnityEvent<OverlapContact<Collider2D>> enteredEvent = new UnityEvent<OverlapContact<Collider2D>>();
+        [SerializeField] private UnityEvent<OverlapContact<Collider2D>> stayedEvent = new UnityEvent<OverlapContact<Collider2D>>();
+        [SerializeField] private UnityEvent<OverlapContact<Collider2D>, OverlapExitReason> exitedEvent = new UnityEvent<OverlapContact<Collider2D>, OverlapExitReason>();
         [SerializeField] private ContactFilter2D contactFilter = new ContactFilter2D { useLayerMask = true, layerMask = ~0 };
         [SerializeField] private Collider2D ignoredCollider;
         [SerializeField] private Transform ignoredRoot;
@@ -28,6 +39,7 @@ namespace YLFramework.Overlap
         private OverlapQueryWorkspace2D _workspace;
         private Collider2D[] _buffer;
         private OverlapShape2D[] _worldShapes = Array.Empty<OverlapShape2D>();
+        private int _worldShapeCount;
         private readonly OverlapContactTracker<OverlapContact<Collider2D>> _tracker = new OverlapContactTracker<OverlapContact<Collider2D>>();
         private readonly List<OverlapContact<Collider2D>> _released = new List<OverlapContact<Collider2D>>();
         // This records the committed policy, not a second source of current configuration.
@@ -35,6 +47,9 @@ namespace YLFramework.Overlap
         private bool _hasCommittedFilter;
         private double _elapsed;
         private long _generation;
+        private int _serializedNotificationDepth;
+        private OverlapExitReason? _deferredRelease;
+        private bool _clearObserversAfterNotification;
         private int _sceneHandle;
         private bool _filterChanged;
         private bool _configurationChanged;
@@ -85,12 +100,21 @@ namespace YLFramework.Overlap
             }
         }
 
+        /// <summary>同一已提交 Enter 的序列化适配，先于 CLR 监听。一次 UnityEvent 通知是不可拆分的监听者批次。</summary>
+        /// <remarks>批内停止/停用先更新运行意图，在批次结束后才清空快照和通知 Exit；旧代次的 CLR 监听与后续接触不再派发。</remarks>
+        public UnityEvent<OverlapContact<Collider2D>> EnteredEvent => enteredEvent;
+        public UnityEvent<OverlapContact<Collider2D>> StayedEvent => stayedEvent;
+        public UnityEvent<OverlapContact<Collider2D>, OverlapExitReason> ExitedEvent => exitedEvent;
+
         public OverlapComposite2D Composite
         {
             get => composite;
             set
             {
                 composite = value ?? throw new ArgumentNullException(nameof(value));
+                areaSource = AreaSource.Composite;
+                areaPositions = Array.Empty<Vector3>();
+                areaTransforms = Array.Empty<Transform>();
                 _configurationChanged = true;
                 _generation++;
             }
@@ -110,6 +134,92 @@ namespace YLFramework.Overlap
                 _generation++;
             }
         }
+
+        /// <summary>以复制的局部节点链替代 Composite；相邻节点转换为世界 XY AABB，不闭合。有限退化对跳过；非有限值或溢出使本轮无效。</summary>
+        public void SetAreaPositions(Vector3[] positions)
+        {
+            areaPositions = (Vector3[])(positions ?? throw new ArgumentNullException(nameof(positions))).Clone();
+            areaTransforms = Array.Empty<Transform>();
+            areaSource = AreaSource.Positions;
+            _configurationChanged = true;
+            _generation++;
+        }
+
+        /// <summary>借用节点 Transform 的实时世界坐标，相邻对含缺失节点时跳过；不接管其生命周期。</summary>
+        public void SetAreaTransforms(Transform[] transforms)
+        {
+            areaTransforms = (Transform[])(transforms ?? throw new ArgumentNullException(nameof(transforms))).Clone();
+            areaPositions = Array.Empty<Vector3>();
+            areaSource = AreaSource.Transforms;
+            _configurationChanged = true;
+            _generation++;
+        }
+
+        internal bool UsesArea => areaSource != AreaSource.Composite;
+
+        internal void ValidateAreaNodes()
+        {
+            if (areaSource == AreaSource.Positions)
+            {
+                var matrix = transform.localToWorldMatrix;
+                for (int i = 0; i < areaPositions.Length; i++)
+                {
+                    OverlapShape3D.ValidateVector(areaPositions[i], "Area local node");
+                    OverlapShape3D.ValidateVector(matrix.MultiplyPoint3x4(areaPositions[i]), "Area world node");
+                }
+            }
+            else if (areaSource == AreaSource.Transforms)
+            {
+                for (int i = 0; i < areaTransforms.Length; i++)
+                    if (areaTransforms[i])
+                        OverlapShape3D.ValidateVector(areaTransforms[i].position, "Area world node");
+            }
+        }
+
+        internal int InputShapeCount
+        {
+            get
+            {
+                switch (areaSource)
+                {
+                    case AreaSource.Composite:
+                        return (composite ?? throw new InvalidOperationException("Composite cannot be null.")).Count;
+                    case AreaSource.Positions:
+                        return Math.Max(0, (areaPositions ?? throw new InvalidOperationException("Area positions cannot be null.")).Length - 1);
+                    case AreaSource.Transforms:
+                        return Math.Max(0, (areaTransforms ?? throw new InvalidOperationException("Area transforms cannot be null.")).Length - 1);
+                    default:
+                        throw new InvalidOperationException("Unknown Area node source.");
+                }
+            }
+        }
+
+        // Runtime 和 Inspector 共用输入转换；缺节点保留原相邻对索引，不跨段连接。
+        internal bool TryGetWorldShape(int index, out OverlapShape2D shape)
+        {
+            if (index < 0 || index >= InputShapeCount)
+                throw new ArgumentOutOfRangeException(nameof(index));
+            if (!UsesArea)
+            {
+                shape = composite.ToWorld(index, transform.localToWorldMatrix);
+                return true;
+            }
+            shape = default;
+            if (areaSource == AreaSource.Transforms && (!areaTransforms[index] || !areaTransforms[index + 1]))
+                return false;
+            var matrix = transform.localToWorldMatrix;
+            var from = areaSource == AreaSource.Positions ? matrix.MultiplyPoint3x4(areaPositions[index]) : areaTransforms[index].position;
+            var to = areaSource == AreaSource.Positions ? matrix.MultiplyPoint3x4(areaPositions[index + 1]) : areaTransforms[index + 1].position;
+            OverlapShape3D.ValidateVector(from, "Area start");
+            OverlapShape3D.ValidateVector(to, "Area end");
+            var size = new Vector2(Mathf.Abs(to.x - from.x), Mathf.Abs(to.y - from.y));
+            OverlapShape3D.ValidateVector(size, "Area bounds");
+            if (size.x == 0 || size.y == 0)
+                return false;
+            shape = OverlapShape2D.Box(from * 0.5f + to * 0.5f, size);
+            return true;
+        }
+
         public OverlapSamplingMode SamplingMode
         {
             get => samplingMode;
@@ -190,6 +300,7 @@ namespace YLFramework.Overlap
             _generation++;
         }
 
+        /// <summary>停止后续采样并释放联系人；若在 UnityEvent 内调用，释放/Exit 延后到当前监听者批次末尾。</summary>
         public void Stop()
         {
             IsRunning = false;
@@ -221,10 +332,10 @@ namespace YLFramework.Overlap
             }
             finally
             {
-                _entered = null;
-                _stayed = null;
-                _exited = null;
-                _enterObservers = _stayObservers = _exitObservers = Array.Empty<Delegate>();
+                if (_serializedNotificationDepth != 0)
+                    _clearObserversAfterNotification = true;
+                else
+                    ClearObservers();
             }
         }
 
@@ -234,7 +345,8 @@ namespace YLFramework.Overlap
             _configurationChanged = true;
         }
 
-        private void Update() => Tick(OverlapSamplingMode.Update, Time.deltaTime);
+        private void Update() => Tick(samplingMode == OverlapSamplingMode.UnscaledUpdate ? OverlapSamplingMode.UnscaledUpdate :
+            OverlapSamplingMode.Update, samplingMode == OverlapSamplingMode.UnscaledUpdate ? Time.unscaledDeltaTime : Time.deltaTime);
         private void FixedUpdate() => Tick(OverlapSamplingMode.FixedUpdate, Time.fixedDeltaTime);
 
         private void Tick(OverlapSamplingMode mode, float delta)
@@ -290,12 +402,13 @@ namespace YLFramework.Overlap
                 long generation = _generation;
                 var filter = Filter;
                 var scene = gameObject.scene.GetPhysicsScene2D();
+                Vector2 reference = transform.position;
                 while (true)
                 {
                     _tracker.Begin();
                     bool complete = true;
                     int rawCount = 0;
-                    for (int i = 0; i < composite.Count; i++)
+                    for (int i = 0; i < _worldShapeCount; i++)
                     {
                         var query = OverlapQuery2D.Query(scene, _worldShapes[i], filter, _buffer, _workspace);
                         rawCount = rawCount > int.MaxValue - query.RawCount ? int.MaxValue : rawCount + query.RawCount;
@@ -313,7 +426,7 @@ namespace YLFramework.Overlap
                             UnityEngine.Object target = filter.GroupByRigidbody && body ? (UnityEngine.Object)body : collider;
                             int identity = target.GetInstanceID();
                             complete &= _tracker.Add(identity,
-                                new OverlapContact<Collider2D>(collider, target, identity, collider.GetInstanceID()), _buffer.Length);
+                                new OverlapContact<Collider2D>(collider, target, identity, collider.GetInstanceID(), collider.ClosestPoint(reference)), _buffer.Length);
                         }
                     }
                     LastQuery = new OverlapQueryResult2D(_tracker.Pending.Count, rawCount,
@@ -338,8 +451,8 @@ namespace YLFramework.Overlap
                 _filterChanged = _configurationChanged = false;
                 _tracker.Commit();
                 DispatchExits(_tracker.Exits, reason, generation, true);
-                Dispatch(_tracker.Enters, _enterObservers, generation);
-                Dispatch(_tracker.Stays, _stayObservers, generation);
+                Dispatch(_tracker.Enters, enteredEvent, _enterObservers, generation);
+                Dispatch(_tracker.Stays, stayedEvent, _stayObservers, generation);
                 return _generation == generation;
             }
             finally
@@ -363,21 +476,21 @@ namespace YLFramework.Overlap
                 OverlapDetectionGeometry.ValidateCapacity(initialCapacity, maxCapacity);
                 Filter.Validate();
                 OverlapQueryWorkspace2D.ValidateConfiguration(maxShapesPerCollider, maxVerticesPerShape, geometryTolerance);
-                if (composite == null)
-                {
-                    throw new InvalidOperationException("Composite cannot be null.");
-                }
-                int count = composite.Count;
+                int count = InputShapeCount;
+                ValidateAreaNodes();
                 if (_worldShapes.Length < count)
                 {
                     _worldShapes = new OverlapShape2D[count];
                 }
-                var matrix = transform.localToWorldMatrix;
                 bool needsWorkspace = false;
+                _worldShapeCount = 0;
                 for (int i = 0; i < count; i++)
                 {
-                    _worldShapes[i] = composite.ToWorld(i, matrix);
-                    needsWorkspace |= _worldShapes[i].Kind == OverlapShapeKind2D.Sector;
+                    if (TryGetWorldShape(i, out var shape))
+                    {
+                        _worldShapes[_worldShapeCount++] = shape;
+                        needsWorkspace |= shape.Kind == OverlapShapeKind2D.Sector;
+                    }
                 }
                 if (!needsWorkspace || _workspace != null && (_workspace.MaxShapesPerCollider != maxShapesPerCollider ||
                     _workspace.MaxVerticesPerShape != maxVerticesPerShape || _workspace.GeometryTolerance != geometryTolerance))
@@ -410,11 +523,17 @@ namespace YLFramework.Overlap
             return true;
         }
 
-        private void Dispatch(List<OverlapContact<Collider2D>> contacts, Delegate[] observers, long generation)
+        private void Dispatch(List<OverlapContact<Collider2D>> contacts, UnityEvent<OverlapContact<Collider2D>> serialized, Delegate[] observers, long generation)
         {
             for (int i = 0; i < contacts.Count && generation == _generation; i++)
             {
                 var contact = contacts[i];
+                _serializedNotificationDepth++;
+                try
+                {
+                    serialized.Invoke(contact);
+                }
+                finally { EndSerializedNotification(); }
                 for (int j = 0; j < observers.Length && generation == _generation; j++)
                 {
                     ((Action<OverlapContact<Collider2D>>)observers[j])(contact);
@@ -442,6 +561,12 @@ namespace YLFramework.Overlap
                         actual = OverlapExitReason.TargetDisabled;
                     }
                 }
+                _serializedNotificationDepth++;
+                try
+                {
+                    exitedEvent.Invoke(contact, actual);
+                }
+                finally { EndSerializedNotification(); }
                 for (int j = 0; j < observers.Length && generation == _generation; j++)
                 {
                     ((Action<OverlapContact<Collider2D>, OverlapExitReason>)observers[j])(contact, actual);
@@ -449,9 +574,43 @@ namespace YLFramework.Overlap
             }
         }
 
+        private void EndSerializedNotification()
+        {
+            if (--_serializedNotificationDepth != 0)
+                return;
+            var reason = _deferredRelease;
+            _deferredRelease = null;
+            bool clear = _clearObserversAfterNotification;
+            _clearObserversAfterNotification = false;
+            try
+            {
+                if (reason.HasValue)
+                    Release(reason.Value);
+            }
+            finally
+            {
+                if (clear)
+                    ClearObservers();
+            }
+        }
+
+        private void ClearObservers()
+        {
+            _entered = null;
+            _stayed = null;
+            _exited = null;
+            _enterObservers = _stayObservers = _exitObservers = Array.Empty<Delegate>();
+        }
+
         private void Release(OverlapExitReason reason)
         {
             _generation++;
+            if (_serializedNotificationDepth != 0)
+            {
+                // UnityEvent cannot interrupt its internal invocation list. Keep its snapshot atomic before Exit.
+                _deferredRelease ??= reason;
+                return;
+            }
             _workspace?.Dispose();
             _workspace = null;
             _elapsed = 0;

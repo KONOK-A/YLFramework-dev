@@ -72,8 +72,8 @@ namespace YLFramework.Core {
   [RoslynAnalyzers.RestrictedCall(""Awake"")] protected void RegisterEvent(Action callback){}
  }
  [RoslynAnalyzers.ProtectedHierarchy(typeof(View))] public class Model { public int Value; public int Property {get;set;} }
- public class EventManager {
-  [RoslynAnalyzers.WarnInClasses(typeof(View),""View reason"")] public static void AddListener(Action callback){}
+  public class RestrictedApi {
+   [RoslynAnalyzers.WarnInClasses(typeof(View),""View reason"")] public static void Observe(Action callback){}
  }
  [RoslynAnalyzers.DisableNew(""Use New"")][RoslynAnalyzers.MethodLocalOnly(""Lease reason"")]
  public class LoadViewArgs {
@@ -85,11 +85,6 @@ namespace YLFramework.Core {
   public class Panel : View {}
   public class LoadPanelRequest<T> {}
   public abstract class Module {
-   [Obsolete] public T LoadView<T>(string assetName,UnityEngine.Transform parent=null,params object[] param) where T:View=>default;
-   [Obsolete] public T LoadView<T>(UnityEngine.GameObject prefab,UnityEngine.Transform parent=null,params object[] param) where T:View=>default;
-   [Obsolete] public T LoadView<T>(UnityEngine.Transform parent=null,params object[] param) where T:View=>default;
-   [Obsolete] public LoadViewRequest<T> LoadViewAsync<T>(string assetName,UnityEngine.Transform parent=null,params object[] param) where T:View=>default;
-   [Obsolete] public LoadViewRequest<T> LoadViewAsync<T>(UnityEngine.Transform parent=null,params object[] param) where T:View=>default;
    public T LoadView<T>(string assetName,UnityEngine.Transform parent=null,LoadViewArgs loadViewArgs=null) where T:View=>default;
    public T LoadView<T>(UnityEngine.GameObject prefab,UnityEngine.Transform parent=null,LoadViewArgs loadViewArgs=null) where T:View=>default;
    public T LoadView<T>(UnityEngine.Transform parent=null,LoadViewArgs loadViewArgs=null) where T:View=>default;

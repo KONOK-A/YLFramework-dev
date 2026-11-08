@@ -19,6 +19,7 @@ foreach ($path in @($controller, $PSCommandPath, (Join-Path $PSScriptRoot 'Test-
     if ($errors.Count -ne 0) { throw "Invalid PowerShell syntax: $path" }; $checks++
 }
 if ($definition.sourceProfile -cne 'YLFrameworkDev-6000.3.27f1_672d562a42a7' -or $definition.jsonVersion -cne '3.2.2') { throw 'The source-specific Editor/JSON profile is not exact.' }; $checks++
+if (-not (Get-Command $controller).Parameters.ContainsKey('DOTweenArchive')) { throw 'The author host must accept an explicit approved DOTween archive without clearing source defines or copying user plugins.' }; $checks++
 $unsupported = @($configuration.editors | Where-Object productVersion -CEQ '2022.3.62f3_96770f904ca7')[0]
 $rejected = $false
 try { $null = Get-YLDevelopmentHostDefinition -Repository $repository -Editor $unsupported } catch { $rejected = $_.Exception.Message.StartsWith('PrerequisiteNotMet:', [StringComparison]::Ordinal) }
@@ -27,7 +28,6 @@ $inputs = @(Get-YLDevelopmentHostInputs -Repository $repository)
 foreach ($required in @('Assets/Scenes/YLFrameworkDev.unity', 'Assets/Scenes/YLFrameworkDev.unity.meta',
     'Assets/Tests/YLFramework/EditMode/Editor/Distribution/FrameworkStructureTests.cs',
     'Assets/Tests/YLFramework/EditMode/Editor/Distribution/DevelopmentHostBoundaryTests.cs',
-    'Assets/Tests/YLFramework/Fixtures/NamespaceMigration/ProductMoves.json',
     'Assets/Tests/YLFramework/Infrastructure/Editor/YLTestEntry.cs',
     'ProjectSettings/ProjectSettings.asset', 'ProjectSettings/EditorBuildSettings.asset',
     'ProjectSettings/GraphicsSettings.asset', 'ProjectSettings/QualitySettings.asset',
@@ -36,11 +36,10 @@ foreach ($required in @('Assets/Scenes/YLFrameworkDev.unity', 'Assets/Scenes/YLF
     if ($required -cnotin $inputs) { throw "A real author input is missing: $required" }; $checks++
 }
 if (@($inputs | Where-Object { $_ -match '^(?:Assets/(?:Plugins|Resources|YLFrameworkData|Editor)|Library|UserSettings)/|(?:Mcp|ReflectorNet|\.kilo)' }).Count -ne 0) { throw 'Commercial/MCP/user data must not be staged or read as source payload.' }; $checks++
-$moves = [IO.File]::ReadAllText((Join-Path $repository 'Assets/Tests/YLFramework/Fixtures/NamespaceMigration/ProductMoves.json')) | ConvertFrom-Json
-if ($moves.Moves.Count -ne 28) { throw 'The historical 28-identity fixture must remain intact.' }; $checks++
+if (@($inputs | Where-Object { $_ -like '*NamespaceMigration/ProductMoves.json*' }).Count -ne 0) { throw 'The current author host must not stage a retired movement ledger.' }; $checks++
 $structure = [IO.File]::ReadAllText((Join-Path $repository 'Assets/Tests/YLFramework/EditMode/Editor/Distribution/FrameworkStructureTests.cs'))
-if (-not $structure.Contains('Assets/Tests/YLFramework/Fixtures/NamespaceMigration/ProductMoves.json') -or
-    -not $structure.Contains('Packages/com.kano.ylframework/') -or $structure.Contains('Root + move.From')) { throw 'The source guard still conflates historical Assets locations and installed package locations.' }; $checks++
+if ($structure.Contains('ProductMoves.json') -or -not $structure.Contains('Runtime/Detection/OverlapDetector2D.cs') -or
+    -not $structure.Contains('Absent optional assets must not remain in the main package.') -or $structure.Contains('Root + move.From')) { throw 'The source guard must bind current package scripts and actual optional-package absence, not replay a historical movement ledger.' }; $checks++
 $boundary = [IO.File]::ReadAllText((Join-Path $repository 'Assets/Tests/YLFramework/EditMode/Editor/Distribution/DevelopmentHostBoundaryTests.cs'))
 $approved = [Collections.Generic.HashSet[string]]::new([string[]]@([regex]::Matches($boundary, '"((?:com\.|extensions\.)[^"\s]+)"') | ForEach-Object { $_.Groups[1].Value }), [StringComparer]::Ordinal)
 foreach ($relative in @('Packages/manifest.json', 'Packages/packages-lock.json')) {

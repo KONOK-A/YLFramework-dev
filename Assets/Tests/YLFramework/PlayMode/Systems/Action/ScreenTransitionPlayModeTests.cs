@@ -33,7 +33,7 @@ namespace YLFramework.Tests.Actions
             Assert.That(Object.FindObjectOfType<ActionGlobalHost>(true) == null, Is.True,
                 "This fixture must own its global executor.");
             Assert.That(Resources.Load<GameObject>(ScreenTransitionCanvas.ResourcePath), Is.Not.Null,
-                "Run YLFramework > Action > 创建屏幕过渡资源 once, outside Play Mode.");
+                "The main package must contain its owned screen-transition prefab; consumers do not regenerate product assets.");
             _ownsEnvironment = true;
             _ownsActionSession = canOwnActionSession;
             Time.timeScale = 1;
@@ -77,16 +77,6 @@ namespace YLFramework.Tests.Actions
             yield return null;
             foreach (var action in _actions)
             {
-                if (action is ScreenTransitionInOut<ScreenTransitionFade, ScreenTransitionFade> fadeInOut)
-                {
-                    fadeInOut.In(null).Out(null).OnInFinish(null);
-                }
-
-                if (action is ScreenTransitionInOut<Probe, Probe> probeInOut)
-                {
-                    probeInOut.In(null).Out(null).OnInFinish(null);
-                }
-
                 if (!action.IsDeinitialized)
                 {
                     action.Deinit();
@@ -120,30 +110,6 @@ namespace YLFramework.Tests.Actions
                 }
             }
             yield return null;
-        }
-
-        public sealed class Probe : AbstractAction<Probe>
-        {
-            public List<string> Trace;
-            public string Name;
-            public bool Ready;
-
-            public override void OnStart() => Trace?.Add(Name + ".start");
-            public override void OnExecute(float dt)
-            {
-                if (Ready)
-                {
-                    this.Finish();
-                }
-            }
-            public override void OnFinish() => Trace?.Add(Name + ".finish");
-            protected override void OnDeinit()
-            {
-                // Sequence resets steps before starting them; keep fluent configuration until disposal.
-                Trace = null;
-                Name = null;
-                Ready = false;
-            }
         }
 
         private static IEnumerator Until(Func<bool> condition)
@@ -198,69 +164,82 @@ namespace YLFramework.Tests.Actions
         }
 
         [UnityTest]
-        public IEnumerator FadeInOutPreservesItsMiddleCallbackButDoesNotPretendTheParentCompletes()
+        public IEnumerator InOutCompletesOnItsSelectedOwnerWithoutCreatingAGlobalHost()
         {
             var middle = 0;
             var finished = 0;
-            ScreenTransitionFade outFade = null;
-            var transition = Own(Kit.ScreenTransition.FadeInOut()
-                .In(fade => Own(fade).Duration(0.01f))
-                .Out(fade => outFade = Own(fade).Duration(0.01f))
-                .OnInFinish(() =>
+            Time.timeScale = 20;
+            var transition = Own(Kit.ScreenTransition.FadeInOut(() =>
                 {
                     Assert.That(_canvas.colorImage.color.a, Is.EqualTo(1));
                     middle++;
                 }));
-            Track(transition.StartGlobal(() => finished++));
-            yield return Until(() => outFade != null && outFade.IsDeinitialized);
+            var controller = Track(transition.Start(_canvas, () => finished++));
+            yield return Until(() => controller.Action == null);
             Assert.That(middle, Is.EqualTo(1));
             Assert.That(_canvas.colorImage.color.a, Is.Zero);
-            Assert.That(transition.Status, Is.EqualTo(ActionStatus.Started), "AK-912 remains open.");
-            Assert.That(finished, Is.Zero);
+            Assert.That(transition.IsDeinitialized, Is.True);
+            Assert.That(finished, Is.EqualTo(1));
+            Assert.That(Object.FindObjectOfType<ActionGlobalHost>(true), Is.Null);
         }
 
         [UnityTest]
-        public IEnumerator GenericInOutKeepsSetterAndChildOrderEvenWhenTheParentIsPaused()
-        {
-            var trace = new List<string>();
-            var input = Own(Probe.Allocate());
-            var output = Own(Probe.Allocate());
-            var parent = Own(ScreenTransitionInOut<Probe, Probe>.Allocate(input, output)
-                .In(value =>
-                {
-                    value.Trace = trace;
-                    value.Name = "in";
-                    value.Ready = true;
-                })
-                .Out(value =>
-                {
-                    value.Trace = trace;
-                    value.Name = "out";
-                    value.Ready = true;
-                })
-                .OnInFinish(() => trace.Add("middle")));
-            var controller = Track(parent.StartGlobal());
-            controller.Pause();
-            yield return Until(() => output.IsDeinitialized);
-            CollectionAssert.AreEqual(new[] { "in.start", "in.finish", "middle", "out.start", "out.finish" }, trace);
-            Assert.That(parent.IsPaused, Is.True);
-            Assert.That(parent.Status, Is.EqualTo(ActionStatus.Started));
-        }
-
-        [UnityTest]
-        public IEnumerator DeinitOfTheInOutParentDoesNotCancelItsOriginalChildSequence()
+        public IEnumerator PausedAndCanceledInOutHasNoDetachedChildOrCompletionCallback()
         {
             var middle = 0;
-            var input = Own(Probe.Allocate());
-            var output = Own(Probe.Allocate());
-            output.Ready = true;
-            var parent = Own(ScreenTransitionInOut<Probe, Probe>.Allocate(input, output).OnInFinish(() => middle++));
-            Track(parent.StartGlobal());
-            parent.Deinit();
-            Assert.That(input.IsDeinitialized, Is.False);
-            input.Ready = true;
-            yield return Until(() => output.IsDeinitialized);
-            Assert.That(middle, Is.EqualTo(1), "AK-912: parent cancellation is not propagated to the child sequence.");
+            var finished = 0;
+            Time.timeScale = 0;
+            var transition = Own(Kit.ScreenTransition.FadeInOut(() => middle++));
+            var controller = Track(transition.Start(_canvas, () => finished++));
+            controller.Pause();
+            controller.IgnoreTimeScale();
+            yield return null;
+            yield return null;
+            Assert.That(_canvas.colorImage.color.a, Is.Zero);
+            controller.Deinit();
+            Time.timeScale = 1;
+            yield return Until(() => controller.Action == null);
+            yield return null;
+            Assert.That(transition.IsDeinitialized, Is.True);
+            Assert.That(_canvas.colorImage.color.a, Is.Zero);
+            Assert.That(middle, Is.Zero);
+            Assert.That(finished, Is.Zero);
+            Assert.That(Object.FindObjectOfType<ActionGlobalHost>(true), Is.Null);
+        }
+
+        [UnityTest]
+        public IEnumerator InOutUsesTheSelectedUnscaledClockWithoutDetachingItsChildren()
+        {
+            var middle = 0;
+            var finished = 0;
+            Time.timeScale = 0;
+            var transition = Own(Kit.ScreenTransition.FadeInOut(() => middle++));
+            var controller = Track(transition.Start(_canvas, () => finished++)).IgnoreTimeScale();
+            var end = Time.realtimeSinceStartup + 4;
+            while (controller.Action != null && Time.realtimeSinceStartup < end)
+            {
+                yield return null;
+            }
+            Assert.That(controller.Action, Is.Null);
+            Assert.That(middle, Is.EqualTo(1));
+            Assert.That(finished, Is.EqualTo(1));
+            Assert.That(_canvas.colorImage.color.a, Is.Zero);
+            Assert.That(Object.FindObjectOfType<ActionGlobalHost>(true), Is.Null);
+        }
+
+        [UnityTest]
+        public IEnumerator InOutMiddleExceptionCancelsTheOwnedSequenceWithoutAHiddenFadeOut()
+        {
+            var finished = 0;
+            Time.timeScale = 20;
+            var transition = Own(Kit.ScreenTransition.FadeInOut(() => throw new InvalidOperationException("transition middle fixture")));
+            LogAssert.Expect(LogType.Exception, new System.Text.RegularExpressions.Regex("InvalidOperationException: transition middle fixture"));
+            var controller = Track(transition.Start(_canvas, () => finished++));
+            yield return Until(() => controller.Action == null);
+            Assert.That(transition.IsDeinitialized, Is.True);
+            Assert.That(finished, Is.Zero);
+            Assert.That(_canvas.colorImage.color.a, Is.EqualTo(1));
+            Assert.That(Object.FindObjectOfType<ActionGlobalHost>(true), Is.Null);
         }
 
         [UnityTest]
