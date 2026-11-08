@@ -10,7 +10,7 @@
 
 - 运行时：[`Runtime/Utilities/ZipTool/`](../../Runtime/Utilities/ZipTool/)
 - 对外封装：[`Utilities/`](../../Runtime/Utilities/ZipTool/Utilities/)；内置库：[`ICSharpCode.SharpZipLib/`](../../Runtime/Utilities/ZipTool/ICSharpCode.SharpZipLib/)
-- 自有包装 namespace：`YLFramework.Compression`，消费者使用 `using YLFramework.Compression;`；内置 SharpZipLib 子树仍保留现有 `YLFramework.Utilities.ZipTool.*` 身份。两者归 `YLFramework.Runtime` 主体，不新增 DLL 或旧 namespace 转发壳；工具源码保持 BCL-only，不等于整个主体 DLL 无引擎依赖。主体不依赖已退休宿主扩展。
+- 自有包装 namespace 为 `YLFramework.Compression`，消费者使用 `using YLFramework.Compression;`；内置库 namespace 为 `YLFramework.Utilities.ZipTool.*`。二者属于 `YLFramework.Runtime`，业务 asmdef 引用 Runtime；包装源码与 Unity 解耦不等于整个 DLL 无引擎依赖。
 - 常规业务直接使用 `ZipUtility` / `GZipUtility`，多次读取同一归档使用 `using` 管理 `ZipArchiveReader`；无需 Manager、组件挂载或公共 Root。
 
 ## 用法
@@ -38,7 +38,7 @@ if (reader.TryReadEntryBytes("config.json", out var bytes))
 - `ZipArchiveReader`：会话式读取 zip（一次打开多次读取，`IDisposable`），解压前预扫描配额与 Zip Slip 路径。
 - `UnzipOptions`：解压配额（总大小 / 单条目大小 / 条目数量，`ForNetworkDownloads` 预设）；0 = 不限制。
 - `GZipUtility`：字节数组 / 流的 GZip 压缩与解压（永不关闭调用方流，支持 0 字节数据）。
-- 内置 `ICSharpCode.SharpZipLib`：保留既有 `YLFramework.Utilities.ZipTool.*` namespace、SharpZipLib Contributors 来源声明与完整 MIT，不随自有 Compression 包装重命名。
+- 内置 `ICSharpCode.SharpZipLib`：使用 `YLFramework.Utilities.ZipTool.*` namespace，保留 SharpZipLib Contributors 来源声明与完整 MIT。
 
 ## 主要类型
 
@@ -67,12 +67,8 @@ if (reader.TryReadEntryBytes("config.json", out var bytes))
 
 ## 依赖
 
-- Zip 源码无框架内模块或 UnityEngine / UnityEditor 依赖；`ZipToolSourceTests` 使用 BCL 引用独立编译全源码，检查这一边界。它不代表整个 Runtime DLL 无 Unity 依赖，也不是独立裁剪交付的保证。
+- Zip 源码无框架内模块或 UnityEngine / UnityEditor 依赖，不需要额外安装 SharpZipLib Package 或供应商 DLL；安装单位仍是主包，不是独立裁剪的工具 DLL。
 
 ## 分发
 
-主 UPM 包包含 `Runtime/`，ZipTool 封装、内置库及 `.meta` 一并归 Runtime 主体分发；来源声明与 [框架许可证](../../LICENSE.md) 一同保留。不需要额外安装 SharpZipLib Package 或供应商 DLL，不可只复制封装而漏掉内置实现。完整安装与宿主依赖见 [文档首页](../README.md)。
-
-## 测试入口
-
-源码仓库的 `Assets/Tests/YLFramework/EditMode/Utilities/ZipTool/ZipToolSourceTests.cs` 检查源码编译边界；当前 UPM 分发专项验证包内容及安装，不继续用旧 unitypackage Exporter 检查作为安装证据。这些检查不等同于 Zip / GZip 全量算法、Android APK 读取或所有平台验证，也不表示当前环境已执行通过。历史验收范围见 [集成记录](../IntegrationPlan.md)。
+主 UPM 包包含封装、内置库及各自来源声明，不可只复制封装而漏掉内置实现。发行与再分发保留 [框架许可证](../../LICENSE.md) 及随库提供的许可和署名；完整安装与宿主依赖见 [安装说明](../Installation.md)。

@@ -1,60 +1,21 @@
-# YLFramework DataAssets
+# DataAssets 配置数据
 
-Optional ScriptableObject configuration roots, identity indices, explicit resource
-ownership and Unity authoring tools. The package depends on the YLFramework main
-package, but neither the main Runtime nor Editor depends on DataAssets.
+`com.kano.ylframework.data-assets` 提供 ScriptableObject 配置根、按 ID / 名称查询的条目、显式资源租约和 Unity 作者工具。配置是共享定义，不是每个业务实例的可变状态。
 
-Install `com.kano.ylframework` and this package from the same version. A Git
-consumer must add both repository subpaths explicitly, because a package.json
-registry dependency cannot discover an unpublished sibling Git package:
+## 依赖与接入
 
-```text
-https://github.com/KONOK-A/YLFramework-dev.git?path=PackageSources/com.kano.ylframework
-https://github.com/KONOK-A/YLFramework-dev.git?path=PackageSources/com.kano.ylframework.data-assets
-```
+依赖主包 `com.kano.ylframework`。从当前源码以本地 UPM 接入时，显式提供主包和本包；尚未发布的兄弟包不会由 Registry 自动取得。业务 asmdef 引用 `YLFramework.DataAssets`，作者脚本另引用 Editor-only 的 `YLFramework.DataAssets.Editor`。
 
-`YLFramework.DataAssets` owns the unchanged `YLFramework.DataAssets` namespace;
-`YLFramework.DataAssets.Editor` owns the unchanged authoring namespace. Original
-script GUIDs are retained. Current Unity field names are the single reader;
-the retired config_name/des/type_script_guid aliases are not kept. Runtime consumers must
-declare their own asmdef reference when using assembly definitions.
+安装步骤见[公共安装指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/Installation.md)，框架入门见[快速开始](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/QuickStart.md)。这些链接指向源码仓库当前文档。
 
-`ScriptableObjectManager.Load` returns a registration that owns its root resource
-lease. `LoadAsync` returns a disposable request/registration owner; dispose it on
-consumer cancellation, disable or destruction. `Clear` closes DataAssets owners,
-not the ResourceSystem. Multiple owners of one root retain independent leases.
-Use these APIs on Unity's main thread and keep shared definition assets immutable
-at runtime. Configuration asset creation and import remain explicit authoring
-operations; installed package files are never used as project output.
+## 开始使用
 
-Root lookup uses the asset object's name/hash, not its `displayName`; name/hash
-collisions are rejected. The authoring window is `Window/YLFramework/Data Assets`.
-It edits explicitly selected roots and creates project-owned rows under
-`Assets/YLFrameworkData`, never inside the installed package.
+1. 在 `Assets/` 下通过 `YLFramework/Data Assets/Configuration Root` 创建根。
+2. 打开 `Window/YLFramework/Data Assets`，选择根并创建条目。
+3. 用 `ScriptableObjectManager.AddConfig(root)` 登记已加载根，持有并在使用结束时 `Dispose()` 返回的登记句柄。
 
-The persistent field protocols remain `displayName/configs/typeScriptGuid` on
-configuration roots and `parent/id/configName/icon/description` on rows. Existing
-Excel column names remain explicitly config_name/des/type_script_guid. These are
-workbook protocols, not old Unity readers; do not rename workbook headers or JSON
-keys when updating C# fields. Before retiring an older application version, save
-its owned old-field assets through Unity while the old definitions can read them,
-preserving GUIDs and object references. Do not rewrite frozen fixtures or bundles.
+完整示例、资源加载、字段协议与所有权见[使用手册](Documentation~/README.md)。工作簿导入导出另由可选的 [Excel 包](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.excel/Documentation~/README.md)提供；不安装 Excel 也可使用配置和普通 Inspector。
 
-Excel import/export is an optional consumer in `com.kano.ylframework.excel`.
-DataAssets does not reference Excel or MiniExcel. Recent-workbook memory and
-the workbook panel belong to the Excel Editor assembly, retaining the original
-asset-GUID-based EditorPrefs keys. They are not serialized into runtime roots;
-the ordinary Inspector works when Excel is absent.
+## 许可证
 
-Existing Resource catalogs persist the asset assembly name. After migrating a
-DataAssets project from `YLFramework.Runtime`, rebuild content and its catalog
-with the formal Resource builder/publisher; do not edit the old JSON or reuse its
-catalog digest. An old assembly tuple is intentionally rejected by the new type
-table. Removing this package does not delete project assets or workbooks.
-
-The development repository's current publication test uses the existing author
-API to create and save a new root and independent rows, cold-reads their actual
-references, and runs the formal Bundle/Catalog publisher and two real Player
-processes. It no longer copies frozen assembly-migration assets into current
-publication. Those historical inputs remain unchanged until their other owners
-have migrated; Editor, runtime lease, session and Player evidence are separate.
+本包采用 [MIT 许可证](LICENSE.md)。

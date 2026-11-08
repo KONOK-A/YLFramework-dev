@@ -14,15 +14,15 @@
 
 ## 位置
 
-- 运行时：[`Runtime/Foundation/IOC/`](../../Runtime/Foundation/IOC/)
-  - `Abstractions/`：`IIOCContainer`
-  - `Attributes/`：`InjectAttribute`
-  - `Collections/`：`TypeMappingCollection` / `TypeInstanceCollection` / `TypeRelationCollection`（public，容器公开状态）
-  - `Core/`：`IOCContainer`（含 `MemberSearchModes`）
-  - `Exceptions/`：`IOCException` 体系
-  - `Internal/`：解析路径、注入元数据与静态反射缓存（internal）
+- 运行时：[`Runtime/Foundation/IOC/`](../../Runtime/Foundation/IOC/)。
+- `Abstractions/`：`IIOCContainer`。
+- `Attributes/`：`InjectAttribute`。
+- `Collections/`：`TypeMappingCollection` / `TypeInstanceCollection` / `TypeRelationCollection`（public，容器公开状态）。
+- `Core/`：`IOCContainer`（含 `MemberSearchModes`）。
+- `Exceptions/`：`IOCException` 体系。
+- `Internal/`：解析路径、注入元数据与静态反射缓存。
 
-公开 namespace 为 `YLFramework.DependencyInjection`，程序集仍为 `YLFramework.Runtime`；使用 `using YLFramework.DependencyInjection;`。原 `YLFramework.Core.IOC` 不保留转发类型，调用方更新 using、完整类型名及反射/生成绑定后重新编译。
+公开 namespace 为 `YLFramework.DependencyInjection`，程序集为 `YLFramework.Runtime`；业务 asmdef 引用 Runtime，并使用 `using YLFramework.DependencyInjection;`。无需 Root 或 Module。
 
 ## 快速使用
 
@@ -74,10 +74,10 @@ container.Clear(); // 只清注册；不会销毁 presenter 或 Sink。
 ## 构造函数注入
 
 - 选择“参数最多的公开实例构造函数”；**最大参数数量并列时 fail-fast**（异常列出并列签名），不依赖反射返回顺序，也不做“可解析性回退”。
-- 没有公开构造函数时回退非公开无参构造（兼容历史行为）。
+- 没有公开构造函数时尝试非公开无参构造。
 - 参数解析顺序：无名显式注册 → 参数名命名注册 → 完整 `Resolve`（未显式注册的 concrete class 自动构造）→ optional 默认值；仍失败抛出带依赖链的异常。显式注册先于自动构造，避免 concrete 参数遮蔽命名注册。
 - 数组参数优先使用显式注册的数组实例 / 映射（无名或参数名命名）；`params` 参数在无显式注册时传空数组；可选数组参数在无匹配元素注册时使用默认值；其余数组按元素类型的注册生成强类型数组（`ResolveAll`）。
-- 显式参数（`CreateInstance(type, args)` / `Resolve(type, name, false, args)`）直接匹配公开构造函数，不再自动解析。
+- 提供至少一个显式参数（`CreateInstance(type, args)` / `Resolve(type, name, false, args)`）时直接匹配公开构造函数，不自动解析参数；null 或空数组仍使用自动构造注入。
 - 构造函数自身抛出的异常作为 `InnerException` 保留；`TargetInvocationException` 会被解包；构造函数体内触发的 IOC 异常（如循环依赖、依赖缺失）保留原异常类型与依赖链，不降级为普通解析失败。
 
 ## 循环依赖检测
@@ -97,7 +97,7 @@ container.Clear(); // 只清注册；不会销毁 presenter 或 Sink。
 成员声明还有默认 Warning 的 [YL0008](Attributes.md#yl0008) 提前检查：static/const/readonly 字段、static 属性、无 setter 属性及 indexer 不属于受支持的成员注入形态；真实 Inject 的派生特性同样识别。private setter 合法，不会仅因 private 报警。规则不推测 `MemberSearchModes`、注册是否存在或名称能否解析，也不替代值类型 owner 与运行时异常检查。
 
 ```csharp
-class Presenter
+class MemberInjectedPresenter
 {
     [Inject] public static object Shared; // YL0008：不会被实例扫描注入
     [Inject] public readonly object Locked; // YL0008：改用构造注入等显式设计
@@ -107,7 +107,7 @@ class Presenter
 
 不要为了消警随意移除 readonly、改成实例成员或添加 setter；按业务所有权选择构造函数注入、显式 `Resolve` 或可写成员。配置入口为 `YLFramework/Core/分析器规则`，不提供猜测业务设计的自动修复。
 
-## ResolveAll
+## 批量解析
 
 - 包含无名与命名注册，匹配规则为“注册键类型可赋值给请求类型”。
 - 每个 `(类型, 名称)` 键下 instance 优先于 mapping，不重复创建。
@@ -161,10 +161,4 @@ class Presenter
 
 - 无框架内模块依赖（纯 C#，使用反射）。
 
-## 测试入口
-
-`Tests/EditMode/Foundation/FoundationBoundaryTests.cs` 检查 Foundation 的身份与源码依赖边界，不等同于完整容器行为验证；不能据此承诺构造、注入与异常路径均已通过测试。
-
-## 备注
-
-- 容器为普通 C# 对象，需要由使用方自行持有与生命周期管理（框架内暂无全局容器入口）。
+构造函数与注入成员使用反射，IL2CPP/裁剪环境中由真实消费者定向保留相关类型和成员；容器不提供 AOT 自动注册或保留机制。

@@ -2,7 +2,7 @@
 
 > [文档首页](../README.md) · [架构总览](../Architecture.md)
 
-本页导航：[主要类型](#主要类型) · [基本用法](#使用) · [回收约束](#生命周期与回收约束) · [容量与会话](#容量与会话) · [领域边界](#领域边界) · [GameObject 实例池](#gameobject-实例池) · [兼容边界](#兼容边界)
+本页导航：[主要类型](#主要类型) · [基本用法](#使用) · [回收约束](#生命周期与回收约束) · [容量与会话](#容量与会话) · [领域边界](#领域边界) · [GameObject 实例池](#gameobject-实例池)
 
 ## 作用
 
@@ -18,7 +18,7 @@
 | Safe、IOfPool/IPoolType、非公开/动态创建工具、自有 GO 池 | [`Runtime/Foundation/Pool/`](../../Runtime/Foundation/Pool/) | `YLFramework.Runtime` |
 | LoadViewArgs 私有参数池、Core 临时集合消费者 | [`Runtime/Core/MVC/Views/Parameters/`](../../Runtime/Core/MVC/Views/Parameters/)、[`Runtime/Core/`](../../Runtime/Core/) | `YLFramework.Runtime` |
 
-公开 namespace 为 `YLFramework.Pooling`；旧 `YLFramework.Core.Pool` 不保留转发类型，调用方须更新引用。Foundation/Core 共用 Runtime 主体，但池中立源码不消费上层领域或外部资源实现；Runtime 仍保留 UGUI/Json.NET，不能视作整个 DLL 零依赖。会话状态不是公共 API。
+公开 namespace 为 `YLFramework.Pooling`，业务 asmdef 引用 `YLFramework.Runtime`。普通对象池不需要 Root、Module 或 Unity 宿主；GameObject 池使用自己的运行期宿主。池中立源码不消费上层领域或外部资源实现，整个 Runtime DLL 的依赖见 [架构](../Architecture.md)。
 
 ## 主要类型
 
@@ -29,7 +29,7 @@
 | `IOfPool` | `OnAllocate`、`OnRecycle`、`IsRecycled`；可观察领域状态不等于池归属 |
 | `ListPool<T>` / `DictionaryPool<TKey,TValue>` | 静态 LIFO 集合入口；`Allocate()` / `Allocate(capacity)`、void `Recycle`、`RecycleToPool`、`Clear`、`MaxPoolSize` |
 | `IObjectFactory<T>` / Default / Custom | 纯创建策略，分别为接口、`new()` 和委托；与 reset 分离 |
-| `NonPublicObjectFactory<T>` / `MultiObjectFactory` | 保留非公开无参构造信息缓存、动态 Type/泛型带参创建和创建后初始化；不维护缓存、不自动重置成员 |
+| `NonPublicObjectFactory<T>` / `MultiObjectFactory` | 非公开无参构造信息缓存、动态 Type/泛型带参创建和创建后初始化；不维护对象缓存、不自动重置成员 |
 | `GameObjectPool` / `GameObjectPoolData` | string key + FIFO 实例缓存、稳定归属、转换期保护、预热/容量、场景回迁与永久销毁；Data 共用 Safe 内核，GO 生命周期独立 |
 
 源码入口：[`ObjectPool.cs`](../../Runtime/Foundation/Pool/Object/ObjectPool.cs)、[`SafeObjectPool.cs`](../../Runtime/Foundation/Pool/Object/SafeObjectPool.cs)、[`GameObjectPool.cs`](../../Runtime/Foundation/Pool/GameObject/GameObjectPool.cs) 与 [`GameObjectPoolData.cs`](../../Runtime/Foundation/Pool/GameObject/GameObjectPoolData.cs)。
@@ -86,9 +86,9 @@ finally
 
 - Action 保留 ActionId/Generation 和当前执行栈退出后的延迟归还；失败清理只能延迟丢弃，不重放失败清理。
 - Events、Binding、FSM、Resource 经 Safe 复用；Binding readonly 内部事件仅清监听，不独立归池。Audio 私有池永久丢弃负责销毁 Source。
-- LoadViewArgs 仅通过 Core 专用入口接管/归还，保留线程、Claim、读取窗口及终态即时清值。Module/Model 不恢复默认隐式池化；普通事件、MappedProperty、普通计时 run 不因接口名而自动池化；计时存储的显式复用由 ReusableTimer 负责。
+- LoadViewArgs 仅通过 Core 专用入口接管/归还，受线程、Claim、读取窗口及终态即时清值约束。Module/Model 不默认隐式池化；普通事件、MappedProperty、普通计时 run 不因接口名而自动池化；计时存储的显式复用由 ReusableTimer 负责。
 - 自有 GO 池保持 `MonoSingletonPath("YLFramework/Pool/GameObjectPool")`，`Allocate(key,parent)` 空池返回 null，需要显式预热或接纳已有实例，不自动加载/创建 Prefab。
-- 自有 GO 池、正式 Resource 的 InstanceLease/实例缓存与旧资源系统的所有权不同。Core 命名资源使用正式 Resource，历史资源链独立管理自身责任；Foundation 池不接管 Prefab/Bundle 租约、异步取消或物理卸载。通过资源系统创建的实例须归还其原 owner，不能改交普通池释放。
+- 自有 GO 池与 [Resource](Resource.md) 的 InstanceLease/实例缓存是不同的 owner。Foundation 池不接管 Prefab/Bundle 租约、异步取消或物理卸载；通过资源系统创建的实例须归还其原 owner，不能改交普通池释放。
 
 ## GameObject 实例池
 
@@ -118,27 +118,3 @@ pool.Clear("Projectile");
 - 数组入口为显式三参数 `InitOneGoData(key, capacity, gameObjects)` 或两参数 `InitOneGoData(key, gameObjects)`；容量/Prefab 入口使用前述命名参数，避免误选重载。
 
 GO 池仅共享 Data 的普通缓存和会话支撑，不用 `ObjectPool<GameObject>` 接纳外部实例或处理 fake-null。GameObject 根和实例的所有权不等于 Prefab/Bundle 租约；正式 Resource 的 InstanceLease/实例缓存独占资产 pin、取消和卸载责任，不能由 Foundation 池代替。
-
-<a id="历史-api-迁移"></a>
-
-## 兼容边界
-
-`ClassObjectPool`、`IndependentObjectPool<T>`、`Pool<T>`、`SimpleObjectPool<T>` 已退出；Core `ClassObjectPoolManager/IReuseable`、集合 `StaticStackPool` 也不再保留。没有隐藏第二套算法或永久兼容壳。
-
-| 旧入口/行为 | 正式承接方式 |
-|---|---|
-| Simple 委托工厂/reset、构造预热、默认无限 FIFO | ObjectPool 显式 `reset:`、`maxPoolSize: 0`，再 `Prewarm(initialSize)`；默认值不机械等同 |
-| Pool/Independent 派生缓存、静态自持缓存 | 组合 ObjectPool，领域生命周期配置为委托；不再提供旧普通池基类身份 |
-| Class/Manager 的 Type 创建与可选生命周期 | `ObjectPool<object>` + 显式动态工厂及 onAllocate/reset；无全局 Type registry |
-| 反射自动写字段/属性 | 退出，不等价复刻；由类型/领域显式 reset，保留构造默认值与必要资源责任 |
-| IOfPool 类型入口 | Safe 保留接口回调、单例、工厂/容量/预热及扩展钩子，直接组合内核 |
-
-当前公开域统一为 `YLFramework.Pooling`；脚本 GUID 与 Runtime 程序集保留，不代表旧基类身份、仓库外源码/DLL 或二进制存档自动兼容。外部 new 接纳与异常后重试也不能照搬：普通池只收自己的借出对象，取得/reset 失败后永久隔离。反射创建只是显式能力，不恢复自动成员 reset。
-
-<a id="当前状态"></a>
-
-## 验证与历史
-
-测试入口为 `Tests/EditMode/Foundation/ObjectPoolTests.cs`、`FoundationBoundaryTests.cs`、`Tests/EditMode/Foundation/Pool/` 下的 `PoolContractTests` / `CollectionPoolTests`；GO 专项为 `Tests/PlayMode/Foundation/Pool/GameObjectPoolPlayModeTests.cs`。Resource、Action、Events、Binding、Audio 与 Core 消费者的回归各归其领域；普通缓存不能自动解决这些模块的清理、取消或失效会话排空。
-
-历史集成和验证范围见 [融合记录](../IntegrationPlan.md)，详细方案保留在 Git 历史中，不是产品包运行依赖。阶段进度不作为使用前提；IL2CPP、其他平台与性能结论需有各自的实际验证。

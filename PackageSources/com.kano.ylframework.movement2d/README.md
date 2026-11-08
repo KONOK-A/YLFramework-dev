@@ -1,25 +1,23 @@
-# YLFramework Movement 2D
+# YLFramework 二维移动
 
-Install this package with the main package and Unity's physics2d module.
-Git consumers explicitly declare main and this package at the same accepted full
-SHA; package-level SemVer dependencies do not fetch sibling Git packages.
-Character movement belongs to `YLFramework.Character2D`; moving paths, platforms
-and passenger detection belong to `YLFramework.Platform2D`. Their namespaces,
-serialized fields, script GUIDs and UnityEvent types are unchanged.
+`com.kano.ylframework.movement2d` 提供 Rigidbody2D 角色移动、跳跃与接触检测，以及折线路径、移动平台和乘客检测。角色与平台可以分别使用，不自动安装输入系统、Overlap 或状态机。
 
-The two Runtime assemblies each reference `YLFramework.Runtime` for existing
-extensions and do not reference each other. Consumer asmdefs declare only the
-runtime they actually use. Authoring for both belongs to
-`YLFramework.Movement2D.Editor`, which references the two runtimes and the main
-Editor common tools. Overlap and both FSM systems are not included in this package.
+## 依赖与接入
 
-This is an ownership change, not a new movement algorithm. Contact checks,
-queued movement, jumps, path modes, pause/stop, passenger snapshots and pooled
-reuse retain their existing update timing. In particular, a moving platform
-applies its world displacement to detected passenger rigidbodies; this does not
-promise an additional character-style obstacle cast for the passenger.
+- 依赖主包 `com.kano.ylframework` 与 Unity 内置 `com.unity.modules.physics2d`。
+- 当前从源码使用本地 UPM 包，须同时为主包与本包提供明确来源；Git 接入也不能仅靠包版本声明取得兄弟包。
+- 角色消费者引用 `YLFramework.Character2D`，路径与平台消费者引用 `YLFramework.Platform2D`，两套 Runtime 不互相引用。
+- 自定义作者工具按需引用 `YLFramework.Movement2D.Editor`。
+- 安装步骤见[主包安装指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/Installation.md)，框架入门见[快速开始](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/QuickStart.md)。这些跨包链接指向源码仓库当前文档。
 
-Existing component Prefabs and persistent UnityEvent method bindings retain
-their identities. Removing the package does not delete user Prefabs or scenes;
-consumers must remove their component/API references before uninstalling it.
-Reference guides remain in the main documentation's Behavior module.
+## 开始使用
+
+角色先准备 Rigidbody2D 和附属的非 Trigger Box、Circle 或 CapsuleCollider2D，再配置 `CharacterController2D`，在调用方 `FixedUpdate` 中提交移动。平台使用 `MoveablePlatform2D` 和 `PlatformCatcher2D`，先配置世界路径，再运行。
+
+## 手册
+
+[使用手册](Documentation~/README.md) 说明移动时序、跳跃、Collider 刷新、路径快照、暂停与停止、平台载人和编辑器操作。平台直接向乘客刚体施加世界位移，不额外执行角色式障碍投射。
+
+## 许可证
+
+[MIT](LICENSE.md)。

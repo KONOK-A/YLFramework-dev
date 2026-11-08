@@ -1,45 +1,7 @@
-# YLFramework Excel Gameplay Adapter
+# Excel Gameplay 适配
 
-This adapter is included in `com.kano.ylframework.excel`, version
-`0.1.0-preview.1`. Installing `com.kano.ylframework.gameplay` alongside Excel
-enables the original `YLFramework.Domain.Excel.Editor` assembly through its
-assembly-local `YL_GAMEPLAY_PACKAGE` Version Define. No global scripting
-symbol is required or changed. The unpublished standalone
-`com.kano.ylframework.domain-excel` package identity has been retired.
+本目录是 Excel 包的 Editor-only 领域接线，提供 `DomainExcelCommands` 和 Skill / Buff / Mission / Equipment 的类型化工作簿菜单。同时安装 Gameplay 后，由程序集局部 `YL_GAMEPLAY_PACKAGE` Version Define 启用 `YLFramework.Domain.Excel.Editor`，不要求或修改全局宏。
 
-For Git installation, explicitly declare main, DataAssets, Excel and Gameplay
-at the same accepted full SHA. Package-level SemVer declarations cannot fetch
-unpublished sibling Git packages. Excel URL format (`<full-commit-sha>` is notation):
+安装前置、工作表、预览 / 确认 / 取消、参数独立提交及恢复边界统一见同包的 [Gameplay 适配指南](../../Documentation~/Gameplay.md)；通用后端见 [Excel 使用手册](../../Documentation~/README.md)。本目录不持有第二份 MiniExcel，也不把运行时持久化接入作者导入。
 
-```text
-https://github.com/KONOK-A/YLFramework-dev.git?path=/PackageSources/com.kano.ylframework.excel#<full-commit-sha>
-```
-
-For the intended Registry channel, Excel and Gameplay are two direct entries;
-UPM resolves their main/DataAssets dependencies. Use Registry only after the
-frozen release handoff confirms availability. This refactor does not publish
-any package. See the [installation guide](../../../com.kano.ylframework/Documentation~/README.md#git-url-与依赖闭包).
-
-The original `DomainExcelCommands` namespace, public overloads, context menus
-and script GUID remain. Generic Excel has no Gameplay product dependency;
-Gameplay without Excel has no MiniExcel backend or adapter assembly.
-Workbook selections and generated assets belong to the consuming project and
-are not deleted when either package is removed.
-
-Domain validation uses the existing typed staged-row `afterImport` callback for
-every imported row, including unchanged rows. Display-diff JSON is not a domain
-data transport. Preview errors block the original plan; external root/parameter,
-effect and cross-root ID constraints are rechecked with `AddValidation` before
-any write. Equipment GUID normalization uses the actual typed row.
-
-Mission parameters keep their independent workbook and transaction. Root-aware
-plans enforce clean-root and condition-reference checks without relying on a
-window, and their menu uses the shared `ExcelPreviewWindow`. Only successful
-application saves/refreshes the root. List, JSON and ScriptableObject commit and
-recovery responsibilities remain separate; no cross-workbook atomicity is implied.
-
-MiniExcel exists only once in the [Excel Editor package](../../README.md).
-The inherited [license](LICENSE.md), [backend provenance](Dependencies.json)
-and Apache-2.0 [license](../Licenses/MiniExcel-LICENSE.txt) and
-[attribution](../Licenses/MiniExcel-ATTRIBUTION.txt) remain with their owners.
-Maintained by Kano; original copyrights are retained.
+保留本目录的[许可证](LICENSE.md)与[依赖来源声明](Dependencies.json)，以及后端的 [Apache-2.0 许可证](../Licenses/MiniExcel-LICENSE.txt)和[署名](../Licenses/MiniExcel-ATTRIBUTION.txt)。由 Kano 维护，原始版权声明保留。

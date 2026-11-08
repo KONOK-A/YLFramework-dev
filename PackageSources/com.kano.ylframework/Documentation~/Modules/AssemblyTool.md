@@ -50,10 +50,7 @@ if (type == null)
 
 - 无框架内模块依赖（纯 C# / `System` / `System.Reflection`）。
 
-## 测试入口
+## 使用限制
 
-`Tests/EditMode/Foundation/AssemblyToolTests.cs`：null/空白、完整名与大小写、程序集限定名边界、嵌套/开放泛型、成功缓存、失败后的晚加载与同名类型首匹配。测试路径是回归入口，不代表当前环境已执行通过。
-
-## 备注
-
-- 本工具不为旧 namespace 建别名；身份升级后应显式迁移持久化类型字符串。Unity `MovedFrom` 也不使 `Assembly.GetType` / `Type.GetType` 自动解析旧全名或 AQN。
+- 类型必须已经加载。字符串查找不能加载 DLL，也不能保证 IL2CPP 裁剪后仍保留未被静态引用的类型；需要反射的消费者自行定向保留。
+- 持久化类型字符串属于调用方的数据格式，应按真实 `FullName` 保存和解析；Unity `MovedFrom` 不会改变 `Assembly.GetType` / `Type.GetType` 的字符串解析规则。

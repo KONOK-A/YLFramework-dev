@@ -7,7 +7,7 @@
 轻量通用数据表与多值索引基础设施：
 
 - `Table<TDataItem>`：数据表抽象基类，统一 `Add` / `Remove` / `Clear` / `Dispose` / 枚举入口，具体存储与索引由子类钩子维护；
-- `TableIndex<TKeyType, TDataItem>`：按键查询的索引，同一键支持多个数据项。
+- `TableIndex<TKey, TDataItem>`：按键查询的索引，同一键支持多个数据项。
 
 定位边界：不做 ORM / Database / DataFrame / SQL / LINQ Provider / 响应式表 / ECS 存储。集合过滤、投影、排序等交给 LINQ。
 
@@ -32,7 +32,9 @@ index.Remove("cat");
 index.Clear(); // 清空并归还列表，index 本身仍可继续使用。
 ```
 
-## Table&lt;TDataItem&gt;
+## 数据表基类
+
+`Table<TDataItem>` 由子类提供存储和钩子：
 
 | 成员 | 语义 |
 |---|---|
@@ -51,7 +53,9 @@ index.Clear(); // 清空并归还列表，index 本身仍可继续使用。
 - Dispose 后是否还能继续使用由子类决定。独立的 `TableIndex` 在释放后拒绝继续操作；它不是 `Table` 的派生类。
 - 回调异常：`OnAdd`/`OnRemove`/`OnClear`/`OnDispose` 抛出的异常原样传播给调用方；基类不捕获、不回滚，异常前已产生的子类副作用保留，写入顺序由子类负责。
 
-## TableIndex&lt;TKeyType, TDataItem&gt;
+## 多值索引
+
+`TableIndex<TKey,TDataItem>` 可直接构造，不是 Table 的派生类型。
 
 - 同 key 多值（multi-set）：同一键可关联多个数据项，**允许重复项**（同一个 item 重复 Add 会出现两次，不去重、不抛异常），保持添加顺序。
 - 键由构造函数传入的选择器在 `Add`/`Remove` 时实时计算，索引不缓存键。
@@ -64,29 +68,17 @@ index.Clear(); // 清空并归还列表，index 本身仍可继续使用。
 - null 键（引用类型 null / `Nullable` 无值）不受支持：在字典操作前抛出带明确消息的 `ArgumentNullException`；空字符串、值类型 default 键合法。
 - keySelector 重入：选择器是用户委托。选择器内 `Add`/`Remove`/`Clear` 会先按调用顺序完成（外层操作随后继续）；选择器内 `Dispose` 索引会在返回后 fail-fast 抛 `ObjectDisposedException`，不会出现 NRE。
 
-### Get / Dictionary 借用契约（旧引用边界）
+### 查询结果的借用边界
 
 - `Get(key)` 命中时返回内部 `List<TDataItem>` 本身；`Dictionary` 属性返回内部字典本身。两者都是**借用引用**，不是快照。
 - 不要修改返回的集合；修改会绕过 Pool 回收并破坏“key 必有非空 List”的不变量。
-- 旧引用生命周期：列表在下一次结构修改 / `Clear` / `Dispose` 时失效（`Clear`/`Dispose` 会回收并清空列表）；字典在 `Clear` 后仍为同一对象但内容被清空，在 `Dispose` 后已归还 `DictionaryPool` 并失效。
+- 借用生命周期：列表在下一次结构修改 / `Clear` / `Dispose` 时失效（`Clear`/`Dispose` 会回收并清空列表）；字典在 `Clear` 后仍为同一对象但内容被清空，在 `Dispose` 后已归还 `DictionaryPool` 并失效。
 - 不要长期缓存这些引用；需要快照时调用方自行拷贝（如 `.ToArray()`）。
 
 ## 依赖
 
-- Foundation 的 `Pool`：`ListPool<T>` 与 `DictionaryPool<TKey, TValue>`（Clear / Dispose 时归还），沿用既有 `YLFramework.Pooling` namespace；这不构成对 `YLFramework.Core.Runtime` 的依赖。
-- Table 提供数据项与多值索引，不替代 Foundation 的 `SerializedDictionary` 序列化容器，也不接管 Resource 的资源加载、租约或缓存策略。
-
-## Resource 消费者
-
-- 旧 `ResTable`、`AssetDataTable` 与 `ResData` 随旧资源栈退役。正式 `ResourceSystem` 使用自己的 Catalog 与资源图，不依赖 Table 维持第二张资源索引。
-- Table 仍作为独立的通用多值索引保留；是否由当前资源系统消费不是其通用能力去留的依据。
-
-## 测试
-
-- `Tests/EditMode/Foundation/Pool/CollectionPoolTests.cs` 中的 `Table*` 用例覆盖选择器校验、Clear / Dispose 归还、移除空桶及插入失败归还；这不是 Table 全部契约的完整覆盖。
-- `Tests/EditMode/Editor/Distribution/FrameworkAssemblyIndependenceTests.cs` 的完整 Runtime 源码闭包包含 Table；它验证编译边界，不替代 Table 行为测试。
-
-上述路径用于定位回归，不表示当前环境已执行通过。
+- [Pool](Pool.md)：`ListPool<T>` 与 `DictionaryPool<TKey, TValue>` 在 Clear / Dispose 时归还，仅管理容器，不释放数据项。
+- Table 提供数据项与多值索引，不替代 [SerializedDictionary](Serialization.md) 的 Unity 字段序列化，也不接管 Resource 的加载、租约或缓存策略。
 
 ## 已知限制
 

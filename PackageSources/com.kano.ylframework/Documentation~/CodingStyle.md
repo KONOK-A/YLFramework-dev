@@ -1,10 +1,10 @@
 # YLFramework 代码规范
 
-适用于 YL 自有及已融合代码。准确、清晰优先；上游库和外部契约保持原规则。分层与依赖方向见 [架构](Architecture.md)。
+适用于 YLFramework 自有代码。准确、清晰优先；第三方实现和协议字段保持其规则。分层与依赖方向见 [架构](Architecture.md)。
 
 ## 命名
 
-先保护外部契约，再判断实际 Unity 序列化资格，最后按访问级别命名；不能仅凭 public 判定序列化。
+先识别协议与序列化字段，再按访问级别命名；不能仅凭 public 判定 Unity 序列化资格。
 
 | 对象 | 规则 |
 |---|---|
@@ -37,9 +37,9 @@
 ## 安全改名
 
 - 同步调用、命名实参、反射、`FindProperty`、UnityEvent、文档和生成模板；移动资产保留 `.meta`/GUID。
-- Unity 字段按需使用精确 `FormerlySerializedAs`，类型迁移另评估；用真实旧资产验证值、引用与重导入。
-- JSON/Excel/存档键、资源地址、枚举值、布局和签名输入不随改名漂移；Json.NET 显式映射，JsonUtility 协议字段必要时保留旧名。
-- `keepWaiting` 等外部 override、Audio 公开 JSON 字段、`SerializedDictionary.datas/Key/Value` 是合法例外，不以旧名零命中验收。
+- 已有 Unity 资产受字段改名影响时，按需使用精确 `FormerlySerializedAs`，并验证真实资产的值、引用与重导入；不为不存在的外部消费者预建兼容层。
+- JSON/Excel/存档键、资源地址、枚举值、布局和签名输入不随 C# 改名漂移；Json.NET 使用显式映射，JsonUtility 按真实协议定义字段。
+- `keepWaiting` 等外部 override、Audio 公开 JSON 字段、`SerializedDictionary.datas/Key/Value` 是合法命名例外。
 - 不借改名改变 API 形状、访问级别、初始化/求值顺序、线程、所有权、取消、异常、重入或 Unity fake-null 语义。
 
 ## 格式工具

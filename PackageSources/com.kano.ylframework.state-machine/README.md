@@ -1,40 +1,22 @@
-# YLFramework State Machine
+# YLFramework 配置式状态机
 
-Configured hierarchical state machines, parameters, conditions, layers and graph
-authoring. The existing `YLFramework.StateMachine` runtime namespace belongs to
-the `YLFramework.StateMachine` assembly. Authoring remains in the existing
-`YLFramework.Editor.StateMachine` namespace, in `YLFramework.StateMachine.Editor`.
-The independent lightweight `YLFramework.FSM` stays in the main package.
+`com.kano.ylframework.state-machine` 提供配置资产驱动的层级状态机、参数、条件组、多层运行和图形编辑器。适合需要在 Inspector 与图窗口中配置状态和过渡的项目；主包的轻量纯代码 `YLFramework.FSM` 是另一套独立能力。
 
-Install this package with its main-package dependency. Runtime consumers declare
-`YLFramework.StateMachine` in their asmdef; Editor consumers also declare
-`YLFramework.StateMachine.Editor` where they use authoring APIs. Foundation type
-resolution and play-state checks come from the main package, not copied helpers.
-Git consumers explicitly declare main and this package at the same accepted full
-SHA; package-level SemVer dependencies do not fetch sibling Git packages.
+## 依赖与接入
 
-The graph stylesheet and state script template retain their original GUIDs and
-package-relative paths. Create And Add creates a new script without replacing an
-occupied file, waits for actual import/compilation and binds its GUID/class name
-to the selected configuration node. A generated state under a consumer asmdef
-requires an explicit `YLFramework.StateMachine` reference. Assembly-CSharp uses
-the runtime assembly's normal auto-reference. The generator does not edit a
-consumer's asmdef or silently overwrite unknown generated output.
+- 依赖主包 `com.kano.ylframework`，不要求 Root、Module、Movement2D 或输入包。
+- 当前从源码使用本地 UPM 包，须同时为主包与本包提供明确来源；Git 接入也不能仅靠包版本声明取得同仓库兄弟包。
+- Runtime asmdef 引用 `YLFramework.StateMachine`；直接调用作者 API 的 Editor asmdef 另引用 `YLFramework.StateMachine.Editor`。
+- 安装步骤见[主包安装指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/Installation.md)，框架入门见[快速开始](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/QuickStart.md)。这些跨包链接指向源码仓库当前文档。
 
-Current configuration assets and components retain their script GUIDs, fields,
-state scripts, parameters and sub-state connections. Existing state creation,
-transition, trigger, reset and disable/destroy behavior is unchanged. Resource
-catalogs that record the old owning assembly must be rebuilt through the actual
-resource publishing flow; preserving a script GUID is not permission to accept
-an old assembly tuple or a Bundle built by a different Unity version.
+## 开始使用
 
-Assets use the current serialized field names only; historical field-name readers
-are no longer included. Before upgrading an owned older asset, open and save it
-with the version that still understands its format, preserving its `.meta` and
-GUID, then verify the configuration and prefab through the current authoring flow.
-Do not rewrite unknown or frozen historical inputs, infer script GUIDs from class
-names, or hand-edit YAML to manufacture a current asset. Rebuild any resource
-publication from verified current inputs.
+通过 `Assets/Create/YLFramework/Asset FSM/FSMController` 创建配置，在 `Window/YLFramework/Asset FSM/StateMachineWindow` 编辑，然后将配置加入 GameObject 上的 `FsmController` 运行层。控制器负责转发 Unity 的三个更新阶段，状态脚本继承 `FsmState`。
 
-Removing this package does not delete user configurations or generated scripts.
-Consumers must remove their own component/API references before uninstalling it.
+## 手册
+
+[使用手册](Documentation~/README.md) 说明创建与绑定脚本、参数与过渡、运行层、生命周期和作者工具边界。生成的脚本、配置资产及使用它们的场景由使用工程持有，卸载本包不会删除这些内容。
+
+## 许可证
+
+[MIT](LICENSE.md)。

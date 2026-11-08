@@ -4,43 +4,44 @@
 
 ## 作用
 
-提供实例事件、独立事件总线、精确订阅句柄与轻量组合。共享机制和 Unity 适配归 Runtime 主体的 Foundation；Core 只保留领域事件键，不再增加一层总线门面，也不强制所有通知进入全局上下文。
+提供实例事件、独立事件总线、精确订阅句柄与轻量组合。共享机制和 Unity 适配归 Runtime 主体的 Foundation；Core 的 `CoreEvents` 只定义领域事件键，不要求所有通知进入全局上下文。
 
 选择入口：对象自己的通知用 `EventChannel`，需要池化时用 `EasyEvent`；独立业务上下文用显式持有的 `EventBus`；只有确实需要全局通信时才选 `EventBus.Default`。局部 Unity 消息适配见 [局部 Unity 监听组件](#局部-unity-监听组件)。
 
 ## 位置
 
-- 共享机制与注销族：[`Runtime/Foundation/Events/Subscriptions/`](../../Runtime/Foundation/Events/Subscriptions/)，归 `YLFramework.Runtime`：Channel / Bus / Key / OrEvent、IUnregister / Scope、EasyEvent 与生命周期触发器。
-- Foundation 事件族公开 namespace 为 `YLFramework.Events`；Core 的领域键仍为 `YLFramework.Core.CoreEvents`，二者共用 Runtime 但职责不合并。
+- 共享机制与注销族：[`Runtime/Foundation/Events/Subscriptions/`](../../Runtime/Foundation/Events/Subscriptions/)，归 `YLFramework.Runtime`：Channel / Bus / Key / OrEvent、IUnregister / Scope、EasyEvent 与生命周期注销触发器。
+- Foundation 事件族公开 namespace 为 `YLFramework.Events`；业务 asmdef 引用 `YLFramework.Runtime` 即可，无需 Root 或 Module。
 - `Unity/`：EventListener 与便捷扩展、MonoEventListener 及物理/动画 Listener，统一使用 `YLFramework.Events`；不把各用途合并为同一组件。
-- `Internal/`：EasyEvent 池化入口。Core 的领域 `CoreEvents` 另在 [`Runtime/Core/Events/`](../../Runtime/Core/Events/)，不维护第二份 Foundation 总线。
+- `Internal/`：EasyEvent 池化入口。Core 的领域 `YLFramework.Core.CoreEvents` 另在 [`Runtime/Core/Events/`](../../Runtime/Core/Events/)。
 
 ## 主要功能
 
-### 共享 Channel 与 Bus
+### 实例通道与总线
 
 - `EventChannel` / `EventChannel<T1, ...>` 使用 `Action` 0~7 参数；`Register` / `RegisterOnce` 返回独立、不池化的精确注册身份。普通 multicast 注册按 target 展开，一次 token 取消自身剩余整组；`Unregister(delegate)` 删除最后一个相等的普通 target 子序列，Once 使用 token 取消。
 - `Trigger` / `Send` 按注册顺序 fail-fast；显式 `TriggerAll` / `SendAll` 才逐监听继续，结束后抛出单个原异常或 `AggregateException`。Once 的 multicast 回调整体作为一个监听，内部仍按委托异常规则中断。
 - 发布捕获写时复制数组，普通退订和 `ClearListeners` 不改变已开始的快照，嵌套发布读取新状态。Once 在用户代码前消费，嵌套及旧快照不会重复执行。
 - `ResetOwner` 保持 channel 实例但终结旧代次；`Dispose` 永久关闭。两者都截断旧在途快照并撤销旧 token。`IEventSource.Register(Action)` 将无参观察放在同一个强类型序列，不另建先行通道；null 回调不注册。
-- `EventBus` 可 `new` 建立独立上下文。`EventKey` 保留完整 Ordinal string、int、枚举类型与完整值、声明 Type 四个独立键域，不使用字符串 hash 路由。枚举构造键需要装箱，可缓存 `EventKey` 用于重复发布；payload 分发不打包 `object[]`、不反射调用。
+- `EventBus` 可 `new` 建立独立上下文。`EventKey` 保留完整 Ordinal string、int、枚举类型与完整值、声明 Type 四个独立键域，不使用字符串 hash 路由。default(EventKey) 无效，string 键允许空字符串但拒绝 null。枚举构造键需要装箱，可缓存 `EventKey` 用于重复发布；payload 分发不打包 `object[]`、不反射调用。
 - 同一 bus/key 的签名由首次非空注册绑定，按泛型声明类型精确校验，不按实参运行时类型或委托 variance 改签名。空回调仍校验已存在签名；缺失键的发布、退订和空注册不建键。末监听离开及 `ClearListeners` 保留签名，`RemoveKey` / `ClearKeys` 终结旧 channel 后才允许重绑。
 - 命名消息使用 `Register(key, callback)` / `Send(key, args)`；类型消息使用 `RegisterMessage<T>` / `RegisterMessageOnce<T>` / `SendMessage<T>` / `SendMessageAll<T>` / `UnregisterMessage<T>`。分开命名避免单参数 string/int/enum 被重载解析为错误的键域；路由仍是同一个 registry。
-- `Default` 是显式的共享上下文，Core View 的自动订阅和 `CoreEvents.ViewRemoved` 直接接入。`TryGetDefault(out bus)` 和 `ResetDefault()` 不创建实例；无人观察的 View 退出发布使用 `TryGetDefault`，不为一次空发布创建全局对象。Default 随既有 Play Session reset 关闭，独立 `new EventBus()` 不随全局 reset 清理。已关闭实例不得 Register/Send 复活；旧 token、委托退订和 `RemoveKey` 清理保持安全。
+- `Default` 是显式的共享上下文，Core View 的自动订阅和 `CoreEvents.ViewRemoved` 直接接入。`TryGetDefault(out bus)` 和 `ResetDefault()` 不创建实例；不需要创建上下文的发布先查询是否存在。Default 随 Play 会话重置关闭，独立 `new EventBus()` 由创建者清理。已关闭实例的 Register/Send 抛 `ObjectDisposedException`，旧 token 退订仍安全。
 
 ```csharp
+using UnityEngine;
 using YLFramework.Events;
 
 using var bus = new EventBus();
-var subscription = bus.Register<int>("score", value => UpdateScore(value));
+var subscription = bus.Register<int>("score", value => Debug.Log(value));
 bus.Send("score", 10);
 subscription.Unregister();
 // 同一键仍绑定 int；显式删除后才允许换签名。
 bus.RemoveKey("score");
 
-var changed = new EventChannel<int>();
+using var changed = new EventChannel<int>();
 using var scope = new SubscriptionScope();
-scope.Add(changed.Register(value => UpdateScore(value)));
+scope.Add(changed.Register(value => Debug.Log(value)));
 changed.Trigger(20);
 changed.ResetOwner(); // 截断旧 owner 的在途快照；实例仍可重新注册。
 ```
@@ -49,14 +50,14 @@ changed.ResetOwner(); // 截断旧 owner 的在途快照；实例仍可重新注
 
 - `SubscriptionCleanup.ReleaseAll` / `SubscriptionSet.ReleaseAll` 先摘本轮责任，全部尝试后报告，保留失败项和重入新加入项；不在同一轮自动重试失败项。`UnregisterAllRetainingFailures` 为 `IUnregisterList` 提供相同必要清理入口。
 - `SubscriptionScope` 只管理明确加入的订阅；Dispose 先永久关闭再清理，关闭后 Add 立即取消。失败责任保留供明确处理；句柄自身若是调用前消费的 `SingleUseUnregister`，失败并不因此变得可恢复。
-- `CustomUnregister` 同实例执行中重入为空操作，成功后释放回调，失败可重试；`SingleUseUnregister` 与值类型 `CallbackUnregister` 的原有消费/复制/Strict 契约不变。
+- `CustomUnregister` 同实例执行中重入为空操作，成功后释放回调，失败可重试；`SingleUseUnregister` 在调用前消费回调，抛错也不会再次执行。`CallbackUnregister` 是值类型，副本各有释放状态；默认构造值使用 StrictAfterSuccess，空回调或重复调用会抛 `NullReferenceException`，不要将任意 IUnregister 都视为可重复执行。
 - `OrEvent` 首 listener 才连接 source，末 listener 断开并可再注册重连；重复/追加 source 保留。连接失败回滚本次责任，旧 source 快照和迟到 token 不影响重连后的新轮；Dispose 永久终结并截断自身在途通知。source 描述保留到 Dispose，不是弱订阅。
 - `OrEvent` 首次连接尚未完成时，同步重入产生的 listener 属于该轮临时责任，失败时一并回滚；明确断连后重建的新轮不受旧轮回滚影响。取消失败的 source token 保留，可再次 `Dispose` 显式重试。
 
 ### 运行时入口
 
 - `EasyEvent`（0~3 个参数）：继承共享 channel 的池化适配（`IOfPool`），`Register` 返回精确 `IUnregister`；支持 `RegisterOnce`、`HasListener` / `ListenerCount`。
-- `EasyEvent` 普通注册 / 注销 / `UnregisterAll` 保留在途快照；`OnAllocate` / `OnRecycle` 使用 `ResetOwner`，截断旧代次。池容量 50，无参预热 10、泛型预热 1。
+- `EasyEvent` 普通注册 / 注销 / `UnregisterAll` 保留在途快照；`OnAllocate` / `OnRecycle` 使用 `ResetOwner`，截断旧代次。仅在需要池化的 owner 中使用，归还后不能继续持有原引用。
 - `EasyEvents`：按事件定义 `Type` 管理实例，不是 payload bus。`Clear` / `Remove<T>` 只丢映射；`ClearListeners` 摘本轮映射后逐项清监听，错误集中报告，重入新增映射保留，不自动归池。
 - `EventListener` 组件：按 `EventType`（鼠标、拖拽、碰撞、触发器）注册回调，并支持 Inspector 中的 UnityEvent。
 - Binding 的 owned event 不随属性回收归池：属性回收只旋转事件代次，保留同实例；Once 使用共享机制。集合顺序、比较器与持久化边界见 [Binding](Binding.md)。
@@ -66,14 +67,14 @@ changed.ResetOwner(); // 截断旧 owner 的在途快照；实例仍可重新注
 
 ## 注册 / 注销 API
 
-- 基础注册：`easyEvent.Register(action)` → `IUnregister`；注销 `handle.Unregister()`（幂等）。
+- 基础注册：`easyEvent.Register(action)` → `IUnregister`；该注册 token 的 `Unregister()` 幂等，只取消本次责任。
 - 一次性注册：`RegisterOnce(action)`；立即回调注册：`RegisterWithACall(action)`。
-- 旧批量注销：`handle.AddToUnregisterList(owner)` + `owner.UnregisterAll()`（原快照/fail-fast 工具契约保留）；必要取消使用共享 `owner.UnregisterAllRetainingFailures()`，Unity 生命周期触发器已使用全部尝试、失败保留的机制。
+- 批量注销：`handle.AddToUnregisterList(owner)` + `owner.UnregisterAll()` 为快照/fail-fast；抛错后本轮剩余项不会继续，集合也已清空。必要所有权清理使用 `UnregisterAllRetainingFailures()`，逐项尝试并保留失败责任；Unity 生命周期触发器采用后者机制。
 - 生命周期绑定：`handle.UnregisterWhenGameObjectDestroyed(go)` / `UnregisterWhenDisabled(go)` / `UnregisterWhenSceneUnloaded(scene)` / `UnregisterWhenAnySceneUnloaded()`。
 
 ## 上下文所有权
 
-独立业务域由已有业务 owner 显式持有 `new EventBus()` 并在退出时 `Dispose`；不能为了少写类型名把原本不同的上下文并入 `Default`，也不新增四个换名的全局槽。Core View 原本就使用共享 Default，仍由 `RegisterEvent` 管理启用/停用轮次的精确订阅，不改成 Module 或 ViewManager 的私有 bus。
+独立业务域由其 owner 显式持有 `new EventBus()` 并在退出时 `Dispose`；不要仅为调用方便将不同上下文并入 `Default`。Core View 使用共享 Default，由 `RegisterEvent` 管理启用/停用轮次的精确订阅。
 
 发布和清理沿实际 owner：共享发布不需要创建上下文时先 `TryGetDefault`；Module/View 退出只取消自己持有的 token，不调用 Default 的 `ClearKeys` 或 `ResetDefault` 清理其他消费者。`ViewRemoved` 保留 `ON_REMOVE_VIEW` 键和 `SendAll` 的全部尝试/聚合异常语义。
 
@@ -83,33 +84,33 @@ changed.ResetOwner(); // 截断旧 owner 的在途快照；实例仍可重新注
 - `UnregisterWhenGameObjectDestroyed`：随 GameObject 销毁；null / fake-null 宿主立即取消。Unity 2022.3 仅保证曾 active 的对象收到 OnDestroy，从未 active 的宿主需显式清理或使用 `SubscriptionScope`，适配器不会强制激活或扫描对象。
 - `UnregisterWhenDisabled`：绑定后下一次实际 OnDisable 才注销，绑定 inactive 对象不立即取消，Enable 不自动重订。触发组件自身销毁时也收尾 pending 责任；销毁后新增责任立即取消。
 - `UnregisterWhenSceneUnloaded(Scene)`：捕获显式传入的已加载 `Scene.handle`，只有该场景卸载才取消；active scene 切换、Additive 的其他场景卸载和业务 GameObject 迁移不改变所有权。无效或已卸载 Scene 立即取消，不创建宿主。
-- `UnregisterWhenAnySceneUnloaded()`：任意场景卸载时取消本轮 AnyScene 订阅，保持原有能力，不扩大为清理其他指定 Scene 的订阅。旧误导入口 `UnRegisterWhenCurrentSceneUnloaded()` 已退出；旧调用按真正所有权改用 AnyScene 或显式 Scene。
-- 两种场景绑定共用原 `SceneUnregisterTrigger` 常驻宿主，保留脚本身份。显式 `Unregister()` 或宿主销毁清理其所有场景及 AnyScene 责任；销毁时先解除 sceneUnloaded 监听，不为清理创建新单例。
+- `UnregisterWhenAnySceneUnloaded()`：任意场景卸载时取消本轮 AnyScene 订阅，不清理绑定到其他指定 Scene 的订阅。
+- 两种场景绑定共用 `SceneUnregisterTrigger` 常驻宿主。显式 `Unregister()` 或宿主销毁清理其所有场景及 AnyScene 责任；销毁时先解除 sceneUnloaded 监听，不为清理创建新单例。
 - 失败项保留只表示责任未被丢弃，是否可重试取决于 token 契约；已消费的 SingleUse 失败不能据此恢复。销毁边界报告失败，不声称全部取消成功。
 
-### Unity EventListener
+### 通用 Unity 监听组件
 
 - 指针 / 拖拽使用 `PointerEventData`；3D / 2D 碰撞使用 `Collision` / `Collision2D`；3D / 2D Trigger 使用 `Collider` / `Collider2D`。`OnMouseEnter/Exit` 是 EventSystem 指针入口，不是 Unity 无参鼠标消息。
-- `Register<T>` 在分配通道前精确校验原生 payload；错误类型抛 `ArgumentException`，非法 EventType 抛 `ArgumentOutOfRangeException`，不再返回 null 或用首次错误类型锁住通道。正确类型的 null 回调返回空 token；已销毁组件不能重新注册。
+- `Register<T>` 在分配通道前精确校验原生 payload；错误类型抛 `ArgumentException`，非法 EventType 抛 `ArgumentOutOfRangeException`。正确类型的 null 回调返回空 token；已销毁组件不能重新注册。
 - 代码监听由组件私有 `EventChannel<T>` 承载，直接复用共享精确 token，不依赖全局 EasyEvent 池寿命；公共 EasyEvent 池化能力不变。组件 Disable 不自动清代码，需要停用边界时绑定返回 token。销毁 / 清指定类型 / 清全部代码永久关闭对应通道，旧 token 和旧在途代码快照不能进入新通道。
 - 始终先代码监听、后 Inspector UnityEvent；代码异常仍阻断后续 UnityEvent。默认 `UnregisterAll()` 不动 Inspector 通道；显式 `UnregisterAll(true)` 把全部 20 个 UnityEvent 字段置 null，不重置物理掩码，仅断开组件的运行时通道，不改资产，也不清外部持有的旧 UnityEvent 对象。
 - `PhysicsLayerMask`（序列化字段 `physicsLayerMask`）仅过滤12个Collision/Trigger消息的**对方 GameObject 层**，3D/2D共用，同时约束代码和Inspector；八种指针/拖拽消息不受影响。默认AllLayers，显式None/0不接收物理通知；不修改Unity碰撞矩阵。一次回调入口只过滤一次，代码回调内改掩码只影响下一次消息，不承诺层变化后的Enter/Exit配对或对Stay去重。
-- 专用 LayerMask 物理监听、`OnAnimationEvent(string)` 和覆盖完整 EventTriggerType 的 UGUI 扩展仍独立保留；局部监听组件属于 Events，通用 UGUI 扩展属于 `YLFramework.Extensions`，不把 UnityEvent 持久化算法搬进 bus。
-- 原生 Inspector 位于 [`Editor/Foundation/Events/EventListenerEditor.cs`](../../Editor/Foundation/Events/EventListenerEditor.cs)，属于 `YLFramework.Editor`。隐藏 Script 字段，默认展开“Unity事件中心”，按鼠标事件、碰撞事件、Trigger事件展示原 20 个中文标签；新增物理掩码与派生类额外字段通过原生附加属性显示，不计入20个事件字段。折叠和页签只保存在Editor会话，不写入组件。UnityEvent使用原生Drawer，保留多对象编辑、Undo/Redo和Prefab override/apply/revert，不依赖Odin或Runtime展示标注框架。
+- 专用 LayerMask 物理监听、`OnAnimationEvent(string)` 和覆盖完整 EventTriggerType 的 UGUI 扩展各自独立；局部监听组件属于 Events，通用 UGUI 扩展属于 `YLFramework.Extensions`。
+- 原生 Inspector 位于 [`Editor/Foundation/Events/EventListenerEditor.cs`](../../Editor/Foundation/Events/EventListenerEditor.cs)，属于 `YLFramework.Editor`。隐藏 Script 字段，默认展开“Unity事件中心”，按鼠标事件、碰撞事件、Trigger 事件展示 20 个中文标签；物理掩码与派生类额外字段通过附加属性显示。折叠和页签只保存在 Editor 会话，不写入组件。UnityEvent 使用原生 Drawer，支持多对象编辑、Undo/Redo 和 Prefab override/apply/revert，无需第三方 Inspector。
 
 ### 局部 Unity 监听组件
 
-- `YLFramework.Events.AnimationEventListener` 接收 AnimationClip 的 `OnAnimationEvent(string)`，转发至公开 `animationEvent`；不是 Animator 状态变化监听器。配置 Clip 时必须使用这个方法名，不要将字段误写成来源包的 `onAnimationEvent`。
+- `YLFramework.Events.AnimationEventListener` 接收 AnimationClip 的 `OnAnimationEvent(string)`，转发至公开 `animationEvent`；不是 Animator 状态变化监听器。配置 Clip 时使用这个方法名，代码订阅使用该字段。
 - `YLFramework.Events.CollisionEventListener` / `TriggerEventListener` 各提供六个 3D / 2D UnityEvent，保留序列化字段 `layerMask`，可通过 `PhysicsLayerMask` 在运行时配置。新组件与 Reset 默认 AllLayers，持久化的显式 0 仍是 None；事件默认初始化，可直接 `AddListener`。
 - `YLFramework.Events.MonoEventListener` 提供默认初始化的 `onAwake/onStart/onEnable/onDisable/onDestroy` 五个 UnityEvent，直接对应本对象的原生生命周期；没有 Update、全局宿主、事件总线或 Root 初始化。组件在 `YLFramework/Events/` 菜单中可添加。
 - 需要观察首次Awake/OnEnable时，在Prefab或尚未激活的对象上预先配置；对active对象AddComponent后再AddListener不会补发已发生的回调。从未active对象的OnDestroy遵守Unity原生限制，不强制激活来补事件。
-- 需要精确 token 和代码 / Inspector 共同物理过滤时使用 `EventListener`；只需专用 Inspector 事件时使用对应局部组件。不要为“兼容”在同一对象自动挂两套，以免业务重复执行。旧 namespace 与持久绑定的迁移边界见 [迁移与历史](#迁移与历史)。
+- 需要精确 token 和代码 / Inspector 共同物理过滤时使用 `EventListener`；只需专用 Inspector 事件时使用对应局部组件，避免对同一消息重复订阅两套组件。
 
-## Domain Reload 行为
+## Play 会话与 Domain Reload
 
-- `EasyEvents` 全局容器经 `SingletonSessionState` reset 清理：标准 channel 旋转旧代次，自定义 `IEasyEvent.UnregisterAll` 仍逐项执行；全部尝试后集中记录异常，不阻断其他模块 reset。只丢映射不再作为会话清理。
+- `EasyEvents` 全局容器在新 Play 会话清理：标准 channel 终结旧代次，自定义 `IEasyEvent.UnregisterAll` 逐项执行；全部尝试后集中记录异常，不阻断其他模块重置。禁用 Domain Reload 时也执行这些清理。
 - Default 的 session reset 关闭旧 bus。旧实例的 Register / Send 抛 `ObjectDisposedException`，退订幂等，旧 token 不影响新注册。
-- 独立 `new EventBus()` 不随全局 reset 清理，由创建者自行 `Dispose`。定向调用 reset 的单元测试不等于真实禁用 Domain Reload 的连续 Play 验证。
+- 独立 `new EventBus()` 不随全局重置清理，由创建者自行 `Dispose`。
 
 ## 重要限制
 
@@ -118,26 +119,6 @@ changed.ResetOwner(); // 截断旧 owner 的在途快照；实例仍可重新注
 - 池化 `EasyEvent` 回收及再次分配时都会清空 listener，旧引用不应在回收后继续使用。
 - 池租用应通过 `RecycleToCache` / `Recycle` 结束；继承的 `Dispose` 是永久关闭，不是归池或可重开的 reset。调用方不得 Dispose 其他 owner 持有的 borrowed event。
 - `EventListener` 必须使用对应 Unity 原生 payload 类型；不接受 `BaseEventData` 等基类替代精确声明类型。
-- `RegisterListExtension.UnregisterAll` 保留旧 fail-fast 工具契约；必要所有权清理使用 `UnregisterAllRetainingFailures`，不要与已改进的 Unity 生命周期触发器混淆。
+- `RegisterListExtension.UnregisterAll` 为 fail-fast；必要所有权清理使用 `UnregisterAllRetainingFailures`，不要与逐项尝试的 Unity 生命周期触发器混淆。
 - Core 的 `CoreEvents` 只描述 View 等领域通知的键，不是另一套总线。
 - 事件、句柄与组合器不是线程安全的，应由所属上下文串行使用；Unity 组件适配在主线程使用。
-
-## 测试
-
-- `Tests/EditMode/Foundation/`：`EventChannelContractTests`、`EventBusContractTests`、`EventCancellationAndOrTests`，直接验证共享基础；session reset 的定向调用不等于真实关闭 Domain Reload 两轮 Play 的验证。
-- `Tests/EditMode/Foundation/Events/EventsContractTests.cs`：Runtime 契约、池化代次、自定义容器清理与取消/Or 直接回归；`Tests/EditMode/Foundation/Binding/BindingContractTests.cs` 覆盖属性 owner、集合顺序与映射。旧 Global 门面专属协议及其测试随门面退役，不声称由另一套全局入口等价保留。
-- `Tests/PlayMode/Core/CoreDirectViewPlayModeTests.cs` 保留 View 自动启停、退出广播异常/重入及无人观察时不创建 Default 的实际消费者回归；共享总线整体清理的在途快照由 Core 及 Foundation 测试直接调用 `ClearKeys` 验证。
-- `Tests/PlayMode/Foundation/Events/EventsLifecyclePlayModeTests.cs`：GameObject Destroy/Disable、指定 Scene 与 AnyScene、失败责任 / 重入及 Listener 通道生命周期。
-- `Tests/EditMode/Foundation/Events/UnityEventListenerContractTests.cs`：20 种原生 payload 映射、真实 persistent UnityEvent 通道、便捷扩展及旧代码快照截断。物理消息映射通过直接调用验证，不等同于物理引擎全流程测试。
-- `Tests/EditMode/Editor/Events/EventListenerEditorTests.cs`：原生 CustomEditor 选择、20 字段真实覆盖与标签/顺序、多对象、派生字段、Undo/Redo 及自有临时 Prefab 的持久目标与覆盖语义；视觉页签和实际 GUI 交互另行验收，不以映射反射测试代替。
-- `Tests/PlayMode/Foundation/Events/Unity/`：原生 Mono 生命周期、实际 Animator Clip 到持久事件目标、局部 2D / 3D Collision / Trigger 的 Enter / Stay / Exit 与掩码过滤；旧 schema Prefab 重导入、显式 None 和掩码的 Prefab / Undo 操作由上述 Inspector 测试覆盖。
-
-以上列出测试用途，不代表当前环境已执行通过，也不能据此承诺独立 Player 或所有平台的行为。
-
-## 迁移与历史
-
-旧 Core namespace 的局部监听调用应改为 `YLFramework.Events`；保留脚本 GUID 不等于持久 UnityEvent 的类型字符串自动兼容，迁移后需定向检查目标、方法和参数。旧 Core 领域事件类型的使用方改为 `YLFramework.Core.CoreEvents`。
-
-`EnumEventSystem`、`IntIdEventSystem`、`StringEventSystem`、`TypeEventSystem` 与 Core `EventManager` 已退役。既有消费者按实际上下文改用 EventBus：命名事件使用 `Register/Send`，类型消息使用 `RegisterMessage/SendMessage`，取消使用返回的 `IUnregister`；旧动态 `object[]` 参数应改为明确 payload 合同，不能靠字符串 hash 或参数打包壳模拟旧系统。原来独立的业务域各自拥有实例，不因入口退役合并。
-
-历史 Events 与 CommonSystem 的阶段验收、连续 Play 及未覆盖平台见 [集成记录](../IntegrationPlan.md)；旧通过数量只适用于对应产物，不作为当前测试保证。

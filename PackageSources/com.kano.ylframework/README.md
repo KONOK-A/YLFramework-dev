@@ -1,82 +1,34 @@
-# YLFramework
+# YLFramework 主包
 
-UPM package `com.kano.ylframework`, version `0.1.0-preview.1`, maintained by Kano.
-The original KONOK-A copyright and source attributions remain in `LICENSE.md`.
+`com.kano.ylframework` 提供框架的基础机制、Module / MVC / UI、资源、音频、动作与配套编辑器工具。项目仍在开发中，尚未正式发布。
 
-This directory contains the framework product, not its Unity development host.
-It includes Runtime and Editor assemblies, production prefabs, BouncyCastle with
-its license, documentation and opt-in samples. Tests, MCP, development settings
-and optional integration SDKs are not included.
+## 能力与边界
 
-Overlap is an optional sibling package, `com.kano.ylframework.overlap`, not part
-of the main Runtime or Editor. Its minimal YL closure is main + overlap; Unity's
-built-in physics/physics2d modules are declared by the package. Consumer asmdefs
-reference `YLFramework.Overlap`, and direct Inspector/Gizmos consumers additionally
-reference `YLFramework.Overlap.Editor` from Editor-only code. Original namespaces,
-script GUIDs and serialized fields are preserved. Legacy Enter/Exit now use complete
-observations and run after collection; see the
-[Overlap package](../com.kano.ylframework.overlap/README.md) for the intentional
-complete-only notification correction and migration boundaries.
+- 基础机制可独立使用，不要求创建 `YLFrameworkRoot` 或启动业务 Module。
+- `YLFramework.Runtime` / `YLFramework.Editor` 是两个主体程序集；Foundation、Core、Systems、Utilities 是包内职责区，不是四个独立安装包。
+- 包含正式 UI 模板、BouncyCastle 与许可证、使用手册、Roslyn Analyzer，以及需显式导入的 Resource Startup 样例。
+- DOTween Action 适配源码随主包提供，只有准备外置 SDK 和 `DOTWEEN` 时才编译；主包不捆绑 SDK。
+- 配置、存档、本地化、玩法等选装能力各自有独立包；测试、仓库工具、MCP 和开发宿主设置不属于本包。
 
-## Registry Installation
+## 接入
 
-The intended release channel is OpenUPM. This preview is still unreleased until
-all eleven package versions, frozen Release assets and their acceptance receipt are
-available; the configuration below is not a claim that publication has occurred.
-After that handoff, use this minimal `Packages/manifest.json` for the main package:
+当前推荐从源码使用本地 UPM 包，按[安装指南](Documentation~/Installation.md)添加本目录的 `package.json`。UGUI、Json.NET 与内置 Unity 模块按包声明由 UPM 解析，不需要另拷 DLL。
 
-```json
-{
-  "scopedRegistries": [
-    { "name": "OpenUPM", "url": "https://package.openupm.com", "scopes": ["com.kano.ylframework"] }
-  ],
-  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1" }
-}
-```
+业务 asmdef 引用 `YLFramework.Runtime`；仅 Editor 代码引用 `YLFramework.Editor`。从[快速开始](Documentation~/QuickStart.md)运行事件示例，再选择需要的模块。
 
-For one optional package, declare its package ID at the same version and let UPM
-resolve its actual manifest dependencies. Save requires Json.NET but not the main
-package. Excel requires main and DataAssets; its built-in Gameplay adapter also
-requires an explicit Gameplay entry. RedDots core does not require Save; install
-Save separately to enable `YLFramework.RedDots.Save`. Do not copy development-host
-dependencies or route `com.unity` through OpenUPM.
-HybridCLR additionally needs the narrow `com.code-philosophy.hybridclr` scope so
-UPM can resolve the separately distributed official SDK `9.0.3`; DOTween still
-requires a separately installed approved SDK and its `DOTWEEN` define.
+## 文档
 
-## Git Fallback
+- [使用手册与能力导航](Documentation~/README.md)
+- [架构与所有权](Documentation~/Architecture.md)
+- [UI 与 Module](Documentation~/Modules/UI.md)
+- [资源接入](Documentation~/Modules/Resource.md)
+- [音频播放](Documentation~/Modules/Audio.md)
+- [编辑器工具与生成输出](Documentation~/Modules/Editor.md)
 
-The fallback Git URL format for installation through Package Manager is:
+`Documentation~` 不进入 AssetDatabase，请从包的实际磁盘目录打开 Markdown。Package Manager 的 Samples 中显式 Import 后，`Samples~/ResourceStartup` 才作为使用工程副本参与编译。
 
-```text
-https://github.com/KONOK-A/YLFramework-dev.git?path=/PackageSources/com.kano.ylframework#<full-commit-sha>
-```
+包源码是输入；配置、工作簿和生成代码由使用工程拥有，默认根为 `Assets/YLFrameworkData`。包的安装或移除不负责删除这些数据。
 
-`<full-commit-sha>` is syntax notation, not an installable revision. The acceptance
-handoff must supply the actual full 40-character SHA and ready-to-use project
-manifest entries for the selected package closure. This README does not claim
-that such a revision is already published or validated. Keeping the SHA in the
-handoff rather than this same commit avoids a self-referencing commit hash.
+## 许可证
 
-UGUI and Newtonsoft.Json registry dependencies are resolved by UPM from the
-package manifest. Git-based YL packages must each be explicitly listed in the
-consuming project's `Packages/manifest.json`; package-level SemVer dependencies
-do not fetch their sibling Git packages. See the installation guide for the
-closure table. The Registry single-entry rule must not be applied to Git URLs.
-DOTween and HybridCLR SDKs are distributed separately from the YL packages.
-
-See [installation and navigation](Documentation~/README.md) and the
-[owned asset and generated-code contracts](Documentation~/Modules/Editor.md). Import Resource Startup
-from this package's Samples section only when needed. Required Canvas,
-EventSystem and ScreenTransition Resources are production assets, not samples.
-`Samples~` does not compile until imported through Package Manager. The former
-unitypackage export path is retired.
-
-Installed package files are read-only inputs. Project-owned authoring data and
-generated code belong under `Assets/YLFrameworkData`: Module code defaults to
-`Generated/Modules`, and ScriptableObject helpers to `ScriptableObjects`.
-Package upgrades and uninstalls do not migrate, overwrite or delete those outputs,
-workbooks, SDKs, native runtimes, Resource releases or HybridCLR baselines.
-Open hidden `Documentation~` files by their actual filesystem path, not through
-AssetDatabase lookup. The source repository remains a development/validation
-host, not a game project.
+许可及第三方来源见 [LICENSE.md](LICENSE.md)。

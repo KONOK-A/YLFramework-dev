@@ -8,13 +8,13 @@
 
 ## 位置
 
-- 运行时：[`Runtime/Foundation/Singleton/`](../../Runtime/Foundation/Singleton/)
-  - `Plain/`：普通 C# 单例与访问属性（`Singleton<T>`、`SingletonProperty<T>`）
-  - `Mono/`：MonoBehaviour 单例与访问属性、路径特性（`MonoSingleton<T>`、`MonoSingletonProperty<T>`、`MonoSingletonPathAttribute`、`PersistentMonoSingleton<T>`、`ReplaceableMonoSingleton<T>`）
-  - `Asset/`：Prefab / ScriptableObject 单例访问属性（`PrefabSingletonProperty<T>`、`ScriptableSingletonProperty<T>`）
-  - `Internal/`：`SingletonCreator` 内部创建逻辑与 `SingletonSessionState` 会话状态重置
+- 运行时：[`Runtime/Foundation/Singleton/`](../../Runtime/Foundation/Singleton/)。
+- `Plain/`：普通 C# 单例与访问属性（`Singleton<T>`、`SingletonProperty<T>`）。
+- `Mono/`：MonoBehaviour 单例与访问属性、路径特性（`MonoSingleton<T>`、`MonoSingletonProperty<T>`、`MonoSingletonPathAttribute`、`PersistentMonoSingleton<T>`、`ReplaceableMonoSingleton<T>`）。
+- `Asset/`：Prefab / ScriptableObject 单例访问属性（`PrefabSingletonProperty<T>`、`ScriptableSingletonProperty<T>`）。
+- `Internal/`：`SingletonCreator` 内部创建逻辑与 `SingletonSessionState` 会话状态重置。
 
-公开 namespace 为 `YLFramework.Singletons`，程序集仍为 `YLFramework.Runtime`；目录名 Singleton 不要求与 namespace 同名。旧 `YLFramework.Core.Singleton` 调用方须更新 using/完整名并重编译，不提供旧身份转发壳。
+公开 namespace 为 `YLFramework.Singletons`，程序集为 `YLFramework.Runtime`。业务 asmdef 引用 Runtime 即可，无需 Root 或 Module；Unity 对象的访问、创建、加载和销毁在主线程执行。
 
 ## 主要功能
 
@@ -59,7 +59,7 @@ cache.Dispose(); // 解除静态缓存，不自动清理 cache 所持资源。
 - `ReplaceableMonoSingleton<T>`：保留后创建者；替换在 `Awake` 中同步完成，`Instance` 立即切换到新实例；同一帧内多个实例通过内部序号决胜。
 - `ScriptableSingletonProperty<T>.Dispose()`：仅当资产由默认 Resources 加载方式载入时才调用 `Resources.UnloadAsset`；自定义 loader 载入的资产由调用方自行管理。
 
-## Domain Reload / Play Session
+## Play 会话与 Domain Reload
 
 - 每次进入 Play 时（`RuntimeInitializeLoadType.SubsystemRegistration`），重置各类 Singleton 缓存、Replaceable 创建序号、资产加载警告和退出标记；Prefab / Scriptable loader 恢复默认 Resources 方式。Mono 的已处置集合仅移除已销毁占位，仍存活的已退休宿主继续排除，避免重新认领。关闭 Domain Reload 时也执行这些重置。
 - `InstanceWithLoader` 属于单次 Play Session 的运行期配置：每个 Play Session 需重新调用。这是与 Domain Reload enabled 行为对齐的有意设计。
@@ -69,14 +69,11 @@ cache.Dispose(); // 解除静态缓存，不自动清理 cache 所持资源。
 
 - 使用 UnityEngine 与 Foundation 内的会话机制，不反向依赖 Core、Systems、Utilities 或框架根宿主；同一 Runtime 不等于取消这条源码边界。
 
-## 测试入口
-
-契约入口为 `Tests/EditMode/Foundation/Singleton/SingletonContractTests.cs`，宿主生命周期入口为 `Tests/PlayMode/Foundation/Singleton/SingletonHostPlayModeTests.cs`；Foundation 身份/边界另由 `Tests/EditMode/Foundation/FoundationBoundaryTests.cs` 检查。测试入口不表示当前环境已执行，禁用 Domain Reload 的实际连续 Play 仍需单独验证。
-
 ## 备注
 
-- 层级路径会决定单例对象的场景位置，例如 `YLFramework/Pool/GameObjectPool`；修改路径会影响已有场景中的对象查找。namespace 迁移不改这些宿主字符串；旧 UI 与 Resource 服务单例已退出，正式 `UIRootContext` 和显式初始化的 `ResourceSystem` 不采用这些旧单例路径。
+- `MonoSingletonPathAttribute` 决定宿主层级，例如 `YLFramework/Pool/GameObjectPool`；修改路径会影响已有场景中的对象查找。它不是 Resources 资源地址，也不会自动接入 ResourceSystem。
 - 路径层级已存在时按原样复用（不会把已存在的父节点改为 DontDestroyOnLoad）；路径为空时回退为按类型名创建独立对象并 DontDestroyOnLoad。
 - `InstanceWithLoader` 替换静态 loader，只作用于后续创建；已有实例不会被替换。
 - Prefab / Scriptable 加载失败（loader 返回 null 或找不到资源）返回 null 并输出一次警告；loader 抛出的异常不会被吞掉，替换 loader 后可重试；loader 内重入 `Instance` 不会递归创建。
 - Prefab 缺少目标组件时会销毁已实例化的克隆，不留下半初始化对象。
+- 普通单例也不保证线程安全。反射构造与资产加载不自动提供 IL2CPP 裁剪保留，使用方按实际创建路径保留必要类型与构造函数。

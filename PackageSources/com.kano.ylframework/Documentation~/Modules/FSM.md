@@ -8,15 +8,15 @@
 
 本模块**不提供可视化 FSM Editor**，也**不以大型状态图制作为目标**：没有 GraphView、节点编辑器、状态机资产、序列化状态图、Hierarchical FSM、State Stack、异步 / 线程安全等能力。需要这些能力时应使用专门的状态机或行为树方案。
 
-YL 的配置/可视化状态机位于 `Runtime/Systems/StateMachine/` 与 `Editor/Systems/StateMachine/`，namespace 为 `YLFramework.StateMachine` / `YLFramework.Editor.StateMachine`；轻量 FSM 归 Utilities，不与之合并。外部状态机也可独立共存；本模块不替代或依赖上述配置式状态机或其他外部实现，也不需要 Module、统一状态机 Manager 或公共 Root。调用方自行驱动并管理回收，Module 关闭不会自动停止外部 FSM。
+需要资产驱动状态和转换配置时，查看 [StateMachine 包手册（源码仓库当前文档）](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.state-machine/Documentation~/README.md)。两者独立：轻量 FSM 不读取状态机资产，也不需要 Module、统一 Manager 或公共 Root。调用方自行驱动并管理回收，关闭 Module 不会自动停止外部 FSM。
 
 ## 位置
 
-- 运行时：[`Runtime/Utilities/FSM/`](../../Runtime/Utilities/FSM/)
-  - `Abstractions/`：`IState`、`IFsmOwner`、`MachineState`
-  - `Core/`：`Fsm<TStateId>`
-  - `States/`：`CustomState`、`AbstractState<TStateId>`
-- namespace：`YLFramework.FSM`；程序集：`YLFramework.Runtime`。有 asmdef 的使用者引用 Runtime 即可，不需要引用 `YLFramework.Core.Runtime` 或外部状态机程序集。
+- 运行时：[`Runtime/Utilities/FSM/`](../../Runtime/Utilities/FSM/)。
+- `Abstractions/`：`IState`、`IFsmOwner`、`MachineState`。
+- `Core/`：`Fsm<TStateId>`。
+- `States/`：`CustomState`、`AbstractState<TStateId>`。
+- namespace：`YLFramework.FSM`；程序集：`YLFramework.Runtime`。有 asmdef 的使用者引用 Runtime 即可。
 
 ## 快速使用
 
@@ -91,12 +91,13 @@ fsm.RecycleToCache();                               // 回收，之后不再使�
 - `Exit` 已经发生，因此不会自动回滚并重新 `Enter` 旧状态（避免引入事务式回滚）。
 - `OnStateChanged` 与随后 `Enter` 都抛异常时，`Enter` 位于 `finally`，最终传播的是 `Enter` 异常，不聚合前一个异常。
 
-## Pause / Continue
+## 暂停与恢复
 
 - `Pause()`：仅 Running 时生效，对当前状态调用 `Exit`；**`Exit` 成功后才提交 `Stop`**。`Exit` 抛异常时保持 Running、Current 与计时不变，可重试。切换回调内调用会被拒绝。
 - 暂停期间 `Update` / `LateUpdate` / `FixedUpdate` / `OnGUI` 全部不执行，`ChangeState` 不生效，状态计时停止累加。
 - `Continue()`：重新 `Enter` 暂停前的当前状态，**计时延续不重置**；**`Enter` 成功后才提交 Running**，失败保持 `Stop`、计时不变，可重试，也不会触发 `OnStateChanged`。
 - `Continue(stateId)`：条件通过时切换到目标状态，**计时重置**，并触发 `OnStateChanged`；`Enter` 抛异常时切换已提交并保持 Running（与 `ChangeState` 一致）。
+- 两个 `Continue` 入口没有切换重入拒绝检查，不应在 Condition、Enter、Exit 或切换通知中重入恢复；不能将 ChangeState/Pause 的保护范围推及所有控制方法。
 
 ## 状态计时
 
@@ -110,6 +111,7 @@ fsm.RecycleToCache();                               // 回收，之后不再使�
 | 操作 | 驱动回调（Update / LateUpdate / FixedUpdate / OnGUI） | 切换回调（Condition / Exit / OnStateChanged / Enter） |
 | --- | --- | --- |
 | `ChangeState` / `Pause` | 允许（同步生效，后续同帧驱动使用最新状态） | 拒绝，返回 false |
+| `Continue` / `Continue(stateId)` | 仅 Stop 时可恢复 | 没有重入拒绝门禁，不应调用 |
 | `Init` | 允许（会同步刷新全部状态的 Owner） | 允许 |
 | `AddState` | 允许（注册新 ID） | 允许 |
 | `SetUp` | 拒绝（非 NotStart） | 拒绝（非 NotStart / 重入） |
@@ -129,7 +131,7 @@ fsm.RecycleToCache();                               // 回收，之后不再使�
 
 ## 主要类型
 
-- `Fsm<TStateId>`：状态机主体（`Core/Fsm.cs`），保留命名空间 `YLFramework.FSM`。
+- `Fsm<TStateId>`：状态机主体（`Core/Fsm.cs`），命名空间 `YLFramework.FSM`。
 - `IState`：状态契约；`Condition` 的语义见上。
 - `CustomState`：委托链式快速状态（未设置的委托不执行，重复设置以后一次为准）。
 - `AbstractState<TStateId>`：正式业务状态基类，提供 `StateMachine` / `StateId` / `Owner` 字段，以及 `ChangeState`、`SecondsInState`、`FramesInState`、`GetOwner<T>()` 等 protected 便捷入口。
@@ -146,8 +148,4 @@ fsm.RecycleToCache();                               // 回收，之后不再使�
 
 ## 依赖
 
-- `Pool`：实例复用现有 Runtime `SafeObjectPool` 包装及 Foundation 池内核，沿用 `YLFramework.Pooling` namespace；不依赖 Core Module / MVC，不新增独立缓存或生命周期管理器。
-
-## 测试入口
-
-`Tests/EditMode/Foundation/Pool/PoolContractTests.cs` 的 `FsmRetainsCallbackReturnGateAndFailedExitIsIsolatedRatherThanRetried` 覆盖 FSM 与池的回调回收限制、退出失败隔离及正常复用，不代表 FSM 全部行为覆盖，也不表示当前环境已执行通过。
+- [Pool](Pool.md)：实例通过 `YLFramework.Pooling.SafeObjectPool` 复用，不依赖 Core Module / MVC。直接 `new Fsm<T>()` 被标记为编译错误，业务使用 `Allocate()`。

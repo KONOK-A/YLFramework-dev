@@ -1,188 +1,86 @@
-# YLFramework
+# YLFramework 使用手册
 
-YLFramework 是 Unity C# 游戏框架，提供基础机制、Module / MVC / UI、资源与音频、配置与领域系统，以及配套作者工具。默认以 **Runtime / Editor 两个主体程序集**交付，能力按需使用，不要求先搭建完整应用框架。
+YLFramework 为 Unity C# 项目提供按需组合的基础机制、业务与表现系统、资源服务及编辑器工具。框架仍在开发中，文档以当前源码为准。
 
-本页是消费方入口。维护源仓库、运行框架测试或准备发行时，使用源码仓库根 README；不要把开发宿主当作游戏工程模板。首版 UPM 包为 `0.1.0-preview.1`，维护者 Kano；版本号本身不表示已完成验收或发布。
+## 从这里开始
 
-## 从哪里开始
-
-| 目标 | 建议路径 |
+| 目标 | 阅读路径 |
 | --- | --- |
-| 使用池、事件、计时、数据结构 | 安装后直接使用相应模块，不需要 Root 或 Module |
-| 组织业务模块与窗口 | 从 [UI / Module](Modules/UI.md) 开始，选择默认 UI 根或正式模板 |
-| 加载资源、场景和命名音频 | 从 [Resource 最小接入](Modules/Resource.md#可运行最小接入) 开始，明确初始化、Provider 和 lease |
-| 编辑配置与玩法定义 | 阅读 [配置数据](Modules/Data.md)、[领域系统](Modules/Domain.md) 和 [Editor 扩展](Modules/Editor.md) |
-| 理解或扩展框架 | 阅读 [架构](Architecture.md) 和 [代码规范](CodingStyle.md) |
+| 将框架接入自己的工程 | [安装指南](Installation.md) → [快速开始](QuickStart.md) |
+| 使用事件、池、计时等轻量工具 | 下方“基础机制”，无需先启动整个框架 |
+| 组织业务与窗口 | [UI / Module](Modules/UI.md) |
+| 加载资源、场景及命名音频 | [Resource](Modules/Resource.md) → [Audio 资源](Modules/Audio/Resources.md) |
+| 选择独立能力包 | 下方“选装能力”，完整手册随所属包提供 |
+| 理解或扩展框架 | [架构](Architecture.md) · [代码规范](CodingStyle.md) · [Editor 扩展](Modules/Editor.md) |
 
-## 安装与分发
-
-### 独立工程安装
-
-主要兼容目标为 Unity 2022.3 LTS 与 Unity 6.3 LTS，源码按 C# 9 维护。Editor、Mono、IL2CPP 与目标平台是不同验证范围；不能把某个补丁版本或 Editor 导入成功扩展为所有平台支持。
-
-Resource 远端 Player 与 IL2CPP 加密后端另有 Windows64 和精确引擎门禁，定点为 `2022.3.62f3c1` / `6000.3.27f1`；详见 [平台与范围](Modules/Resource.md#共存与范围)。本地 Bundle、远端更新、加密与整个框架的支持范围不能混为一谈。
-
-1. 首选取得冻结 Release 资产及对应 Registry 验收回执；首版仍是 Unreleased，以下配置不表示当前11个包版本已经公开可用。Git 回退则需要本次验收提供的真实完整 SHA，不能安装占位值或假设同名 tag 已发布。
-2. Registry 版本就绪后，按下节在消费工程 `Packages/manifest.json` 声明所选能力的直接入口，等待 UPM 自动解析闭包。条件适配需显式安装其组合；使用 Git 回退时须显式声明全部 Git 闭包。不要复制源宿主的 Packages、ProjectSettings 或整个外部 Plugins / Resources 目录。
-3. 消费方 asmdef 显式引用所用 Runtime 程序集；主包为 `YLFramework.Runtime`，选装包归属见[架构表](Architecture.md#目录与程序集)。仅 Editor 扩展引用相应 Editor 程序集。检查真实 Unity 编译，而不是只看 IDE。
-4. 按能力完成显式装配。基础工具可直接使用；UI、Resource、命名 Audio 和领域配置遵守各自初始化与所有权，不因放入 Root Prefab 就自动全部启用。
-5. 在目标工程验证实际场景与 Player；配置、反射类型、资源闭包和可选 SDK 的平台前置由应用一并准备。
-
-| 默认依赖 | 安装与边界 |
-| --- | --- |
-| UGUI：`com.unity.ugui` | 包声明 `1.0.0`，由 UPM 按目标 Editor / 工程解析兼容版本；正式 UI 和部分动作依赖 UnityEngine.UI |
-| Json.NET：`com.unity.nuget.newtonsoft-json` | 包声明 `3.2.1`，由 UPM 自动解析，不需手动拷 DLL；不可用同名替身 DLL 代替 |
-| `BouncyCastle.Cryptography 2.7.0` | netstandard2.0 DLL 与许可已随框架携带，用于 HKDF-SHA256；不要再导入冲突副本 |
-
-主包还显式声明所用Unity内置模块。默认产品不包含或要求可选宿主扩展、Odin、MCP、DOTween SDK、MiniExcel或HybridCLR。DOTween自有适配源码位于主包Action的条件程序集，不要求安装SDK或启用宏；其他选装功能独立交付，可选SDK不混入主包。
-
-### Registry 与自动依赖
-
-计划的主发行渠道为`https://package.openupm.com`，采用GitHub Release asset tracking，不跟踪开发仓库根目录。当前维护包声明版本为`0.1.0-preview.1`，实际集合见源码目录及维护Catalog，不以历史五包候选代表当前全部产品。完成发布及实际Registry验收后，主包的最小工程manifest为：
-
-```json
-{
-  "scopedRegistries": [
-    { "name": "OpenUPM", "url": "https://package.openupm.com", "scopes": ["com.kano.ylframework"] }
-  ],
-  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1" }
-}
-```
-
-只把 `dependencies` 中的入口替换为下表所需包，不预填主包、Excel、UGUI、Newtonsoft.Json 或全部 Unity 内置模块来制造“自动依赖成功”。各包依赖里的版本号、实际解析版本及 Editor 自带基线是不同证据；Unity 6 的内置 UGUI 可以是 `2.0.0`，不把它机械改成包声明的 `1.0.0`。
-
-| 唯一直接入口 | 自有间接闭包 | 额外前置 |
-| --- | --- | --- |
-| `com.kano.ylframework` | 无选装包 | 官方依赖由 UPM 解析 |
-| `com.kano.ylframework.data-assets` | 主包 | ScriptableObject 根、登记与作者窗口 |
-| `com.kano.ylframework.localization` | 主包、UGUI | 显式语言根、文本/ResourceImage 与作者窗口 |
-| `com.kano.ylframework.save` | Newtonsoft UPM，无主包依赖 | 槽位、同步/异步JSON、原子单文件和显式恢复 |
-| `com.kano.ylframework.gameplay` | 主包、Newtonsoft UPM | Skill/Buff/Mission/Equipment四Runtime与统一作者工具，不要求Excel |
-| `com.kano.ylframework.state-machine` | 主包 | 配置式状态机、图编辑与状态脚本生成；轻量FSM仍属主包 |
-| `com.kano.ylframework.movement2d` | 主包、内置physics2d | Character2D / Platform2D两个Runtime与统一Editor，不安装Overlap |
-| `com.kano.ylframework.reddot` | 主包 | 核心不要求Save或Gameplay；使用`YLFramework.RedDots.Save`时另显式安装Save |
-| `com.kano.ylframework.overlap` | 主包 | 原2D/3D检测组件与Inspector，直接声明内置physics/physics2d，不要求movement2d或其他选装包 |
-| `com.kano.ylframework.excel` | 主包、DataAssets | MiniExcel 与许可随 Excel 包携带 |
-| Excel Gameplay 条件适配 | 包含在Excel中，另安装Gameplay | 无独立DomainExcel包，不需要全局宏 |
-| DOTween 条件适配 | 随主包Action提供，不是独立UPM包 | SDK独立准备且启用`DOTWEEN`；无SDK或宏关闭的门控检查不是正向集成 |
-| `com.kano.ylframework.hybridclr` | 主包 | 额外添加窄 scope `com.code-philosophy.hybridclr`，官方 SDK `9.0.3` 间接解析，不随适配包捆绑 |
-
-不要把 `com.unity`、`com` 等宽 scope 指向 OpenUPM。HybridCLR 完整 manifest 见[适配包说明](../../com.kano.ylframework.hybridclr/README.md#registry-安装)。Registry 验收目标是标准版 `2022.3.62f3` 与 `6000.3.27f1`，与 China `2022.3.62f3c1` 和历史 native 专项分开。实际支持范围仍以对应源码、发布字节和回执为准。
-
-清单内全部包的 `.tgz` 与 `release-manifest.json` 是发行身份记录。真实 UPM LocalTarball 安装只作 ArtifactPreflight，不能替代 Registry 元数据、下载字节、实际来源和间接依赖验收。相同版本重开或重新解析也不能声称完成了跨版本升级。
-
-### Git URL 与依赖闭包
-
-固定格式如下，`?path=` 必须在 `#` 之前，路径指向包根，修订使用完整 40 位 SHA，不用短 SHA 或可变分支：
-
-```text
-https://github.com/KONOK-A/YLFramework-dev.git?path=/PackageSources/com.kano.ylframework#<full-commit-sha>
-```
-
-其中 `<full-commit-sha>` 仅是格式记号，不能直接安装。验收完成后应交付独立的清单/回执，包含实际已验证提交的完整 SHA、各包完整 URL、可直接使用的 `Packages/manifest.json` 依赖片段及真实验证范围；本文不提前填入未经验证的 SHA，也不让源码提交包含其自身 SHA。首次版本号不等于已存在的发布 tag。
-
-Unity 不支持在 `package.json` 中声明 Git URL 传递依赖。自有包虽然声明 SemVer 依赖，Git 消费方仍须逐项显式列出下表中的闭包；各 YL 包使用同一已验证修订。将 URL 的包目录替换为相应 ID，不能只安装最外层叶子后等待 UPM 去 Registry 找自有包。
-
-| 选择的能力 | 必须显式声明的自有 Git 包 | 额外前置 |
-| --- | --- | --- |
-| 主包 | `com.kano.ylframework` | UGUI / Json.NET 等 Registry 依赖自动解析 |
-| DOTween | 仅主包 | 独立安装官方DOTween Standard `1.2.825`，完成SDK Setup和`DOTWEEN`；消费asmdef显式引用`YLFramework.Actions.DOTween` |
-| 红点 | 主包 + `com.kano.ylframework.reddot` | consumer asmdef显式引用`YLFramework.RedDots`；使用`YLFramework.RedDots.Save`时另显式声明Save的同SHA Git条目，核心不强装Save/Gameplay |
-| DataAssets | 主包 + `com.kano.ylframework.data-assets` | 不要求安装 Excel |
-| Localization | 主包 + `com.kano.ylframework.localization` | 不要求安装 DataAssets/Excel/TMP |
-| Save | 仅 `com.kano.ylframework.save` + Newtonsoft UPM | 不需要主包；若使用主包SerializedDictionary则消费方显式安装两者 |
-| 配置式 StateMachine | 主包 + `com.kano.ylframework.state-machine` | Runtime与图编辑器/状态脚本生成一起交付；轻量FSM不随它迁移 |
-| Character2D / Platform2D | 主包 + `com.kano.ylframework.movement2d` + physics2d | 一个安装包、两个互不引用的Runtime及一个公共Editor，Overlap不随它迁移 |
-| Overlap | 主包 + `com.kano.ylframework.overlap` | 内置physics/physics2d由UPM解析；Runtime引用`YLFramework.Overlap`，直接消费作者类型时另引用`YLFramework.Overlap.Editor` |
-| Gameplay | 主包 + `com.kano.ylframework.gameplay` | 四个独立Runtime，消费方asmdef只引用所用领域，不要求Excel/Save |
-| Excel | 主包 + DataAssets + `com.kano.ylframework.excel` | MiniExcel `1.31.2` 与 Apache-2.0 许可随 Excel 包携带 |
-| Excel Gameplay | 主包 + DataAssets + Excel + Gameplay | Excel内的原Domain.Excel.Editor随Gameplay存在性启用，无全局宏 |
-| HybridCLR | 主包 + `com.kano.ylframework.hybridclr` | 官方 SDK `9.0.3` 也需单独声明其 Git 来源，匹配 native / 平台门禁 |
-
-本地源码开发可从每个包根的 `package.json` 使用本地安装，或在开发宿主 manifest 使用 `file:../PackageSources/<包ID>`。本地连接不代表 Git 包已完成安装验收，也不将宿主 SDK、测试或配置纳入产品依赖。
-
-Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当前原生后端使用 Windows CNG；没有软件 GCM 或临时明文回退。具体平台、key provider 与失败合同见 [可选 Bundle 内容加密](Modules/Resource.md#可选-bundle-内容加密)。
-
-### 帮助与包内容
-
-- 帮助菜单为 `YLFramework/帮助`，以及 Core / Toolkit / Action / Audio 子入口；它只读取索引、元数据与 XML，不执行示例或启动系统，见 [Help](Modules/Help.md)。
-- `Documentation~` 不进入 AssetDatabase；从 Package Manager 打开包的实际磁盘目录，再用文件系统路径打开 `Documentation~/README.md` 或模块页。开发仓库中位于 `PackageSources/com.kano.ylframework/Documentation~`，不要用 `AssetDatabase.LoadAssetAtPath<TextAsset>` 查找隐藏文档。
-- 产品只走 UPM；旧框架 `.unitypackage` Exporter、导入包和选装导出入口已退役。Resource 发布快照、Player 和 HybridCLR 基座是另外的制品，不是框架安装包。
-
-| 默认交付 | 内容 |
-| --- | --- |
-| `Runtime/`、`Editor/` | 两主体源码、Core 默认资源及编译器输入 |
-| `Plugins/BouncyCastle/` | 随包 DLL 与完整许可 |
-| `Prefabs/` | 正式 UI 模板，清单与继承关系见 [UI 资产准备](Modules/UI.md#资产准备与迁移) |
-| `Samples~/ResourceStartup/` | 仅在 Package Manager 的 Samples 中显式 Import 后编译；生成的使用工程数据不属于包源码 |
-| `Documentation~/`、`LICENSE.md` | 产品文档与来源许可；隐藏文档按实际文件路径打开 |
-
-主包不包含Tests、选装包源码、源仓库Tools、游戏、测试探针、SDK、MCP、NuGet缓存或开发宿主配置。Canvas、EventSystem和ScreenTransition等默认Resources是正式运行资产，不随样例一起隐藏。Analyzer以RoslynAnalyzer编译器输入交付，不作为Player插件；规则、安装与移除只维护在[Attributes](Modules/Attributes.md#core-使用诊断)。
-
-包目录视为只读输入，生成和升级不覆盖用户数据。Module 生成到 `Assets/YLFrameworkData/Generated/Modules`，SO 创建助手默认写 `Assets/YLFrameworkData/ScriptableObjects`；已有设置、工作簿、样例副本、外置 SDK/native、StreamingAssets 发布与冻结基座不由包安装/升级/卸载自动迁移或清理。替换旧输入前先备份并区分框架原件、自定义代码、配置与未知文件，只移除已确认的旧框架副本，不让同名脚本或 asmdef 与包同时编译。具体输出身份与资产维护见[作者合同](Modules/Editor.md#设置与生成)，资源引用输出见[代码生成](Modules/Resource.md#代码生成)，不能把整个旧目录删除当作升级。
-
-## 能力导航
+## 主包能力
 
 ### 基础机制
 
 | 能力 | 文档 |
 | --- | --- |
-| 事件、Channel / Bus 与 Unity 监听 | [Events](Modules/Events.md) |
-| 对象池与精确回收 | [Pool](Modules/Pool.md) |
-| 计时、作用域与日期投递 | [Timing](Modules/Timing.md) |
-| 依赖注入、单例与会话重置 | [IOC](Modules/IOC.md) · [Singleton](Modules/Singleton.md) |
-| 属性与方法绑定 | [Binding](Modules/Binding.md) |
-| 元数据、Inspector 扩展与编译器诊断 | [Attributes](Modules/Attributes.md) |
+| 实例事件、EventBus、订阅与 Unity 监听 | [事件](Modules/Events.md) |
+| 普通对象、集合与 GameObject 池 | [对象池](Modules/Pool.md) |
+| 秒、帧、日期投递与作用域 | [计时](Modules/Timing.md) |
+| 三相位消息注册与注销 | [Update 桥接](Modules/Update.md) |
+| 协程启动、观察与请求等待 | [Async](Modules/Async.md) |
+| 构造与成员注入、容器 | [依赖注入](Modules/IOC.md) |
+| C#、MonoBehaviour、Prefab 与 SO 单例 | [单例](Modules/Singleton.md) |
+| 属性和集合变更绑定 | [数据绑定](Modules/Binding.md) |
+| 序列化字典与 Inspector | [序列化](Modules/Serialization.md) |
+| 类型元数据、Inspector 与编译器使用诊断 | [Attributes](Modules/Attributes.md) |
 | 类型查找与缓存 | [AssemblyTool](Modules/AssemblyTool.md) |
-| 更新与协程等待基础 | `Runtime/Foundation/Update`、`Async`；请求基类边界见 [HTTP](Modules/Http.md#与异步基类的区别) |
 
-### 业务与领域
-
-| 能力 | 文档 |
-| --- | --- |
-| Module / MVC、View / Panel、UI 根与输入 | [UI](Modules/UI.md) · [Core 职责](Architecture.md#core-职责归口) |
-| Catalog、AssetBundle、场景、lease、构建发布 | [Resource](Modules/Resource.md) |
-| Music / Voice / Sound、命名 Provider、句柄与 Mixer | [Audio](Modules/Audio.md) |
-| Action、Observable、组合动作与音频桥接 | [Action](Modules/Action.md) |
-| Localization、Excel 字段与作者流程 | [Data](Modules/Data.md)，[Localization 包](../../com.kano.ylframework.localization/README.md) |
-| DataAssets 根、租约与作者窗口 | [DataAssets 包](../../com.kano.ylframework.data-assets/README.md) |
-| 存档槽、SaveStore、序列化与故障恢复 | [Save](Modules/Save.md) |
-| Skill、Buff、Mission、Equipment、Reddot、Logging | [Domain](Modules/Domain.md) |
-| HTTP 请求、取消与响应快照 | [HTTP](Modules/Http.md) |
-| 配置式 StateMachine | [StateMachine 包](../../com.kano.ylframework.state-machine/README.md)，[Behavior](Modules/Behavior.md#两种状态机)；不同于下方轻量 FSM |
-
-### 工具与 Editor
+### 业务与系统
 
 | 能力 | 文档 |
 | --- | --- |
-| 轻量 FSM、网格与索引 | [FSM](Modules/FSM.md) · [Grid](Modules/Grid.md) · [Table](Modules/Table.md) |
-| JSON 树、压缩与通用扩展 | [Json](Modules/Json.md) · [ZipTool](Modules/ZipTool.md) · [Extensions](Modules/Extensions.md) |
-| Overlap、CharacterController2D、MoveablePlatform | [Behavior](Modules/Behavior.md)，检测安装[Overlap包](../../com.kano.ylframework.overlap/README.md)，角色/平台安装[Movement2D包](../../com.kano.ylframework.movement2d/README.md) |
-| 取色器与窗口 | [UI](Modules/UI.md#取色控件colorselector) |
-| 作者工具、TreeView、设置与 Editor 迁移 | [Editor](Modules/Editor.md) |
-| 帮助提供方、窗口与 XML | [Help](Modules/Help.md) |
+| Module / MVC、View / Panel、UI 根与输入 | [UI](Modules/UI.md) |
+| 资产、实例、场景与图片加载 | [Resource 接入](Modules/Resource.md) |
+| 配置、图集、工作台与代码生成 | [Resource 作者工具](Modules/Resource/Authoring.md) |
+| 部署、更新、加密与平台限制 | [Resource 交付](Modules/Resource/Delivery.md) |
+| 播放、Options、句柄与关闭 | [Audio](Modules/Audio.md) |
+| 命名 Provider、素材库与资源租约 | [Audio 资源](Modules/Audio/Resources.md) |
+| 淡变、Mixer、组件与播放策略 | [Audio 进阶](Modules/Audio/Advanced.md) |
+| 插值、组合动作、Observable 与 DOTween 适配 | [Action](Modules/Action.md) |
+| HTTP 请求、取消与响应 | [HTTP](Modules/Http.md) |
+| 日志输出与会话 | [Logging](Modules/Logging.md) |
 
-## 可选集成
+### 通用工具与 Editor
 
-以下均需显式安装，不从默认产品反向引用 SDK。版本、宏、平台与许可按所选集成的声明准备，不以“目录已存在”当作已接入。
-
-| 集成 | 使用边界 |
+| 能力 | 文档 |
 | --- | --- |
-| DOTween | [主包Action条件适配](Modules/Action.md#dotween-可选适配)，外部`DOTween.dll`与`DOTWEEN`，不单独发行或默认下载SDK |
-| DataAssets | [`com.kano.ylframework.data-assets`](../../com.kano.ylframework.data-assets/README.md)，独立配置根、登记与Editor作者工具 |
-| Localization | [`com.kano.ylframework.localization`](../../com.kano.ylframework.localization/README.md)，独立语言根、显示绑定和Editor作者工具 |
-| Save | [`com.kano.ylframework.save`](../../com.kano.ylframework.save/README.md)，无主包安装依赖；[详细存储合同](Modules/Save.md) |
-| 配置式 StateMachine | [`com.kano.ylframework.state-machine`](../../com.kano.ylframework.state-machine/README.md)，图作者工具、原模板/样式与真实编译后的脚本绑定 |
-| 二维角色与平台 | [`com.kano.ylframework.movement2d`](../../com.kano.ylframework.movement2d/README.md)，独立Runtime、原Prefab/UnityEvent及实际Physics2D生命周期 |
-| 重叠检测 | [`com.kano.ylframework.overlap`](../../com.kano.ylframework.overlap/README.md)，独立Runtime/Editor，保留原2D/3D形状、100容量与OnDisable无Exit语义 |
-| Excel | [`com.kano.ylframework.excel`](../../com.kano.ylframework.excel/README.md)，复用DataAssets并携带完整 MiniExcel 后端及许可；[配置作者流程](Modules/Data.md#excel-作者后端) |
-| Excel Gameplay | [Excel内置领域适配](../../com.kano.ylframework.excel/Editor/Gameplay/README.md)，同装Gameplay启用；[领域导入](Modules/Domain.md#domainexcel) |
-| HybridCLR | [`com.kano.ylframework.hybridclr`](../../com.kano.ylframework.hybridclr/README.md)，使用外置官方 SDK 并复用 Resource；[架构边界](Architecture.md#hybridclr-可选接入) |
+| 代码优先轻量状态机 | [FSM](Modules/FSM.md) |
+| 网格、表与索引 | [Grid](Modules/Grid.md) · [Table](Modules/Table.md) |
+| JSON 树与 Unity 值转换 | [Json](Modules/Json.md) |
+| 压缩与安全解压 | [ZipTool](Modules/ZipTool.md) |
+| Unity / System / Math 扩展 | [Extensions](Modules/Extensions.md) |
+| 取色窗口、Tips 与 UI 查询 | [UI 控件](Modules/UI.md#资源tips-与控件) |
+| 资产编辑、TreeView、设置与生成 | [Editor](Modules/Editor.md) |
+| 帮助提供方、窗口与 XML 索引 | [Help](Modules/Help.md) |
 
-跨包链接按源码仓库兄弟目录组织；安装后各包的物理缓存目录可能不同，应从对应包的实际磁盘根打开其 README / LICENSE，不把兄弟目录名硬编码为 PackageCache 路径。
+## 选装能力
 
-## 维护与来源
+下列链接指向源码仓库当前文档；安装后的对应包也包含自己的 `README.md` 和 `Documentation~/README.md`。完整说明不依赖 UPM 缓存目录之间的相对位置。
 
-框架代码规范见 [CodingStyle](CodingStyle.md)，来源与许可见 [LICENSE](../LICENSE.md)。历史设计与迁移的查找入口为 [历史索引](IntegrationPlan.md)，不是当前待办或安装说明。
+| 能力包 | 用途与完整手册 |
+| --- | --- |
+| `com.kano.ylframework.data-assets` | [ScriptableObject 配置根、登记与作者工具](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.data-assets/Documentation~/README.md) |
+| `com.kano.ylframework.localization` | [语言根、回退与文本/图片显示](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.localization/Documentation~/README.md) |
+| `com.kano.ylframework.save` | [独立存档、槽位与恢复](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.save/Documentation~/README.md) |
+| `com.kano.ylframework.state-machine` | [配置式状态机、图与状态脚本](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.state-machine/Documentation~/README.md) |
+| `com.kano.ylframework.movement2d` | [二维角色与移动平台](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.movement2d/Documentation~/README.md) |
+| `com.kano.ylframework.overlap` | [2D/3D 检测、Cast、Detector 与预览](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.overlap/Documentation~/README.md) |
+| `com.kano.ylframework.gameplay` | [Skill、Buff、Mission、Equipment](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.gameplay/Documentation~/README.md) |
+| `com.kano.ylframework.reddot` | [红点聚合、已读状态与诊断](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.reddot/Documentation~/README.md) |
+| `com.kano.ylframework.excel` | [Excel 工作簿作者流程与 Gameplay 适配](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.excel/Documentation~/README.md) |
+| `com.kano.ylframework.hybridclr` | [HybridCLR 构建、补丁与运行时](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.hybridclr/Documentation~/README.md) |
 
-源码仓库的 Tests、测试 CLI 与验收夹具不随产品包交付。模块文档中的 `Tests/...` 简写表示源码仓库 `Assets/Tests/YLFramework/...`，不是包内路径。消费方使用自己的真实编译、接入场景和目标平台验证；旧结果、缺失工具或同名 API 都不能代替当前使用环境的证据。
+包选择、依赖和条件适配见[安装指南](Installation.md#选择能力包)。轻量 FSM 属于主包，配置式 StateMachine 属于选装包，两者使用不同执行内核。
+
+## 阅读与使用约定
+
+- 每个模块说明自己的初始化、线程、取消和释放责任。`YLFrameworkRoot` 是常驻宿主与默认 UI 入口，不会自动启动所有系统。
+- 同包文档使用相对链接；标示为源码仓库的跨包链接展示当前主线内容，不代表未来某个安装版本的固定快照。
+- `Documentation~` 不进入 AssetDatabase，请按实际包磁盘路径打开；Editor 的 `YLFramework/帮助` 提供模块指南与可取得的 API/XML 索引，详见 [Help](Modules/Help.md)。
+- 来源与许可见 [LICENSE](../LICENSE.md)。源码开发流程和测试工具见源码仓库的[贡献指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/CONTRIBUTING.md)，它们不随产品包安装。
