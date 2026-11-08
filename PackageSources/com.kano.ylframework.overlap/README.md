@@ -6,22 +6,17 @@ that directly use its Inspector/Gizmos types also reference `YLFramework.Overlap
 The package directly declares Unity's built-in physics and physics2d modules.
 For Git installation, explicitly declare main and overlap at the same verified
 full revision; package-level SemVer dependencies do not fetch sibling Git packages.
-Namespaces, original component script GUIDs and
-serialized fields are retained. The main package no longer owns these types.
+This package does not install movement2d, Gameplay, RedDots or Save. Runtime
+namespaces are `YLFramework.Overlap` and Editor namespaces are
+`YLFramework.Editor.Overlap`; the main package does not own these types.
+Stateless query/Cast APIs live under `Runtime/Queries`, continuous detectors and
+local Union configurations under `Runtime/Detection`, and the current Inspector
+under `Editor/OverlapDetectorInspector.cs`.
 
-This package does not install movement2d, Gameplay, RedDots or Save. Original
-2D/3D components retain their fixed 100-entry per-instance query buffer, reentry
-guard and NonAlloc shape behavior. Reaching capacity reports possible truncation
-at most once per enabled session in Editor/Development, not proven completeness.
-In particular,
-disabling an original component clears its local state without synthesizing Exit.
-Legacy 3D hit points remain the existing XY projection; new casts use native `RaycastHit`/`Vector3`.
-
-Runtime sources live under `Runtime/Utilities/Overlap`; Inspector/Gizmos sources
-live under `Editor/Utilities/Overlap`. Runtime namespaces remain `YLFramework.Overlap`
-and Editor namespaces remain `YLFramework.Editor.Overlap`. New stateless query/Cast
-APIs live under `Runtime/Queries`; continuous detectors and local Union configurations
-live under `Runtime/Detection`.
+The old component/Inspector hierarchy under `Utilities/Overlap`, mutable hit lists
+and XY-only 3D hit protocol are retired. Use the current Detector/Contact API and
+create or explicitly migrate current authoring inputs; old script GUIDs are not
+redirected to new components. Historical fixtures are not current import guarantees.
 
 ## Caller-Buffer Queries
 
@@ -330,7 +325,8 @@ Child order/native query order determines contact order, not cross-process order
 The default mode is `OverlapSamplingMode.Manual`, with `runOnEnable` enabled.
 `Sample()` explicitly samples while running and enabled; `StartDetection()` restarts,
 and `Stop()` stops both scheduling and explicit sampling until restarted. `SamplingMode`
-also supports `Update` / `FixedUpdate`, at finite positive `Frequency` in scaled time,
+also supports `Update` / `FixedUpdate` in scaled time and `UnscaledUpdate` using
+`Time.unscaledDeltaTime`, at finite positive `Frequency`,
 at most once per engine callback. `ConfigureCapacity(initialCapacity, maxCapacity,
 growBuffer: true)` opts into bounded growth and a full Union rerun. Default capacity
 is 32, maximum 256, growth off. Raw saturation, even exact-full or subsequently
@@ -344,8 +340,23 @@ Invalid serialized settings or unsupported transforms give `Invalidated` plus
 state changes. An in-progress callback enumeration remains safe across nested Stop.
 
 `Entered` / `Stayed` carry `OverlapContact<Collider2D>` or `OverlapContact<Collider>`;
-`Exited` also carries `OverlapExitReason`. Contacts contain Collider, Target (collider
-or grouped body), cached Identity and ColliderInstanceId. A complete baseline is
+`Exited` also carries `OverlapExitReason`. `EnteredEvent` / `StayedEvent` /
+`ExitedEvent` expose serialized UnityEvents with the same payloads for persistent
+Inspector bindings. The serialized adapter runs before C# observers; a callback
+that stops or invalidates the cycle suppresses the remaining C# observers.
+One already-started UnityEvent invocation is an atomic listener batch: its
+persistent and runtime listeners finish against the same committed snapshot.
+Stop/disable immediately changes running intent, but contact clearing and Exit
+wait until that batch ends, so no old Enter/Stay can occur after its Exit. A
+stop-then-restart keeps the requested running state and starts a fresh observation
+after the old contacts are released. No private Unity reflection or second event
+registry is used to emulate per-listener cancellation.
+Contacts contain Collider, Target (collider or grouped body), cached Identity,
+ColliderInstanceId, and `Vector3 Point`. Point is Unity's native closest point on
+the chosen representative collider relative to the Detector position (2D Z is zero;
+3D Z is preserved), not a normal or penetration estimate. Enter/Stay refresh Point;
+Exit retains the last committed point even when the target is destroyed.
+A complete baseline is
 committed **before** notifications: old departures first, new Enter next, existing
 Stay last; a new contact does not also receive Stay in its Enter sample. Known
 destroyed/disabled targets use `TargetDestroyed` / `TargetDisabled`; other complete
@@ -354,7 +365,8 @@ disable/pool return uses `Disabled`. Unity normally disables before owner destru
 and when moving between local physics scenes, so these paths do not invent a second
 owner-destroyed Exit. A scene change without disable uses `SceneChanged`.
 Callback Stop/disable/destroy/reconfiguration/nested Sample cancels remaining old-cycle
-notifications, including remaining observers. Lifecycle clearing releases all committed
+C# observers and later contact notifications, not listeners already inside the
+current atomic UnityEvent batch. Lifecycle clearing releases all committed
 contacts, even when a prior notification was interrupted. Observer exceptions propagate
 fail-fast; committed state remains consistent and dispatch flags/buffers are finalized.
 
@@ -366,6 +378,17 @@ elliptical/ellipsoidal round shapes are explicitly invalid, not approximate OBBs
 conservative bounds. Orthogonality/equal-scale checks use relative float tolerance
 1e-5. These configurations do not provide compound Cast, polygon overlap or booleans.
 
+`OverlapDetector2D.SetAreaPositions(Vector3[])` selects local adjacent corner pairs,
+transformed by the full owner matrix. `SetAreaTransforms(Transform[])` selects live
+world-position pairs. Each pair becomes a world XY AABB, and the chain never closes
+implicitly. The serialized node arrays are copied on API assignment; Transform
+positions remain live. Missing Transform nodes skip their original adjacent pairs,
+without connecting across a gap. Finite zero-width/height pairs are skipped; an
+empty, one-node or wholly degenerate chain commits complete empty and releases
+previous contacts. Nonfinite present nodes or overflowing bounds are `Invalidated`
+and cannot replace the last complete baseline. Area reuses the same capacity, grouping and complete-only
+commit rules as Union. Assign `Composite` to switch back to Union geometry.
+
 ## Selected Authoring And Preview
 
 Both Detector Inspectors edit local Union geometry, sampling mode/frequency,
@@ -375,7 +398,11 @@ native `ContactFilter2D` (layer, trigger, depth/normal policy), or explicit 3D
 layer/Ignore-or-Collide, plus ignored collider/root, grouping and distance sorting.
 The public `Filter` signatures are unchanged. Programmatic assignment immediately
 updates that same backing state; a later sample does not restore an older Inspector
-copy. Invalid serialized values remain visible and are rejected before native queries.
+copy. The 2D input selector exposes either Union, local Area positions or live Area
+Transform references through the same SerializedObject/Undo/prefab save path.
+Area validation, selected Gizmos and per-pair preview use the runtime world-AABB
+conversion. Union center/dimension handles do not silently edit Area nodes.
+Invalid serialized values remain visible and are rejected before native queries.
 Ignored references belong to the component/scene or prefab instance, never to the
 shared geometry configuration. Shared prefab asset Inspectors are read-only; use
 Prefab Mode or an instance, and save only when intentionally requested.
@@ -394,7 +421,7 @@ RawCount minus Count is not a rejected-collider count: it includes Union duplica
 and body grouping. The Inspector does not construct full contact snapshots.
 
 Editor preview is independent of runtime detector sampling and is not persisted.
-Choose a Union child, caller capacity and explicit **world** Cast direction/distance.
+Choose a Union child or adjacent Area pair, caller capacity and explicit **world** Cast direction/distance.
 The trajectory is that child's Cast, never a compound Cast. Only the explicit sample
 button or opt-in, rate-limited selected auto sampling performs physics queries.
 Inspector creation, OnGUI and Gizmo repaint do not query. Preview uses two native
@@ -422,9 +449,10 @@ the Inspector closes. Wire geometry uses real inner/outer arcs and finite radial
 edges; a disk omits its inner arc, a full ring omits radial edges. Sector Cast
 is visibly unsupported and no translated/swept sector wire shape is fabricated.
 
-The source repository declares `Daily / Overlap` for original and new native physics
-contracts, `Daily / OverlapEditor` for authoring, `Special / OverlapPlayer` for the
-minimal main+overlap dual-process Mono Player and measured native workloads, and
+The source repository declares `Daily / Overlap` for current native physics
+contracts, `Daily / OverlapEditor` for authoring, `Special / OverlapPlayer` for a
+new-GUID prefab with ten cold-read persistent Contact bindings across six channels, the minimal
+main+overlap dual-process Mono Player and measured native workloads, and
 `Daily / OverlapMovement` for the explicit main+movement2d+overlap coexistence case.
 The Player measurement contract calibrates allocation counting with a real 64 KiB
 allocation; a constant-zero Unity Mono counter is **unsupported**, with bytes `-1`,
@@ -432,17 +460,8 @@ not measured zero allocation. Current unique and repeated/grouped workloads are
 different workloads, not an old-product speedup comparison. Complexity evidence for
 the retired nested `Contains` path is separate from engine timing.
 
-Legacy components now use the same raw native dispatch, retaining default physics
-scene, raw Trigger counts before exclusion, native treatment of old zero/malformed
-dimensions, fixed **per-call** 100 capacity, public mutable results, original GUIDs
-and XY 3D hits. Area may still collect more than 100 unique colliders from several
-individually complete calls. The intentional reliability correction is that incomplete
-observations no longer emit Enter/Exit or replace the complete baseline, including
-the first saturated sample after re-enable. Partial `results` remain visible and
-`LastQueryStatus` exposes completeness; the next complete sample resumes normal
-diffs. Complete legacy notifications retain Enter-before-Exit order, now after all
-children have been collected. Public list edits are re-indexed at the next query
-boundary, not assumed immutable. Legacy OnDisable still clears without Exit.
+There is no `Quick / Overlap`: the deleted legacy managed guard is not replaced by
+fake physics or enum-only tests. Use actual Unity authoring/physics validation.
 
 Update package installation and consumer asmdef references together. GUID
 preservation does not rewrite assembly-qualified type names in external DLLs,

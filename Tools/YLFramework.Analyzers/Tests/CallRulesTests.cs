@@ -36,7 +36,7 @@ namespace YLFramework.Analyzers.Tests
             yield return Case("Caller_EmptyNullList", "class C{[RestrictedCall((string[])null)]static int F()=>1;void Awake(){ {|YL0002:F()|};}}");
             yield return Case("Caller_GenericExtension", "static class E{[RestrictedCall(\"Awake\")]public static void F<T>(this T x){} }class C{void Awake(){this.F();}void Wrong(){ {|YL0002:this.F()|};}}");
             yield return Case("Caller_InterfaceStaticTargetOnly", "interface I{[RestrictedCall(\"Awake\")]void F();}class C:I{public void F(){}void M(I i){F(); {|YL0002:i.F()|};}}");
-            yield return Case("Warn_ViewAndNestedHelper", "class C:YLFramework.Core.View{void M(){ {|YL0003:YLFramework.Core.EventManager.AddListener(()=>{})|};}class Helper{void M(){YLFramework.Core.EventManager.AddListener(()=>{});}}}", "C", "AddListener", "View reason");
+            yield return Case("Warn_ViewAndNestedHelper", "class C:YLFramework.Core.View{void M(){ {|YL0003:YLFramework.Core.RestrictedApi.Observe(()=>{})|};}class Helper{void M(){YLFramework.Core.RestrictedApi.Observe(()=>{});}}}", "C", "Observe", "View reason");
             yield return Case("Warn_StructInterfaceAndDedup", "interface I{} class E{[WarnInClasses(typeof(I),\"reason\")][WarnInClasses(new[]{typeof(I)},\"reason\")]public static void F(){}}struct C:I{void M(){ {|YL0003:E.F()|};}}", "reason");
             yield return Case("Warn_OpenGeneric", "class B<T>{}class C:B<int>{[WarnInClasses(typeof(B<>),null)]void F(){}void M(){ {|YL0003:F()|};}}");
             yield return Case("Warn_ClosedGenericMismatch", "class B<T>{}class C:B<string>{[WarnInClasses(typeof(B<int>),\"reason\")]void F(){}void M(){F();}}");

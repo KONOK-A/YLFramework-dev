@@ -167,9 +167,9 @@ namespace YLFramework.Tests.ResourceBuild
                 var current = Version(0);
                 var target = Version(1);
                 var envelope = ResourceReleaseSigner.Create(new ResourceRelease(Path.GetDirectoryName(target.DirectoryPath), target.Document),
-                    "test", 7, "isolated-test", signing, DateTimeOffset.UtcNow.AddDays(1), channelSupportsContentEncryption: true);
-                Assert.Throws<InvalidOperationException>(() => ResourceReleaseSigner.Create(
-                    new ResourceRelease(Path.GetDirectoryName(target.DirectoryPath), target.Document), "test", 7, "isolated-test", signing, DateTimeOffset.UtcNow.AddDays(1)));
+                    "test", 7, "isolated-test", signing, DateTimeOffset.UtcNow.AddDays(1));
+                var payload = ResourceCatalogCodec.ParseObject(Convert.FromBase64String((string)JObject.Parse(Encoding.UTF8.GetString(envelope))["payload"]));
+                Assert.That(payload.Properties().Count(), Is.EqualTo(13), "Current signing keeps its authenticated payload, not a legacy-client confirmation argument.");
                 var selected = target.Document.Bundles.Single();
                 var files = target.Document.Bundles.Cast<ResourceCatalogFile>().Concat(target.Document.SupportFiles).Select(x => x.RelativeFile)
                     .Concat(new[] { "resource-catalog.json", ".ylr-complete.json" }).ToDictionary(x => "/" + target.Document.CatalogDigest + "/" + x,

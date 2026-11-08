@@ -9,6 +9,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using YLFramework.DataAssets;
+using YLFramework.Editor.DataAssets;
 using YLFramework.Editor.Resource;
 using YLFramework.Resource;
 using Object = UnityEngine.Object;
@@ -23,6 +24,7 @@ namespace YLFramework.Tests.DataAssets
         private ScriptableObjectRegistration _owner;
         private ResourceSystem _resource;
         private string _folder;
+        private string _rowFolder;
         private ScriptableObjectConfigs _root;
 
         private sealed class Operation : ResourceSourceOperation
@@ -102,29 +104,59 @@ namespace YLFramework.Tests.DataAssets
         }
 
         [UnityTest]
-        public IEnumerator FormalRebuiltPublicationLoadsTheMovedRootAndRowThroughResourceLeases()
+        public IEnumerator CurrentAuthorGeneratedRootAndRowPublishWithIndependentRuntimeLeases()
         {
             _folder = "Assets/__YLDataAssembly_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", _folder.Substring("Assets/".Length));
             AssetDatabase.CreateFolder(_folder, "Content");
-            const string Before = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblySplitV1/Content/Domain/";
-            Assert.That(AssetDatabase.CopyAsset(Before + "ScriptableObjectConfigs.asset", _folder + "/Content/Root.asset"), Is.True);
-            Assert.That(AssetDatabase.CopyAsset(Before + "ScriptableObjectData.asset", _folder + "/Content/Row.asset"), Is.True);
-            _root = AssetDatabase.LoadAssetAtPath<ScriptableObjectConfigs>(_folder + "/Content/Root.asset");
-            _root.name = "MigratedDataRoot";
-            var row = AssetDatabase.LoadAssetAtPath<ScriptableObjectData>(_folder + "/Content/Row.asset");
+            var rootPath = _folder + "/Content/Root.asset";
+            _root = ScriptableObject.CreateInstance<ScriptableObjectConfigs>();
+            AssetDatabase.CreateAsset(_root, rootPath);
+            _root.name = "CurrentDataRoot";
+            ScriptableObjectConfigsController.SetDataType(_root,
+                AssetDatabase.LoadAssetAtPath<MonoScript>("Packages/com.kano.ylframework.data-assets/Runtime/Systems/DataAssets/ScriptableObjectData.cs"));
+            _rowFolder = ScriptableObjectConfigsController.GetDataPath(_root);
+            Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(_rowFolder)) ||
+                File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(_rowFolder + ".meta")), Is.False, "Do not adopt another author's row directory.");
+            var row = ScriptableObjectConfigsController.CreateData(typeof(ScriptableObjectData), _root);
+            row.configName = "current-data-assets";
+            row.description = "Current author-generated publication input";
+            ScriptableObjectConfigsController.Save(_root);
+            string rowPath = AssetDatabase.GetAssetPath(row);
+            string rootGuid = AssetDatabase.AssetPathToGUID(rootPath), rowGuid = AssetDatabase.AssetPathToGUID(rowPath);
+            Assert.That(rootGuid, Is.Not.EqualTo("bc5f270fc89b4f64e96f0792352cb45e"));
+            Assert.That(rowGuid, Is.Not.EqualTo("ec36d8de00c0bb849a6aaf0c124d0230"));
+            Resources.UnloadAsset(row);
+            Resources.UnloadAsset(_root);
+            _root = AssetDatabase.LoadAssetAtPath<ScriptableObjectConfigs>(rootPath);
+            row = AssetDatabase.LoadAssetAtPath<ScriptableObjectData>(rowPath);
+            Assert.That(_root.typeScriptGuid, Is.EqualTo("a1743beab98e80e47b2c8b4917852add"));
+            Assert.That(_root.configs.Single(), Is.SameAs(row));
+            Assert.That(row.parent, Is.SameAs(_root));
+            StringAssert.Contains("configName: current-data-assets", File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(rowPath)));
+            StringAssert.DoesNotContain("config_name:", File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(rowPath)));
+            StringAssert.DoesNotContain("type_script_guid:", File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(rootPath)));
             int rowId = row.id;
             string rowName = row.configName, rowDescription = row.description;
-            Assert.That(rowName, Is.EqualTo("before-assembly-dataassets"));
-            row.parent = _root;
-            _root.configs.Clear();
-            _root.configs.Add(row);
+            Assert.That(rowName, Is.EqualTo("current-data-assets"));
+            string evidence = Path.Combine(global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput(), "current-data-assets-input.json");
+            Assert.That(File.Exists(evidence), Is.False);
+            File.WriteAllText(evidence, Newtonsoft.Json.JsonConvert.SerializeObject(new
+            {
+                rootGuid,
+                rowGuid,
+                rowId,
+                rowName,
+                rowDescription,
+                runtimeAssembly = typeof(ScriptableObjectConfigs).Assembly.GetName().Name
+            }, Newtonsoft.Json.Formatting.Indented));
             var project = ScriptableObject.CreateInstance<ResourceProject>();
             project.projectId = "data-move-" + Guid.NewGuid().ToString("N").Substring(0, 8);
             project.sourceDirectories.Add(new ResourceSourceDirectory { guid = AssetDatabase.AssetPathToGUID(_folder + "/Content") });
+            project.sourceDirectories.Add(new ResourceSourceDirectory { guid = AssetDatabase.AssetPathToGUID(_rowFolder) });
             var group = new ResourceGroup { id = "Data", packing = ResourcePacking.Together };
             group.selections.Add(new ResourceSelection { guid = AssetDatabase.AssetPathToGUID(_folder + "/Content/Root.asset"), address = "root" });
-            group.selections.Add(new ResourceSelection { guid = AssetDatabase.AssetPathToGUID(_folder + "/Content/Row.asset"), address = "row" });
+            group.selections.Add(new ResourceSelection { guid = rowGuid, address = "row" });
             project.groups.Add(group);
             AssetDatabase.CreateAsset(project, _folder + "/Project.asset");
             EditorUtility.SetDirty(_root);
@@ -222,7 +254,8 @@ namespace YLFramework.Tests.DataAssets
                     scenes = new[] { path },
                     locationPathName = executable,
                     target = BuildTarget.StandaloneWindows64,
-                    options = BuildOptions.Development
+                    options = BuildOptions.Development,
+                    extraScriptingDefines = new[] { "YL_DATAASSETS_ACCEPTANCE" }
                 });
                 Assert.That(build.summary.result, Is.EqualTo(UnityEditor.Build.Reporting.BuildResult.Succeeded));
             }
@@ -286,6 +319,11 @@ namespace YLFramework.Tests.DataAssets
             if (_folder != null && TestContext.CurrentContext.Result.Outcome.Status != NUnit.Framework.Interfaces.TestStatus.Failed)
             {
                 Assert.That(AssetDatabase.DeleteAsset(_folder), Is.True);
+                if (_rowFolder != null)
+                {
+                    Assert.That(AssetDatabase.DeleteAsset(_rowFolder), Is.True);
+                    _rowFolder = null;
+                }
             }
             else if (_folder == null && _root)
             {

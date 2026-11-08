@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using UnityEngine;
-using UnityEngine.Serialization;
 using YLFramework.Events;
 using YLFramework.Foundation;
 
@@ -55,14 +54,14 @@ namespace YLFramework.Mission
         /// <remarks>通过管理器写入时，只需同配表中任一引用此参数的任务正在执行即可。</remarks>
         [Tooltip("只能在任务执行中设置参数,如果参数对应的任务不在执行中,则无法设置!(默认:true)")]
         [Header("只能在任务执行中设置参数,如果参数对应的任务不在执行中,则无法设置!(默认:true)")]
-        [FormerlySerializedAs("only_can_set_in_progress"), JsonProperty("only_can_set_in_progress"), global::YLFramework.Excel.ExcelColumnName("only_can_set_in_progress")] public bool onlySetInProgress = true;
+        [JsonProperty("only_can_set_in_progress"), global::YLFramework.Excel.ExcelColumnName("only_can_set_in_progress")] public bool onlySetInProgress = true;
 
         /// <summary>
         /// 设置参数时,设置的目标值比当前值大时生效,否则无效(默认:false)
         /// </summary>
         [Tooltip("设置参数时,设置的目标值比当前值大时生效,否则无效(默认:false)")]
         [Header("设置参数时,设置的目标值比当前值大时生效,否则无效(默认:false)")]
-        [FormerlySerializedAs("only_can_set_larger"), JsonProperty("only_can_set_larger"), global::YLFramework.Excel.ExcelColumnName("only_can_set_larger")] public bool onlySetLarger = false;
+        [JsonProperty("only_can_set_larger"), global::YLFramework.Excel.ExcelColumnName("only_can_set_larger")] public bool onlySetLarger = false;
 
         /// <summary>
         /// 参数描述
@@ -70,7 +69,7 @@ namespace YLFramework.Mission
         [Tooltip("参数描述")]
         [Header("参数描述")]
         [TextArea]
-        [FormerlySerializedAs("des"), JsonProperty("des"), global::YLFramework.Excel.ExcelColumnName("des")] public string description;
+        [JsonProperty("des"), global::YLFramework.Excel.ExcelColumnName("des")] public string description;
 
         /// <summary>
         /// 自定义数据
@@ -78,7 +77,7 @@ namespace YLFramework.Mission
         [SerializeField]
         [Tooltip("自定义数据")]
         [Header("自定义数据")]
-        [JsonProperty("custom_data"), FormerlySerializedAs("custom_data"), global::YLFramework.Excel.ExcelColumnName("custom_data")]
+        [JsonProperty("custom_data"), global::YLFramework.Excel.ExcelColumnName("custom_data")]
         private List<string> customData = new List<string>();
         #endregion
 

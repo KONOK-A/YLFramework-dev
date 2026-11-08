@@ -123,16 +123,12 @@ namespace YLFramework.Core.Tests
             DisabledProbe?.Invoke(this);
         }
 
-        public override void OnLoaded(params object[] param)
-        {
-            LoadedCount++;
-            Parameter = param.Length > 0 ? param[0] : null;
-            LoadedAction?.Invoke();
-            LoadingProbe?.Invoke(this);
-        }
-
         public override void OnLoaded(LoadViewArgs args)
         {
+            LoadedCount++;
+            Parameter = args.GetObject("parameter");
+            LoadedAction?.Invoke();
+            LoadingProbe?.Invoke(this);
             ArgsCount++;
             Token = args.GetInt("token");
             ArgsProbe?.Invoke(this, args);

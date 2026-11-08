@@ -19,8 +19,46 @@ namespace YLFramework.Behavior.Acceptance
         public int positiveIntCount;
         public int nonzeroVector2Count;
         public int nonzeroVector3Count;
-        public void ReceiveHit(OverlapHit<Collider2D> value) => hitCount++;
-        public void ReceiveHit3D(OverlapHit<Collider> value) => hit3DCount++;
+        public int stayCount;
+        public int stay3DCount;
+        public Vector3 point;
+        public Vector3 point3D;
+        public Vector3 exitPoint;
+        public Vector3 exitPoint3D;
+        public OverlapExitReason exitReason;
+        public OverlapExitReason exitReason3D;
+        public void ReceiveHit(OverlapContact<Collider2D> value)
+        {
+            hitCount++;
+            point = value.Point;
+        }
+        public void ReceiveStay(OverlapContact<Collider2D> value)
+        {
+            stayCount++;
+            point = value.Point;
+        }
+        public void ReceiveExit(OverlapContact<Collider2D> value, OverlapExitReason reason)
+        {
+            hitCount++;
+            exitPoint = value.Point;
+            exitReason = reason;
+        }
+        public void ReceiveHit3D(OverlapContact<Collider> value)
+        {
+            hit3DCount++;
+            point3D = value.Point;
+        }
+        public void ReceiveStay3D(OverlapContact<Collider> value)
+        {
+            stay3DCount++;
+            point3D = value.Point;
+        }
+        public void ReceiveExit3D(OverlapContact<Collider> value, OverlapExitReason reason)
+        {
+            hit3DCount++;
+            exitPoint3D = value.Point;
+            exitReason3D = reason;
+        }
         public void ReceiveBool(bool value)
         {
             boolCount++;

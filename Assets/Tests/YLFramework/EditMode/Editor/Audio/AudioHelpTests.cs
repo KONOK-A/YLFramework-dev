@@ -232,10 +232,10 @@ namespace YLFramework.Tests.Audio
             foreach (var contract in new[] { "useWeightedRandom 默认 false", "weightedClips", "Clip/Weight", "三种位置模式",
                          "旧 clips", "去重拒播不重抽", "UnityEvent onStarted 默认空事件", "只读 Started", "无参事件",
                          "先登记 lease 与 StopOnDisable 快照", "Stop/禁用/递归 Play", "不重新登记失效旧 lease",
-                         "crossFadeOnPlay 默认 false", "crossFadeDuration 默认 1", "crossFadeIgnoreTimeScale 默认 true", "crossFadeCurve 字段初始值 Linear",
-                         "Reset 设置 EqualPower", "兼容旧缺字段资源", "并显式传入组件曲线",
+                          "crossFadeOnPlay 默认 false", "crossFadeDuration 默认 1", "crossFadeIgnoreTimeScale 默认 true", "crossFadeCurve 字段初始值 EqualPower",
+                          "不依赖 Reset", "显式保存 Linear 保持有效", "并显式传入组件曲线",
                           "不先 Stop 旧曲", "只停自有目标及旧尾轨", "截断自己的旧尾轨", "长期存活的音乐所有者",
-                          "useGlobalPlaySoundMode", "字段缺省 false", "playSoundMode=EveryOne", "Reset", "AddComponent",
+                           "useGlobalPlaySoundMode", "字段缺省 true", "playSoundMode=EveryOne", "显式保存 false", "AddComponent",
                           "options.PlaySoundMode=null", "空候选", "旧循环", "空 Clip", "旧音乐", "duration/curve",
                           "Advanced 默认折叠", "隐藏字段不静默清空", "新增项 Weight=1", "旧 Weight=0" })
             {
@@ -248,7 +248,7 @@ namespace YLFramework.Tests.Audio
                 CollectionAssert.Contains(components.RelatedTypes, type);
                 CollectionAssert.Contains(components.FeaturedTypes, type);
             }
-            foreach (var contract in new[] { "AudioClipLibrary", "素材组与控制通道是两种身份", "Uniform/Weighted", "ProjectId", "逻辑地址", "显式迁移",
+            foreach (var contract in new[] { "AudioClipLibrary", "素材组与控制通道是两种身份", "Uniform/Weighted", "ProjectId", "逻辑地址", "来源编号 Clip=0、ExternalProvider=3、Resource=4", "1/2 与未知值整组拒绝",
                          "ExternalProvider", "SetProvider", "空 persistenceId 不持久化", "Manual", "FirstStart", "EveryEnable", "PlayGroup(string)",
                          "停用停止所有自有播放与 pending", "nullable PlaySoundMode 不被 Unity 序列化", "不随机抽选", "Prefab Override" })
             {

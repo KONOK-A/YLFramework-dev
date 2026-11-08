@@ -88,16 +88,16 @@ namespace YLFramework.Tests.Audio
             return AudioKit.PlaySound(_clip, options);
         }
 
-        private static IEnumerator WaitForVolume(AudioHandle handle, float volume)
+        private static IEnumerator WaitForVolume(AudioHandle handle, float volume, float tolerance = .0001f)
         {
             var end = Time.realtimeSinceStartup + 2f;
-            while (handle.IsValid && Mathf.Abs(handle.Voice.Source.volume - volume) > .0001f && Time.realtimeSinceStartup < end)
+            while (handle.IsValid && Mathf.Abs(handle.Voice.Source.volume - volume) > tolerance && Time.realtimeSinceStartup < end)
             {
                 yield return null;
             }
 
             Assert.IsTrue(handle.IsValid);
-            Assert.AreEqual(volume, handle.Voice.Source.volume, .0001f);
+            Assert.AreEqual(volume, handle.Voice.Source.volume, tolerance);
         }
 
         private static IEnumerator WaitForStop(AudioHandle handle)
@@ -191,7 +191,7 @@ namespace YLFramework.Tests.Audio
             yield return WaitForVolume(handle, 1f);
             Assert.IsTrue(handle.Voice.Source.mute);
             handle.FadeOut(.05f, stopWhenDone: false);
-            yield return WaitForVolume(handle, 0f);
+            yield return WaitForVolume(handle, 0f, 0f);
             Assert.IsTrue(handle.IsPlaying);
             AudioKit.Settings.IsSoundMuted.Value = false;
             Assert.AreEqual(0f, handle.Voice.Source.volume);

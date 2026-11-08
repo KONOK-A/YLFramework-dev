@@ -383,13 +383,9 @@ namespace YLFramework.Resource
         // 重验准备记录内的授权及目标摘要绑定；枚举可读取过期授权，提交另要求 fresh。
         private ResourceRemoteRelease[] ReadReleaseRecords(JObject record, bool fresh = false)
         {
-            if (ResourceCatalogCodec.Integer(record, "Version") == 1)
-            {
-                return Array.Empty<ResourceRemoteRelease>();
-            }
-
+            RequireControlVersion(record);
             var array = ReadArray(record, "Releases");
-            if (array.Count == 0 || array.Count > _mounts.Count)
+            if (array.Count > _mounts.Count)
             {
                 throw new InvalidDataException("Invalid prepared release closure.");
             }

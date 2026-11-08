@@ -12,58 +12,58 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7331c0230f1378c48bb33ed06489830c, type: 3}
   m_Name: ResourceProject
   m_EditorClassIdentifier: 
-  ProjectId: yl-core-resource
-  DisplayName: Core Resource Fixture
-  SourceDirectories:
-  - Guid: da234115a5c75ec4484e4086ad57a161
-    AddressPrefix: 
-  Compression: 0
-  ContentEncryption: 0
-  ContentKeyId: 
-  AutomaticAtlases: {fileID: 0}
-  AutomaticAtlasConfigurationGuid: 
-  Groups:
-  - Id: views
-    Packing: 0
-    Selections:
-    - Guid: a3c3587da9b5fae4180a91c5c9da8de6
-      Address: YLCoreSmokeView
-      Aliases: []
-      Extensions: []
-  - Id: panels
-    Packing: 0
-    Selections:
-    - Guid: 81b3e72808e84fb40bd33beefa24ebc1
-      Address: YLCoreSmokePanel
-      Aliases: []
-      Extensions: []
-  - Id: text
-    Packing: 0
-    Selections:
-    - Guid: 6af15cc176f17ae4eac7982647833d79
-      Address: YLCoreSmokeRows
-      Aliases: []
-      Extensions: []
-    - Guid: af1b6478cdec35143a7796c15d1a0ab0
-      Address: YLCoreEmptyRows
-      Aliases: []
-      Extensions: []
-    - Guid: b23527a3f74eb8f4b83bb000326630ec
-      Address: YLCoreBlankRows
-      Aliases: []
-      Extensions: []
-    - Guid: 8162f1fe877c7ce4ea034eb92281eac6
-      Address: YLCoreInvalidRows
-      Aliases: []
-      Extensions: []
-  - Id: scenes
-    Packing: 0
-    Selections:
-    - Guid: ac85017a8b836064593eeb23fb9d0fe4
-      Address: YLCoreSmokeScene
-      Aliases: []
-      Extensions: []
-    - Guid: 985c27fbf5dc77745a657a53507154a6
-      Address: YLCoreSmokeHarness
-      Aliases: []
-      Extensions: []
+  projectId: yl-core-resource
+  displayName: Core Resource Fixture
+  sourceDirectories:
+  - guid: da234115a5c75ec4484e4086ad57a161
+    addressPrefix: 
+  compression: 0
+  contentEncryption: 0
+  contentKeyId: 
+  automaticAtlases: {fileID: 0}
+  automaticAtlasConfigurationGuid: 
+  groups:
+  - id: views
+    packing: 0
+    selections:
+    - guid: a3c3587da9b5fae4180a91c5c9da8de6
+      address: YLCoreSmokeView
+      aliases: []
+      extensions: []
+  - id: panels
+    packing: 0
+    selections:
+    - guid: 81b3e72808e84fb40bd33beefa24ebc1
+      address: YLCoreSmokePanel
+      aliases: []
+      extensions: []
+  - id: text
+    packing: 0
+    selections:
+    - guid: 6af15cc176f17ae4eac7982647833d79
+      address: YLCoreSmokeRows
+      aliases: []
+      extensions: []
+    - guid: af1b6478cdec35143a7796c15d1a0ab0
+      address: YLCoreEmptyRows
+      aliases: []
+      extensions: []
+    - guid: b23527a3f74eb8f4b83bb000326630ec
+      address: YLCoreBlankRows
+      aliases: []
+      extensions: []
+    - guid: 8162f1fe877c7ce4ea034eb92281eac6
+      address: YLCoreInvalidRows
+      aliases: []
+      extensions: []
+  - id: scenes
+    packing: 0
+    selections:
+    - guid: ac85017a8b836064593eeb23fb9d0fe4
+      address: YLCoreSmokeScene
+      aliases: []
+      extensions: []
+    - guid: 985c27fbf5dc77745a657a53507154a6
+      address: YLCoreSmokeHarness
+      aliases: []
+      extensions: []

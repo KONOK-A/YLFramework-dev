@@ -14,11 +14,6 @@ namespace YLFramework.Async
     {
         // 常规完成链：Complete(error) 写结果 -> 无参 Complete 收束进度并去重 -> IsCompleted 的 setter 发通知。
 
-        /// <summary>旧版完成事件；新代码使用 AddCompleteEvent，以便在请求已经结束时也能收到通知。</summary>
-        /// <remarks>常规完成时先调用此事件，再调用 AddCompleteEvent 的订阅；结束后直接订阅此事件不会补发。</remarks>
-        [Obsolete("已过时,请使用AddCompleteEvent代替!")]
-        public event Action<T> Completed = null;
-
         private Action<T> _completed;
         private bool _isCompleted = false;
         private string _error = string.Empty;
@@ -29,7 +24,7 @@ namespace YLFramework.Async
 
         /// <summary>供派生类访问的结束标记，赋为 true 时同步发出完成通知。</summary>
         /// <remarks>
-        /// 每次直接赋为 true 都会依次调用旧事件、完成订阅和 OnCompleted，不会自行去重。
+        /// 每次直接赋为 true 都会依次调用完成订阅和 OnCompleted，不会自行去重。
         /// 通常应调用 Complete，由该入口避免重复完成通知；回调抛异常时，后续回调和钩子不会继续执行。
         /// </remarks>
         protected bool IsCompleted
@@ -42,7 +37,6 @@ namespace YLFramework.Async
                 if (_isCompleted)
                 {
                     // 按自类型约定，将当前请求作为 T 回传给订阅者。
-                    Completed?.Invoke(this as T);
                     _completed?.Invoke(this as T);
                     OnCompleted();
                 }
@@ -103,7 +97,7 @@ namespace YLFramework.Async
             IsCompleted = true;
         }
 
-        /// <summary>保存结果并静默结束，跳过两类完成订阅，但仍调用 OnCompleted。</summary>
+        /// <summary>保存结果并静默结束，跳过完成订阅，但仍调用 OnCompleted。</summary>
         /// <param name="error">原样保存的错误信息；省略时写入 null。</param>
         /// <remarks>不会清空订阅；之后通过 AddCompleteEvent 注册的迟到订阅仍会立即执行。重复完成只更新结果和进度。</remarks>
         protected void CompleteWithoutNotify(string error = null)
@@ -145,7 +139,7 @@ namespace YLFramework.Async
             _completed -= action;
         }
 
-        /// <summary>清空 AddCompleteEvent 保存的订阅，不清空旧版 Completed 事件。</summary>
+        /// <summary>清空 AddCompleteEvent 保存的全部完成订阅。</summary>
         public void RemoveAllCompleteEvent()
         {
             _completed = null;

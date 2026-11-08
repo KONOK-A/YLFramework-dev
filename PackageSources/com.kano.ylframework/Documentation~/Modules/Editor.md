@@ -32,11 +32,15 @@ Core 的默认资源、Module 生成与专用目录下的 ScriptableObject 创�
 
 Module 生成器输出到 `Assets/YLFrameworkData/Generated/Modules`，生成 namespace 保留 `YLFramework.Core.Examples`；这是使用工程的代码与程序集，不写安装包或 `Samples~`。迁移旧生成目录时保留真实 GUID/程序集身份，不在两个目录重建同名 asmdef。
 
+Module 的 namespace 与程序集身份为 `YLFramework.Core.Examples.<ModuleName>`。任何位置已导入的同名 asmdef、或已加载的同名程序集/类型都会在写入前拒绝；错误指出原 asmdef 或程序集位置。先复用或显式移动原模块及其 `.meta`，改变输出根不是重建同名身份的许可。[资源引用生成](Resource.md#代码生成)有独立的专属目录，不与 Module 或 ScriptableObject 输出混用。
+
+`Assets/YLFrameworkData`、Workbook、StreamingAssets 和 HybridCLR 基座属于使用工程；更新包不自动迁移或清理它们。样例导入也生成使用工程自有副本，更新前核对改动与重复程序集，不保留两个同名副本。先验证实际 GUID、序列化值、Resources 与消费者编译；缺失脚本未补齐时不要保存场景。SDK/native/AOT/裁剪输入变化需要另建并验证新基座，不覆盖冻结产物或替换未知 vendor 文件。
+
 `ScriptableObjectExtensions.CreateAsset()` 默认写入 `Assets/YLFrameworkData/ScriptableObjects`；显式路径只能在该根或其子目录内。只接受尚未归属 AssetDatabase 的新实例，不移动或覆盖已有资产、不接受链接目录。创建不注册 Undo，失败时由调用方处理自己仍持有的实例；不要将该助手当作已有用户资产的迁移工具。
 
-正式 Prefab / 默认 Resources 已随包保存，不在 Editor 启动时重新生成。消费方的 `UIPanelAssetMigration.ValidateAssets()` 只读核验模板，不写包；历史 `MigrateAssets()` 不是升级步骤。自定义模板留在项目自有目录，见 [UI 资产准备](UI.md#资产准备与迁移)。
+正式 Prefab / 默认 Resources 已随包保存，不在 Editor 启动时重新生成。消费方的 `UIPanelAssetValidator.ValidateAssets()` 只读核验模板，不写包；历史 `MigrateAssets()`、UI 一次性迁移和旧 fileID 修补作者已退役。正常显式缺失资源创建仍保留包只读与未知输出保护；自定义模板留在项目自有目录，见 [UI 资产准备](UI.md#资产准备与迁移)。
 
-Core 设置根仍为 `ProjectSettings/YLFramework/Core`。类型与文件归位不意味着可以更换已有设置路径、菜单、生成存储根或窗口持久身份；涉及 Buff 的精确旧路径时使用 [显式迁移](Domain.md#buff-设置迁移)。
+Core 设置根仍为 `ProjectSettings/YLFramework/Core`。类型与文件归位不意味着可以任意更换当前设置路径、生成存储根或窗口持久身份；[Buff 当前设置](Domain.md#buff-当前设置)只访问实际当前类型全名文件，一次性旧路径迁移已退役。链接、类型不匹配及未知输出保护保留，不扫描/接管外部设置。
 
 生成器修改源模板与输入，再验证正式输出和消费者，不直接修补生成代码。需要预览或导出时不自动保存用户场景，不认领未知输出或冻结基座。
 
@@ -51,7 +55,7 @@ Core 设置根仍为 `ProjectSettings/YLFramework/Core`。类型与文件归位�
 | ScriptableObjectExtensions | `Editor/Core`，namespace `YLFramework.Editor.Core` |
 | DomainAssetOwnership | Gameplay包`Editor/Shared`，namespace `YLFramework.Editor.Domain`，内部归属`YLFramework.Gameplay.Editor` |
 
-外部源码更新 using、全限定名和反射字符串，不依赖旧 namespace 包装或 CLR 别名。SplitWindow、TreeViewStateGroup、TreeViewStateInfo 保留适用的 MovedFrom 以迁移窗口或托管引用，但不提供旧 `Type.GetType` 字符串解析。
+外部源码更新 using、全限定名和反射字符串，不依赖旧 namespace 包装或 CLR 别名。SplitWindow、TreeViewStateGroup、TreeViewStateInfo 与 HelpWindow 使用当前类型/字段保存状态，旧类型和字段 reader 已退役；不提供旧 `Type.GetType` 字符串解析，不扫描、清空或声称自动转换用户 Library/layout。已有自有状态须在仍理解旧格式的版本保存并实际验证后再升级。
 
 脚本 GUID 与无关字段保持；迁移用 Unity 实际保存的旧资产检查引用、重导入和持久状态，不用改名后伪造的旧 YAML 代替。
 

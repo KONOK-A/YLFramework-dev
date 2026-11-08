@@ -22,16 +22,10 @@ namespace YLFramework.Audio
         [SerializeField] private bool crossFadeOnPlay = false;
         [SerializeField] private float crossFadeDuration = 1f;
         [SerializeField] private bool crossFadeIgnoreTimeScale = true;
-        [Tooltip("New Editor components use EqualPower for background tracks; existing serialized Linear values stay unchanged. Only used when cross fade is enabled.")]
-        [SerializeField] private AudioCrossfadeCurve crossFadeCurve = AudioCrossfadeCurve.Linear;
+        [Tooltip("New Editor and runtime components use EqualPower; explicitly saved Linear values stay unchanged. Only used when cross fade is enabled.")]
+        [SerializeField] private AudioCrossfadeCurve crossFadeCurve = AudioCrossfadeCurve.EqualPower;
 
         private readonly List<AudioHandle> _owned = new List<AudioHandle>(2);
-
-        /// <summary>为新添加的 Editor 组件选择等功率过渡，不改已有资产保存的 Linear 值。</summary>
-        private void Reset()
-        {
-            crossFadeCurve = AudioCrossfadeCurve.EqualPower;
-        }
 
         /// <summary>按配置仅在首次 Start 自动播放音乐。</summary>
         private void Start()

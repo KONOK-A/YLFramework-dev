@@ -119,7 +119,7 @@ Resource 默认不启用内容加密。选择 AES-256-GCM 内容加密时，当�
 
 主包不包含Tests、选装包源码、源仓库Tools、游戏、测试探针、SDK、MCP、NuGet缓存或开发宿主配置。Canvas、EventSystem和ScreenTransition等默认Resources是正式运行资产，不随样例一起隐藏。Analyzer以RoslynAnalyzer编译器输入交付，不作为Player插件；规则、安装与移除只维护在[Attributes](Modules/Attributes.md#core-使用诊断)。
 
-包目录视为只读输入，生成和升级不覆盖用户数据。Module 生成到 `Assets/YLFrameworkData/Generated/Modules`，SO 创建助手默认写 `Assets/YLFrameworkData/ScriptableObjects`；已有设置、工作簿、样例副本、外置 SDK/native、StreamingAssets 发布与冻结基座不由包安装/升级/卸载自动迁移或清理。旧工程先按 [UPM 迁移](Migration-UPM.md) 备份并核对真实引用，不能把整个旧目录删除当作升级。
+包目录视为只读输入，生成和升级不覆盖用户数据。Module 生成到 `Assets/YLFrameworkData/Generated/Modules`，SO 创建助手默认写 `Assets/YLFrameworkData/ScriptableObjects`；已有设置、工作簿、样例副本、外置 SDK/native、StreamingAssets 发布与冻结基座不由包安装/升级/卸载自动迁移或清理。替换旧输入前先备份并区分框架原件、自定义代码、配置与未知文件，只移除已确认的旧框架副本，不让同名脚本或 asmdef 与包同时编译。具体输出身份与资产维护见[作者合同](Modules/Editor.md#设置与生成)，资源引用输出见[代码生成](Modules/Resource.md#代码生成)，不能把整个旧目录删除当作升级。
 
 ## 能力导航
 

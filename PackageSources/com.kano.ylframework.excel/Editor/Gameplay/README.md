@@ -26,6 +26,18 @@ Gameplay without Excel has no MiniExcel backend or adapter assembly.
 Workbook selections and generated assets belong to the consuming project and
 are not deleted when either package is removed.
 
+Domain validation uses the existing typed staged-row `afterImport` callback for
+every imported row, including unchanged rows. Display-diff JSON is not a domain
+data transport. Preview errors block the original plan; external root/parameter,
+effect and cross-root ID constraints are rechecked with `AddValidation` before
+any write. Equipment GUID normalization uses the actual typed row.
+
+Mission parameters keep their independent workbook and transaction. Root-aware
+plans enforce clean-root and condition-reference checks without relying on a
+window, and their menu uses the shared `ExcelPreviewWindow`. Only successful
+application saves/refreshes the root. List, JSON and ScriptableObject commit and
+recovery responsibilities remain separate; no cross-workbook atomicity is implied.
+
 MiniExcel exists only once in the [Excel Editor package](../../README.md).
 The inherited [license](LICENSE.md), [backend provenance](Dependencies.json)
 and Apache-2.0 [license](../Licenses/MiniExcel-LICENSE.txt) and

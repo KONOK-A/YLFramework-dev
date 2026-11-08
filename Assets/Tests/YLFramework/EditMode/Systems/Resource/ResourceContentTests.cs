@@ -4,6 +4,7 @@ using NUnit.Framework;
 
 namespace YLFramework.Tests.ResourceBuild
 {
+    [Category("YL.Special.ResourceUpdates")]
     public partial class ResourceContentTests
     {
         [Test]

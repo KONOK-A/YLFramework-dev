@@ -283,7 +283,7 @@ namespace YLFramework.Tests.Extensions.Data.Save
             {
                 var path = global::YLFramework.Testing.PackageTestPaths.Physical(
                     Path.Combine(root, "SaveData/SaveSystemData.json"));
-                SaveManager.SaveItem borrowed;
+                SaveItem borrowed;
                 DateTime savedAt;
                 byte[] before;
                 using (var store = Open(root))
@@ -455,7 +455,7 @@ namespace YLFramework.Tests.Extensions.Data.Save
         public void RenamedSaveIdApiKeepsLegacyJsonKeysAcrossColdReopen()
         {
             Assert.That(typeof(SaveStore).GetProperty("CurrentSaveId"), Is.Not.Null);
-            Assert.That(typeof(SaveManager.SaveItem).GetProperty("SaveId"), Is.Not.Null);
+            Assert.That(typeof(SaveItem).GetProperty("SaveId"), Is.Not.Null);
             Run(root =>
             {
                 Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(root, "SaveData/7")));

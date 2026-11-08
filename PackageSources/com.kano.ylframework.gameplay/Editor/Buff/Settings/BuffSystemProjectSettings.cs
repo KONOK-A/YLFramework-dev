@@ -96,8 +96,8 @@ namespace YLFramework.Editor.Buff
             catch (IOException exception)
             {
                 Reload();
-                EditorGUILayout.HelpBox(exception.Message + "\nMigration menu: " + BuffSettingsMigration.MenuPath +
-                    ". Resolve any old/new file conflict without overwriting either file.", MessageType.Error);
+                EditorGUILayout.HelpBox(exception.Message +
+                    "\nCheck the current settings file and preserve unknown or incompatible outputs for manual review.", MessageType.Error);
                 return;
             }
         }

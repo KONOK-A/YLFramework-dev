@@ -17,7 +17,7 @@
   ],
   "autoReferenced": false,
   "defineConstraints": [
-    "UNITY_EDITOR || YL_DATA_ACCEPTANCE"
+    "UNITY_EDITOR || YL_DATA_ACCEPTANCE || YL_UNITY_JSON_ACCEPTANCE"
   ],
   "versionDefines": [],
   "noEngineReferences": false

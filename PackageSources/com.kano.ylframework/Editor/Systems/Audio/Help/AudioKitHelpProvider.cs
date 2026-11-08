@@ -76,7 +76,7 @@ namespace YLFramework.Editor.Audio
                 HelpBlock.Paragraph("背景音乐组件", "添加 AudioMusicPlayer 并绑定 Clip，默认 Loop 与 playOnAwake 开启，在首次 Start 自动播放，不是每次 OnEnable。" +
                     "需要手动控制时关闭自动播放，通过 UnityEvent 调用无参 Play/Stop，组件停用只停止自有音乐。"),
                 HelpBlock.Paragraph("Button 点击音", "添加 AudioEmitter，在 Clip 列表放入点击音，保持 2D、Loop 关闭；Button.onClick 拖入组件并选择 AudioEmitter.Play。" +
-                    "普通 2D one-shot 不因面板停用被截断。编辑器新建/Reset 默认继承全局去重；同帧重叠可显式选择 EveryOne。"),
+                    "普通 2D one-shot 不因面板停用被截断。编辑器与运行时新建默认继承全局去重；同帧重叠可显式选择 EveryOne。"),
                 HelpBlock.Code("Settings Slider", "常规 Slider 范围 [0,1]；已有合法 PlayerPrefs 优先于默认音量 1，0 静音而非停止。",
                     "musicSlider.SetValueWithoutNotify(AudioKit.Settings.MusicVolume.Value);\n" +
                     "musicSlider.onValueChanged.AddListener(value => AudioKit.Settings.MusicVolume.Value = value);"),
@@ -84,7 +84,7 @@ namespace YLFramework.Editor.Audio
                     "需要同步其他入口的音量修改时，用 RegisterWithInitValue 与 Slider.SetValueWithoutNotify；UI 所有者负责注销订阅和事件监听。Source 状态不代表听感。"),
                 HelpBlock.Paragraph("无需配置与按需启用", "常规 2D 播放无需 Mixer、配置资产、预热或并发上限。只有使用空间播放、Mixer 路由/参数/Snapshot、淡变/Crossfade、去重/并发/缓存时才配置对应高级项。" +
                     "Settings 分类开关默认 true、音量 1、临时 Mute=false；坏音量存档内存回退 1，不自动重写，代码非法赋值拒绝，合法大于 1 倍率保留。"),
-                HelpBlock.Paragraph("统一初始默认值", "配置 | 初始值 | 选择理由（无业务/合法存档覆盖；组件指编辑器新建/Reset）\n" +
+                HelpBlock.Paragraph("统一初始默认值", "配置 | 初始值 | 选择理由（无业务/合法存档覆盖；Emitter/Music 指编辑器与运行时新建，Mixer 指编辑器新建/Reset）\n" +
                     "Loop | Sound/Voice 单次、Music 循环 | 点击音与人声自然结束，BGM 持续播放\n" +
                     "Volume / Pitch / Priority | 1 / 1 / 0 | 不改素材倍率或音调，不预设抢占优势\n" +
                     "Settings 开关 / 音量 / Mute | true / 1 / false | 开箱即听，合法存档优先\n" +
@@ -98,7 +98,7 @@ namespace YLFramework.Editor.Audio
                     "CrossFadeMusic API | EqualPower、unscaled=true、duration 必填 | 不相关 BGM 减少中点功率下陷，游戏暂停仍可过渡\n" +
                     "MusicPlayer Crossfade | off、duration=1、unscaled=true、curve=EqualPower | 直接播放优先，启用过渡时已有预设\n" +
                     "MixerController | applyOnAwake=false、transitionDuration=0.5 | 全局路由显式开启，显式 Snapshot 过渡避免默认硬切"),
-                HelpBlock.Notice("新建/Reset 与旧资源", "MusicPlayer 的 crossFadeCurve 字段初始化仍为 Linear，旧缺字段资源保持 Linear；编辑器新建/Reset 为 EqualPower，Crossfade 仍关闭。" +
+                HelpBlock.Notice("统一创建默认与显式保存值", "Emitter 的 useGlobalPlaySoundMode 字段缺省 true，MusicPlayer 的 crossFadeCurve 字段初始值 EqualPower；编辑器与运行时 AddComponent 相同，不依赖 Reset。显式保存的 false/Linear 保持有效，Crossfade 仍关闭。" +
                     "MixerController 字段初始化仍为 applyOnAwake=true、transitionDuration=0，保留旧资产；编辑器新建/Reset 为 false/0.5。" +
                     "运行时 AddComponent 不承诺触发 Reset，已有序列化选择不自动改写。新 Mixer 预设只绑定 Config 不自动应用或清全局路由，须勾选 Apply Routing On Awake（applyOnAwake）或显式 Apply。" +
                     "EveryOne 才关闭去重；显式窗口 0 仅在 GlobalFrames/SoundFrames 下做同帧去重，0 不是关闭去重。默认 5 帧约为 60 FPS 下 83 ms、120 FPS 下 42 ms，并非固定毫秒数。显式 10 帧和显式 Linear 仍合法。"),
@@ -109,7 +109,7 @@ namespace YLFramework.Editor.Audio
                 HelpBlock.Paragraph("默认与优先级", "new/Defaults 的 Loop=false、Volume=1、Pitch=1；MusicDefaults 的 Loop=true。省略/null 的音乐 Options 按 MusicDefaults 解析，Sound/Voice 按 Defaults 解析。" +
                     "WithOptions 的 options 位置参数仍必填但允许 null；显式 Defaults.Loop=false 保持非循环，不自动改 true。default(AudioSoundOptions) 现在为 null。" +
                     "Volume=0 合法静音，Pitch=0 非法；路由 Inherit，无分类 Group 则 Direct。options.PlaySoundMode=null 继承全局，初始 EveryOne；单次显式路由/策略优先于分类/全局。" +
-                    "新建/Reset Emitter 继承策略，旧缺字段资源保持 EveryOne；运行时 AddComponent 不保证触发 Reset。"),
+                    "编辑器与运行时新建 Emitter 继承策略；显式保存 useGlobalPlaySoundMode=false 时使用组件 playSoundMode=EveryOne 或其他明确策略，不自动覆盖。"),
                 HelpBlock.Paragraph("高频配置复用", "业务可持有并复用同一个 AudioSoundOptions，避免每次 new 或读取 Defaults/MusicDefaults；每次提交捕获独立内部值快照，之后修改原对象只影响后续请求。" +
                     "省略/null 使用对应类别的内部值默认，不创建配置类。优化仅针对内部 Options 类分配，不承诺整个 Audio 零 GC；初始化、音源创建、集合扩容和 Action 回调闭包等仍可能分配。" +
                     "Unity 2022.3.62f3c1 Editor PlayMode 预热后的 4096 次配置捕获/校验/值存储测得 0 次 GC.Alloc 事件；完整路径前后数据见 Audio 文档，不是字节统计，不能替代 Player/IL2CPP 设备实测。"),
@@ -338,7 +338,7 @@ namespace YLFramework.Editor.Audio
                     typeof(AudioSoundConcurrency), typeof(SoundOverflowPolicy), typeof(AudioCrossfadeCurve), typeof(AudioClipLibrary), typeof(AudioClipGroup),
                     typeof(AudioClipEntry), typeof(AudioClipSource), typeof(AudioClipSelectionMode), typeof(AudioGroupPlayer), typeof(AudioGroupAutoPlay) },
                 HelpBlock.Paragraph("AudioEmitter", "在 Inspector 配置 Clip 列表、2D/固定位置/跟随模式和音效参数，UnityEvent 绑定无参 Play/Stop。" +
-                    "useGlobalPlaySoundMode 字段缺省 false，旧缺字段资源保持原 playSoundMode=EveryOne；编辑器新建/Reset 设置 true，通过 options.PlaySoundMode=null 继承全局。运行时 AddComponent 不保证触发 Reset。" +
+                    "useGlobalPlaySoundMode 字段缺省 true，通过 options.PlaySoundMode=null 继承全局；编辑器与运行时 AddComponent 相同，不依赖 Reset。显式保存 false 使用组件 playSoundMode=EveryOne 或其他明确策略，不自动覆盖。" +
                     "私有序列化 useWeightedRandom 默认 false，旧 clips 仍为均匀模式；开启后使用配对的 weightedClips 列表（每项 Clip/Weight），三种位置模式都支持加权。" +
                     "加权只选择一次，去重拒播不重抽、不防重复；不开启时不改变旧序列化配置或播放参数。" +
                     "OutputRoute 默认 Inherit，可在 Inspector 指定 MixerGroup 或 Direct。EveryOne 允许 2D 点击音同帧重叠；禁用面板不截断已发起的普通 one-shot。有效循环重播替换旧循环，禁用停止循环和所有自有跟随声音。" +
@@ -351,7 +351,7 @@ namespace YLFramework.Editor.Audio
                     "空 Clip 或已销毁 Clip 不停止旧音乐；新配置先验证，Crossfade 开启时 duration/curve 也在替换前校验。" +
                     "OutputRoute 默认 Inherit，透传到音乐请求；旧组件退出不能停止由另一请求替换后的音乐。不自建 Source、加载资源或实现另一套池。" +
                     "private serialized autoFade 默认全零，Crossfade 关闭时使用与 PlayMusicWithOptions 相同的内部值提交链，autoFade 全零保持原无包络行为；非法新配置在 Stop 自有旧句柄前拒绝。" +
-                    "private serialized crossFadeOnPlay 默认 false、crossFadeDuration 默认 1、crossFadeIgnoreTimeScale 默认 true；crossFadeCurve 字段初始值 Linear，兼容旧缺字段资源，编辑器新建/Reset 设置 EqualPower，Crossfade 仍关闭。运行时 AddComponent 不承诺 Reset；关闭时不校验无关 Crossfade 参数。" +
+                    "private serialized crossFadeOnPlay 默认 false、crossFadeDuration 默认 1、crossFadeIgnoreTimeScale 默认 true；crossFadeCurve 字段初始值 EqualPower，编辑器与运行时 AddComponent 相同，不依赖 Reset；显式保存 Linear 保持有效。Crossfade 仍关闭，关闭时不校验无关 Crossfade 参数。" +
                     "开启走 CrossFadeMusic 对应的内部值提交链并显式传入组件曲线，不先 Stop 旧曲；所有新配置先验证，组件跟踪自己仍有效的请求。Stop/OnDisable 只停自有目标及旧尾轨，不误停其它所有者的新曲。" +
                     "旧场景所有者退出可截断自己的旧尾轨；跨场景完整过渡应由长期存活的音乐所有者发起，不忽略 OnDisable 所有权。"),
                 HelpBlock.Paragraph("组件值配置", "AudioEmitter/AudioMusicPlayer 从现有序列化字段直接构造内部 AudioPlaybackOptions，按值提交，不在每次 Play 创建公开配置类，也不缓存共享可变 Options。" +
@@ -362,8 +362,8 @@ namespace YLFramework.Editor.Audio
                 HelpBlock.Notice("输入保护边界", "空/非法输入先校验，不切断旧自有音频；此保护不保证容量拒播、通道关闭、原生启动失败或回调异常时回滚旧声音。"),
                 HelpBlock.Paragraph("AudioClipLibrary 素材组", "菜单 Assets/Create/YLFramework/Audio/Clip Library 创建共享资产；Groups 的 Name 精确区分大小写，不是控制通道名。" +
                     "每组 Selection 为 Uniform/Weighted，Entries 每项 Source/Clip/ProjectId/Key/Weight；Uniform 忽略 Weight，Weighted 的 0 排除，所有加权值必须有限且非负。缺组、重名、非法枚举/权重或无候选返回失败，不停止已有播放。" +
-                    "Clip 为借用；Resource 使用正式 ProjectId 与 Key 逻辑地址，物理来源由已初始化的 Resource Catalog 决定。应用先 InitializeAsync，再通过 GetAudioClipProvider 装配领域地址；Library 只读取已初始化的 Current，不隐式初始化。旧 Resources/AssetBundle 配置保留序列化值但须显式迁移，Inspector 按逐条映射创建新 GUID 副本，不猜 BundleName、不覆盖原配置。ExternalProvider 必须代码 SetProvider，不自动注册后端。" +
-                    "Inspector 使用 SerializedObject，多对象追加分别保留各自列表长度，新条目为 Clip/null/空 ProjectId/空 Key/空 BundleName/Weight=1；Undo 保留旧零权重，不随机抽选、不加载、不静默修复配置。"),
+                    "Clip 为借用；Resource 使用正式 ProjectId 与 Key 逻辑地址，物理来源由已初始化的 Resource Catalog 决定。应用先 InitializeAsync，再通过 GetAudioClipProvider 装配领域地址；Library 只读取已初始化的 Current，不隐式初始化。来源编号 Clip=0、ExternalProvider=3、Resource=4；1/2 与未知值整组拒绝，即使该项零权重也不跳过、不猜 BundleName、不自动清空或修复未知库。ExternalProvider 必须代码 SetProvider，不自动注册后端。" +
+                    "Inspector 使用 SerializedObject，多对象追加分别保留各自列表长度，新条目为 Clip/null/空 ProjectId/空 Key/Weight=1；Undo 保留旧零权重，不随机抽选、不加载、不静默修复配置。当前小写字段正式保存后冷读，不保留旧 PascalCase reader 或一次性迁移窗口。"),
                 HelpBlock.Paragraph("AudioGroupPlayer 组播放所有者", "绑定 library/groupName，再显式配置唯一 channelName；素材组与控制通道是两种身份。category 选择 Music/Voice/Sound 设置，channelMode 为 Exclusive/Overlap；空 persistenceId 不持久化，稳定 ID 只允许 ASCII 字母/数字及 . _ - /，多个实例不得共用通道名或持久化 ID。" +
                     "autoPlay 默认 Manual，FirstStart 在首次 Start 播放，EveryEnable 在 Start 及后续启用时播放；UnityEvent 可绑定无参 Play/Stop 或 PlayGroup(string)。停用停止所有自有播放与 pending，销毁释放通道，不控制其他组件。" +
                     "框架自有 Source 为 2D，借源保留 caller 空间曲线/滤镜，options 不配置空间距离/衰减。options 提供 Volume/Pitch/Loop/OutputRoute/AutoFade/Priority/AutoPauseWhenTimeScaleZero；Music 不自动启用 Loop，Music/Voice 忽略 Sound Priority。nullable PlaySoundMode 不被 Unity 序列化，Inspector Sound 继承全局策略。" +

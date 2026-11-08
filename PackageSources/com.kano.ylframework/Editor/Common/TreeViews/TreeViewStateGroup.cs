@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
-using UnityEngine.Scripting.APIUpdating;
 
 #if UNITY_6000_2_OR_NEWER 
 using TreeView = UnityEditor.IMGUI.Controls.TreeView<int>;
@@ -15,7 +14,6 @@ namespace YLFramework.Editor.Common
 {
     /// <summary>把调用方提供的整数标识与一份 TreeView 界面状态一起序列化。</summary>
     [Serializable]
-    [MovedFrom(true, sourceNamespace: "YLFramework.Editor.Utilities")]
     public class TreeViewStateInfo
     {
         /// <summary>调用方用于查找此状态的整数标识。</summary>
@@ -37,7 +35,6 @@ namespace YLFramework.Editor.Common
 
     /// <summary>为同一窗口中的多份列表按整数标识保留各自的树状态，由宿主决定是否持久化。</summary>
     [Serializable]
-    [MovedFrom(true, sourceNamespace: "YLFramework.Editor.Utilities")]
     public class TreeViewStateGroup
     {
 

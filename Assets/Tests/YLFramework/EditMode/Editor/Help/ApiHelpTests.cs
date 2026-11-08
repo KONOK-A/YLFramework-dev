@@ -42,7 +42,7 @@ namespace YLFramework.Tests.Actions
             "YLFramework.Actions.ISequence", "YLFramework.Actions.Lerp", "YLFramework.Actions.LerpExtension",
             "YLFramework.Actions.MonoUpdateActionExecutorExtension",
             "YLFramework.Actions.ParallelExtension", "YLFramework.Actions.Repeat", "YLFramework.Actions.RepeatExtension",
-            "YLFramework.Actions.ScreenTransitionFade", "YLFramework.Actions.ScreenTransitionInOut`2", "YLFramework.Actions.SequenceExtension",
+            "YLFramework.Actions.ScreenTransitionFade", "YLFramework.Actions.SequenceExtension",
             "YLFramework.Actions.TaskAction", "YLFramework.Actions.TaskExtension",
             "YLFramework.Actions.ActionKitUniRxExtension",
             "YLFramework.Actions.UniRxAction`1"
@@ -60,16 +60,16 @@ namespace YLFramework.Tests.Actions
                 optional.GetType("YLFramework.Integrations.DOTween.ActionKitDOTweenExtension", true)
             }).ToArray();
             CollectionAssert.AreEquivalent(expected, index.Select(entry => entry.Type));
-            Assert.That(core.Length, Is.EqualTo(44));
+            Assert.That(core.Length, Is.EqualTo(43));
             CollectionAssert.IsSubsetOf(core, index.Select(entry => entry.Type).ToArray());
             Assert.That(index.Select(entry => entry.Type).Distinct().Count(), Is.EqualTo(index.Length));
             Assert.That(index.All(entry => entry.Type.IsVisible), Is.True);
             Assert.That(index.All(entry => entry.Type.Assembly == typeof(ActionKit).Assembly ||
                 entry.Type.Assembly.GetName().Name == "YLFramework.Actions.DOTween"), Is.True);
-            Assert.That(core.Sum(type => ActionKitApiHelpContent.GetDeclaredApi(type).Count()), Is.EqualTo(303));
+            Assert.That(core.Sum(type => ActionKitApiHelpContent.GetDeclaredApi(type).Count()), Is.EqualTo(297));
             var providerCount = ActionKitApiHelpContent.ApiAssemblies().Count() - 1;
-            Assert.That(index.Length, Is.EqualTo(44 + 2 * providerCount));
-            Assert.That(index.Sum(entry => entry.Members.Length), Is.EqualTo(303 + 12 * providerCount));
+            Assert.That(index.Length, Is.EqualTo(43 + 2 * providerCount));
+            Assert.That(index.Sum(entry => entry.Members.Length), Is.EqualTo(297 + 12 * providerCount));
             Assert.That(typeof(ActionKit).Assembly.GetName().Name, Is.EqualTo("YLFramework.Runtime"));
             Assert.That(index.All(entry => entry.Type.Namespace == "YLFramework.Actions" ||
                 entry.Type.Namespace.StartsWith("YLFramework.Actions.", StringComparison.Ordinal) ||
@@ -307,8 +307,8 @@ namespace YLFramework.Tests.Actions
                 Is.EqualTo("Dictionary<string, IAction>.Enumerator"));
             Assert.That(ActionKitApiHelpContent.FormatType(typeof(Dictionary<string, IAction>.KeyCollection.Enumerator)),
                 Is.EqualTo("Dictionary<string, IAction>.KeyCollection.Enumerator"));
-            Assert.That(ActionKitApiHelpContent.FormatType(typeof(ScreenTransitionInOut<IAction, IAction>)),
-                Is.EqualTo("ScreenTransitionInOut<IAction, IAction>"));
+            Assert.That(ActionKitApiHelpContent.FormatType(typeof(Dictionary<string, List<IAction>>)),
+                Is.EqualTo("Dictionary<string, List<IAction>>"));
             Assert.That(ActionKitApiHelpContent.FormatType(typeof(ActionKit.ScreenTransition)), Is.EqualTo("ActionKit.ScreenTransition"));
         }
 
@@ -398,8 +398,8 @@ namespace YLFramework.Tests.Actions
             StringAssert.Contains("Interface 只返回当前 ActionKit 模块实例", Topic("lifecycle").SearchText);
             StringAssert.Contains("不提供系统、模型、工具的注册", Topic("lifecycle").SearchText);
             StringAssert.Contains("不会 Dispose 或 Cancel", Topic("task").SearchText);
-            StringAssert.Contains("父动作取消也不会取消", Topic("screen").SearchText);
-            StringAssert.Contains("父动作不会随它完成", Topic("screen").SearchText);
+            StringAssert.Contains("由父序列统一等待、暂停和取消", Topic("screen").SearchText);
+            StringAssert.Contains("不隐式创建全局宿主", Topic("screen").SearchText);
             StringAssert.Contains("子动作取消会取消父序列", Topic("sequence").SearchText);
             StringAssert.Contains("当前可选 DOTween 动作集成已可用", Topic("distribution").SearchText);
             StringAssert.Contains("主包包含动作源码、组件、资源、编辑器帮助及 DOTween 自有条件适配", Topic("distribution").SearchText);
@@ -416,7 +416,7 @@ namespace YLFramework.Tests.Actions
             StringAssert.Contains("Time.frameCount", Topic("frames").SearchText);
             StringAssert.Contains("不是按动作实际获得的更新次数", Topic("frames").SearchText);
             var module = ActionKitHelpProvider.CreateModule();
-            StringAssert.Contains("YLFramework", module.Documentation(typeof(ActionKit)).Summary);
+            StringAssert.Contains("YLFramework", HelpApiIndex.Build(module).Single(type => type.Type == typeof(ActionKit)).Summary);
             foreach (var page in module.Guides.Concat(module.About))
             {
                 Assert.That(page.RelatedTypes.All(type => type.Assembly == typeof(ActionKit).Assembly ||
@@ -474,6 +474,8 @@ namespace YLFramework.Tests.Actions
                 Assert.That(page.Blocks.Single(block => block.Title == "参数、执行与生命周期").Content, Is.EqualTo(topic.Behavior));
                 Assert.That(page.Blocks.Single(block => block.Title == "注意事项").Content, Is.EqualTo(topic.Notes));
                 Assert.That(page.Blocks.Any(block => block.Title == "可选程序集未加载"), Is.EqualTo(!topic.IsAvailable));
+                var document = page.Blocks.Single(block => block.Kind == HelpBlockKind.Link && block.Title == "完整 Action 说明");
+                Assert.That(File.Exists(new Uri(document.Url).LocalPath), Is.True);
                 CollectionAssert.AreEquivalent(index.Where(type => ActionKitApiHelpContent.RelatedTopics(type.Type).Contains(topic))
                     .Select(type => type.Type), page.RelatedTypes);
                 CollectionAssert.AreEquivalent(ActionKitApiHelpContent.FeaturedTypes(topic, index).Select(type => type.Type), page.FeaturedTypes);
@@ -630,6 +632,11 @@ namespace YLFramework.Tests.Actions
         [Test]
         public void DOTweenChineseHelpDocumentsOwnedTweenLifecycleAndOptionalDependency()
         {
+#if DOTWEEN
+            var loaded = System.Reflection.Assembly.Load("YLFramework.Actions.DOTween");
+            Assert.That(ActionKitApiHelpContent.ApiAssemblies(), Does.Contain(loaded),
+                "The explicit SDK profile must exercise the actual optional XML consumer, not an empty optional branch.");
+#endif
             var topic = Topic("dotween");
             Assert.That(topic.Group, Is.EqualTo("扩展与工具"));
             foreach (var text in new[] { "getter 恰一次", "Complete()", "Kill(true)", "外部 Pause 只是等待", "Kill(false)",
@@ -648,7 +655,11 @@ namespace YLFramework.Tests.Actions
                 StringAssert.Contains(text, topic.SearchText);
             }
 
-            foreach (var type in ActionKitApiHelpContent.BuildIndex().Where(entry => entry.Type.Assembly.GetName().Name == topic.RequiredAssembly))
+            var types = ActionKitApiHelpContent.BuildIndex().Where(entry => entry.Type.Assembly.GetName().Name == topic.RequiredAssembly).ToArray();
+#if DOTWEEN
+            Assert.That(types.Length, Is.EqualTo(2));
+#endif
+            foreach (var type in types)
             {
                 StringAssert.DoesNotContain("尚未核实", type.Summary);
                 Assert.That(type.Members.Any(member => member is ConstructorInfo), Is.False);
@@ -749,24 +760,21 @@ namespace YLFramework.Tests.Actions
         }
 
         [Test]
-        public void ApiReferencePreservesVerifiedChineseOverridesAndUsesXmlOrExplicitMissingFields()
+        public void ApiReferenceUsesOnlyRuntimeXmlInsteadOfAManualMemberOverride()
         {
             var module = ActionKitHelpProvider.CreateModule();
+            Assert.That(module.Documentation, Is.Null, "Action member descriptions must have one Runtime XML source, not a second override engine.");
             var index = HelpApiIndex.Build(module);
-            module.Documentation = null;
-            var xml = HelpApiIndex.Build(module);
+            var xml = new HelpXmlDocumentation(module);
             foreach (var type in index)
             {
                 Assert.That(HasChinese(type.Summary), Is.True, type.Name);
                 Assert.That(!string.IsNullOrWhiteSpace(type.Group), Is.True);
                 CollectionAssert.AreEquivalent(type.Members, type.Entries.Select(entry => entry.Member));
-                var xmlType = xml.Single(entry => entry.Type == type.Type);
-                AssertDocumentationSources(type.Help, ActionKitApiHelpReference.Describe(type.Type), xmlType.Help, type.Name);
+                AssertDocumentationSources(type.Help, xml.Get(type.Type), type.Name);
                 foreach (var entry in type.Entries)
                 {
-                    var verified = ActionKitApiHelpReference.Describe(entry.Member);
-                    var xmlMember = xmlType.Entries.Single(item => item.Member == entry.Member);
-                    AssertDocumentationSources(entry.Help, verified, xmlMember.Help, entry.Signature);
+                    AssertDocumentationSources(entry.Help, xml.Get(entry.Member), entry.Signature);
                     Assert.That(string.IsNullOrWhiteSpace(entry.Help.Summary) || HasChinese(entry.Help.Summary), Is.True, entry.Signature);
                     var parameters = entry.Member is MethodBase method ? method.GetParameters() : entry.Member is PropertyInfo property ? property.GetIndexParameters() : Array.Empty<ParameterInfo>();
                     CollectionAssert.IsSubsetOf(entry.Help.Parameters.Select(parameter => parameter.Name), parameters.Select(parameter => parameter.Name), entry.Signature);
@@ -776,19 +784,18 @@ namespace YLFramework.Tests.Actions
             }
         }
 
-        private static void AssertDocumentationSources(HelpDocumentation actual, HelpDocumentation verified, HelpDocumentation xml, string context)
+        private static void AssertDocumentationSources(HelpDocumentation actual, HelpDocumentation xml, string context)
         {
-            Assert.That(actual.Summary, Is.EqualTo(string.IsNullOrWhiteSpace(verified.Summary) ? xml.Summary : verified.Summary), context);
-            Assert.That(actual.Returns, Is.EqualTo(string.IsNullOrWhiteSpace(verified.Returns) ? xml.Returns : verified.Returns), context);
-            Assert.That(actual.Remarks, Is.EqualTo(string.IsNullOrWhiteSpace(verified.Remarks) ? xml.Remarks : verified.Remarks), context);
+            Assert.That(actual.Summary, Is.EqualTo(xml.Summary), context);
+            Assert.That(actual.Returns, Is.EqualTo(xml.Returns), context);
+            Assert.That(actual.Remarks, Is.EqualTo(xml.Remarks), context);
             foreach (var fields in new[]
             {
-                new[] { actual.Parameters, verified.Parameters, xml.Parameters },
-                new[] { actual.TypeParameters, verified.TypeParameters, xml.TypeParameters }
+                new[] { actual.Parameters, xml.Parameters },
+                new[] { actual.TypeParameters, xml.TypeParameters }
             })
             {
-                var expected = fields[2].Concat(fields[1]).Where(parameter => !string.IsNullOrWhiteSpace(parameter.Description))
-                    .GroupBy(parameter => parameter.Name).Select(group => group.Last()).ToArray();
+                var expected = fields[1].Where(parameter => !string.IsNullOrWhiteSpace(parameter.Description)).ToArray();
                 CollectionAssert.AreEquivalent(expected.Select(parameter => parameter.Name + "\n" + parameter.Description),
                     fields[0].Where(parameter => !string.IsNullOrWhiteSpace(parameter.Description))
                         .Select(parameter => parameter.Name + "\n" + parameter.Description), context);
@@ -796,21 +803,21 @@ namespace YLFramework.Tests.Actions
         }
 
         [Test]
-        public void ReferenceLeavesUnknownAndDeclarationOnlyFieldsForXmlInsteadOfInventingAnOverride()
+        public void MissingXmlLeavesDeclarationsAvailableWithoutInventingMemberDescriptions()
         {
-            Assert.That(ActionKitApiHelpReference.TypeSummary(typeof(ApiHelpTests)), Is.Null);
-            var unknown = ActionKitApiHelpReference.Describe(typeof(ApiHelpTests).GetMethod(nameof(IndexContainsEveryExportedApiTypeExactlyOnceAndRetainsAllCoreTypes)));
-            Assert.That(unknown.Summary + unknown.Returns + unknown.Remarks, Is.Empty);
-            Assert.That(unknown.Parameters, Is.Empty);
-            var constructor = typeof(CallbackAction).GetConstructor(BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
-            Assert.That(constructor, Is.Not.Null);
-            Assert.That(ActionKitApiHelpReference.Describe(constructor).Summary, Is.Empty);
-            Assert.That(ActionKitApiHelpReference.Describe(typeof(IAction<>).GetProperty("ActionId")).Returns, Is.Empty);
-            Assert.That(ActionKitApiHelpReference.Describe(typeof(IAction<>).GetMethod("OnStart")).Returns, Is.Empty);
+            var module = new HelpModule { ApiTypes = new[] { new HelpApiTypeDefinition(typeof(ProtectedSetterExample), "fixture") } };
+            var type = HelpApiIndex.Build(module).Single();
+            StringAssert.Contains("ProtectedSetterExample", type.Declaration);
+            Assert.That(type.Help.Summary + type.Help.Remarks + type.Help.Returns, Is.Empty);
+            var property = type.Entries.Single(entry => entry.Name == "Value");
+            StringAssert.Contains("public int Value { get; protected set; }", property.Signature);
+            Assert.That(property.Help.Summary + property.Help.Remarks + property.Help.Returns, Is.Empty);
+            Assert.That(property.Help.Parameters, Is.Empty);
+            Assert.That(property.Help.TypeParameters, Is.Empty);
         }
 
         [Test]
-        public void LocalCompilerXmlFeedsTypeParametersWithoutReplacingVerifiedFrameSemantics()
+        public void LocalCompilerXmlProvidesTypeParametersAndVerifiedGlobalFrameSemantics()
         {
             var module = ActionKitHelpProvider.CreateModule();
             Assert.That(module.XmlPaths.Count, Is.EqualTo(ActionKitApiHelpContent.ApiAssemblies().Count()));
@@ -847,8 +854,8 @@ namespace YLFramework.Tests.Actions
             StringAssert.Contains("Unity 全局帧计数增加一帧", action.Entries.Single(entry => entry.Name == "NextFrame").Help.Summary);
             module.Documentation = null;
             var xmlAction = HelpApiIndex.Build(module).Single(type => type.Type == typeof(ActionKit));
-            StringAssert.Contains("执行器更新次数", xmlAction.Entries.Single(entry => entry.Name == "DelayFrame").Help.Summary);
-            Assert.That(frames.Help.Summary, Is.EqualTo(ActionKitApiHelpReference.Describe(frames.Member).Summary));
+            StringAssert.Contains("Unity 全局帧计数", xmlAction.Entries.Single(entry => entry.Name == "DelayFrame").Help.Summary);
+            Assert.That(frames.Help.Summary, Is.EqualTo(xmlAction.Entries.Single(entry => entry.Name == "DelayFrame").Help.Summary));
             Assert.That(custom.Help.TypeParameters.Single().Description,
                 Is.EqualTo(xmlAction.Entries.Single(entry => entry.Name == "Custom" && ((MethodInfo)entry.Member).IsGenericMethod).Help.TypeParameters.Single().Description));
         }

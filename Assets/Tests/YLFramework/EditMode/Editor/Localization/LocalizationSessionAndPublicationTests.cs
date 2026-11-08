@@ -174,7 +174,7 @@ namespace YLFramework.Tests.Extensions.Data
                 }
                 type.GetField("binding").SetValue(probe, binding);
                 host.SetActive(true);
-            });
+            }, new[] { "YL_LOCALIZATION_ACCEPTANCE" });
             var snapshot = ResourceLocalSnapshot.Open(Path.GetFullPath(release.DirectoryPath), project.projectId, release.Catalog.CatalogDigest,
                 release.Catalog.Platform, release.Catalog.AppContentCompatibilityId);
             var catalog = snapshot.CreateCatalog(new[] { typeof(MultiLanguageConfigs), typeof(LanguageConfig) });

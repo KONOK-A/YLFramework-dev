@@ -12,36 +12,36 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7331c0230f1378c48bb33ed06489830c, type: 3}
   m_Name: WorkbenchProject
   m_EditorClassIdentifier: 
-  ProjectId: yl-workbench-polish-20261018
-  DisplayName: "Workbench \u6613\u7528\u6027\u4F53\u9A8C"
-  SourceDirectories:
-  - Guid: 5f2046fbafcc0264998d730a58e28fd3
-    AddressPrefix: 
-  Compression: 0
-  ContentEncryption: 0
-  ContentKeyId: 
-  AutomaticAtlases: {fileID: 0}
-  AutomaticAtlasConfigurationGuid: 
-  Groups:
-  - Id: messages
-    Packing: 0
-    Selections:
-    - Guid: b4c304a99f4148c4ba4294ca945e4a30
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: 38ba46820e9f49e4fac0ddfa112942e3
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: fe626f07e9a61a44c9547f9babfcd30f
-      Address: 
-      Aliases: []
-      Extensions: []
-  - Id: optional
-    Packing: 1
-    Selections:
-    - Guid: f2c888607d758ab48ad72cb05483579c
-      Address: 
-      Aliases: []
-      Extensions: []
+  projectId: yl-workbench-polish-20261018
+  displayName: "Workbench \u6613\u7528\u6027\u4F53\u9A8C"
+  sourceDirectories:
+  - guid: 5f2046fbafcc0264998d730a58e28fd3
+    addressPrefix: 
+  compression: 0
+  contentEncryption: 0
+  contentKeyId: 
+  automaticAtlases: {fileID: 0}
+  automaticAtlasConfigurationGuid: 
+  groups:
+  - id: messages
+    packing: 0
+    selections:
+    - guid: b4c304a99f4148c4ba4294ca945e4a30
+      address: 
+      aliases: []
+      extensions: []
+    - guid: 38ba46820e9f49e4fac0ddfa112942e3
+      address: 
+      aliases: []
+      extensions: []
+    - guid: fe626f07e9a61a44c9547f9babfcd30f
+      address: 
+      aliases: []
+      extensions: []
+  - id: optional
+    packing: 1
+    selections:
+    - guid: f2c888607d758ab48ad72cb05483579c
+      address: 
+      aliases: []
+      extensions: []

@@ -97,7 +97,7 @@ Action 对 `YLFramework.Editor` 的 InternalsVisibleTo 是受控内部可见性�
 | View / ViewManager | 表现会话、索引、加载与查询；Panel 复用该生命周期，不维护第二套窗口 owner |
 | PanelManager / UIRootContext | 根、层、遮罩、排序与输入协调；根配置不变成独立资源缓存 |
 | SceneController | 通过 `ICoreResourceProvider` 提交场景请求，只清自己的在途责任，不持有成功 Scene 的卸载权 |
-| EventManager | Core 事件薄入口，不复制 Foundation 总线 |
+| CoreEvents | 领域事件键；View 直接使用 Foundation EventBus 的共享上下文，不增加门面或总线 |
 | 默认资源与 Analyzer marker | Core 自身默认配置与 Runtime 元数据，不塞入中立 Foundation；Analyzer DLL 另作为编译器输入 |
 
 TimerObject 属于 Foundation Timing；物理、动画和 Unity 生命周期监听属于 Foundation Events。它们不因曾服务 Core 就继续混入 MVC。

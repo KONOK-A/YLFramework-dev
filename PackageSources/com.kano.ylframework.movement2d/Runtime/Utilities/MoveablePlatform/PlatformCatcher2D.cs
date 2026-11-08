@@ -206,12 +206,8 @@ namespace YLFramework.Platform2D
                 Vector3 from = transform.localToWorldMatrix.MultiplyPoint(area.from);
                 Vector3 to = transform.localToWorldMatrix.MultiplyPoint(area.to);
 
-#if UNITY_6000_0_OR_NEWER
                 ContactFilter2D contactFilter = CreateLegacyFilter(_layerMask.value, float.NegativeInfinity, float.PositiveInfinity);
                 int count = Physics2D.defaultPhysicsScene.Linecast(from, to, contactFilter, _hits);
-#else
-                int count = Physics2D.LinecastNonAlloc(from, to, _hits, _layerMask.value);
-#endif
 
                 for (int i = 0; i < count; i++)
                 {

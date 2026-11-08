@@ -66,7 +66,7 @@ closure table. The Registry single-entry rule must not be applied to Git URLs.
 DOTween and HybridCLR SDKs are distributed separately from the YL packages.
 
 See [installation and navigation](Documentation~/README.md) and the
-[UPM migration guide](Documentation~/Migration-UPM.md). Import Resource Startup
+[owned asset and generated-code contracts](Documentation~/Modules/Editor.md). Import Resource Startup
 from this package's Samples section only when needed. Required Canvas,
 EventSystem and ScreenTransition Resources are production assets, not samples.
 `Samples~` does not compile until imported through Package Manager. The former

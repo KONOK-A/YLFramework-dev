@@ -4,20 +4,8 @@
   "references": [
     "YLFramework.Runtime",
     "YLFramework.Editor",
-    "YLFramework.DataAssets",
-    "YLFramework.DataAssets.Editor",
-    "YLFramework.Localization",
-    "YLFramework.Save",
-    "YLFramework.Skill",
-    "YLFramework.Buff",
-    "YLFramework.Mission",
     "YLFramework.Equipment",
-    "YLFramework.Gameplay.Editor",
-    "YLFramework.Tests.Data.Probes",
-    "YLFramework.Tests.Domain.Probes",
-    "UnityEngine.UI",
-    "UnityEngine.TestRunner",
-    "UnityEditor.TestRunner",
+    "YLFramework.Equipment.Acceptance.Player",
     "YLFramework.Tests.Fixtures"
   ],
   "includePlatforms": [

@@ -12,25 +12,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7331c0230f1378c48bb33ed06489830c, type: 3}
   m_Name: ResourceProject
   m_EditorClassIdentifier: 
-  ProjectId: YL.CommonSystem.Fixture
-  DisplayName: CommonSystem Fixture
-  SourceDirectories:
-  - Guid: 633455d988eca6649baaef9633f6337b
-    AddressPrefix: 
-  Compression: 0
-  ContentEncryption: 0
-  ContentKeyId: 
-  AutomaticAtlases: {fileID: 0}
-  AutomaticAtlasConfigurationGuid: 
-  Groups:
-  - Id: scenes
-    Packing: 0
-    Selections:
-    - Guid: 32623c2015843ff4190d313e7cb9b8b8
-      Address: CommonNeutral
-      Aliases: []
-      Extensions: []
-    - Guid: 9ed0b9e556ce68a4a97bdf47f35940e0
-      Address: CommonTarget
-      Aliases: []
-      Extensions: []
+  projectId: YL.CommonSystem.Fixture
+  displayName: CommonSystem Fixture
+  sourceDirectories:
+  - guid: 633455d988eca6649baaef9633f6337b
+    addressPrefix: 
+  compression: 0
+  contentEncryption: 0
+  contentKeyId: 
+  automaticAtlases: {fileID: 0}
+  automaticAtlasConfigurationGuid: 
+  groups:
+  - id: scenes
+    packing: 0
+    selections:
+    - guid: 32623c2015843ff4190d313e7cb9b8b8
+      address: CommonNeutral
+      aliases: []
+      extensions: []
+    - guid: 9ed0b9e556ce68a4a97bdf47f35940e0
+      address: CommonTarget
+      aliases: []
+      extensions: []

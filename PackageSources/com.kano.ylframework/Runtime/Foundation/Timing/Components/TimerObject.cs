@@ -1,6 +1,5 @@
 using UnityEngine;
 using UnityEngine.Events;
-using UnityEngine.Serialization;
 
 namespace YLFramework.Timing
 {
@@ -20,11 +19,11 @@ namespace YLFramework.Timing
 
         /// <summary>本轮正常到期时同步调用的事件，异常交由调度器报告。</summary>
         [Tooltip("事件回调")]
-        [FormerlySerializedAs("Action")] public UnityEvent onCompleted;
+        public UnityEvent onCompleted;
 
         /// <summary>本轮被取消或所属调度器失效时同步调用的事件；正常完成和故障不触发。</summary>
         [Tooltip("中断回调")]
-        [FormerlySerializedAs("Abort")] public UnityEvent onAborted;
+        public UnityEvent onAborted;
 
         private ReusableTimer _timer;
         private TimerHandle _current;

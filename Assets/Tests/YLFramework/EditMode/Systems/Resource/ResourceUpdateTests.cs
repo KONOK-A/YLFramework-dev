@@ -17,6 +17,7 @@ using YLFramework.Resource;
 
 namespace YLFramework.Tests.ResourceBuild
 {
+    [Category("YL.Special.ResourceUpdates")]
     public partial class ResourceUpdateTests
     {
         private const string Key = "YL.Resource87.";

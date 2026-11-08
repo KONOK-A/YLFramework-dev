@@ -39,17 +39,29 @@ namespace YLFramework.Tests.DataAssets
             Assert.That(AssetDatabase.GUIDToAssetPath(guid), Is.EqualTo("Packages/com.kano.ylframework.data-assets/" + relative));
         }
 
+        [TestCase(typeof(ScriptableObjectConfigs), "typeScriptGuid", "type_script_guid")]
+        [TestCase(typeof(ScriptableObjectData), "configName", "config_name")]
+        [TestCase(typeof(ScriptableObjectData), "description", "des")]
+        public void CurrentUnityFieldsHaveNoRetiredReaderWhileWorkbookColumnsRemainExplicit(Type type, string name, string column)
+        {
+            var field = type.GetField(name);
+            Assert.That(field, Is.Not.Null);
+            Assert.That(field.GetCustomAttributes(typeof(UnityEngine.Serialization.FormerlySerializedAsAttribute), false), Is.Empty);
+            var attribute = (global::YLFramework.Excel.ExcelColumnNameAttribute)Attribute.GetCustomAttribute(field,
+                typeof(global::YLFramework.Excel.ExcelColumnNameAttribute));
+            Assert.That(attribute, Is.Not.Null);
+            Assert.That(attribute.Name, Is.EqualTo(column));
+        }
+
         [SetUp]
         public void SetUp()
         {
             CaptureAbsentParents("Assets/YLFrameworkData/DataAssets", "Assets/YLFrameworkData");
             _folder = "Assets/__YLDataAssets_" + Guid.NewGuid().ToString("N");
-            DataAcceptanceOwnership.Own(_folder);
             AssetDatabase.CreateFolder("Assets", _folder.Substring("Assets/".Length));
             _root = ScriptableObject.CreateInstance<ScriptableObjectConfigs>();
             AssetDatabase.CreateAsset(_root, _folder + "/Items.asset");
             _childFolder = ScriptableObjectConfigsController.GetDataPath(_root);
-            DataAcceptanceOwnership.Own(_childFolder);
         }
 
         [TearDown]
@@ -204,6 +216,50 @@ namespace YLFramework.Tests.DataAssets
             Assert.That(_root.GetScriptableObjectData(1), Is.SameAs(second));
         }
 
+        [TestCase(0, "", "")]
+        [TestCase(17, "current-data-name", "current-data-description")]
+        public void CurrentDataRootAndRowColdReadKeepsExplicitValuesListsParentAndScriptBindings(int id, string name, string description)
+        {
+            string rootPath = AssetDatabase.GetAssetPath(_root);
+            _root.name = "CurrentDataRoot";
+            ScriptableObjectConfigsController.SetDataType(_root,
+                AssetDatabase.LoadAssetAtPath<MonoScript>("Packages/com.kano.ylframework.data-assets/Runtime/Systems/DataAssets/ScriptableObjectData.cs"));
+            var data = ScriptableObjectConfigsController.CreateData(typeof(ScriptableObjectData), _root);
+            data.id = id;
+            data.configName = name;
+            data.description = description;
+            data.icon.projectName = "current-icons";
+            data.icon.iconName = "icons/current";
+            EditorUtility.SetDirty(data);
+            EditorUtility.SetDirty(_root);
+            ScriptableObjectConfigsController.Save(_root);
+            string rowPath = AssetDatabase.GetAssetPath(data);
+            string rootGuid = AssetDatabase.AssetPathToGUID(rootPath), rowGuid = AssetDatabase.AssetPathToGUID(rowPath);
+            Resources.UnloadAsset(data);
+            Resources.UnloadAsset(_root);
+            _root = AssetDatabase.LoadAssetAtPath<ScriptableObjectConfigs>(rootPath);
+            data = AssetDatabase.LoadAssetAtPath<ScriptableObjectData>(rowPath);
+            Assert.That(_root, Is.Not.Null);
+            Assert.That(data, Is.Not.Null);
+            Assert.That(AssetDatabase.AssetPathToGUID(rootPath), Is.EqualTo(rootGuid));
+            Assert.That(AssetDatabase.AssetPathToGUID(rowPath), Is.EqualTo(rowGuid));
+            Assert.That(_root.GetType(), Is.EqualTo(typeof(ScriptableObjectConfigs)));
+            Assert.That(data.GetType(), Is.EqualTo(typeof(ScriptableObjectData)));
+            Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(_root))), Is.EqualTo("5e54610ded7e2994aaa66cefe28b02ce"));
+            Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(data))), Is.EqualTo("a1743beab98e80e47b2c8b4917852add"));
+            Assert.That(_root.typeScriptGuid, Is.EqualTo("a1743beab98e80e47b2c8b4917852add"));
+            Assert.That(_root.GetDataType(), Is.EqualTo(typeof(ScriptableObjectData)));
+            Assert.That(_root.configs.Single(), Is.SameAs(data));
+            Assert.That(data.parent, Is.SameAs(_root));
+            Assert.That(data.id, Is.EqualTo(id));
+            Assert.That(data.configName, Is.EqualTo(name));
+            Assert.That(data.description, Is.EqualTo(description));
+            Assert.That(data.icon.projectName, Is.EqualTo("current-icons"));
+            Assert.That(data.icon.iconName, Is.EqualTo("icons/current"));
+            Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(rowPath)), Does.Not.Contain("config_name:").And.Not.Contain("des:"));
+            Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(rootPath)), Does.Contain("typeScriptGuid:").And.Not.Contain("type_script_guid:"));
+        }
+
         [Test]
         public void CreateCopyAndSaveReopenPreserveConcreteDataParentAndTypeGuid()
         {
@@ -233,6 +289,36 @@ namespace YLFramework.Tests.DataAssets
             Assert.That(((DataAssetTestData)reopened.GetScriptableObjectData(2)).amount, Is.EqualTo(23));
             Assert.That(reopened.GetScriptableObjectData(2).parent, Is.SameAs(reopened));
             Assert.Throws<ArgumentException>(() => ScriptableObjectConfigsController.CreateData(typeof(ScriptableObjectData), reopened));
+        }
+
+        [Test]
+        public void SavingCurrentDataDoesNotFlushAnUnrelatedDirtyAssetOrReplaceUnknownFiles()
+        {
+            string materialPath = _folder + "/Unrelated.mat";
+            var material = new Material(Shader.Find("Sprites/Default")) { color = Color.blue };
+            AssetDatabase.CreateAsset(material, materialPath);
+            byte[] materialBytes = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(materialPath));
+            byte[] materialMeta = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(materialPath + ".meta"));
+            string unknownPath = _folder + "/Keep.txt";
+            File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(unknownPath), "preserve unknown author content");
+            AssetDatabase.ImportAsset(unknownPath, ImportAssetOptions.ForceSynchronousImport);
+            byte[] unknownBytes = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(unknownPath));
+            byte[] unknownMeta = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(unknownPath + ".meta"));
+            material.color = Color.red;
+            EditorUtility.SetDirty(material);
+            var row = ScriptableObjectConfigsController.CreateData(typeof(ScriptableObjectData), _root);
+            row.configName = "saved current data";
+            EditorUtility.SetDirty(row);
+            ScriptableObjectConfigsController.Save(_root);
+            Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(materialPath)), Is.EqualTo(materialBytes));
+            Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(materialPath + ".meta")), Is.EqualTo(materialMeta));
+            Assert.That(EditorUtility.IsDirty(material), Is.True);
+            Assert.That(material.color, Is.EqualTo(Color.red));
+            Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(unknownPath)), Is.EqualTo(unknownBytes));
+            Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(unknownPath + ".meta")), Is.EqualTo(unknownMeta));
+            string rowPath = AssetDatabase.GetAssetPath(row);
+            AssetDatabase.ImportAsset(rowPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            Assert.That(AssetDatabase.LoadAssetAtPath<ScriptableObjectData>(rowPath).configName, Is.EqualTo("saved current data"));
         }
 
         [Test]

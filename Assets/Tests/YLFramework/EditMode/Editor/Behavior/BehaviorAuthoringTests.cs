@@ -24,7 +24,6 @@ namespace YLFramework.Tests.Extensions.Behavior
     public class BehaviorAuthoringTests
     {
         private const string Root = "Assets/Tests/YLFramework/Fixtures/Extensions/Behavior";
-        private const string AcceptanceKey = "YLFramework.Behavior.MainAcceptance";
         private string _folder;
         private readonly List<GameObject> _owned = new List<GameObject>();
         private Undo.UndoRedoCallback[] _userUndoCallbacks;
@@ -36,9 +35,6 @@ namespace YLFramework.Tests.Extensions.Behavior
         private FsmTransitionData _previousTransition;
         private RuntimeFsmController _previousTransitionController;
         private int[] _previousSelection;
-        private bool _wasBuildGuardEnabled;
-        private string _previousBuildAssets;
-        private string _previousBuildOutput;
 
         [SetUp]
         public void Setup()
@@ -60,12 +56,6 @@ namespace YLFramework.Tests.Extensions.Behavior
             _previousTransition = _transitionHelper.transition;
             _previousTransitionController = _transitionHelper.controller;
             _previousSelection = Selection.instanceIDs;
-            _wasBuildGuardEnabled = SessionState.GetBool(AcceptanceKey + ".ProtectBuildSaves", false);
-            _previousBuildAssets = SessionState.GetString(AcceptanceKey + ".BuildAssets", string.Empty);
-            _previousBuildOutput = SessionState.GetString(AcceptanceKey + ".BuildOutput", string.Empty);
-            SessionState.SetString(AcceptanceKey + ".BuildAssets", _folder);
-            SessionState.SetString(AcceptanceKey + ".BuildOutput", SessionState.GetString(AcceptanceKey + ".Tests", string.Empty));
-            SessionState.SetBool(AcceptanceKey + ".ProtectBuildSaves", true);
         }
 
         [TearDown]
@@ -106,24 +96,6 @@ namespace YLFramework.Tests.Extensions.Behavior
                     Undo.undoRedoPerformed += callback;
                 }
 
-                SessionState.SetBool(AcceptanceKey + ".ProtectBuildSaves", _wasBuildGuardEnabled);
-                if (string.IsNullOrEmpty(_previousBuildAssets))
-                {
-                    SessionState.EraseString(AcceptanceKey + ".BuildAssets");
-                }
-                else
-                {
-                    SessionState.SetString(AcceptanceKey + ".BuildAssets", _previousBuildAssets);
-                }
-
-                if (string.IsNullOrEmpty(_previousBuildOutput))
-                {
-                    SessionState.EraseString(AcceptanceKey + ".BuildOutput");
-                }
-                else
-                {
-                    SessionState.SetString(AcceptanceKey + ".BuildOutput", _previousBuildOutput);
-                }
             }
         }
 
@@ -136,16 +108,15 @@ namespace YLFramework.Tests.Extensions.Behavior
 
         [TestCase(false)]
         [TestCase(true)]
-        public void LegacyVariantPathsMigrateAtomicallyIncludingNestedAndArrayFields(bool injectConflict)
+        public void CurrentVariantValuesKeepNestedOverridesThroughUndoAndColdRead(bool redo)
         {
             var scene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
-            var root = new GameObject("LegacyVariantNames");
+            var root = new GameObject("CurrentVariantNames");
             root.SetActive(false);
             UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(root, scene);
             try
             {
                 root.AddComponent<CharacterController2D>();
-                root.AddComponent<OverlapArea2D>();
                 root.AddComponent<YLFramework.RedDots.Reddot>();
                 var emitter = root.AddComponent<YLFramework.Audio.AudioEmitter>();
                 using (var serialized = new SerializedObject(emitter))
@@ -153,15 +124,15 @@ namespace YLFramework.Tests.Extensions.Behavior
                     serialized.FindProperty("weightedClips").arraySize = 1;
                     serialized.ApplyModifiedPropertiesWithoutUndo();
                 }
-                var basePath = _folder + "/LegacyVariantBase.prefab";
+                var basePath = _folder + "/CurrentVariantBase.prefab";
                 var basePrefab = PrefabUtility.SaveAsPrefabAsset(root, basePath);
+                var baseBytes = File.ReadAllBytes(basePath);
                 var instance = (GameObject)PrefabUtility.InstantiatePrefab(basePrefab, scene);
                 var paths = new[]
                 {
-                    (Type: typeof(CharacterController2D), Old: "MaxJumpCount", Current: "maxJumpCount", Value: "4"),
-                    (Type: typeof(OverlapArea2D), Old: "_mode", Current: "mode", Value: "1"),
-                    (Type: typeof(YLFramework.RedDots.Reddot), Old: "_path", Current: "path", Value: "Legacy/Variant"),
-                    (Type: typeof(YLFramework.Audio.AudioEmitter), Old: "weightedClips.Array.data[0].Weight", Current: "weightedClips.Array.data[0].weight", Value: "3.5")
+                    (Type: typeof(CharacterController2D), Current: "maxJumpCount", Value: "4"),
+                    (Type: typeof(CharacterController2D), Current: "maxFallingVelocity", Value: "23.5"),
+                    (Type: typeof(YLFramework.RedDots.Reddot), Current: "path", Value: "Current/Variant")
                 };
                 PrefabUtility.SetPropertyModifications(instance, paths.Select(binding => new PropertyModification
                 {
@@ -169,47 +140,42 @@ namespace YLFramework.Tests.Extensions.Behavior
                     propertyPath = binding.Current,
                     value = binding.Value
                 }).ToArray());
-                var path = _folder + "/LegacyVariant.prefab";
+                using (var data = new SerializedObject(instance.GetComponent<YLFramework.Audio.AudioEmitter>()))
+                {
+                    data.FindProperty("weightedClips.Array.data[0].weight").floatValue = 3.5f;
+                    data.ApplyModifiedPropertiesWithoutUndo();
+                }
+                Undo.IncrementCurrentGroup();
+                using (var data = new SerializedObject(instance.GetComponent<CharacterController2D>()))
+                {
+                    data.FindProperty("maxJumpCount").intValue = 5;
+                    data.ApplyModifiedProperties();
+                }
+                Undo.FlushUndoRecordObjects();
+                Undo.PerformUndo();
+                Assert.That(instance.GetComponent<CharacterController2D>().maxJumpCount, Is.EqualTo(4));
+                if (redo)
+                    Undo.PerformRedo();
+                var path = _folder + "/CurrentVariant.prefab";
                 PrefabUtility.SaveAsPrefabAsset(instance, path);
                 var meta = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"));
-                var yaml = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path));
-                foreach (var binding in paths)
-                {
-                    Assert.That(yaml, Does.Contain("propertyPath: " + binding.Current));
-                    yaml = yaml.Replace("propertyPath: " + binding.Current + "\n", "propertyPath: " + binding.Old + "\n");
-                }
-                File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), yaml, new UTF8Encoding(false));
+                var bytes = File.ReadAllBytes(path);
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                UnityEngine.Object.DestroyImmediate(instance);
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-                var helper = typeof(YLFramework.Editor.Core.UIPanelAssetMigration).Assembly.GetType("YLFramework.Editor.Foundation.SerializedFieldMigration");
-                Assert.That(helper, Is.Not.Null, "FSA does not itself canonicalize Prefab override property paths.");
-                var migrate = helper.GetMethod("MigratePrefabOverrides", new[] { typeof(GameObject) });
                 var contents = PrefabUtility.LoadPrefabContents(path);
                 try
                 {
-                    var original = PrefabUtility.GetPropertyModifications(contents);
-                    if (injectConflict)
-                    {
-                        var old = original.Single(modification => modification.propertyPath == "MaxJumpCount");
-                        var conflicting = original.Concat(new[] { new PropertyModification { target = old.target, propertyPath = "maxJumpCount", value = "5" } }).ToArray();
-                        PrefabUtility.SetPropertyModifications(contents, conflicting);
-                        var before = PrefabUtility.GetPropertyModifications(contents)
-                            .Select(value => (value.target, value.propertyPath, value.value, value.objectReference)).ToArray();
-                        var failure = Assert.Throws<System.Reflection.TargetInvocationException>(() => migrate.Invoke(null, new object[] { contents }));
-                        Assert.That(failure.InnerException, Is.TypeOf<InvalidOperationException>());
-                        CollectionAssert.AreEqual(before, PrefabUtility.GetPropertyModifications(contents)
-                            .Select(value => (value.target, value.propertyPath, value.value, value.objectReference)));
-                        PrefabUtility.SetPropertyModifications(contents, original);
-                    }
-                    Assert.That(migrate.Invoke(null, new object[] { contents }), Is.True);
                     foreach (var binding in paths)
                     {
                         using var serialized = new SerializedObject(contents.GetComponent(binding.Type));
                         Assert.That(serialized.FindProperty(binding.Current).prefabOverride, Is.True, binding.Current);
                         Assert.That(PrefabUtility.GetPropertyModifications(contents).Single(modification => modification.propertyPath == binding.Current).value,
-                            Is.EqualTo(binding.Value), binding.Current);
+                            Is.EqualTo(redo && binding.Current == "maxJumpCount" ? "5" : binding.Value), binding.Current);
                     }
-                    Assert.That(migrate.Invoke(null, new object[] { contents }), Is.False);
-                    PrefabUtility.SaveAsPrefabAsset(contents, path);
+                    using var audio = new SerializedObject(contents.GetComponent<YLFramework.Audio.AudioEmitter>());
+                    Assert.That(audio.FindProperty("weightedClips.Array.data[0].weight").prefabOverride, Is.True);
+                    Assert.That(audio.FindProperty("weightedClips.Array.data[0].weight").floatValue, Is.EqualTo(3.5f));
                 }
                 finally
                 {
@@ -218,8 +184,13 @@ namespace YLFramework.Tests.Extensions.Behavior
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
                 var restored = AssetDatabase.LoadAssetAtPath<GameObject>(path);
                 Assert.That(PrefabUtility.GetCorrespondingObjectFromSource(restored), Is.SameAs(basePrefab));
-                Assert.That(restored.GetComponent<CharacterController2D>().maxJumpCount, Is.EqualTo(4));
-                Assert.That(PrefabUtility.GetPropertyModifications(restored).Select(value => value.propertyPath), Does.Not.Contain("weightedClips.Array.data[0].Weight"));
+                Assert.That(restored.GetComponent<CharacterController2D>().maxJumpCount, Is.EqualTo(redo ? 5 : 4));
+                Assert.That(restored.GetComponent<CharacterController2D>().maxFallingVelocity, Is.EqualTo(23.5f));
+                using (var data = new SerializedObject(restored.GetComponent<YLFramework.Audio.AudioEmitter>()))
+                    Assert.That(data.FindProperty("weightedClips.Array.data[0].weight").floatValue, Is.EqualTo(3.5f));
+                Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+                CollectionAssert.AreEqual(baseBytes, File.ReadAllBytes(basePath));
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
                 CollectionAssert.AreEqual(meta, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")));
             }
             finally
@@ -228,34 +199,48 @@ namespace YLFramework.Tests.Extensions.Behavior
             }
         }
 
-        [TestCase(false, false)]
-        [TestCase(false, true)]
-        [TestCase(true, false)]
-        [TestCase(true, true)]
-        public void LegacyVariantArrayOverridesKeepSizeAndVariantOnlyValues(bool migrateSize, bool injectConflict)
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CurrentVariantArrayOverridesKeepSizeValuesAndReferences(bool transforms)
         {
             var scene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
-            var root = new GameObject("LegacyVariantArrays");
+            var root = new GameObject("CurrentVariantArrays");
             root.SetActive(false);
             UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(root, scene);
             try
             {
-                root.AddComponent<BoxCollider2D>();
-                root.AddComponent<OverlapArea2D>();
+                var target = new GameObject("AreaNode");
+                target.transform.SetParent(root.transform, false);
+                target.transform.localPosition = new Vector3(2, 3);
+                var source = root.AddComponent<OverlapDetector2D>();
+                if (transforms)
+                    source.SetAreaTransforms(Array.Empty<Transform>());
+                else
+                    source.SetAreaPositions(Array.Empty<Vector3>());
                 root.AddComponent<YLFramework.Audio.AudioEmitter>();
-                var basePath = _folder + "/LegacyArrayBase.prefab";
+                var basePath = _folder + "/CurrentArrayBase.prefab";
                 var basePrefab = PrefabUtility.SaveAsPrefabAsset(root, basePath);
+                var baseBytes = File.ReadAllBytes(basePath);
                 var instance = (GameObject)PrefabUtility.InstantiatePrefab(basePrefab, scene);
-                var area = instance.GetComponent<OverlapArea2D>();
+                var area = instance.GetComponent<OverlapDetector2D>();
                 var emitter = instance.GetComponent<YLFramework.Audio.AudioEmitter>();
+                string input = transforms ? "areaTransforms" : "areaPositions";
                 using (var serialized = new SerializedObject(area))
                 {
-                    var results = serialized.FindProperty("results");
-                    Assert.That(results.arraySize, Is.Zero);
-                    results.arraySize = 1;
-                    results.GetArrayElementAtIndex(0).FindPropertyRelative("collider").objectReferenceValue =
-                        instance.GetComponent<BoxCollider2D>();
-                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                    var nodes = serialized.FindProperty(input);
+                    Assert.That(nodes.arraySize, Is.Zero);
+                    nodes.arraySize = 2;
+                    if (transforms)
+                    {
+                        nodes.GetArrayElementAtIndex(0).objectReferenceValue = instance.transform;
+                        nodes.GetArrayElementAtIndex(1).objectReferenceValue = instance.transform.Find("AreaNode");
+                    }
+                    else
+                    {
+                        nodes.GetArrayElementAtIndex(0).vector3Value = Vector3.zero;
+                        nodes.GetArrayElementAtIndex(1).vector3Value = new Vector3(2, 3, 4);
+                    }
+                    serialized.ApplyModifiedProperties();
                 }
                 using (var serialized = new SerializedObject(emitter))
                 {
@@ -265,78 +250,52 @@ namespace YLFramework.Tests.Extensions.Behavior
                     clips.GetArrayElementAtIndex(0).FindPropertyRelative("weight").floatValue = 3.5f;
                     serialized.ApplyModifiedPropertiesWithoutUndo();
                 }
-                var path = _folder + "/LegacyArrayVariant.prefab";
-                var saved = PrefabUtility.SaveAsPrefabAsset(instance, path);
-                Assert.That(saved.GetComponent<OverlapArea2D>().results.Count, Is.EqualTo(1));
-                using (var serialized = new SerializedObject(basePrefab.GetComponent<YLFramework.Audio.AudioEmitter>()))
+                Undo.IncrementCurrentGroup();
+                using (var data = new SerializedObject(emitter))
                 {
-                    Assert.That(serialized.FindProperty("weightedClips").arraySize, Is.Zero);
+                    data.FindProperty("weightedClips.Array.data[0].weight").floatValue = 4.5f;
+                    data.ApplyModifiedProperties();
                 }
-                var currentPath = migrateSize ? "results.Array.size" : "weightedClips.Array.data[0].weight";
-                var oldPath = migrateSize ? "Results.Array.size" : "weightedClips.Array.data[0].Weight";
-                var meta = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"));
-                var yaml = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path));
-                var identity = Regex.Matches(yaml, @"(?m)^--- !u!\d+ &\d+.*$")
-                    .Cast<Match>().Select(match => match.Value).ToArray();
-                Assert.That(yaml, Does.Contain("propertyPath: " + currentPath + "\n"));
-                File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), yaml.Replace("propertyPath: " + currentPath + "\n",
-                    "propertyPath: " + oldPath + "\n"), new UTF8Encoding(false));
+                Undo.FlushUndoRecordObjects();
+                Undo.PerformUndo();
+                using (var data = new SerializedObject(emitter))
+                    Assert.That(data.FindProperty("weightedClips.Array.data[0].weight").floatValue, Is.EqualTo(3.5f));
+                string path = _folder + "/CurrentArrayVariant.prefab";
+                Assert.That(PrefabUtility.SaveAsPrefabAsset(instance, path), Is.Not.Null);
+                var bytes = File.ReadAllBytes(path);
+                var meta = File.ReadAllBytes(path + ".meta");
+                UnityEngine.Object.DestroyImmediate(instance);
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
                 var contents = PrefabUtility.LoadPrefabContents(path);
                 try
                 {
-                    var original = PrefabUtility.GetPropertyModifications(contents);
-                    var legacy = original.Single(modification => modification.propertyPath == oldPath);
-                    if (injectConflict)
+                    Assert.That(PrefabUtility.GetCorrespondingObjectFromSource(contents), Is.SameAs(basePrefab));
+                    using var nodes = new SerializedObject(contents.GetComponent<OverlapDetector2D>());
+                    Assert.That(nodes.FindProperty(input).arraySize, Is.EqualTo(2));
+                    Assert.That(nodes.FindProperty(input + ".Array.size").prefabOverride, Is.True);
+                    if (transforms)
                     {
-                        PrefabUtility.SetPropertyModifications(contents, original.Concat(new[]
-                        {
-                            new PropertyModification
-                            {
-                                target = legacy.target,
-                                propertyPath = currentPath,
-                                value = migrateSize ? "2" : "4.5"
-                            }
-                        }).ToArray());
-                        var before = PrefabUtility.GetPropertyModifications(contents)
-                            .Select(value => (value.target, value.propertyPath, value.value, value.objectReference)).ToArray();
-                        Assert.Throws<InvalidOperationException>(() =>
-                            YLFramework.Editor.Foundation.SerializedFieldMigration.MigratePrefabOverrides(contents));
-                        CollectionAssert.AreEqual(before, PrefabUtility.GetPropertyModifications(contents)
-                            .Select(value => (value.target, value.propertyPath, value.value, value.objectReference)));
-                        PrefabUtility.SetPropertyModifications(contents, original);
+                        Assert.That(nodes.FindProperty(input).GetArrayElementAtIndex(0).objectReferenceValue, Is.SameAs(contents.transform));
+                        Assert.That(nodes.FindProperty(input).GetArrayElementAtIndex(1).objectReferenceValue, Is.SameAs(contents.transform.Find("AreaNode")));
                     }
-                    Assert.That(YLFramework.Editor.Foundation.SerializedFieldMigration.MigratePrefabOverrides(contents), Is.True);
-                    var migrated = PrefabUtility.GetPropertyModifications(contents);
-                    var canonical = migrated.Single(modification => modification.propertyPath == currentPath);
-                    Assert.That(canonical.target, Is.SameAs(legacy.target));
-                    Assert.That(canonical.value, Is.EqualTo(legacy.value));
-                    Assert.That(canonical.objectReference, Is.SameAs(legacy.objectReference));
-                    CollectionAssert.AreEquivalent(original.Where(value => value.propertyPath != oldPath)
-                            .Select(value => (value.target, value.propertyPath, value.value, value.objectReference)),
-                        migrated.Where(value => value.propertyPath != currentPath)
-                            .Select(value => (value.target, value.propertyPath, value.value, value.objectReference)));
-                    Assert.That(YLFramework.Editor.Foundation.SerializedFieldMigration.MigratePrefabOverrides(contents), Is.False);
-                    PrefabUtility.SaveAsPrefabAsset(contents, path);
+                    else
+                        Assert.That(nodes.FindProperty(input).GetArrayElementAtIndex(1).vector3Value, Is.EqualTo(new Vector3(2, 3, 4)));
+                    using var audio = new SerializedObject(contents.GetComponent<YLFramework.Audio.AudioEmitter>());
+                    Assert.That(audio.FindProperty("weightedClips").arraySize, Is.EqualTo(1));
+                    Assert.That(audio.FindProperty("weightedClips.Array.data[0].weight").floatValue, Is.EqualTo(3.5f));
+                    Assert.That(audio.FindProperty("weightedClips.Array.data[0].weight").prefabOverride, Is.True);
                 }
                 finally
                 {
                     PrefabUtility.UnloadPrefabContents(contents);
                 }
-                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-                var restored = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-                Assert.That(PrefabUtility.GetCorrespondingObjectFromSource(restored), Is.SameAs(basePrefab));
-                Assert.That(restored.GetComponent<OverlapArea2D>().results.Count, Is.EqualTo(1));
-                Assert.That(restored.GetComponent<OverlapArea2D>().results[0].collider,
-                    Is.SameAs(restored.GetComponent<BoxCollider2D>()));
-                using (var serialized = new SerializedObject(restored.GetComponent<YLFramework.Audio.AudioEmitter>()))
+                using (var serialized = new SerializedObject(basePrefab.GetComponent<YLFramework.Audio.AudioEmitter>()))
                 {
-                    Assert.That(serialized.FindProperty("weightedClips").arraySize, Is.EqualTo(1));
-                    Assert.That(serialized.FindProperty("weightedClips.Array.data[0].weight").floatValue, Is.EqualTo(3.5f));
+                    Assert.That(serialized.FindProperty("weightedClips").arraySize, Is.Zero);
                 }
-                CollectionAssert.AreEqual(meta, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")));
-                CollectionAssert.AreEqual(identity, Regex.Matches(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path)), @"(?m)^--- !u!\d+ &\d+.*$")
-                    .Cast<Match>().Select(match => match.Value).ToArray());
+                CollectionAssert.AreEqual(baseBytes, File.ReadAllBytes(basePath));
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+                CollectionAssert.AreEqual(meta, File.ReadAllBytes(path + ".meta"));
             }
             finally
             {
@@ -346,27 +305,10 @@ namespace YLFramework.Tests.Extensions.Behavior
 
         [TestCase(false)]
         [TestCase(true)]
-        public void LegacyComponentYamlKeepsAuthoringValuesResultsAndObjectLinks(bool enabled)
+        public void CurrentComponentsKeepExplicitValuesAreaNodesAndObjectLinks(bool enabled)
         {
-            var bindings = new[]
-            {
-                (Type: typeof(CharacterController2D), Old: "MaxFallingVelocity", Current: "maxFallingVelocity"),
-                (Type: typeof(CharacterController2D), Old: "MaxJumpCount", Current: "maxJumpCount"),
-                (Type: typeof(OverlapBase<Collider2D, OverlapEvent2D>), Old: "Results", Current: "results"),
-                (Type: typeof(OverlapArea2D), Old: "_mode", Current: "mode"),
-                (Type: typeof(YLFramework.RedDots.Reddot), Old: "_path", Current: "path"),
-                (Type: typeof(YLFramework.RedDots.Reddot), Old: "_indicator", Current: "indicator"),
-                (Type: typeof(YLFramework.Actions.ScreenTransitionCanvas), Old: "ColorImage", Current: "colorImage")
-            };
-            foreach (var binding in bindings)
-            {
-                var field = binding.Type.GetField(binding.Current, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
-                Assert.That(field, Is.Not.Null, binding.Type.Name + "." + binding.Current);
-                Assert.That(field.GetCustomAttributes(typeof(UnityEngine.Serialization.FormerlySerializedAsAttribute), false)
-                    .Cast<UnityEngine.Serialization.FormerlySerializedAsAttribute>().Any(alias => alias.oldName == binding.Old), Is.True, binding.Old);
-            }
             var scene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
-            var root = new GameObject("LegacyComponentNames");
+            var root = new GameObject("CurrentComponents");
             root.SetActive(false);
             UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(root, scene);
             try
@@ -374,41 +316,41 @@ namespace YLFramework.Tests.Extensions.Behavior
                 var character = root.AddComponent<CharacterController2D>();
                 character.maxFallingVelocity = 23.5f;
                 character.maxJumpCount = 4;
-                var collider = root.AddComponent<BoxCollider2D>();
-                var area = root.AddComponent<OverlapArea2D>();
-                area.Mode = OverlapAreaMode.Transform;
+                root.AddComponent<BoxCollider2D>();
+                var node = new GameObject("AreaNode").transform;
+                node.SetParent(root.transform, false);
+                node.localPosition = new Vector3(2, 3, 4);
+                var area = root.AddComponent<OverlapDetector2D>();
+                area.SetAreaTransforms(new[] { root.transform, node, null });
                 using (var serialized = new SerializedObject(area))
                 {
-                    serialized.FindProperty("runOnAwake").boolValue = enabled;
+                    serialized.FindProperty("runOnEnable").boolValue = enabled;
                     serialized.ApplyModifiedPropertiesWithoutUndo();
                 }
-                area.Transforms.Add(root.transform);
-                area.results.Add(new OverlapHit<Collider2D> { collider = collider, point = new Vector2(2, 3) });
                 var child = new GameObject("Indicator", typeof(RectTransform), typeof(UnityEngine.UI.Image));
                 child.transform.SetParent(root.transform, false);
                 var reddot = root.AddComponent<YLFramework.RedDots.Reddot>();
                 reddot.Path = "Legacy/Indicator";
                 reddot.Indicator = child;
                 root.AddComponent<YLFramework.Actions.ScreenTransitionCanvas>().colorImage = child.GetComponent<UnityEngine.UI.Image>();
-                var path = _folder + "/LegacyComponents.prefab";
+                var path = _folder + "/CurrentComponents.prefab";
                 var prefab = PrefabUtility.SaveAsPrefabAsset(root, path);
-                var componentTypes = new[] { typeof(CharacterController2D), typeof(OverlapArea2D), typeof(YLFramework.RedDots.Reddot), typeof(YLFramework.Actions.ScreenTransitionCanvas) };
+                var componentTypes = new[] { typeof(CharacterController2D), typeof(OverlapDetector2D), typeof(YLFramework.RedDots.Reddot), typeof(YLFramework.Actions.ScreenTransitionCanvas) };
                 string Snapshot(GameObject value) => string.Join("\n", componentTypes.Select(type => EditorJsonUtility.ToJson(value.GetComponent(type))));
                 var snapshot = Snapshot(prefab);
                 var meta = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"));
-                var yaml = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path));
-                foreach (var binding in bindings)
-                {
-                    yaml = Regex.Replace(yaml, @"(?m)^(\s*)" + binding.Current + ":", "$1" + binding.Old + ":");
-                }
-
-                File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), yaml, new UTF8Encoding(false));
+                var bytes = File.ReadAllBytes(path);
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
                 var restored = AssetDatabase.LoadAssetAtPath<GameObject>(path);
                 Assert.That(Snapshot(restored), Is.EqualTo(snapshot));
-                PrefabUtility.SavePrefabAsset(restored);
-                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
-                Assert.That(Snapshot(AssetDatabase.LoadAssetAtPath<GameObject>(path)), Is.EqualTo(snapshot));
+                using (var data = new SerializedObject(restored.GetComponent<OverlapDetector2D>()))
+                {
+                    Assert.That(data.FindProperty("runOnEnable").boolValue, Is.EqualTo(enabled));
+                    Assert.That(data.FindProperty("areaTransforms").GetArrayElementAtIndex(0).objectReferenceValue, Is.SameAs(restored.transform));
+                    Assert.That(data.FindProperty("areaTransforms").GetArrayElementAtIndex(1).objectReferenceValue, Is.SameAs(restored.transform.Find("AreaNode")));
+                    Assert.That(data.FindProperty("areaTransforms").GetArrayElementAtIndex(2).objectReferenceValue, Is.Null);
+                }
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
                 CollectionAssert.AreEqual(meta, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")));
             }
             finally
@@ -417,71 +359,9 @@ namespace YLFramework.Tests.Extensions.Behavior
             }
         }
 
-        [Test]
-        public void FrozenOverlapComponentsColdLoadWithOriginalGuidsFieldsAndEventsWithoutSaving()
-        {
-            const string Path = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblySplitV1/Content/Behavior/Components.prefab";
-            var source = File.ReadAllBytes(Path);
-            var metadata = File.ReadAllBytes(Path + ".meta");
-            using var hash = System.Security.Cryptography.SHA256.Create();
-            Assert.That(string.Concat(hash.ComputeHash(source).Select(value => value.ToString("x2"))),
-                Is.EqualTo("09f38cd34aa55364493ba389d7e8b55dd06d881e7614e9a2ecf4a29cd6c3e47e"));
-            Assert.That(AssetDatabase.AssetPathToGUID(Path), Is.EqualTo("73dab49f422e8304e846b6bf7838e329"));
-            var contents = PrefabUtility.LoadPrefabContents(Path);
-            try
-            {
-                Assert.That(contents.activeSelf, Is.False);
-                foreach (var child in contents.GetComponentsInChildren<Transform>(true))
-                {
-                    Assert.That(GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(child.gameObject), Is.Zero, child.name);
-                }
-                Assert.That(contents.GetComponentsInChildren<MonoBehaviour>(true), Has.Length.EqualTo(6));
-                var area = contents.GetComponent<OverlapArea2D>();
-                var circle = contents.GetComponent<OverlapCircle2D>();
-                Assert.That(area, Is.Not.Null);
-                Assert.That(circle, Is.Not.Null);
-                Assert.That(area.GetType().Assembly.GetName().Name, Is.EqualTo("YLFramework.Overlap"));
-                Assert.That(circle.GetType().Assembly, Is.SameAs(area.GetType().Assembly));
-                Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(area))),
-                    Is.EqualTo("3cb3192915845724e936d6ba3e5d692f"));
-                Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(circle))),
-                    Is.EqualTo("c08500f745b47234a8b6ef0ff49d0dce"));
-                var target = contents.transform.Find("Target2D");
-                Assert.That(target, Is.Not.Null);
-                Assert.That(area.Mode, Is.EqualTo(OverlapAreaMode.Transform));
-                Assert.That(area.LayerMask.value, Is.EqualTo(55));
-                Assert.That(area.Positions, Is.Empty);
-                Assert.That(area.Transforms, Is.EqualTo(new[] { target }));
-                Assert.That(area.results, Has.Count.EqualTo(1));
-                Assert.That(area.results[0].collider, Is.SameAs(target.GetComponent<BoxCollider2D>()));
-                Assert.That(area.results[0].point, Is.EqualTo(new Vector2(2, 3)));
-                Assert.That(circle.LayerMask.value, Is.EqualTo(1));
-                Assert.That(circle.Radius, Is.EqualTo(2f));
-                Assert.That(circle.results, Is.Empty);
-                foreach (var query in new OverlapBase2D[] { area, circle })
-                {
-                    Assert.That(query.DetectionNumber, Is.EqualTo(10f));
-                    Assert.That(query.UpdateMode, Is.EqualTo(OverlapUpdateMode.Normal));
-                    using var serialized = new SerializedObject(query);
-                    Assert.That(serialized.FindProperty("runOnAwake").boolValue, Is.True);
-                    Assert.That(query.onColliderEnter, Is.Not.Null);
-                    Assert.That(query.onColliderExit, Is.Not.Null);
-                    // 冻结输入中的两个事件均为空，不能为本次回归重采或补造持久回调。
-                    Assert.That(query.onColliderEnter.GetPersistentEventCount(), Is.Zero);
-                    Assert.That(query.onColliderExit.GetPersistentEventCount(), Is.Zero);
-                }
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(contents);
-                CollectionAssert.AreEqual(source, File.ReadAllBytes(Path));
-                CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Path + ".meta"));
-            }
-        }
-
         [TestCase(false)]
         [TestCase(true)]
-        public void LegacyYlStateMachineYamlRetainsLayersScriptsGroupsAndAutomaticPolicy(bool automatic)
+        public void CurrentStateMachineRetainsLayersScriptsGroupsAndExplicitAutomaticPolicy(bool automatic)
         {
             var asset = CreateAsset();
             asset.layers.Add("Live");
@@ -508,20 +388,7 @@ namespace YLFramework.Tests.Extensions.Behavior
             AssetDatabase.SaveAssetIfDirty(asset);
             string path = AssetDatabase.GetAssetPath(asset);
             string guid = AssetDatabase.AssetPathToGUID(path);
-            string yaml = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path));
-            foreach (var name in new[]
-            {
-                ("Layers", "layers"), ("originGUID", "originGuid"), ("StateScripts", "stateScripts"),
-                ("group_conditions", "groupConditions"), ("AutoSwtich", "autoSwitch"),
-                ("defaultState", "isDefaultState"), ("isBuildInState", "isBuiltInState"),
-                ("buildInStateName", "builtInStateName")
-            })
-            {
-                yaml = Regex.Replace(yaml, @"(?m)^([ \t]*(?:-[ \t]+)?)" + name.Item2 + @":", "$1" + name.Item1 + ":");
-                Assert.That(Regex.IsMatch(yaml, @"(?m)^[ \t]*(?:-[ \t]+)?" + name.Item1 + @":"), Is.True, name.Item1);
-            }
-
-            File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), yaml, new UTF8Encoding(false));
+            var meta = File.ReadAllBytes(path + ".meta");
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
             var reloaded = AssetDatabase.LoadAssetAtPath<RuntimeFsmController>(path);
             var serialized = new SerializedObject(reloaded);
@@ -546,6 +413,7 @@ namespace YLFramework.Tests.Extensions.Behavior
             AssetDatabase.SaveAssetIfDirty(reloaded);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
             Assert.That(AssetDatabase.LoadAssetAtPath<RuntimeFsmController>(path).GetTransitionData("Idle", "Run").autoSwitch, Is.EqualTo(automatic));
+            CollectionAssert.AreEqual(meta, File.ReadAllBytes(path + ".meta"));
         }
 
         [Test]
@@ -567,9 +435,8 @@ namespace YLFramework.Tests.Extensions.Behavior
             }
             string path = _folder + "/NamedLayerHost.prefab";
             PrefabUtility.SaveAsPrefabAsset(obj, path);
-            string legacy = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path)).Replace("\n  runtimeFsmControllerLayers:", "\n  _runtimeFSMControllerLayer:");
-            StringAssert.Contains("\n  _runtimeFSMControllerLayer:", legacy);
-            File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), legacy, new UTF8Encoding(false));
+            var bytes = File.ReadAllBytes(path);
+            var meta = File.ReadAllBytes(path + ".meta");
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
             var loaded = PrefabUtility.LoadPrefabContents(path);
             try
@@ -587,6 +454,8 @@ namespace YLFramework.Tests.Extensions.Behavior
             {
                 PrefabUtility.UnloadPrefabContents(loaded);
             }
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+            CollectionAssert.AreEqual(meta, File.ReadAllBytes(path + ".meta"));
         }
 
         [Test]
@@ -1635,34 +1504,65 @@ namespace YLFramework.Tests.Extensions.Behavior
         }
 
         [Test]
-        public void MainPlayModeSaveFencePreservesUnrelatedDirtyAsset()
+        public void CurrentFixtureProducerPreservesUnrelatedDirtyAsset()
         {
-            var fence = Type.GetType("YLFramework.Behavior.Acceptance.BehaviorMainSaveFence, YLFramework.Behavior.Acceptance.Editor", false);
-            Assert.That(fence, Is.Not.Null, "UTF PlayMode bootstrap must not save unrelated dirty assets.");
-            var main = Type.GetType("YLFramework.Behavior.Acceptance.BehaviorMainAcceptance, YLFramework.Behavior.Acceptance.Editor", true);
-            string key = (string)main.GetField("TestSaveGuardKey", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic).GetRawConstantValue();
             string path = _folder + "/Unrelated.mat";
             var material = new Material(Shader.Find("Hidden/InternalErrorShader"));
             AssetDatabase.CreateAsset(material, path);
             AssetDatabase.SaveAssetIfDirty(material);
             byte[] before = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path));
-            bool old = SessionState.GetBool(key, false);
-            bool oldBuildGuard = SessionState.GetBool(AcceptanceKey + ".ProtectBuildSaves", false);
-            SessionState.SetBool(key, true);
-            SessionState.SetBool(AcceptanceKey + ".ProtectBuildSaves", false);
+            material.name = "UnsavedUserValue";
+            EditorUtility.SetDirty(material);
+            var builder = Type.GetType("YLFramework.Behavior.Acceptance.BehaviorAcceptanceBuilder, YLFramework.Behavior.Acceptance.Editor", true);
+            builder.GetMethod("CreateEventsPrefab", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic).Invoke(null, new object[] { _folder });
+            Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Is.EqualTo(before), "The current producer must save only its own outputs.");
+            Assert.That(material.name, Is.EqualTo("UnsavedUserValue"));
+            Assert.That(EditorUtility.IsDirty(material), Is.True);
+        }
+
+        [Test]
+        [Category("YL.Special.BehaviorPlayer")]
+        public void CurrentAuthoredBehaviorExecutesPersistentContactsInTwoActualMonoPlayers()
+        {
+            string output = global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput();
+            var builder = Type.GetType("YLFramework.Behavior.Acceptance.BehaviorAcceptanceBuilder, YLFramework.Behavior.Acceptance.Editor", true);
+            string generated = null;
+            string scratch = "Assets/__YLBehaviorPlayer_" + Guid.NewGuid().ToString("N");
+            Assert.That(Directory.Exists(scratch), Is.False);
+            Assert.That(AssetDatabase.CreateFolder("Assets", scratch.Substring(7)), Is.Not.Empty);
             try
             {
-                material.name = "UnsavedUserValue";
-                EditorUtility.SetDirty(material);
-                AssetDatabase.SaveAssets();
-                Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Is.EqualTo(before), "The UTF/global save must not write the unrelated material.");
-                Assert.That(material.name, Is.EqualTo("UnsavedUserValue"));
-                Assert.That(EditorUtility.IsDirty(material), Is.True);
+                Assert.That(Application.isBatchMode, Is.True);
+                UnityEditor.SceneManagement.EditorSceneManager.OpenScene("Assets/YLTestingProfile/Empty.unity", UnityEditor.SceneManagement.OpenSceneMode.Single);
+                string scenePath = (string)builder.GetMethod("Generate").Invoke(null,
+                    new object[] { true, new Action<string>(path => generated = path) });
+                string prefab = generated + "/BehaviorEvents.prefab";
+                var bytes = File.ReadAllBytes(prefab);
+                var meta = File.ReadAllBytes(prefab + ".meta");
+                Assert.That(AssetDatabase.AssetPathToGUID(prefab), Is.Not.Empty.And.Not.EqualTo("73dab49f422e8304e846b6bf7838e329"));
+                File.Copy(prefab, Path.Combine(output, "Behavior-current.prefab"), false);
+                File.Copy(prefab + ".meta", Path.Combine(output, "Behavior-current.prefab.meta"), false);
+                global::YLFramework.Testing.EditorFixtures.StandaloneFixturePlayer.BuildAndRun(output, scratch, "YLFramework.Overlap", null, target =>
+                {
+                    var authored = UnityEditor.SceneManagement.EditorSceneManager.OpenScene(scenePath, UnityEditor.SceneManagement.OpenSceneMode.Additive);
+                    try
+                    {
+                        foreach (var root in authored.GetRootGameObjects())
+                            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(root, target);
+                    }
+                    finally { UnityEditor.SceneManagement.EditorSceneManager.CloseScene(authored, true); }
+                }, new[] { "YL_BEHAVIOR_ACCEPTANCE" });
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(prefab));
+                CollectionAssert.AreEqual(meta, File.ReadAllBytes(prefab + ".meta"));
             }
             finally
             {
-                SessionState.SetBool(key, old);
-                SessionState.SetBool(AcceptanceKey + ".ProtectBuildSaves", oldBuildGuard);
+                Assert.That(AssetDatabase.DeleteAsset(scratch), Is.True);
+                if (generated != null)
+                {
+                    Assert.That(generated.StartsWith(Root + "/GeneratedAcceptance_", StringComparison.Ordinal), Is.True);
+                    Assert.That(AssetDatabase.DeleteAsset(generated), Is.True);
+                }
             }
         }
 
@@ -1685,13 +1585,16 @@ namespace YLFramework.Tests.Extensions.Behavior
                 var receiver = loaded.GetComponentInChildren(receiverType, true);
                 Assert.That(receiver, Is.Not.Null);
                 var motor = loaded.GetComponentInChildren<CharacterController2D>(true);
-                var overlap = loaded.GetComponentInChildren<OverlapCircle2D>(true);
-                var sphere = loaded.GetComponentInChildren<OverlapSphere3D>(true);
+                var overlap = loaded.GetComponentInChildren<OverlapDetector2D>(true);
+                var sphere = loaded.GetComponentInChildren<OverlapDetector3D>(true);
+                Assert.That(overlap && sphere, Is.True, "The current producer must use Detector/Contact, not retired Overlap components.");
                 var platform = loaded.GetComponentInChildren<Moveable>(true);
                 var events = new UnityEventBase[] { motor.onGroundValueChange, motor.onTouchWallValueChange, motor.onTopValueChange,
                     motor.onJumpCountValueChange, motor.onVelocityValueChange, platform.onMove,
-                    overlap.onColliderEnter, overlap.onColliderExit, sphere.onColliderEnter, sphere.onColliderExit };
-                string[] methods = { "ReceiveBool", "ReceiveWall", "ReceiveTop", "ReceiveInt", "ReceiveVector2", "ReceiveVector3", "ReceiveHit", "ReceiveHit", "ReceiveHit3D", "ReceiveHit3D" };
+                    overlap.EnteredEvent, overlap.StayedEvent, overlap.ExitedEvent,
+                    sphere.EnteredEvent, sphere.StayedEvent, sphere.ExitedEvent };
+                string[] methods = { "ReceiveBool", "ReceiveWall", "ReceiveTop", "ReceiveInt", "ReceiveVector2", "ReceiveVector3",
+                    "ReceiveHit", "ReceiveStay", "ReceiveExit", "ReceiveHit3D", "ReceiveStay3D", "ReceiveExit3D" };
                 for (int i = 0; i < events.Length; i++)
                 {
                     Assert.That(events[i].GetPersistentEventCount(), Is.EqualTo(1), methods[i]);
@@ -1718,16 +1621,15 @@ namespace YLFramework.Tests.Extensions.Behavior
             obj.SetActive(false);
             _owned.Add(obj);
             var receiver = obj.AddComponent(receiverType);
-            var overlap = obj.AddComponent<OverlapCircle2D>();
-            overlap.onColliderEnter = new OverlapEvent2D();
-            overlap.onColliderExit = new OverlapEvent2D();
-            var hit = (UnityAction<OverlapHit<Collider2D>>)Delegate.CreateDelegate(typeof(UnityAction<OverlapHit<Collider2D>>), receiver, "ReceiveHit");
-            UnityEventTools.AddPersistentListener(overlap.onColliderEnter, hit);
-            UnityEventTools.AddPersistentListener(overlap.onColliderExit, hit);
-            Assert.That(overlap.onColliderEnter.GetPersistentListenerState(0), Is.EqualTo(UnityEventCallState.RuntimeOnly));
+            var overlap = obj.AddComponent<OverlapDetector2D>();
+            UnityEventTools.AddPersistentListener(overlap.EnteredEvent,
+                (UnityAction<OverlapContact<Collider2D>>)Delegate.CreateDelegate(typeof(UnityAction<OverlapContact<Collider2D>>), receiver, "ReceiveHit"));
+            UnityEventTools.AddPersistentListener(overlap.ExitedEvent,
+                (UnityAction<OverlapContact<Collider2D>, OverlapExitReason>)Delegate.CreateDelegate(typeof(UnityAction<OverlapContact<Collider2D>, OverlapExitReason>), receiver, "ReceiveExit"));
+            Assert.That(overlap.EnteredEvent.GetPersistentListenerState(0), Is.EqualTo(UnityEventCallState.RuntimeOnly));
             // 本用例在EditMode实际Invoke；明确序列化为EditorAndRuntime，不把RuntimeOnly的未调用误判为丢失绑定。
-            overlap.onColliderEnter.SetPersistentListenerState(0, UnityEventCallState.EditorAndRuntime);
-            overlap.onColliderExit.SetPersistentListenerState(0, UnityEventCallState.EditorAndRuntime);
+            overlap.EnteredEvent.SetPersistentListenerState(0, UnityEventCallState.EditorAndRuntime);
+            overlap.ExitedEvent.SetPersistentListenerState(0, UnityEventCallState.EditorAndRuntime);
             obj.AddComponent<BoxCollider2D>();
             var motor = obj.AddComponent<CharacterController2D>();
             motor.onGroundValueChange = new YLFramework.Character2D.BoolUnityEvent();
@@ -1751,11 +1653,11 @@ namespace YLFramework.Tests.Extensions.Behavior
             try
             {
                 var loadedReceiver = loaded.GetComponent(receiverType);
-                var loadedOverlap = loaded.GetComponent<OverlapCircle2D>();
-                Assert.That(loadedOverlap.onColliderEnter.GetPersistentEventCount(), Is.EqualTo(1));
-                Assert.That(loadedOverlap.onColliderEnter.GetPersistentListenerState(0), Is.EqualTo(UnityEventCallState.EditorAndRuntime));
-                loadedOverlap.onColliderEnter.Invoke(default);
-                loadedOverlap.onColliderExit.Invoke(default);
+                var loadedOverlap = loaded.GetComponent<OverlapDetector2D>();
+                Assert.That(loadedOverlap.EnteredEvent.GetPersistentEventCount(), Is.EqualTo(1));
+                Assert.That(loadedOverlap.EnteredEvent.GetPersistentListenerState(0), Is.EqualTo(UnityEventCallState.EditorAndRuntime));
+                loadedOverlap.EnteredEvent.Invoke(default);
+                loadedOverlap.ExitedEvent.Invoke(default, OverlapExitReason.TargetDestroyed);
                 var loadedMotor = loaded.GetComponent<CharacterController2D>();
                 loadedMotor.onGroundValueChange.Invoke(true);
                 loadedMotor.onJumpCountValueChange.Invoke(2);
@@ -1763,6 +1665,7 @@ namespace YLFramework.Tests.Extensions.Behavior
                 loaded.GetComponent<Moveable>().onMove.Invoke(Vector3.one);
                 var serialized = new SerializedObject(loadedReceiver);
                 Assert.That(serialized.FindProperty("hitCount").intValue, Is.EqualTo(2));
+                Assert.That(serialized.FindProperty("exitReason").intValue, Is.EqualTo((int)OverlapExitReason.TargetDestroyed));
                 foreach (string name in new[] { "boolCount", "intCount", "vector2Count", "vector3Count" })
                 {
                     Assert.That(serialized.FindProperty(name).intValue, Is.EqualTo(1), name);

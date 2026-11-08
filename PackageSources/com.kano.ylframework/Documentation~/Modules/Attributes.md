@@ -68,13 +68,13 @@ Editor 内可从 `YLFramework/Core/帮助` 阅读规则和接入摘要；`YLFram
 |---|---|
 | <a id="yl0001"></a>YL0001 | `MustCallBase` 的有效 override 链要求当前方法直接调用同一 base 槽；修复为 `base.Start()`，不是同名 overload 或嵌套 callback 中的调用。仅证明存在，不证明所有控制流执行；抽象层级冲突需调整标记/覆写结构。 |
 | <a id="yl0002"></a>YL0002 | `RestrictedCall` 限定直接调用者；例如 `View.RegisterEvent` 在 `Awake` 方法本体调用，callback 参数声明合法，callback 内调用不借用外层身份。 |
-| <a id="yl0003"></a>YL0003 | `WarnInClasses` 对当前词法类型的本身/基类/接口匹配警告；View 中用 `RegisterEvent` 代替直接 `EventManager.AddEvent/RemoveEvent`。普通 nested helper 不自动继承外层调用类型。 |
+| <a id="yl0003"></a>YL0003 | `WarnInClasses` 对当前词法类型的本身/基类/接口匹配警告；供项目自有方法声明明确的调用边界。普通 nested helper 不自动继承外层调用类型，不为退役入口把标记搬到中立 Foundation。 |
 | <a id="yl0004"></a>YL0004 | `DisableNew` 检查外部普通/目标类型 new 及可确定类约束 new T；用 `LoadViewArgs.New()` 等正式工厂。标记类型自身及词法嵌套实现可构造自身，派生类/同程序集不是全免。 |
 | <a id="yl0005"></a>YL0005 | `MethodLocalOnly` 检查显式 field/property 持有；将参数保持在方法借用窗口，不保存回收后的 lease 引用。数组、tuple、真实容器与自有实例值槽都可构成存储。 |
 | <a id="yl0006"></a>YL0006 | `ProtectedHierarchy` 检查指定类型层级对受保护实例 field/property/indexer 的写入和可写 ref 暴露；例如 View 读取 Model 状态，修改通过 Model 的受管方法进行。 |
 | <a id="yl0007"></a>YL0007 | 真实 Core View 派生声明无参、非 static、非 generic 的 `void OnEnable/OnDisable/OnDestroy` 会竞争 private 框架消息；改用 `OnViewEnabled/OnViewDisabled/OnClosed`。不要求新 marker，不禁止 Awake/其他 Unity 消息。 |
 | <a id="yl0008"></a>YL0008 | 真实 `InjectAttribute`（包括派生特性）用于 static 成员、const/readonly 字段、无 setter 属性或 indexer；改用构造注入、显式 Resolve 或可写实例成员。允许 private setter，不猜容器扫描模式或注册完整性。 |
-| <a id="yl0009"></a>YL0009 | 真实 `Module.LoadView<T>` / `LoadViewAsync<T>` 的 T 确定为 Panel 或其派生/类约束时，改用 `LoadPanel` / `LoadPanelAsync`。覆盖现用及 Obsolete 泛型重载，不把 Transform parent 自动替换成 UIRootContext root。 |
+| <a id="yl0009"></a>YL0009 | 真实 `Module.LoadView<T>` / `LoadViewAsync<T>` 的 T 确定为 Panel 或其派生/类约束时，改用 `LoadPanel` / `LoadPanelAsync`。覆盖全部现用 LoadViewArgs 泛型入口，不把 Transform parent 自动替换成 UIRootContext root。 |
 | <a id="yl0010"></a>YL0010 | 非泛型 `IEnumerator` 协程直接 `yield return AudioPlayRequest` 不会按 Unity 协议等待请求；显式选择等待开始或结束。普通泛型数据枚举、object 擦除不追踪；自定义调度器可局部抑制。 |
 
 ### 错误与正确示例
@@ -84,10 +84,17 @@ Editor 内可从 `YLFramework/Core/帮助` 阅读规则和接入摘要；`YLFram
 protected override void Start() { /* 缺少 base */ } // Warning
 protected override void Start() { base.Start(); } // 正确
 
-// YL0002/3：以下方法位于 View 子类中。
+// YL0002：以下方法位于 View 子类中。
 void Wrong() { RegisterEvent("changed", OnChanged); } // YL0002
-void Wrong() { EventManager.AddEvent("changed", OnChanged); } // YL0003
 void Awake() { RegisterEvent("changed", OnChanged); } // 正确，框架管理轮次
+
+// YL0003：项目自有方法可声明调用方类型边界；不是额外框架 API。
+static class LocalApi
+{
+    [YLFramework.Core.RoslynAnalyzers.WarnInClasses(typeof(View), "Use owned subscriptions")]
+    public static void Observe() { }
+}
+class Presenter : View { void Wrong() { LocalApi.Observe(); } } // YL0003
 
 // YL0004/5：局部工厂借用可以，直接构造和成员保存不可以。
 var args = new LoadViewArgs(); // YL0004

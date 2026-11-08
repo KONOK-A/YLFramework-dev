@@ -114,11 +114,11 @@ namespace YLFramework.Tests.Extensions.Data
                 Assert.That(LocalizationManager.GetString(17), Is.EqualTo("round-" + round));
                 Assert.That(ScriptableObjectManager.GetConfig("domain-data").GetName(17), Is.EqualTo("round-" + round));
                 SaveManager.SetStorageRoot(Path.Combine(output, "save-round-" + round));
-                var model = SaveManager.CreateModel<Model>(3);
+                _store = SaveManager.Store;
+                var model = _store.CreateModel<Model>(3);
                 model.Value = round;
-                SaveManager.SaveModel(model);
-                Assert.That(SaveManager.LoadModel<Model>(3).Value, Is.EqualTo(round));
-                _store = (SaveStore)_storeField.GetValue(null);
+                _store.SaveModel(model);
+                Assert.That(_store.LoadModel<Model>(3).Value, Is.EqualTo(round));
                 yield return null;
                 yield return new ExitPlayMode();
                 bool saveClosed = false;
@@ -181,7 +181,6 @@ namespace YLFramework.Tests.Extensions.Data
             LocalizationManager.Shutdown();
             ScriptableObjectManager.Clear();
             SaveManager.Close();
-            _store?.Dispose();
             if (_resource != null && _resource.State == ResourceSystemState.Ready)
             {
                 using var shutdown = _resource.ShutdownAsync();

@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using UnityEngine.Serialization;
 
 namespace YLFramework.StateMachine
 {
@@ -36,10 +35,10 @@ namespace YLFramework.StateMachine
         public List<FsmConditionData> conditions = new List<FsmConditionData>();
 
         /// <summary>与基础组互为 OR 的附加条件组。</summary>
-        [FormerlySerializedAs("group_conditions")] public List<GroupCondition> groupConditions = new List<GroupCondition>();
+        public List<GroupCondition> groupConditions = new List<GroupCondition>();
 
         /// <summary>整条过渡没有任何条件时允许自动切换；有条件时不替代条件求值。</summary>
-        [FormerlySerializedAs("AutoSwtich")] public bool autoSwitch = false;
+        public bool autoSwitch = false;
 
         /// <summary>基础组及所有附加组均不含条件时为 true。</summary>
         public bool IsEmpty

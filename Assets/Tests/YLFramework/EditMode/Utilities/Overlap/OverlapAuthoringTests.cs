@@ -14,6 +14,117 @@ using Object = UnityEngine.Object;
 
 namespace YLFramework.Tests.Extensions.Behavior
 {
+    public sealed class OverlapPackageIdentityTests
+    {
+        [Test]
+        public void CurrentDetectorAndInspectorHaveIndependentRuntimeAndEditorOwners()
+        {
+            const string root = "Packages/com.kano.ylframework.overlap/";
+            Assert.That(typeof(OverlapDetector2D).Assembly.GetName().Name, Is.EqualTo("YLFramework.Overlap"));
+            Assert.That(typeof(OverlapDetector3D).Assembly, Is.SameAs(typeof(OverlapDetector2D).Assembly));
+            Assert.That(typeof(OverlapDetectorInspector).Assembly.GetName().Name, Is.EqualTo("YLFramework.Overlap.Editor"));
+            string runtimeGuid = AssetDatabase.AssetPathToGUID(root + "Runtime/Detection/OverlapDetector2D.cs");
+            Assert.That(runtimeGuid, Is.Not.Empty.And.Not.EqualTo("c08500f745b47234a8b6ef0ff49d0dce"));
+            Assert.That(AssetDatabase.AssetPathToGUID(root + "Editor/OverlapDetectorInspector.cs"), Is.Not.Empty);
+            string definition = UnityEditor.Compilation.CompilationPipeline.GetAssemblyDefinitionFilePathFromScriptPath(root + "Editor/OverlapDetectorInspector.cs");
+            Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(definition)), Does.Contain("YLFramework.Overlap.Editor"));
+            foreach (var dependency in typeof(OverlapDetector2D).Assembly.GetReferencedAssemblies())
+                Assert.That(dependency.Name, Does.Not.StartWith("UnityEditor"));
+        }
+    }
+
+    public sealed class OverlapAreaAuthoringTests
+    {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AreaPreviewAndColdAuthoringUseTheSelectedSourceWithoutSamplingOrRewriting(bool transforms)
+        {
+            string folder = "Assets/__YLAreaAuthoring_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", folder.Substring(7));
+            var root = new GameObject("OwnedAreaAuthor");
+            var selection = Selection.objects;
+            OverlapDetectorInspector inspector = null;
+            try
+            {
+                root.transform.position = new Vector3(10, 20, 5);
+                root.transform.rotation = Quaternion.Euler(0, 0, 90);
+                var detector = root.AddComponent<OverlapDetector2D>();
+                detector.Filter = new OverlapFilter2D(new ContactFilter2D { useLayerMask = true, layerMask = 1 << 11 });
+                // Inactive Composite geometry must not affect Area validation or preview.
+                using (var data = new SerializedObject(detector))
+                {
+                    data.FindProperty("composite.shapes").arraySize = 1;
+                    data.ApplyModifiedPropertiesWithoutUndo();
+                }
+                var from = new GameObject("From").transform;
+                from.SetParent(root.transform, false);
+                var to = new GameObject("To").transform;
+                to.SetParent(root.transform, false);
+                to.localPosition = new Vector3(2, 4);
+                if (transforms) detector.SetAreaTransforms(new[] { from, to, null, from });
+                else detector.SetAreaPositions(new[] { Vector3.zero, new Vector3(2, 4) });
+                var target = new GameObject("AreaTarget") { layer = 11 };
+                target.transform.SetParent(root.transform, false);
+                target.transform.position = new Vector3(8, 21, 17);
+                target.AddComponent<BoxCollider2D>().size = Vector2.one * 0.1f;
+                Physics2D.SyncTransforms();
+                Assert.That(OverlapDetectorInspector.ValidateConfiguration(detector), Is.Empty);
+                var shape = OverlapDetectorInspector.World2D(detector, 0);
+                Assert.That(Vector2.Distance(shape.Center, new Vector2(8, 21)), Is.LessThan(0.00001f));
+                Assert.That(Vector2.Distance(shape.Size, new Vector2(4, 2)), Is.LessThan(0.00001f));
+                string serialized = EditorJsonUtility.ToJson(detector);
+                inspector = (OverlapDetectorInspector)UnityEditor.Editor.CreateEditor(detector);
+                Selection.activeGameObject = root;
+                inspector.SamplePreview();
+                Assert.That((int)typeof(OverlapDetectorInspector).GetField("_acceptedCount", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(inspector), Is.EqualTo(1));
+                Assert.That(detector.BufferCapacity, Is.Zero);
+                Assert.That(detector.LastComplete, Is.Empty);
+                Assert.That(EditorJsonUtility.ToJson(detector), Is.EqualTo(serialized));
+                string path = folder + "/Area.prefab";
+                Assert.That(PrefabUtility.SaveAsPrefabAsset(root, path), Is.Not.Null);
+                var bytes = File.ReadAllBytes(path);
+                var meta = File.ReadAllBytes(path + ".meta");
+                Object.DestroyImmediate(inspector);
+                inspector = null;
+                Object.DestroyImmediate(root);
+                root = null;
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                var loaded = PrefabUtility.LoadPrefabContents(path);
+                try
+                {
+                    detector = loaded.GetComponent<OverlapDetector2D>();
+                    Assert.That(OverlapDetectorInspector.ValidateConfiguration(detector), Is.Empty);
+                    Assert.That(Vector2.Distance(OverlapDetectorInspector.World2D(detector, 0).Center, new Vector2(8, 21)), Is.LessThan(0.00001f));
+                    using var data = new SerializedObject(detector);
+                    Assert.That(data.FindProperty(transforms ? "areaTransforms" : "areaPositions").arraySize, Is.EqualTo(transforms ? 4 : 2));
+                    if (transforms)
+                    {
+                        Assert.That(data.FindProperty("areaTransforms").GetArrayElementAtIndex(2).objectReferenceValue, Is.Null);
+                        loaded.transform.Find("To").position += new Vector3(2, 2);
+                        Assert.That(Vector2.Distance(OverlapDetectorInspector.World2D(detector, 0).Center, new Vector2(9, 22)), Is.LessThan(0.00001f));
+                    }
+                    else
+                    {
+                        data.FindProperty("areaPositions").GetArrayElementAtIndex(1).vector3Value = Vector3.up;
+                        data.ApplyModifiedPropertiesWithoutUndo();
+                        loaded.transform.rotation = Quaternion.identity;
+                        Assert.That(OverlapDetectorInspector.ValidateConfiguration(detector), Is.Empty, "Finite degenerate pairs are valid empty input, not malformed geometry.");
+                    }
+                }
+                finally { PrefabUtility.UnloadPrefabContents(loaded); }
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+                CollectionAssert.AreEqual(meta, File.ReadAllBytes(path + ".meta"));
+            }
+            finally
+            {
+                if (inspector) Object.DestroyImmediate(inspector);
+                if (root) Object.DestroyImmediate(root);
+                Selection.objects = selection;
+                Assert.That(AssetDatabase.DeleteAsset(folder), Is.True);
+            }
+        }
+    }
+
     [TestFixture(false)]
     [TestFixture(true)]
     [Category("YL.Module.Behavior")]

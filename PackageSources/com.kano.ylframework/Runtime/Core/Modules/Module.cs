@@ -98,12 +98,11 @@ namespace YLFramework.Core
         public virtual bool IsBaseModule => false;
 
         /// <summary>
-        /// 必需的启动配表（资产名到Model数组类型）。空数组合法，缺失或无效文本导致启动失败。
-        /// 配表及其Bundle须启动过程专用，取文本期间不得由其他调用者并发加载或持有；
-        /// Provider复制文本并归还自己的资产租约后，再执行JSON构造与Model初始化。
+        /// 内置启动配表（资产名到 Model 数组类型）；null 或空字典不读表，空数组合法，缺失或无效文本导致启动失败。
+        /// Provider 复制文本并归还本次请求的资产租约后，再执行 JSON 构造与 Model 初始化；不影响其他调用者的共享租约。
+        /// 不承诺跨表初始化顺序，启动失败的清理不包含外部副作用回滚或恢复已切换场景。
         /// </summary>
 
-        [Obsolete("已过时!")]
         public virtual Dictionary<string, Type> PreloadConfigTables => null;
 
         /// <summary>

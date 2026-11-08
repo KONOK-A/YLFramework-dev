@@ -69,7 +69,6 @@ namespace YLFramework.Core.Tests
             }
             set => base.ProjectName = value;
         }
-        [Obsolete("已过时!")]
         public override Dictionary<string, Type> PreloadConfigTables => TableGetterError != null ? throw TableGetterError : null;
         public override string DefaultStartUpScene => SceneGetterError != null ? throw SceneGetterError : string.Empty;
         public override bool Equals(object obj) => ReferenceEquals(this, obj) || (EqualModules && obj is Module);

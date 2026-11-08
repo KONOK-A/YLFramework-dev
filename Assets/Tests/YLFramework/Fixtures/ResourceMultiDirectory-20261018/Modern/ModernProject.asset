@@ -12,52 +12,52 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7331c0230f1378c48bb33ed06489830c, type: 3}
   m_Name: ModernProject
   m_EditorClassIdentifier: 
-  ProjectId: yl-resource-multidirectory-modern-20261018
-  DisplayName: "\u591A\u76EE\u5F55\u8D44\u6E90\u53D6\u8BC1\uFF08\u81EA\u6709\uFF09"
-  SourceDirectories:
-  - Guid: 71b1bf0c863af4b4b85993d5c7bad16e
-    AddressPrefix: textures
-  - Guid: a21ea5a2fd3d18e44b9866ba4c031bc8
-    AddressPrefix: materials
-  - Guid: 4101def53efb6934cbe1498be1c4dc5c
-    AddressPrefix: text
-  - Guid: 1a8d7fa949622f64c917e74953e8534e
-    AddressPrefix: prefabs
-  - Guid: 743daed9ec36c2847b47570722fde789
-    AddressPrefix: scenes
-  - Guid: a120d6c8721eba848b8ab2fd9bad16fb
-    AddressPrefix: ui
-  - Guid: 58349fe8c904b6c4195d9a3c6206be12
-    AddressPrefix: 
-  Compression: 0
-  ContentEncryption: 0
-  ContentKeyId: 
-  AutomaticAtlases: {fileID: 11400000, guid: 9660939179a430842b416aefafcb3bb4, type: 2}
-  AutomaticAtlasConfigurationGuid: 9660939179a430842b416aefafcb3bb4
-  Groups:
-  - Id: main
-    Packing: 0
-    Selections:
-    - Guid: e1cdd2cb3aa9a4f4d83fef176675efe0
-      Address: 
-      Aliases: []
-      Extensions: []
-    - Guid: 87bc9585aa8022d4b8caa0d4511c45c5
-      Address: 
-      Aliases:
+  projectId: yl-resource-multidirectory-modern-20261018
+  displayName: "\u591A\u76EE\u5F55\u8D44\u6E90\u53D6\u8BC1\uFF08\u81EA\u6709\uFF09"
+  sourceDirectories:
+  - guid: 71b1bf0c863af4b4b85993d5c7bad16e
+    addressPrefix: textures
+  - guid: a21ea5a2fd3d18e44b9866ba4c031bc8
+    addressPrefix: materials
+  - guid: 4101def53efb6934cbe1498be1c4dc5c
+    addressPrefix: text
+  - guid: 1a8d7fa949622f64c917e74953e8534e
+    addressPrefix: prefabs
+  - guid: 743daed9ec36c2847b47570722fde789
+    addressPrefix: scenes
+  - guid: a120d6c8721eba848b8ab2fd9bad16fb
+    addressPrefix: ui
+  - guid: 58349fe8c904b6c4195d9a3c6206be12
+    addressPrefix: 
+  compression: 0
+  contentEncryption: 0
+  contentKeyId: 
+  automaticAtlases: {fileID: 11400000, guid: 9660939179a430842b416aefafcb3bb4, type: 2}
+  automaticAtlasConfigurationGuid: 9660939179a430842b416aefafcb3bb4
+  groups:
+  - id: main
+    packing: 0
+    selections:
+    - guid: e1cdd2cb3aa9a4f4d83fef176675efe0
+      address: 
+      aliases: []
+      extensions: []
+    - guid: 87bc9585aa8022d4b8caa0d4511c45c5
+      address: 
+      aliases:
       - message
-      Extensions: []
-  - Id: other
-    Packing: 0
-    Selections:
-    - Guid: c4e9748d1daa714458c2e8564826e7e8
-      Address: 
-      Aliases: []
-      Extensions: []
-  - Id: scenes
-    Packing: 0
-    Selections:
-    - Guid: a29fa44e37acc1941a6d332f557327cc
-      Address: 
-      Aliases: []
-      Extensions: []
+      extensions: []
+  - id: other
+    packing: 0
+    selections:
+    - guid: c4e9748d1daa714458c2e8564826e7e8
+      address: 
+      aliases: []
+      extensions: []
+  - id: scenes
+    packing: 0
+    selections:
+    - guid: a29fa44e37acc1941a6d332f557327cc
+      address: 
+      aliases: []
+      extensions: []

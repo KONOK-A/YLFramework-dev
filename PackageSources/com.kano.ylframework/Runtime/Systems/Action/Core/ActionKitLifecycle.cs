@@ -80,9 +80,6 @@ namespace YLFramework.Actions
             }
         }
 
-        /// <summary>保留原初始化入口，行为与 Initialize 相同。</summary>
-        public static void InitArchitecture() => Initialize();
-
         /// <summary>模块实例的初始化钩子，在 OnRegisterPatch 之前调用。</summary>
         protected virtual void Init()
         {
@@ -102,7 +99,7 @@ namespace YLFramework.Actions
             }
         }
 
-        /// <summary>停止模块动作，解除模块订阅并释放自有宿主和资源，之后允许重新初始化。</summary>
+        /// <summary>关闭当前模块，停止动作、解除模块订阅并释放自有宿主和资源，之后允许重新初始化。</summary>
         /// <remarks>
         /// 执行器回调中调用时先关闭后续推进，待当前执行栈退出后再完成清理，不中断当前方法内尚未返回的业务代码。
         /// 未交给执行器的动作不在调度清理范围内；静态动作池、IdGenerator 和 OnRegisterPatch 不随关停重置。

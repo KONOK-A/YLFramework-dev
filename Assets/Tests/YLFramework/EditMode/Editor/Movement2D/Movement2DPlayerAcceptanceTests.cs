@@ -116,7 +116,8 @@ namespace YLFramework.Tests.Movement2D
                     scenes = new[] { scenePath },
                     locationPathName = Path.Combine(run.player, "P.exe"),
                     target = BuildTarget.StandaloneWindows64,
-                    options = BuildOptions.Development
+                    options = BuildOptions.Development,
+                    extraScriptingDefines = new[] { "YL_MOVEMENT2D_ACCEPTANCE" }
                 });
                 // BuildPipeline can restore the open scene using new native object handles.
                 scene = SceneManager.GetSceneByPath(scenePath);
@@ -492,12 +493,14 @@ namespace YLFramework.Tests.Movement2D
                     package.name.StartsWith("com.kano.ylframework.", StringComparison.Ordinal)).Select(package => package.name));
             Assert.That(typeof(CharacterController2D).Assembly.GetName().Name, Is.EqualTo("YLFramework.Character2D"));
             Assert.That(typeof(MoveablePlatform2D).Assembly.GetName().Name, Is.EqualTo("YLFramework.Platform2D"));
-            var probe = CompilationPipeline.GetAssemblies(AssembliesType.Player).Single(assembly => assembly.name == ProbeAssembly);
+            Assert.That(CompilationPipeline.GetAssemblies(AssembliesType.PlayerWithoutTestAssemblies).Any(assembly => assembly.name == ProbeAssembly), Is.False,
+                "The probe must be absent from an ordinary Player and enabled only for the explicit acceptance build.");
+            var probe = CompilationPipeline.GetAssemblies(AssembliesType.Editor).Single(assembly => assembly.name == ProbeAssembly);
             var references = probe.assemblyReferences.Select(assembly => assembly.name).ToArray();
             CollectionAssert.AreEquivalent(new[] { "YLFramework.Character2D", "YLFramework.Platform2D" },
                 references.Where(name => name.StartsWith("YLFramework.", StringComparison.Ordinal)));
-            Assert.That(references.All(name => name == "YLFramework.Character2D" || name == "YLFramework.Platform2D" || name == "UnityEngine.UI"), Is.True,
-                "Only the main package's implicit UGUI reference may supplement the two declared runtime references.");
+            Assert.That(references.All(name => name == "YLFramework.Character2D" || name == "YLFramework.Platform2D" || name == "UnityEngine.UI" || name == "UnityEditor.UI"), Is.True,
+                "Only the implicit UGUI Editor/runtime references may supplement the two declared runtime references; the actual Player closure is checked after building.");
             return output;
         }
 

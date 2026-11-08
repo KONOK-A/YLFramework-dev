@@ -57,21 +57,6 @@ if ($artifact -and $HybridCLR) { throw 'Registry/LocalTarball distribution cover
 
 function Get-DistributionPackageContent([string] $Root, [switch] $AllowManagedFingerprint,
     [ValidateSet('Git', 'Registry', 'LocalTarball')][string] $FingerprintSource = 'Git') {
-    function Convert-CanonicalToken([Newtonsoft.Json.Linq.JToken] $Token) {
-        if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
-            $result = [Newtonsoft.Json.Linq.JObject]::new()
-            [string[]]$names = @($Token.Properties() | ForEach-Object Name)
-            [Array]::Sort($names, [StringComparer]::Ordinal)
-            foreach ($name in $names) { $result.Add($name, (Convert-CanonicalToken $Token[$name])) }
-            return ,$result
-        }
-        if ($Token -is [Newtonsoft.Json.Linq.JArray]) {
-            $result = [Newtonsoft.Json.Linq.JArray]::new()
-            foreach ($item in $Token) { $result.Add((Convert-CanonicalToken $item)) }
-            return ,$result
-        }
-        return ,$Token.DeepClone()
-    }
     $Root = Get-YLTestPath $Root
     if (-not [IO.File]::Exists((Join-Path $Root 'LICENSE.md')) -or [IO.FileInfo]::new((Join-Path $Root 'LICENSE.md')).Length -eq 0) { throw 'Package LICENSE.md is required.' }
     $files = [Collections.Generic.SortedDictionary[string, object]]::new([StringComparer]::Ordinal)
@@ -103,8 +88,8 @@ function Get-DistributionPackageContent([string] $Root, [switch] $AllowManagedFi
                     [string]$fingerprint.Value -cnotmatch $(if ($FingerprintSource -ceq 'LocalTarball') { '\A[0-9a-fA-F]{32}\z' } else { '\A[0-9a-fA-F]{40}\z' })) { throw 'Untrusted package-manager fingerprint metadata.' }
                 $fingerprint.Remove()
             }
-            $canonical = (Convert-CanonicalToken $manifest).ToString([Newtonsoft.Json.Formatting]::None)
-            $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()
+            $canonical = (ConvertTo-YLPackageCanonicalToken $manifest).ToString([Newtonsoft.Json.Formatting]::None)
+            $hash = Get-YLPackageManifestHash $canonical
         }
         $files.Add($relative, @{ path = $relative; sha256 = $hash })
     }
@@ -112,19 +97,6 @@ function Get-DistributionPackageContent([string] $Root, [switch] $AllowManagedFi
     $text = [Text.StringBuilder]::new()
     foreach ($entry in $files.GetEnumerator()) { $null = $text.Append($entry.Key).Append([char]0).Append($entry.Value.sha256).Append("`n") }
     return [pscustomobject]@{ sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text.ToString()))).ToLowerInvariant(); files = @($files.Values) }
-}
-
-function Get-DistributionSdk([string] $Repository) {
-    $manifest = [IO.File]::ReadAllText((Join-Path $Repository 'Packages/manifest.json')) | ConvertFrom-Json -AsHashtable -NoEnumerate -DateKind String
-    $lock = [IO.File]::ReadAllText((Join-Path $Repository 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable -NoEnumerate -DateKind String
-    $id = 'com.code-philosophy.hybridclr'
-    if ($manifest -isnot [Collections.IDictionary] -or $manifest['dependencies'] -isnot [Collections.IDictionary] -or
-        $manifest['dependencies'][$id] -isnot [string] -or $manifest['dependencies'][$id] -cnotmatch '^https://[^\s?#]+\.git#v9\.0\.3$' -or
-        $lock -isnot [Collections.IDictionary] -or $lock['dependencies'] -isnot [Collections.IDictionary] -or $lock['dependencies'][$id] -isnot [Collections.IDictionary]) { throw 'HybridCLR SDK requires an explicit v9.0.3 Git declaration and lock.' }
-    $entry = $lock['dependencies'][$id]
-    if ($entry['version'] -isnot [string] -or $entry['version'] -cne $manifest['dependencies'][$id] -or
-        $entry['source'] -isnot [string] -or $entry['source'] -cne 'git' -or $entry['hash'] -isnot [string] -or $entry['hash'] -cnotmatch '^[0-9a-f]{40}$') { throw 'HybridCLR SDK lock must match the exact declaration and commit.' }
-    return @{ declaration = $manifest['dependencies'][$id]; revision = $entry['hash'] }
 }
 
 function Get-DistributionHostPackages([string] $Repository, [object] $EditorProfile, [bool] $HybridCLR) {
@@ -136,9 +108,9 @@ function Get-DistributionHostPackages([string] $Repository, [object] $EditorProf
     $dependencies['com.unity.nuget.newtonsoft-json'] = $sourceLock.dependencies.'com.unity.nuget.newtonsoft-json'.version
     $sdk = $null
     if ($HybridCLR) {
-        $sdk = Get-DistributionSdk -Repository $Repository
+        $sdk = Get-YLIntegrationHybridSdk -Repository $Repository
         $dependencies['com.code-philosophy.hybridclr'] = $sdk.declaration
-        $inputs = @($inputs + @('Packages/manifest.json', 'Packages/packages-lock.json') | Sort-Object -Unique)
+        $inputs = @($inputs + $sdk.inputs | Sort-Object -Unique)
     }
     return @{ inputs = $inputs; dependencies = $dependencies; sdk = $sdk }
 }
@@ -274,7 +246,7 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
         $resolvedLock = $lock['dependencies'][$entry.Key]
         if ($resolvedLock -isnot [Collections.IDictionary] -or $resolvedLock['source'] -isnot [string] -or
             $actual['source'].ToLowerInvariant() -cne $resolvedLock['source']) { throw 'Distribution resolved dependency source does not match the actual lock.' }
-        $expectedVersion = if ($entry.Key.StartsWith('com.kano.', [StringComparison]::Ordinal)) { @($expectedPackages | Where-Object name -CEQ $entry.Key)[0].version } elseif ($entry.Key -ceq 'com.code-philosophy.hybridclr') { '9.0.3' } else { $entry.Value }
+        $expectedVersion = if ($entry.Key.StartsWith('com.kano.', [StringComparison]::Ordinal)) { @($expectedPackages | Where-Object name -CEQ $entry.Key)[0].version } elseif ($entry.Key -ceq 'com.code-philosophy.hybridclr') { $sdk.version } else { $entry.Value }
         if ($actual['version'] -cne $expectedVersion) { throw 'Distribution resolved dependency version does not match.' }
         if ($entry.Key -ceq 'com.code-philosophy.hybridclr' -and ($actual['source'] -cne 'Git' -or $lock['dependencies'][$entry.Key]['hash'] -cne $sdk.revision)) { throw 'HybridCLR SDK actual Git revision does not match.' }
     }

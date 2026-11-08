@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('List', 'Discover', 'Run', 'Clean')][string] $Action = 'List',
-    [ValidateSet('Quick', 'Daily', 'Integration', 'Special')][string] $Suite = 'Quick',
+    [ValidateSet('Quick', 'Daily', 'Special')][string] $Suite = 'Quick',
     [string] $Module = 'Reddot',
     [string] $Unity,
     [string] $WorkspaceRoot = $env:YL_TEST_WORKSPACE,
@@ -115,6 +115,9 @@ function Get-SelectedSources([switch] $Native, [object] $EditorProfile) {
     }
     foreach ($relative in @('Tools/Testing/TestSuites.json', 'Tools/Testing/Invoke-YLTests.ps1',
         'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/Common/Packages.ps1', 'Tools/Packaging/PackageCatalog.json')) { $null = $inputs.Add($relative) }
+    if ($Native -and 'nativeSdk' -cin $definition.PSObject.Properties.Name -and $definition.nativeSdk -ceq 'HybridCLR') {
+        foreach ($relative in (Get-YLIntegrationHybridSdk -Repository $repository).inputs) { $null = $inputs.Add($relative) }
+    }
     if ($Native) {
         $null = $inputs.Add('Tools/Testing/UnityHost.ps1')
         if ($definition.nativeLayout -ceq 'Framework') {

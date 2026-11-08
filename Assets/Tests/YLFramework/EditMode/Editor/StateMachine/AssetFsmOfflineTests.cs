@@ -32,6 +32,23 @@ namespace YLFramework.Tests.Extensions.Behavior
             Assert.That(typeof(FsmStateCreator).Assembly.GetType("YLFramework.StateMachine.FsmEditorWindow"), Is.Null);
         }
 
+        [TestCase(typeof(FsmController), "runtimeFsmControllerLayers")]
+        [TestCase(typeof(RuntimeFsmController), "layers")]
+        [TestCase(typeof(RuntimeFsmController), "originGuid")]
+        [TestCase(typeof(FsmStateNodeData), "isDefaultState")]
+        [TestCase(typeof(FsmStateNodeData), "stateScripts")]
+        [TestCase(typeof(FsmStateNodeData), "isBuiltInState")]
+        [TestCase(typeof(FsmStateNodeData), "builtInStateName")]
+        [TestCase(typeof(FsmTransitionData), "groupConditions")]
+        [TestCase(typeof(FsmTransitionData), "autoSwitch")]
+        public void CurrentSerializedFieldsHaveNoRetiredReaders(Type owner, string fieldName)
+        {
+            var field = owner.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(field, Is.Not.Null);
+            Assert.That(field.GetCustomAttributesData().Select(attribute => attribute.AttributeType.FullName),
+                Does.Not.Contain("UnityEngine.Serialization.FormerlySerializedAsAttribute"), owner.FullName + "." + fieldName);
+        }
+
         [Test]
         public void RuntimeHasNoEditorOrOriginalFrameworkDependency()
         {

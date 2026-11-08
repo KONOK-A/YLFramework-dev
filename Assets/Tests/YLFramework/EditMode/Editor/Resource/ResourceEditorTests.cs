@@ -28,7 +28,8 @@ namespace YLFramework.Tests.ResourceEditor
 
         [TestCase(false)]
         [TestCase(true)]
-        public void LegacyResourceAssetsKeepNestedDefinitionsReferencesAndExplicitFlags(bool enabled)
+        [Category("YL.Special.ResourceCurrent")]
+        public void CurrentResourceAssetsKeepNestedDefinitionsReferencesAndExplicitFlags(bool enabled)
         {
             var fields = new Dictionary<Type, string[]>
             {
@@ -50,8 +51,7 @@ namespace YLFramework.Tests.ResourceEditor
                 {
                     var field = pair.Key.GetField(Current(old), BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     Assert.That(field, Is.Not.Null, pair.Key.Name + "." + Current(old));
-                    Assert.That(field.GetCustomAttributes<UnityEngine.Serialization.FormerlySerializedAsAttribute>()
-                        .Any(alias => alias.oldName == old), Is.True, pair.Key.Name + "." + old);
+                    Assert.That(field.GetCustomAttributes<UnityEngine.Serialization.FormerlySerializedAsAttribute>(), Is.Empty, pair.Key.Name + "." + old);
                 }
             }
             var atlas = ScriptableObject.CreateInstance<ResourceAtlasConfiguration>();
@@ -148,11 +148,9 @@ namespace YLFramework.Tests.ResourceEditor
                     var yaml = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path));
                     foreach (var old in fields.Values.SelectMany(value => value).Distinct())
                     {
-                        yaml = System.Text.RegularExpressions.Regex.Replace(yaml,
-                            @"(?m)^(\s*(?:- )?)" + Current(old) + ":", "$1" + old + ":");
+                        Assert.That(System.Text.RegularExpressions.Regex.IsMatch(yaml, @"(?m)^[ \t]*(?:- )?" + old + ":"), Is.False, path + ":" + old);
                     }
 
-                    File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), yaml, new System.Text.UTF8Encoding(false));
                     AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
                     var restored = AssetDatabase.LoadMainAssetAtPath(path);
                     Assert.That(EditorJsonUtility.ToJson(restored), Is.EqualTo(snapshot), path);

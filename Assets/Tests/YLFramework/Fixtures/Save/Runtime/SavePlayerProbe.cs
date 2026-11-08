@@ -27,6 +27,8 @@ namespace YLFramework.Tests.SavePackage
             public bool mainAbsent;
             public bool coldReopened;
             public bool backupRecovered;
+            public bool isIL2CPP;
+            public bool developmentBuild;
         }
 
         private async void Start()
@@ -34,6 +36,12 @@ namespace YLFramework.Tests.SavePackage
             var report = new Report
             {
                 isEditor = Application.isEditor,
+                developmentBuild = Debug.isDebugBuild,
+#if ENABLE_IL2CPP
+                isIL2CPP = true,
+#else
+                isIL2CPP = false,
+#endif
                 platform = Application.platform.ToString(),
                 unityVersion = Application.unityVersion,
                 pid = System.Diagnostics.Process.GetCurrentProcess().Id,

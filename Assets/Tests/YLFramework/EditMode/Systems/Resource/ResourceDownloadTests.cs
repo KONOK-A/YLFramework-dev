@@ -6,6 +6,7 @@ using YLFramework.Resource;
 
 namespace YLFramework.Tests.ResourceBuild
 {
+    [Category("YL.Special.ResourceUpdates")]
     public partial class ResourceDownloadTests
     {
         private static long Response(long status, long offset, long length, string validator, Dictionary<string, string> headers)

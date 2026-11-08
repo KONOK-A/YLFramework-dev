@@ -14,7 +14,7 @@ namespace YLFramework.Tests.Audio
     public class AudioResourceProviderTests
     {
         [Test]
-        public void LegacyLibraryLocationsRequireExplicitProjectAddressMigration()
+        public void RetiredLibraryLocationsAreRejectedWithoutCreatingAResourceAuthority()
         {
             var library = ScriptableObject.CreateInstance<AudioClipLibrary>();
             var clip = AudioClip.Create("borrowed86b", 4410, 1, 44100, false);
@@ -25,7 +25,7 @@ namespace YLFramework.Tests.Audio
                     name = "legacy",
                     entries = new()
                 {
-                    new AudioClipEntry { source = AudioClipSource.Resources, key = "resources://old-clip" }
+                    new AudioClipEntry { source = (AudioClipSource)1, key = "resources://old-clip" }
                 }
                 });
                 library.groups.Add(new AudioClipGroup

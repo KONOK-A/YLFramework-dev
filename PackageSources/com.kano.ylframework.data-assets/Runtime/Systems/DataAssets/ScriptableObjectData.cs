@@ -1,6 +1,5 @@
 using System;
 using UnityEngine;
-using UnityEngine.Serialization;
 using YLFramework.Excel;
 using YLFramework.Resource;
 
@@ -43,12 +42,12 @@ namespace YLFramework.DataAssets
         [Tooltip("Unique ID within the root")]
         public int id;
         /// <summary>供显示与精确名称查询使用的配置名称，不等同于资产对象名。</summary>
-        [FormerlySerializedAs("config_name"), ExcelColumnName("config_name")] public string configName;
+        [ExcelColumnName("config_name")] public string configName;
         /// <summary>条目的图标定位信息，由使用方另行取得图片资源。</summary>
         public IconInfo icon = new IconInfo();
         /// <summary>条目说明，编辑器列表将其用作名称提示。</summary>
         [TextArea(3, 10)]
-        [FormerlySerializedAs("des"), ExcelColumnName("des")] public string description;
+        [ExcelColumnName("des")] public string description;
 
         /// <summary>编辑器校验条目时使父根索引失效，后续查询据当前数据重建。</summary>
         protected virtual void OnValidate()

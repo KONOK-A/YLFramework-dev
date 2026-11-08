@@ -14,7 +14,7 @@ using UnityEngine.SceneManagement;
 
 namespace YLFramework.Tests.EquipmentAcceptance
 {
-    // 复用 DomainMainAcceptance 的设置保护算法，不复用其历史 owner、SessionState 或证据根。
+    // 独立 Equipment 作者构建的设置保护；只恢复本轮明确拥有的修改。
     public static class EquipmentSettings
     {
         private const string Key = "YLFramework.Equipment.Acceptance.Settings";
@@ -65,7 +65,6 @@ namespace YLFramework.Tests.EquipmentAcceptance
         public static void Capture(string output)
         {
             Require(!Active && !EditorApplication.isPlayingOrWillChangePlaymode && !EditorApplication.isCompiling && !BuildPipeline.isBuildingPlayer, "Settings gate is not idle.");
-            Require(!SessionState.GetBool("YLFramework.Domain.MainAcceptance.Protection", false), "Another acceptance owner is active.");
             for (var i = 0; i < SceneManager.sceneCount; i++)
             {
                 Require(!SceneManager.GetSceneAt(i).isDirty, "Do not discard a dirty scene.");

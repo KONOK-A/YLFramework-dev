@@ -27,21 +27,6 @@ function Read-YLRegistryJson {
             foreach ($item in $Element.EnumerateArray()) { Assert-JsonElement $item }
         }
     }
-    function Convert-RegistryToken([Newtonsoft.Json.Linq.JToken] $Token) {
-        if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
-            $result = [Newtonsoft.Json.Linq.JObject]::new()
-            [string[]]$names = @($Token.Properties() | ForEach-Object Name)
-            [Array]::Sort($names, [StringComparer]::Ordinal)
-            foreach ($name in $names) { $result.Add($name, (Convert-RegistryToken $Token[$name])) }
-            return ,$result
-        }
-        if ($Token -is [Newtonsoft.Json.Linq.JArray]) {
-            $result = [Newtonsoft.Json.Linq.JArray]::new()
-            foreach ($item in $Token) { $result.Add((Convert-RegistryToken $item)) }
-            return ,$result
-        }
-        return ,$Token.DeepClone()
-    }
     $text = [Text.UTF8Encoding]::new($false, $true).GetString($Bytes)
     try { $document = [Text.Json.JsonDocument]::Parse($text) }
     catch { throw "Strict JSON validation failed: $($_.Exception.Message)" }
@@ -57,7 +42,7 @@ function Read-YLRegistryJson {
     }
     return [pscustomobject]@{
         manifest = ConvertFrom-Json -InputObject $text -AsHashtable -NoEnumerate -DateKind String
-        canonical = (Convert-RegistryToken $token).ToString([Newtonsoft.Json.Formatting]::None)
+        canonical = (ConvertTo-YLPackageCanonicalToken $token).ToString([Newtonsoft.Json.Formatting]::None)
     }
 }
 
@@ -174,7 +159,7 @@ function Get-YLRegistryPayload {
             throw "Missing required asset meta: $id/$path"
         }
         $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
-        $contentHash = if ($path -ceq 'package.json') { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json.canonical))).ToLowerInvariant() } else { $hash }
+        $contentHash = if ($path -ceq 'package.json') { Get-YLPackageManifestHash $json.canonical } else { $hash }
         $files.Add($path, [ordered]@{ path = $path; sha256 = $hash; contentSha256 = $contentHash; length = [long]$bytes.Length })
     }
     foreach ($directory in $directories) {
@@ -424,7 +409,7 @@ function Get-YLRegistrySdkPayload {
             if ($offset -lt 64 -or $offset -gt $bytes.Length - 24 -or [BitConverter]::ToUInt32($bytes, $offset) -ne 0x4550) { throw 'Official SDK DLL PE header is invalid.' }
         }
         $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
-        $canonical = if ($path -ceq 'package.json') { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json.canonical))).ToLowerInvariant() } else { $hash }
+        $canonical = if ($path -ceq 'package.json') { Get-YLPackageManifestHash $json.canonical } else { $hash }
         $files.Add($path, @{ path = $path; sha256 = $hash; contentSha256 = $canonical; length = [long]$bytes.Length })
     }
     $content = [Text.StringBuilder]::new()

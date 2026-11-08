@@ -3,11 +3,11 @@
 param(
     [ValidateSet('Prepare','Verify')][string] $Operation='Verify',
     [ValidateSet('ParameterOwner','UnmodifiedControl')][string] $Variant='ParameterOwner',
-    [string] $DeliveryRoot='G:\Unity\U63-20261027-c63a1',
+    [string] $WorkspaceRoot,
     [ValidatePattern('^[A-Za-z0-9-]+$')][string] $Run,
     [string] $SourceManifest,
-    [string] $Il2CppRepository='G:\Unity\U63-20261027-c63a1\h17\Library\HybridCLR\il2cpp_plus_repo',
-    [string] $HybridClrRepository='G:\Unity\U63-20261027-c63a1\h17\Library\HybridCLR\hybridclr_repo'
+    [string] $Il2CppRepository,
+    [string] $HybridClrRepository
 )
 Set-StrictMode -Version 3.0
 $ErrorActionPreference='Stop'
@@ -52,14 +52,18 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 $patch=Join-Path $PSScriptRoot 'GlobalMetadata-ParameterOwner.patch'
 Assert-NativeSourceNoLinks $patch
 if ($Operation -ceq 'Prepare') {
-    if (-not $Run) { throw 'Native source: a new exact run is required.' }
-    Assert-NativeSourceNoLinks $DeliveryRoot
-    $owner=[IO.File]::ReadAllText((Join-Path $DeliveryRoot 'owner.json')) | ConvertFrom-Json -AsHashtable
-    if ($owner.purpose -cne 'YLFramework-Stage9-independent-delivery' -or $owner.root -cne [IO.Path]::GetFullPath($DeliveryRoot)) { throw 'Native source: wrong delivery owner.' }
-    $root=Join-Path $DeliveryRoot ('B08Native/'+$Run)
-    Assert-NativeSourceNoLinks $root
-    if ([IO.Path]::Exists($root)) { throw 'Native source: preserve existing source runs.' }
-    [IO.Directory]::CreateDirectory($root) | Out-Null
+    if (-not $Run -or [string]::IsNullOrWhiteSpace($WorkspaceRoot) -or
+        [string]::IsNullOrWhiteSpace($Il2CppRepository) -or [string]::IsNullOrWhiteSpace($HybridClrRepository)) {
+        throw 'Native source: explicit workspace, exact run and both pinned source repositories are required.'
+    }
+    . (Join-Path $PSScriptRoot '../Testing/Common/Workspace.ps1')
+    $repository=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+    foreach ($inputRoot in @($WorkspaceRoot,$Il2CppRepository,$HybridClrRepository)) { $null=Get-YLTestPath $inputRoot }
+    $workspace=Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $repository
+    $record=New-YLTestDirectory -Workspace $workspace -Kind Result -Key ('HybridCLR-NativeSource-'+$Run)
+    $root=$record.path
+    $lease=Lock-YLTestDirectory -Workspace $workspace -Path $root
+    try {
     foreach ($spec in @(@('il2cpp_plus',$Il2CppRepository,'6eb38b29c3a7448b3ac6c4dee450de375b5d158d'),@('hybridclr',$HybridClrRepository,'bf01f8eed56a077781c3a7b25f418603c7645588'))) {
         Assert-NativeSourceNoLinks $spec[1]
         $head=& git -C $spec[1] rev-parse HEAD
@@ -104,6 +108,7 @@ if ($Operation -ceq 'Prepare') {
     $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($manifest | ConvertTo-Json -Depth 8))
     $stream=[IO.File]::Open($SourceManifest,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
     try { $stream.Write($bytes,0,$bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+    } finally { $lease.Dispose() }
 }
 if (-not $SourceManifest) { throw 'Native source: explicit manifest required.' }
 Assert-NativeSourceNoLinks $SourceManifest

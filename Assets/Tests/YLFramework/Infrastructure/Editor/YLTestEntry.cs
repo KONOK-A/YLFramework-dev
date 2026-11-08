@@ -43,6 +43,12 @@ namespace YLFramework.Testing.Editor
                     PrepareSamples();
                     return;
                 }
+                if (_request.samples?.Any(sample => sample.package == "com.kano.ylframework.hybridclr" && sample.name == "HybridCLR Module") == true)
+                {
+                    // 导入和 define 已在上一进程完成；每个模式按当前编译结果准备资源，不借前一测试的副作用。
+                    var fixture = Type.GetType("YLFramework.Tests.Integrations.HybridCLR.HybridCLRTestFixtures, YLFramework.HybridCLR.Tests.EditMode", true);
+                    fixture.GetMethod("Prepare").Invoke(null, null);
+                }
                 SessionState.SetString(PendingKey, Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(arguments[index + 1])));
                 EnsureApi();
                 if (_request.action == "Discover")
@@ -160,6 +166,23 @@ namespace YLFramework.Testing.Editor
 
         private static void PrepareHostProfile()
         {
+            if (Type.GetType("UnityEngine.InputSystem.InputSystem, Unity.InputSystem", false) != null)
+            {
+                using (var inputSettings = new SerializedObject(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset")[0]))
+                {
+                    var inputHandler = inputSettings.FindProperty("activeInputHandler");
+                    if (inputHandler == null)
+                    {
+                        throw new InvalidOperationException("The owned Input System host has no active input handling setting.");
+                    }
+                    if (inputHandler.intValue != 2)
+                    {
+                        inputHandler.intValue = 2;
+                        inputSettings.ApplyModifiedPropertiesWithoutUndo();
+                        AssetDatabase.SaveAssetIfDirty(inputSettings.targetObject);
+                    }
+                }
+            }
             if (_request.prepareSceneTemplates && !File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/SceneTemplateSettings.json")))
             {
                 var active = UnityEngine.SceneManagement.SceneManager.GetActiveScene();

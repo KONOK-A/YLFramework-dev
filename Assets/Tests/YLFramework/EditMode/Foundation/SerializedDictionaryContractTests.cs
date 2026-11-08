@@ -375,14 +375,31 @@ namespace YLFramework.Foundation.Tests
         }
 
         [Test]
-        public void PreMigrationAssetRetainsDataAndReferencesAfterNamespaceChange()
+        public void CurrentAssetColdReadRetainsItsSerializedKeysValuesAndLocalReferences()
         {
-            const string Path = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/SerializedDictionaryBefore.asset";
-            Assert.That(AssetDatabase.AssetPathToGUID(Path), Is.EqualTo("c920a96e550145e47b63934ef3cc76ea"));
-            var asset = AssetDatabase.LoadAssetAtPath<SerializedDictionaryTestAsset>(Path);
-            Assert.That(asset, Is.Not.Null);
+            var path = "Assets/__YLDictionaryCurrent_" + Guid.NewGuid().ToString("N") + ".asset";
+            Assert.That(System.IO.File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)) ||
+                System.IO.File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")), Is.False);
+            var asset = ScriptableObject.CreateInstance<SerializedDictionaryTestAsset>();
+            var created = false;
             try
             {
+                asset.Direct.Add("alpha", 7);
+                asset.Direct.Add("omega", 11);
+                asset.Derived.Add("persisted", 13);
+                asset.Nested.Add(42, new DictionaryTestValue { Number = 17, Reference = asset });
+                asset.ObjectKeys.Add(asset, 19);
+                AssetDatabase.CreateAsset(asset, path);
+                created = true;
+                EditorUtility.SetDirty(asset);
+                AssetDatabase.SaveAssetIfDirty(asset);
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                var metadata = System.IO.File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"));
+                Assert.That(guid, Is.Not.EqualTo("c920a96e550145e47b63934ef3cc76ea"));
+                Resources.UnloadAsset(asset);
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                asset = AssetDatabase.LoadAssetAtPath<SerializedDictionaryTestAsset>(path);
+                Assert.That(asset, Is.Not.Null);
                 Assert.That(asset.Direct.GetType().Namespace, Is.EqualTo("YLFramework.Serialization"));
                 Assert.That(asset.Direct.Keys, Is.EqualTo(new[] { "alpha", "omega" }));
                 Assert.That(asset.Direct.Values, Is.EqualTo(new[] { 7, 11 }));
@@ -392,10 +409,15 @@ namespace YLFramework.Foundation.Tests
                 Assert.That(asset.ObjectKeys[asset], Is.EqualTo(19));
                 Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(asset))),
                     Is.EqualTo("da82f70412bbaab439cd654edba33760"));
+                Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+                Assert.That(System.IO.File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")), Is.EqualTo(metadata));
             }
             finally
             {
-                Resources.UnloadAsset(asset);
+                if (asset)
+                    Resources.UnloadAsset(asset);
+                if (created)
+                    Assert.That(AssetDatabase.DeleteAsset(path), Is.True);
             }
         }
 

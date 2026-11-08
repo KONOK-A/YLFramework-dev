@@ -12,33 +12,33 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b8d754bdbc05bfb45bb058ffdf82c0bc, type: 3}
   m_Name: AutomaticAtlases
   m_EditorClassIdentifier: 
-  Rules:
-  - Id: multi-root
-    GroupId: main
-    Grouping: 0
-    Address: atlases/multi-root
-    Sources:
+  rules:
+  - id: multi-root
+    groupId: main
+    grouping: 0
+    address: atlases/multi-root
+    sources:
     - {fileID: 2800000, guid: e7fab2d76b19663419b79c320448ba7b, type: 3}
     - {fileID: 2800000, guid: f110f596781628d45805d3083eda283a, type: 3}
-    AllowRotation: 0
-    TightPacking: 0
-    Padding: 4
-    MaxTextureSize: 128
-    Readable: 1
-    MipMaps: 0
-    SRgb: 0
-    FilterMode: 0
-    Compression: 0
-  ProjectGuid: 5c0f01c44d4e08a4c92590c5632501d2
-  GenerationParentGuid: acaccf9dc9b624a48a192580a70d624f
-  DirectoryGuid: a8ae4c63fb00c8a47b9d34ab26ea9f7d
-  ConfigurationGuid: 9660939179a430842b416aefafcb3bb4
-  ConfigurationMetaHash: 66c608c5a58b8f81b0f5508bd832b635b68a0cb7061e145044701f21e4eefaa5
-  DirectoryMetaHash: cde108f61397f83412f4d965ec919225bc6967968e929f91c814ec12c6b1dec9
-  Outputs:
-  - Key: multi-root
-    FileName: multi-root.spriteatlasv2
-    Guid: 2723e6ed8f82a094181e5f2daf2687b1
-    InputHash: 416133a8d44473932fde671ab8b4c741c4ea39f470f0960dc514f66a477a5a7f
-    AssetHash: dbd5d617c1318212cae1428fed99a52f30b3db22faf1a37b91ae9947c1d76740
-    MetaHash: 31807f564301f0af6b76b3dd91b6cfeeb712b778283eecdd0cf12282a2c1f9d2
+    allowRotation: 0
+    tightPacking: 0
+    padding: 4
+    maxTextureSize: 128
+    readable: 1
+    mipMaps: 0
+    srgb: 0
+    filterMode: 0
+    compression: 0
+  projectGuid: 5c0f01c44d4e08a4c92590c5632501d2
+  generationParentGuid: acaccf9dc9b624a48a192580a70d624f
+  directoryGuid: a8ae4c63fb00c8a47b9d34ab26ea9f7d
+  configurationGuid: 9660939179a430842b416aefafcb3bb4
+  configurationMetaHash: 66c608c5a58b8f81b0f5508bd832b635b68a0cb7061e145044701f21e4eefaa5
+  directoryMetaHash: cde108f61397f83412f4d965ec919225bc6967968e929f91c814ec12c6b1dec9
+  outputs:
+  - key: multi-root
+    fileName: multi-root.spriteatlasv2
+    guid: 2723e6ed8f82a094181e5f2daf2687b1
+    inputHash: 416133a8d44473932fde671ab8b4c741c4ea39f470f0960dc514f66a477a5a7f
+    assetHash: dbd5d617c1318212cae1428fed99a52f30b3db22faf1a37b91ae9947c1d76740
+    metaHash: 31807f564301f0af6b76b3dd91b6cfeeb712b778283eecdd0cf12282a2c1f9d2

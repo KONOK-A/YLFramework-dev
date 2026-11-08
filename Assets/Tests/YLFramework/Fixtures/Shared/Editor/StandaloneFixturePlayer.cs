@@ -37,7 +37,7 @@ namespace YLFramework.Testing.EditorFixtures
         }
 
         public static void BuildAndRun(string output, string assetRoot, string expectedRuntime, ResourceRelease release, Action<Scene> populate,
-            string[] extraScriptingDefines = null)
+            string[] extraScriptingDefines = null, bool graphics = false)
         {
             Assert.That(Application.isBatchMode && !EditorApplication.isPlaying, Is.True);
             string project = Path.GetFullPath(Directory.GetParent(Application.dataPath).FullName);
@@ -126,7 +126,7 @@ namespace YLFramework.Testing.EditorFixtures
                 {
                     UseShellExecute = false,
                     WorkingDirectory = player,
-                    Arguments = "-batchmode -nographics -ylFeatureResult \"" + path + "\" -logFile \"" + Path.Combine(player, "player-" + run + ".log") + "\""
+                    Arguments = "-batchmode " + (graphics ? "" : "-nographics ") + "-ylFeatureResult \"" + path + "\" -logFile \"" + Path.Combine(player, "player-" + run + ".log") + "\""
                 });
                 if (!process.WaitForExit(90000))
                 {

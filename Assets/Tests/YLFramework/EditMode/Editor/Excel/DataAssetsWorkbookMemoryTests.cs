@@ -19,7 +19,6 @@ namespace YLFramework.Tests.Extensions.Data
         {
             string name = "YLWorkbookMemory-" + Guid.NewGuid().ToString("N");
             _folder = "Assets/" + name;
-            YLFramework.Tests.DataAssets.DataAcceptanceOwnership.Own(_folder);
             AssetDatabase.CreateFolder("Assets", name);
             _root = ScriptableObject.CreateInstance<ScriptableObjectConfigs>();
             AssetDatabase.CreateAsset(_root, _folder + "/Root.asset");

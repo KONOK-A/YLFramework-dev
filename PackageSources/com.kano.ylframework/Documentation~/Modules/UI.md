@@ -9,7 +9,7 @@
 - `Module` 是唯一业务 owner。`Panel : View` 只扩展独立 UI 会话，复用 Core 的 Model、事件、请求失效与实例归还协议。
 - 主体在 `Runtime/Core/UI/Windows`，根、输入、Tips、适配分别分组；namespace 为 `YLFramework.Core`，程序集为 `YLFramework.Runtime`。主体依赖 UGUI，不要求外部资源后端。
 - `PanelManager` 是同一个协调器的 partial，不是资源服务或第二套窗口 owner。不存在必须先注册的窗口目录、业务 key、另一套加载器或 UI 池。
-- 普通根 View 使用 `LoadView/LoadViewAsync`，已有实例使用 `AttachView`；根组件实际是 Panel 时必须使用 Panel 入口。普通 View 的 object[]、LoadViewArgs、Model 和生命周期契约不变。
+- 普通根 View 使用 `LoadView/LoadViewAsync`，已有实例使用 `AttachView`；根组件实际是 Panel 时必须使用 Panel 入口。所有加载只接受 `LoadViewArgs`，通过一次 `OnLoaded(LoadViewArgs)` 初始化；合法对象值仍可用 `SetObject/GetObject` 传递，不保留旧位置数组协议。
 - Module/Panel/View、参数袋和显示操作均在 Unity 主线程使用。入口见 [`Module.Panels.cs`](../../Runtime/Core/Modules/Module.Panels.cs)，会话与显示契约见 [`Panel.cs`](../../Runtime/Core/UI/Windows/Panel.cs) 和 [`View.cs`](../../Runtime/Core/MVC/Views/View.cs)。
 
 ## 打开与配置
@@ -105,9 +105,9 @@ live.Abort(); // 已终结：不改变结果，也不 Close 已交付的会话�
 
 ## 生命周期与显示
 
-首开沿 View 同一个事务：归属/Model 绑定 → Panel 根/Canvas/顺序/门禁准备 → `OnLoaded(object[])` 与 `OnLoaded(LoadViewArgs)` → 设置 loaded → `OnOpen(LoadViewArgs)` → 恢复事件与 `OnViewEnabled` → 统一显示/输入协调 → 交付。
+首开沿 View 同一个事务：归属/Model 绑定 → Panel 根/Canvas/顺序/门禁准备 → 一次 `OnLoaded(LoadViewArgs)` → 设置 loaded → `OnOpen(LoadViewArgs)` → 恢复事件与 `OnViewEnabled` → 统一显示/输入协调 → 交付。
 
-`LoadViewArgs` 由入口 Claim 并在终态归还，借读期间不能保存到字段、属性、委托或容器。普通 View 的参数钩子不变；Panel 的新数据逻辑写 protected `OnOpen`，已有实例经有效 `AttachView` 新会话也调用它。
+`LoadViewArgs` 由入口 Claim 并在终态归还，借读期间不能保存到字段、属性、委托或容器，也不能修改或再次交给加载入口。普通 View 在唯一的 `OnLoaded` 回调借读；Panel 的新数据逻辑写 protected `OnOpen`，已有实例经有效 `AttachView` 新会话也调用它。参数归还只清引用，不释放业务对象值。
 
 `OnOpen` 可读 EffectiveSettings、Root、SortingOrder，但不能 Close 当前 Panel/owner、重入同 Module 的同步或异步 Panel 打开，也不能 Hide/Show/BringToFront/UpdateDisplay；这些操作立即抛错，不排队。关闭禁令同样作用于 Module.ClearView 的统一出口和会退役当前 Panel 的 backend 祖先，不允许批量出口先产生部分退出副作用；真实销毁与内部 rollback 仍可清理。其他业务操作沿既有 Core 契约。OnLoaded/OnViewEnabled 中允许的显示调整会保留，初始化尾部不会重放初始 overrides 覆盖它们。自有准备/数据/启用失败回滚或丢弃，其他会话观察异常独立报告。
 
@@ -129,7 +129,7 @@ Camera/RenderMode 直接配置原生 Canvas；分辨率和 match 使用原生 Ca
 
 ### 资产准备与迁移
 
-UPM 包内已保存下列正式资产，路径相对逻辑包根 `Packages/com.kano.ylframework/`，不属于 `Samples~`。可显式调用 `YLFramework.Editor.Core.UIPanelAssetMigration.ValidateAssets()`（菜单 `YLFramework/Core/UI Panel/核验资产迁移`）只读检查；它不写入 Prefab、场景或包目录。
+UPM 包内已保存下列正式资产，路径相对逻辑包根 `Packages/com.kano.ylframework/`，不属于 `Samples~`。可显式调用 `YLFramework.Editor.Core.UIPanelAssetValidator.ValidateAssets()`（菜单 `YLFramework/Core/UI Panel/核验正式资产`）只读检查；它不写入 Prefab、场景或包目录。
 
 | 资产 | 准备内容 |
 |---|---|
@@ -139,11 +139,11 @@ UPM 包内已保存下列正式资产，路径相对逻辑包根 `Packages/com.k
 | `Prefabs/UITipsOverlay.prefab` | UITips 的 Variant，仅覆盖 Layer4；完整模板的 Presenter 引用该 Variant |
 | `Prefabs/ColorSelector.prefab` | 显式保存 Panel 默认配置 |
 
-旧 `MigrateAssets()` 和写入式产品迁移菜单不再是消费方入口。包资产损坏时先核对安装来源并重新安装，不通过编辑 PackageCache 或启动时重建修补。只读校验不是 PlayMode、输入或 Player 验收。
+旧 `UIPanelAssetMigration`、`MigrateAssets()`、测试夹具迁移及旧 fileID 修补作者已退役，不留换名的写入入口。包资产损坏时先核对安装来源并重新安装，不通过编辑 PackageCache 或启动时重建修补。只读校验不是 PlayMode、输入或 Player 验收。
 
-升级旧工程时，先备份并区分框架原件与用户自定义模板，再按 [UPM 迁移](../Migration-UPM.md) 保留原有引用与序列化值。自定义模板放在使用工程的自有目录，使用 Unity Prefab API 检查/迁移真实层映射、Tips 绑定和继承关系，不覆盖包内模板或未知资产，不保存带 Missing Script 的用户场景。保留 GUID/fileID 不能代替重载、实例化与输入验证。
+升级旧工程时，先备份并区分框架原件与用户自定义模板，再按[作者资产合同](Editor.md#资产编辑)保留原有引用与序列化值。自定义模板放在使用工程的自有目录，使用 Unity Prefab API 检查/迁移真实层映射、Tips 绑定和继承关系，不覆盖包内模板或未知资产，不保存带 Missing Script 的用户场景。保留 GUID/fileID 不能代替重载、实例化与输入验证。
 
-产品资产作者命令与测试夹具维护属于源码开发仓库，不包含在消费方产品 API 中；UPM 包运行不依赖 `Assets/Tests/YLFramework`。
+正常的显式默认资源创建与测试夹具维护属于源码开发仓库，不包含在消费方产品 API 中；保留包只读、缺失才创建及未知输出保护，不恢复一次性写入迁移。UPM 包运行不依赖 `Assets/Tests/YLFramework`。
 
 ## 输入边界
 
@@ -192,8 +192,8 @@ named/direct 解析到同一 Prefab 可共享 Single，但成功实例的租约�
 | 验证 | 入口与边界 |
 |---|---|
 | 源码与日常测试 | `pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -Action Run -Suite Daily -Module Core -Unity <Unity.exe> -WorkspaceRoot <自有工作根>`；Foundation同入口换模块。真实UTF发现、逐模式执行、XML和进程退出闭合；前置、逻辑层与显式专项见源码仓库 `Tools/Testing/README.md`。旧UIPanel辅助编译入口已退役，不能将编译当测试或Player结果 |
-| 包资产检查 | 主包 `Editor/Core/UIPanelAssetMigration.cs`，只读校验正式模板；用户资产迁移单独检查实际 diff、身份、重载和实例化 |
-| 真实场景与连续 Play | `Tests/Acceptance/Core/UIAcceptance.unity` 使用正式 Prefab；夹具在 `Tests/Fixtures/Core/`。每轮 READY 后按原入口 PrepareExit、真正停止 Play、VerifyExit；两轮之间不编译或重载 |
+| 包资产检查 | 主包 `Editor/Core/UIPanelAssetValidator.cs`，实际调用只读校验并验证资产与场景不变；用户资产迁移单独检查实际 diff、身份、重载和实例化 |
+| 真实场景与连续 Play | 同上 runner 使用 `-Suite Special -Module Core`。原 `Tests/Acceptance/Core/UIAcceptance.unity` 的输入/渲染探针每轮 READY 后 PrepareExit、真正 ExitPlayMode、VerifyExit；两轮禁 Domain Reload，既有场景和包输入明确绑定。自建设备仅使用临时克隆的输入设置并归还，不修改工程输入资产，不替代 OS 剪贴板或 Player |
 | Windows64 IL2CPP | `YLFramework.Editor.UIPanelAcceptanceBuild.BuildWindows64IL2CPP()` 或菜单 `YLFramework/Core/UI Panel/构建 Windows64 IL2CPP 验收`；源码在 `Tests/EditMode/Editor/Core/UIPanelAcceptanceBuild.cs` |
 
 构建入口生成 Development / Medium stripping 的 `Temp/UI.Panel.IL2CPP/UIAcceptance.exe`，结束后恢复原后端与裁剪设置，不自动运行、不保存脏场景。图形运行需检查 READY、PLAYER_READY_FOR_QUIT、PLAYER_PASS/QUIT_PENDING_PASS、退出码及相关异常；`UI_PANEL_NATIVE_CAPTURE_GATE_REACHED` 只是中间标记。较小 Player 门不替代 Scrollbar/InputField/多指的完整 Editor 矩阵，也不证明原游戏或单后端 Player 全矩阵通过。

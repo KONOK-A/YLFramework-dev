@@ -8,17 +8,20 @@ Overlap、CharacterController2D、MoveablePlatform 与配置式 StateMachine 是
 
 安装 [com.kano.ylframework.overlap](../../../com.kano.ylframework.overlap/README.md) 及主包，Unity内置physics/physics2d由包直接声明。最小自有闭包仅main + overlap，不要求movement2d、Gameplay、RedDots或Save。消费方asmdef显式引用`YLFramework.Overlap`；直接使用Inspector/Gizmos类型的Editor程序集另引用`YLFramework.Overlap.Editor`。
 
-namespace仍为`YLFramework.Overlap`，包内实现位于`Runtime/Utilities/Overlap`，配套绘制与Inspector位于`Editor/Utilities/Overlap`，Editor namespace仍为`YLFramework.Editor.Overlap`。原组件/Inspector的脚本GUID和序列化字段保留；主包不再提供这些类型。旧反射/AQN与Resource内容若记录了`YLFramework.Runtime`或`YLFramework.Editor`，须同步真实消费者并重建正式内容，不改写历史Catalog或承诺旧Bundle跨Unity版本兼容。
+namespace 为 `YLFramework.Overlap`，当前实现位于 `Runtime/Queries` 与 `Runtime/Detection`，配套 Inspector 为 `Editor/OverlapDetectorInspector.cs`，Editor namespace 为 `YLFramework.Editor.Overlap`。主包不提供这些类型。旧 `Utilities/Overlap` 组件、旧 Inspector、可变 hit 列表和 XY-only 3D 协议已退役，旧 GUID 不映射到新类型；历史迁移 Prefab/Catalog/YAML/meta/hash 仅保留原件，不作为当前可冷导入的承诺。
 
-- 在自有 GameObject 上添加 Point / Circle / Box / Capsule / Area 2D 或 Box / Sphere 3D 检测组件，明确 LayerMask、形状、频率与 scaled / unscaled 模式。
-- 旧组件查询排除 Trigger。公开 `results` 是组件复用的可写展示列表，不是长期快照；完整查询先收集再派发 enter/exit，部分结果只展示、不替换完整差分基准。调用方需要跨查询保留时自行复制。`OverlapHit<T>.point` 包括 3D 查询也使用 Vector2，不按直觉修改其协议。
-- `CheckOverlap()` 可手动调用；同一组件在自身事件中递归查询会拒绝，不影响其他组件查询。
-- 禁用立即清空结果，不补发 exit；重新启用后的首次完整查询重新 enter，饱和查询不派 enter，保留显式 `IsRunning` 设置。关闭 `IsRunning` 只停止自动检测，不阻止手动查询，也不取消已经进入的查询。
-- 容量为 100。Editor / Development 达到容量时，每次启用周期最多提示一次可能截断，不保证每次都发生实际丢失；Release 不走该日志路径。
+- `OverlapQuery2D/3D` 使用调用方缓冲、显式 Filter 与物理场景执行 Query/Cast；Workspace 为显式 owner 自有并释放，不是全局 Manager。
+- `OverlapDetector2D/3D` 使用局部 Union、Manual/Update/FixedUpdate/UnscaledUpdate、实例有界容量和完整结果差分。`UnscaledUpdate` 在 `timeScale=0` 仍可采样，`FixedUpdate` 不冒充继续运行。
+- **只有完整观测才能提交差异**。`MayBeTruncated` / `Invalidated` 保留 `LastComplete`；提交在回调前完成，按旧离开、新进入、原有停留通知。所有容量、generation 与 ownerScene 约束同样适用于 Area。
+- `OverlapContact<T>.Point` 是相对 Detector 位置取得的代表 Collider 原生最近点快照，2D Z=0，3D 保留 Z；Enter/Stay 刷新，Destroyed 等 Exit 使用最后提交点。它不是法线、穿透深度或连续接触解算。
+- `EnteredEvent`、`StayedEvent`、`ExitedEvent` 是同一 Contact 合同的序列化 UnityEvent；Exit 额外传 `OverlapExitReason`。停止、禁用或重配置会取消旧周期剩余通知，保留原退出顺序。
+- 2D `SetAreaPositions(Vector3[])` / `SetAreaTransforms(Transform[])` 选择本地位置或实时世界节点，相邻对转换成世界 XY AABB，不自动闭合。缺失 Transform 只跳过原相邻对，不跨缺口连接；空链为完整空结果，非有限节点或零宽/高框明确 `Invalidated`，不提交假 Exit。
 
-新的 `OverlapQuery2D/3D` 提供调用方缓冲查询及原生 Cast 命中；`OverlapDetector2D/3D` 提供局部 Union、Manual/Update/FixedUpdate、实例有界容量和完整结果差分。具体签名、退出原因与几何限制见 [Overlap 包说明](../../../com.kano.ylframework.overlap/README.md)。3D 新 Cast 使用原生 Vector3，不改变上面的旧 XY 协议。
+具体签名、退出原因、容量与几何限制见 [Overlap 包说明](../../../com.kano.ylframework.overlap/README.md)。当前作者及 Player 输入由正式 producer 生成新 GUID，并验证真实持久 Contact 回调；不手工重写或重采冻结快照。
 
-两个 Detector 的 Inspector 可持久编辑几何、采样、容量和 Filter，支持 Undo/Prefab override；世界中心 Handle/Gizmos 直接复用 Runtime 转换。仅单选实例可显式或主动开启限频预览，重绘不查询；Cast 方向/距离为明确选择的世界值，不是对象隐含运动。实际 `Count/RawCount/status` 与借用的 `LastComplete` 分列，partial/invalid 不冒充完整当前集。2D 全局禁 Trigger 的请求明确诊断、不翻全局开关；3D 默认 Ignore，不使用 UseGlobal。共享 Prefab asset 不由预览覆盖，不自动保存用户场景。
+两个 Detector 的 Inspector 可持久编辑几何、采样、容量和 Filter，支持 Undo/Prefab override；2D 输入选择器同时支持 Area 的位置/Transform 数组，校验、Gizmos 和按相邻对预览复用 Runtime 转换，不另建 Geometry/Manager。Union 的中心/尺寸 Handle 不隐式修改 Area 节点。仅单选实例可显式或主动开启限频预览，重绘不查询；Cast 方向/距离为明确选择的世界值，不是对象隐含运动。实际 `Count/RawCount/status` 与借用的 `LastComplete` 分列，partial/invalid 不冒充完整当前集。2D 全局禁 Trigger 的请求明确诊断、不翻全局开关；3D 默认 Ignore，不使用 UseGlobal。共享 Prefab asset 不由预览覆盖，不自动保存用户场景。
+
+仓库入口为 `Daily/Overlap`、`Daily/OverlapEditor`、`Daily/OverlapMovement` 与 `Special/OverlapPlayer`；当前 Behavior producer/持久消费者另由 `Special/BehaviorPlayer` 复用既有双进程 Development Mono 验收。旧 managed guard 删除后不保留无当前目标的 `Quick/Overlap`，不以 stub 代替实际 Unity 物理；旧主工程 PID/SessionState/外部接收根及 Batch 接收入口已退役，不将其历史结果当当前 Player 通过。
 
 ## CharacterController2D
 
@@ -59,7 +62,7 @@ Box / Capsule 按本地 size、绝对缩放与独立角度查询，不重复旋�
 - 在自有 GameObject 上挂 `FsmController`，配置运行层，或在 Start 前调用 `AddRuntimeFsmController(source, layerName)`；`UserData` 可在启动前注入。
 - 状态脚本继承 `YLFramework.StateMachine.FsmState`，提供 public 无参构造，并由使用工程为 IL2CPP 保留实际类型。不要绑定旧包的状态基类。
 - 控制器按 Start 初始化，并在 Update / LateUpdate / FixedUpdate 推进。使用 `GetCurrentStateInfo`、Set / Get Bool / Float / Int / Trigger 与 ResetTrigger；跨层同名参数仍按参数类型参与读写。
-- 条件组内 AND、组间 OR；AnyState、Trigger 与层级回调遵循配置。空条件链仅在 `autoSwitch=true` 时自动切换；旧序列化拼写由当前字段迁移声明处理，不用于新代码。
+- 条件组内 AND、组间 OR；AnyState、Trigger 与层级回调遵循配置。空条件链仅在 `autoSwitch=true` 时自动切换；配置和组件只使用当前序列化字段，不再读取旧字段拼写。
 
 ### 生命周期与作者边界
 
@@ -69,5 +72,6 @@ Box / Capsule 按本地 size、绝对缩放与独立角度查询，不重复旋�
 - 内置状态由标记与内置名称共同决定，不按普通 name 猜测旧格式。暂时缺类型、参数或父节点时保留可修复数据，不自动删除或重写所有资产。
 - Delete / Undo / Redo、创建、拖拽、参数与条件组编辑只操作当前资产；文本输入中的 Delete 不删除图节点，内置保护节点与运行时数据不可误删。
 - New Scripts 拒绝覆盖已有源码；Create And Add 等待实际导入、编译与程序集重载完成后绑定，不假设下一次 delayCall 已可取得类型。
+- 更新自己拥有的旧格式资产前，先用仍支持该格式的版本执行正式打开、保存并保留 `.meta` / GUID，再验证当前配置、Prefab 与实际发布消费者。未知或冻结的历史输入不得原地改写；没有维护中的旧资产时，通过正式作者流程创建新身份的当前资产，不手补 YAML 或从类型名猜脚本 GUID。
 
 运行正确性、原生窗口事件、实际物理、序列化持久回调、IL2CPP 裁剪和人工作者交互是不同验证范围。源仓库的具体执行说明在 Behavior 测试夹具指南与统一测试工具中，不以旧验收回执替代当前产品使用验证。

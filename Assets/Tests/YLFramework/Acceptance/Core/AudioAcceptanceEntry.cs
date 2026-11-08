@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityEngine.Audio;
 using YLFramework.Audio;
@@ -9,6 +11,7 @@ using YLFramework.Resource;
 namespace YLFramework.Core.Tests
 {
     /// <summary>4.5 Editor/Mono Player 共用的窄音频验收入口，不参与框架分发。</summary>
+    [UnityEngine.Scripting.Preserve]
     public sealed class AudioAcceptanceEntry : MonoBehaviour
     {
         [global::UnityEngine.Serialization.FormerlySerializedAs("Group")]
@@ -21,6 +24,10 @@ namespace YLFramework.Core.Tests
         public AudioMixerConfig mixerConfig;
         [global::UnityEngine.Serialization.FormerlySerializedAs("ResourceKey")]
         public string resourceKey;
+        public string ownedPlayerDirectory;
+        public string runToken;
+        public AudioEmitter emitter;
+        public AudioMusicPlayer musicPlayer;
         public static string Result;
         public static string Stage;
         private AudioHandle _exitHandle;
@@ -28,6 +35,10 @@ namespace YLFramework.Core.Tests
         private Provider _exitProvider;
         private bool _ownsAudioSession;
         private readonly float[] _samples = new float[2048];
+        private readonly JObject _measurements = new JObject();
+        private string _resultPath;
+        private string _runtimeError;
+        private ResourceSystem _resources;
 
         private sealed class Owner : IDisposable
         {
@@ -54,6 +65,11 @@ namespace YLFramework.Core.Tests
         private IEnumerator Start()
         {
             Result = "RUNNING";
+            if (!Application.isEditor)
+            {
+                PreparePlayerResult();
+                Application.logMessageReceived += CaptureRuntimeError;
+            }
             DontDestroyOnLoad(gameObject);
             var stack = new Stack<IEnumerator>();
             stack.Push(RunAudio());
@@ -82,6 +98,7 @@ namespace YLFramework.Core.Tests
                         Debug.LogError("AUDIO45 " + Result);
                         if (!Application.isEditor)
                         {
+                            WritePlayerResult(false);
                             Application.Quit(1);
                         }
 
@@ -168,6 +185,7 @@ namespace YLFramework.Core.Tests
                 })))
                 {
                     resources = initialized.TakeResult();
+                    _resources = resources;
                 }
 
                 _ownsAudioSession = true;
@@ -265,6 +283,41 @@ namespace YLFramework.Core.Tests
                 old.Stop();
                 Check(current.IsPlaying, "pool reuse rejects old generation Stop");
                 current.Stop();
+                if (!Application.isEditor)
+                {
+                    Stage = "current serialized component policies";
+                    Check(emitter && musicPlayer, "current serialized Emitter and Music input references");
+                    AudioKit.StopAllSound();
+                    AudioKit.StopMusic();
+                    AudioKit.PlaySoundMode = AudioKit.PlaySoundModes.IgnoreSameSoundInGlobalFrames;
+                    emitter.Play();
+                    emitter.Play();
+                    Check(AudioKit.SoundCount == 2, "saved explicit false preserves the EveryOne emitter override");
+                    emitter.Stop();
+                    AudioKit.StopAllSound();
+                    AudioKit.Settings.MusicVolume.Value = 1f;
+                    musicPlayer.Play();
+                    var savedOutgoing = AudioKit.Music;
+                    var savedOutgoingSource = FindSource(signal);
+                    yield return new WaitForSecondsRealtime(1.1f);
+                    Check(savedOutgoing.IsValid && savedOutgoingSource && Mathf.Abs(savedOutgoingSource.volume - 1f) < .01f,
+                        "saved Music completes its configured initial fade-in before the overlap measurement");
+                    musicPlayer.Play();
+                    var savedIncoming = AudioKit.Music;
+                    var savedIncomingSource = FindSource(signal, savedOutgoingSource);
+                    Check(savedOutgoing.IsValid && savedIncoming.IsValid && !savedOutgoing.Equals(savedIncoming) && savedOutgoingSource && savedIncomingSource,
+                        "saved current Music drives two leases");
+                    yield return new WaitForSecondsRealtime(.35f);
+                    Check(savedOutgoing.IsValid && savedIncoming.IsValid && savedIncomingSource.volume > .1f && savedIncomingSource.volume < .9f,
+                        "saved Linear transition is in progress");
+                    _measurements["saved-linear-outgoing-gain"] = savedOutgoingSource.volume;
+                    _measurements["saved-linear-incoming-gain"] = savedIncomingSource.volume;
+                    Check(Mathf.Abs(savedOutgoingSource.volume + savedIncomingSource.volume - 1f) < .04f,
+                        "saved explicit Linear preserves amplitude math rather than using the creation default");
+                    musicPlayer.Stop();
+                    Check(!savedOutgoing.IsValid && !savedIncoming.IsValid, "saved Music stops its target and owned tail");
+                    AudioKit.PlaySoundMode = AudioKit.PlaySoundModes.EveryOne;
+                }
                 AudioKit.Shutdown();
                 Check(AudioKit.SoundStats.OwnedSourceCount == 0, "Shutdown releases owned Source pool");
                 _exitProvider = new Provider { Clip = signal };
@@ -351,15 +404,18 @@ namespace YLFramework.Core.Tests
                 rejected = true;
             }
             var passed = rejected && !_exitHandle.IsValid && _exitPending.IsDone &&
-                _exitPending.EndReason == AudioPlayEnd.Shutdown && _exitProvider.Owner.Releases == 1 && AudioKit.SoundStats.OwnedSourceCount == 0;
+                _exitPending.EndReason == AudioPlayEnd.Shutdown && _exitProvider.Owner.Releases == 1 && AudioKit.SoundStats.OwnedSourceCount == 0 &&
+                ResourceSystem.Current == null && string.IsNullOrEmpty(_runtimeError);
             if (passed)
             {
                 Debug.Log("AUDIO45 QUIT_PASS");
+                WritePlayerResult(true);
             }
             else
             {
                 Result = "FAILED: real quit cleanup";
                 Debug.LogError("AUDIO45 QUIT_FAILED");
+                WritePlayerResult(false);
                 // quitting 已不可撤销；Mono fixture 的失败必须以非零码结束，不能被先前 Quit(0) 覆盖。
                 if (!Application.isEditor)
                 {
@@ -367,11 +423,69 @@ namespace YLFramework.Core.Tests
                 }
             }
         }
-        private static AudioSource FindSource(AudioClip clip = null)
+
+        private void PreparePlayerResult()
+        {
+            var args = Environment.GetCommandLineArgs();
+            var index = Array.IndexOf(args, "-ylFeatureResult");
+            Check(index > 0 && index + 1 < args.Length, "shared fixture result argument");
+            var player = Path.GetFullPath(Path.GetDirectoryName(Application.dataPath));
+            var output = Path.GetFullPath(args[index + 1]);
+            Check(Guid.TryParseExact(runToken, "N", out _) &&
+                string.Equals(player, Path.GetFullPath(ownedPlayerDirectory), StringComparison.OrdinalIgnoreCase), "serialized owned Player identity");
+            Check(string.Equals(Path.GetDirectoryName(output), player, StringComparison.OrdinalIgnoreCase) &&
+                (Path.GetFileName(output) == "result-1.json" || Path.GetFileName(output) == "result-2.json") &&
+                !File.Exists(output) && !Directory.Exists(output), "new result inside the owned Player");
+            for (var parent = new DirectoryInfo(player); parent != null; parent = parent.Parent)
+            {
+                Check((parent.Attributes & FileAttributes.ReparsePoint) == 0, "unlinked owned Player ancestry");
+            }
+            Check(Array.IndexOf(args, "-nographics") < 0 &&
+                SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null, "real graphical Player device");
+            _resultPath = output;
+        }
+
+        private void CaptureRuntimeError(string message, string stack, LogType type)
+        {
+            if (type == LogType.Error || type == LogType.Assert || type == LogType.Exception)
+            {
+                _runtimeError = message + "\n" + stack;
+            }
+        }
+
+        private void WritePlayerResult(bool passed)
+        {
+            if (Application.isEditor || string.IsNullOrEmpty(_resultPath))
+            {
+                return;
+            }
+            var diagnostics = _resources?.GetDiagnosticsSnapshot();
+            var report = new JObject
+            {
+                ["status"] = passed ? "Passed" : "Failed",
+                ["error"] = passed ? null : Result + "\n" + _runtimeError,
+                ["unityVersion"] = Application.unityVersion,
+                ["platform"] = Application.platform.ToString(),
+                ["isEditor"] = Application.isEditor,
+                ["runtimeAssembly"] = typeof(AudioKit).Assembly.GetName().Name,
+                ["catalogDigest"] = "",
+                ["pid"] = System.Diagnostics.Process.GetCurrentProcess().Id,
+                ["leaseCount"] = diagnostics?.LeaseCount ?? -1,
+                ["recordCount"] = diagnostics?.RecordCount ?? -1,
+                ["token"] = runToken,
+                ["graphicsDevice"] = SystemInfo.graphicsDeviceType.ToString(),
+                ["audioSampleRate"] = AudioSettings.outputSampleRate,
+                ["measurements"] = _measurements
+            };
+            using var stream = new FileStream(_resultPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            using var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false));
+            writer.Write(report.ToString());
+        }
+        private static AudioSource FindSource(AudioClip clip = null, AudioSource except = null)
         {
             foreach (var source in FindObjectsOfType<AudioSource>())
             {
-                if ((!clip || source.clip == clip) && source.isPlaying)
+                if (source != except && (!clip || source.clip == clip) && source.isPlaying)
                 {
                     return source;
                 }
@@ -404,6 +518,7 @@ namespace YLFramework.Core.Tests
                 yield return null;
             } while (Time.realtimeSinceStartup < deadline);
             var rms = Math.Sqrt(energy / count);
+            _measurements[label] = rms;
             Debug.Log("AUDIO45 OUTPUT " + label + " rms=" + rms.ToString("G9", System.Globalization.CultureInfo.InvariantCulture));
             consume(rms);
         }

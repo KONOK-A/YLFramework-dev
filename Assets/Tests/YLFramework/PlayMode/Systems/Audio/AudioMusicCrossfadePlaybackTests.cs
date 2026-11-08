@@ -638,7 +638,7 @@ namespace YLFramework.Tests.Audio
         }
 
         [UnityTest]
-        public IEnumerator RuntimeMusicComponentKeepsLegacyLinearInitializerAndDrivesExplicitEqualPower()
+        public IEnumerator RuntimeMusicComponentUsesEqualPowerWithoutEditorReset()
         {
             var root = new GameObject("Crossfade.Curve.Component");
             try
@@ -654,13 +654,12 @@ namespace YLFramework.Tests.Audio
                 Assert.IsNotNull(crossFadeOnPlay);
                 Assert.IsNotNull(crossFadeDuration);
                 Assert.IsNotNull(crossFadeCurve);
-                Assert.AreEqual(AudioCrossfadeCurve.Linear, crossFadeCurve.GetValue(player),
-                    "Runtime AddComponent preserves the legacy field initializer; Editor Reset selects EqualPower separately.");
+                Assert.AreEqual(AudioCrossfadeCurve.EqualPower, crossFadeCurve.GetValue(player),
+                    "Runtime and Editor creation must share the same EqualPower default.");
                 clipField.SetValue(player, _a);
                 playOnAwake.SetValue(player, false);
                 crossFadeOnPlay.SetValue(player, true);
                 crossFadeDuration.SetValue(player, .6f);
-                crossFadeCurve.SetValue(player, AudioCrossfadeCurve.EqualPower);
                 player.Play();
                 var first = AudioKit.Music;
                 Assert.IsTrue(first.IsValid);

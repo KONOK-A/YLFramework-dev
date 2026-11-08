@@ -41,11 +41,6 @@ namespace YLFramework.Tests.Actions
         {
             foreach (var action in _actions)
             {
-                if (action is ScreenTransitionInOut<ScreenTransitionFade, ScreenTransitionFade> inOut)
-                {
-                    inOut.In(null).Out(null).OnInFinish(null);
-                }
-
                 if (!action.IsDeinitialized)
                 {
                     action.Deinit();
@@ -137,46 +132,63 @@ namespace YLFramework.Tests.Actions
         }
 
         [Test]
-        public void AllocatedFadeRetainsOriginalSettingsUntilFactoryOrCallerOverwritesThem()
+        public void RecycledFadeStartsWithDefaultColorAlphaDurationAndElapsedTime()
         {
             var first = Own(ScreenTransitionFade.Allocate().Color(Color.red).FromAlpha(0.3f).ToAlpha(0.7f).Duration(2));
-            ScreenTransitionFade reused = null;
-            try
-            {
-                first.Deinit();
-                ActionQueue.Drain();
-                reused = Own(ScreenTransitionFade.Allocate());
-                Assert.That(reused, Is.SameAs(first));
-                reused.Execute(0);
-                Assert.That(_canvas.colorImage.color.r, Is.EqualTo(1));
-                Assert.That(_canvas.colorImage.color.a, Is.EqualTo(0.3f));
-                reused.Execute(1);
-                Assert.That(_canvas.colorImage.color.a, Is.EqualTo(0.5f).Within(0.00001f));
-            }
-            finally
-            {
-                // Leave no characterized settings behind even when an assertion fails.
-                first.Color(Color.black).FromAlpha(0).ToAlpha(0).Duration(1);
-                if (reused != null)
-                {
-                    reused.Color(Color.black).FromAlpha(0).ToAlpha(0).Duration(1);
-                }
-            }
+            first.Execute(0);
+            first.Execute(1);
+            first.Deinit();
+            ActionQueue.Drain();
+            var reused = Own(ScreenTransitionFade.Allocate());
+            Assert.That(reused, Is.SameAs(first));
+            reused.Execute(0);
+            Assert.That(_canvas.colorImage.color, Is.EqualTo(new Color(0, 0, 0, 0)));
+            Assert.That(reused.Execute(0.5f), Is.False);
+            Assert.That(_canvas.colorImage.color.a, Is.Zero);
+            Assert.That(reused.Execute(0.5f), Is.True);
         }
 
         [Test]
-        public void InOutKeepsBothAllocationOverloadsAndAllFluentReturnTypes()
+        public void InOutIsARegularSequenceThatCanBeDrivenToCompletionWithoutAGlobalHost()
         {
-            var fadeIn = Own(Kit.ScreenTransition.FadeIn());
-            var fadeOut = Own(Kit.ScreenTransition.FadeOut());
-            var typed = Own(ScreenTransitionInOut<ScreenTransitionFade, ScreenTransitionFade>.Allocate(fadeIn, fadeOut));
-            var defaultAllocated = Own(ScreenTransitionInOut<ScreenTransitionFade, ScreenTransitionFade>.Allocate());
-            Assert.That(typed.In(value => { }), Is.SameAs(typed));
-            Assert.That(typed.Out(value => { }), Is.SameAs(typed));
-            Assert.That(typed.OnInFinish(() => { }), Is.SameAs(typed));
-            Assert.That(defaultAllocated.Status, Is.EqualTo(ActionStatus.NotStart));
-            Assert.That(typeof(Kit.ScreenTransition).GetMethod("FadeInOut").ReturnType,
-                Is.EqualTo(typeof(ScreenTransitionInOut<ScreenTransitionFade, ScreenTransitionFade>)));
+            IAction action = Own(Kit.ScreenTransition.FadeInOut());
+            Assert.That(action, Is.InstanceOf<ISequence>(), "The factory must return an owned sequence, not a detached global launcher.");
+            var completed = 0;
+            ((ISequence)action).Callback(() => completed++);
+            Assert.That(action.Execute(0), Is.False);
+            Assert.That(_canvas.colorImage.color.a, Is.Zero);
+            Assert.That(action.Execute(0.5f), Is.False);
+            Assert.That(_canvas.colorImage.color.a, Is.EqualTo(0.5f));
+            Assert.That(action.Execute(0.5f), Is.False);
+            Assert.That(_canvas.colorImage.color.a, Is.EqualTo(1));
+            Assert.That(action.Execute(1), Is.True);
+            Assert.That(_canvas.colorImage.color.a, Is.Zero);
+            Assert.That(completed, Is.EqualTo(1));
+            Assert.That(Object.FindObjectOfType<ActionGlobalHost>(true), Is.Null);
+        }
+
+        [Test]
+        public void FactorySequenceInvokesTheMiddleCallbackOnceAndClearsItBeforePoolReuse()
+        {
+            var middle = 0;
+            var transition = Own(Kit.ScreenTransition.FadeInOut(() =>
+            {
+                Assert.That(_canvas.colorImage.color.a, Is.EqualTo(1));
+                middle++;
+            }));
+            transition.Execute(0);
+            Assert.That(transition.Execute(1), Is.False);
+            Assert.That(middle, Is.EqualTo(1));
+            Assert.That(transition.Execute(1), Is.True);
+            transition.Deinit();
+            ActionQueue.Drain();
+            var reused = Own(Kit.ScreenTransition.FadeInOut());
+            reused.Execute(0);
+            reused.Execute(1);
+            Assert.That(reused.Execute(1), Is.True);
+            Assert.That(middle, Is.EqualTo(1));
+            Assert.That(_canvas.colorImage.color.a, Is.Zero);
+            Assert.That(Object.FindObjectOfType<ActionGlobalHost>(true), Is.Null);
         }
 
         [Test]
@@ -191,7 +203,7 @@ namespace YLFramework.Tests.Actions
         {
             var prefab = Resources.Load<GameObject>(ScreenTransitionCanvas.ResourcePath);
             Assert.That(prefab, Is.Not.Null,
-                "Run YLFramework > Action > 创建屏幕过渡资源 once, outside Play Mode.");
+                "The main package must contain its owned screen-transition prefab; consumers do not regenerate product assets.");
             Assert.That(AssetDatabase.GetAssetPath(prefab),
                 Is.EqualTo("Packages/com.kano.ylframework/Runtime/Systems/Action/Resources/ActionKit/ScreenTransitionCanvas.prefab"));
             Assert.That(GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(prefab), Is.Zero);

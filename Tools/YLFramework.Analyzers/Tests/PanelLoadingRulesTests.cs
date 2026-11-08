@@ -10,17 +10,12 @@ namespace YLFramework.Analyzers.Tests
 {
     public class PanelLoadingRulesTests
     {
-        [TestCase("owner.LoadView<P>(\"name\",null,new object[0])")]
-        [TestCase("owner.LoadView<P>((UnityEngine.GameObject)null,null,new object[0])")]
-        [TestCase("owner.LoadView<P>((UnityEngine.Transform)null,new object[0])")]
-        [TestCase("owner.LoadViewAsync<P>(\"name\",null,new object[0])")]
-        [TestCase("owner.LoadViewAsync<P>((UnityEngine.Transform)null,new object[0])")]
         [TestCase("owner.LoadView<P>(\"name\",null,(LoadViewArgs)null)")]
         [TestCase("owner.LoadView<P>((UnityEngine.GameObject)null,null,(LoadViewArgs)null)")]
         [TestCase("owner.LoadView<P>((UnityEngine.Transform)null,(LoadViewArgs)null)")]
         [TestCase("owner.LoadViewAsync<P>(\"name\",null,(LoadViewArgs)null)")]
         [TestCase("owner.LoadViewAsync<P>((UnityEngine.Transform)null,(LoadViewArgs)null)")]
-        public Task AllTenGenericLoadingOverloadsRejectPanelTypes(string call)
+        public Task AllFiveTypedGenericLoadingOverloadsRejectPanelTypes(string call)
             => AnalyzerFixture.Check("using YLFramework.Core;class P:Panel{}class C{void M(Module owner){var p={|YL0009:" +
                 call + "|};}}", "LoadPanel");
 

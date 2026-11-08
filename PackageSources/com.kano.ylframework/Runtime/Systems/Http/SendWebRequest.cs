@@ -363,7 +363,7 @@ namespace YLFramework.Http
             finally
             {
                 ReleaseTransport();
-                // 基类保留旧事件先于注册回调的历史多播/中断语义；异常只报告，不反写 HTTP 终态。
+                // 基类按注册顺序同步通知；异常只报告，不反写 HTTP 终态。
                 try
                 {
                     Complete(error);

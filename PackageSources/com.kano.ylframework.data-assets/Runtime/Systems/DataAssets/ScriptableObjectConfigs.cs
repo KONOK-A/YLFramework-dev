@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Serialization;
 
 namespace YLFramework.DataAssets
 {
@@ -16,7 +15,7 @@ namespace YLFramework.DataAssets
         public List<ScriptableObjectData> configs = new List<ScriptableObjectData>();
         /// <summary>编辑器允许创建的条目基类脚本 GUID；为空时使用默认条目基类。</summary>
         [HideInInspector]
-        [FormerlySerializedAs("type_script_guid"), global::YLFramework.Excel.ExcelColumnName("type_script_guid")] public string typeScriptGuid;
+        [global::YLFramework.Excel.ExcelColumnName("type_script_guid")] public string typeScriptGuid;
 
         private DataAssetIdIndex _index;
         private ScriptableObjectData[] _indexedItems;

@@ -37,9 +37,9 @@ namespace YLFramework.Editor.Help
                         "这里仅展示精选 API，不扫描整个工程或执行成员。"),
                     Document("基础模块导航", "README.md")),
                 Guide("tools", "Tools 与 Editor 工具", "按需选用数据与 UI 便利工具，不增加统一工具宿主或配置中心。",
-                    new[] { typeof(global::YLFramework.Utilities.StringTools), typeof(FSM.Fsm<>), typeof(Grids.NormalGrid<>), typeof(global::YLFramework.Utilities.Json.JSONObject),
+                    new[] { typeof(global::YLFramework.Utilities.StringTools), typeof(FSM.Fsm<>), typeof(Grids.NormalGrid<>),
                         typeof(global::YLFramework.UI.ColorSelector), typeof(global::YLFramework.UI.ColorSelectorWindow) },
-                    HelpBlock.Paragraph("选用工具", "StringTools/Extensions、FSM、Grid、Json/JSONObject、Table 位于 YLFramework.Runtime；FSM 由调用方驱动及回收，" +
+                    HelpBlock.Paragraph("选用工具", "StringTools/Extensions、FSM、Grid、Table 位于 YLFramework.Runtime；JSON 树直接使用既有 Json.NET 依赖的 JObject/JArray/JToken。FSM 由调用方驱动及回收，" +
                           "不替代 com.kano.ylframework.state-machine 的可视化状态机。ZipTool也归Runtime主体，源码仍BCL-only；Zip/GZip的reader以using管理寿命。" +
                          "这些工具不强制依赖 Core Module，也不把 Save/HTTP 改为另一套 JSON 内核。"),
                     HelpBlock.Paragraph("取色便利工具", "ColorSelector 的控件、渲染与窗口统一位于 Utilities/UI/ColorSelector，不是 Foundation 基础机制。" +

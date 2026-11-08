@@ -177,7 +177,11 @@ function Invoke-YLUnitySuite {
     $sources = Get-SelectedSources -Native -EditorProfile $EditorProfile
     $sessionScene = 'prepareSessionScene' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSessionScene
     $desktop = $Suite -ceq 'Special' -and 'interactiveDesktop' -cin $Definition.PSObject.Properties.Name -and $Definition.interactiveDesktop
-    $dotween = 'nativeSdk' -cin $Definition.PSObject.Properties.Name
+    $nativeSdk = if ('nativeSdk' -cin $Definition.PSObject.Properties.Name) { $Definition.nativeSdk } else { '' }
+    if ($nativeSdk -isnot [string] -or $nativeSdk -cnotin @('', 'DOTween', 'HybridCLR')) { throw 'Unsupported native SDK; only explicit DOTween and HybridCLR profiles are accepted.' }
+    $dotween = $nativeSdk -ceq 'DOTween'
+    $hybridClr = $nativeSdk -ceq 'HybridCLR'
+    $hybridSdk = $null
     $nativeTools = @($Unity)
     if ($dotween) {
         if ($Definition.nativeSdk -isnot [string] -or $Definition.nativeSdk -cne 'DOTween' -or $Module -cne 'DOTween' -or
@@ -185,15 +189,21 @@ function Invoke-YLUnitySuite {
         $DOTweenArchive = Get-YLTestPath -Path $DOTweenArchive -ReadOnly
         $nativeTools += $DOTweenArchive
     } elseif ($DOTweenArchive) { throw 'An ordinary native module cannot deploy a DOTween SDK.' }
+    if ($hybridClr) {
+        if ($Module -cne 'HybridCLR' -or $Suite -cne 'Daily' -or $Definition.nativeLayout -cne 'Framework') { throw 'PrerequisiteNotMet: HybridCLR SDK requires the explicit Daily Framework module.' }
+        $hybridSdk = Get-YLIntegrationHybridSdk -Repository $Repository
+    }
     $profile = "Unity-$($EditorProfile.version)-UTF$($EditorProfile.testFramework)-UGUI$($EditorProfile.ugui)-$Suite-$($Definition.nativeLayout)-Graphics$($Definition.graphics)-IsolatedModes"
     if ($sessionScene) { $profile += '-SessionScenes' }
     if ($desktop) { $profile += '-Desktop' }
     if ($dotween) { $profile += '-ApprovedDOTween-InitializeOnce' }
+    if ($hybridClr) { $profile += '-ApprovedHybridCLR-Git' }
     $identity = Get-YLTestInputIdentity -Repository $Repository -Paths $sources.inputs -Toolchain $nativeTools -Profile $profile
     $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $Repository
     $repositoryKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Repository.ToLowerInvariant()))).Substring(0, 12)
     $hostKey = "Unity-$($EditorProfile.version)-$Suite-$Module-$repositoryKey"
     if ($dotween) { $hostKey += '-SdkInitializeOnce' }
+    if ($hybridClr) { $hostKey += '-HybridClrGitSdk' }
     $hasSamples = 'sampleInputs' -cin $Definition.PSObject.Properties.Name -and @($Definition.sampleInputs).Count -gt 0
     if ($hasSamples) { $hostKey += '-Samples-' + $identity.sha256 }
     if ($sessionScene) { $hostKey += '-SessionScenes' }
@@ -234,6 +244,9 @@ function Invoke-YLUnitySuite {
         if ($dotween) {
             $sdk = Get-YLIntegrationDotweenSdk -Repository $Repository -Archive $DOTweenArchive -OwnedSdkRoot (Join-Path $run.path 'ApprovedSdk')
             $Summary['sdk'] = @{ mode = 'Required'; version = $sdk.version; archiveSha256 = $sdk.archiveSha256; assemblySha256 = $sdk.assemblySha256; sdkDeployed = $true; defineEnabled = $true }
+        }
+        if ($hybridClr) {
+            $Summary['sdk'] = @{ source = 'Git'; version = $hybridSdk.version; declaration = $hybridSdk.declaration; revision = $hybridSdk.revision; nativeInstallation = 'NotRun' }
         }
         $ids = if ('packageInputs' -cin $Definition.PSObject.Properties.Name) { @($Definition.packageInputs) } else { @('com.kano.ylframework') }
         $productPackages = @(Get-YLUpmPackages -Repository $Repository -Ids $ids)
@@ -289,11 +302,21 @@ function Invoke-YLUnitySuite {
             }
             $projectLock = [IO.File]::ReadAllText((Join-Path $Repository $packageInputs[1])) | ConvertFrom-Json -DateKind String
             $dependencies['com.unity.nuget.newtonsoft-json'] = $projectLock.dependencies.'com.unity.nuget.newtonsoft-json'.version
+            foreach ($id in @(if ('nativeUnityPackages' -cin $Definition.PSObject.Properties.Name) { $Definition.nativeUnityPackages })) {
+                if ($id -isnot [string] -or $id -cne 'com.unity.inputsystem') { throw 'Unsupported native Unity package; only the explicit Input System consumer is approved.' }
+                $declared = $projectManifest.dependencies.$id
+                $locked = $projectLock.dependencies.$id
+                if ($declared -isnot [string] -or $declared -cnotmatch '^\d+\.\d+\.\d+$' -or
+                    $locked.source -isnot [string] -or $locked.source -cne 'registry' -or
+                    $locked.version -isnot [string] -or $locked.version -cne $declared) { throw "PrerequisiteNotMet: native Unity package declaration and target lock must match: $id" }
+                $dependencies[$id] = $declared
+            }
         }
         $manifest = @{ dependencies = $dependencies }
         foreach ($package in $productPackages) {
             $manifest.dependencies[$package.id] = 'file:../' + $package.relative
         }
+        if ($hybridClr) { $manifest.dependencies['com.code-philosophy.hybridclr'] = $hybridSdk.declaration }
         $files['Packages/manifest.json'] = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Json -InputObject $manifest -Depth 8))
         if ($dotween) {
             foreach ($relative in $sdk.files.Keys) { $files['Assets/Plugins/Demigiant/DOTween/' + $relative] = [IO.File]::ReadAllBytes((Join-Path $sdk.root $relative)) }
@@ -338,6 +361,7 @@ function Invoke-YLUnitySuite {
                 $fact = Invoke-TestingProcess -Exe $Unity -Arguments $arguments
                 $response = [IO.File]::ReadAllText((Join-Path $output 'response.json')) | ConvertFrom-Json -DateKind String
                 Assert-YLUnityResponseIdentity -Response $response -Request $request -UnityVersion $EditorProfile.version
+                if ($hybridClr) { $null = Get-YLIntegrationHybridSdk -Repository $hostRecord.path }
                 $Summary.unity.actualVersion = $response.unityVersion
                 if ($response.isBatchMode -isnot [bool] -or $response.isBatchMode -eq $desktop) { throw 'The actual Editor desktop/batch mode differs from the explicit host profile.' }
                 $Summary.unity['isBatchMode'] = $response.isBatchMode
@@ -406,6 +430,16 @@ function Invoke-YLUnitySuite {
                 $fresh = Get-SelectedSources -Native -EditorProfile $EditorProfile
                 $currentTools = @($nativeTools) + @((Join-Path $hostRecord.path 'Packages/manifest.json'), (Join-Path $hostRecord.path 'Packages/packages-lock.json')) + @($execution.response.compiledInputs)
                 $current = Get-YLTestInputIdentity -Repository $Repository -Paths $fresh.inputs -Toolchain $currentTools -Profile $profile
+                if ($current.sha256 -cne $effective.sha256) {
+                    $Summary['inputDrift'] = @{
+                        mode = $mode
+                        expectedHash = $effective.sha256; actualHash = $current.sha256
+                        expectedProfile = $effective.profile; actualProfile = $current.profile
+                        expectedRepository = $effective.repository; actualRepository = $current.repository
+                        sources = @(Compare-Object -ReferenceObject @($effective.files | ForEach-Object { [pscustomobject]$_ }) -DifferenceObject @($current.files | ForEach-Object { [pscustomobject]$_ }) -Property path, sha256 -CaseSensitive | Select-Object path, sha256, SideIndicator)
+                        toolchain = @(Compare-Object -ReferenceObject @($effective.toolchain | ForEach-Object { [pscustomobject]$_ }) -DifferenceObject @($current.toolchain | ForEach-Object { [pscustomobject]$_ }) -Property path, sha256 -CaseSensitive | Select-Object path, sha256, SideIndicator)
+                    }
+                }
                 Read-YLTestXml -Path (Join-Path $execution.output "results-$mode.xml") -Selection $actualSelection -InputIdentity $current -Mode $mode -ProcessResult $execution.process
             })
             $total = ($modes | Measure-Object -Property total -Sum).Sum

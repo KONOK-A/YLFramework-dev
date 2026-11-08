@@ -53,9 +53,13 @@ namespace YLFramework.Core.Tests
                     "static global::YLFramework.Pooling.ObjectPool<object> pool; " +
                     "static void Use() { var module = global::YLFramework.Core.ModuleManager.GetModule(\"X\"); " +
                     "var provider = global::YLFramework.Core.CoreResourceAccess.Provider; " +
+                    "var tables = module.PreloadConfigTables; " +
                     "var settings = new global::Newtonsoft.Json.JsonSerializerSettings { CheckAdditionalContent = true }; " +
                     "var json = global::Newtonsoft.Json.JsonConvert.DeserializeObject(\"{}\", typeof(object), settings); " +
-                    "var ui = typeof(global::UnityEngine.UI.Image); } }");
+                    "var ui = typeof(global::UnityEngine.UI.Image); } } " +
+                    "internal sealed class SupportedConfigTableModule : global::YLFramework.Core.Module { " +
+                    "public override global::System.Collections.Generic.Dictionary<string, global::System.Type> PreloadConfigTables => null; " +
+                    "public override void OnStart() {} }");
                 var forbidden = Path.Combine(folder, "ForbiddenSystemsConsumer.cs");
                 File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(forbidden), "using Upper = global::YLFramework.Audio.AudioKit; " +
                     "internal static class ForbiddenSystemsConsumer { static global::System.Type Type() => typeof(Upper); " +
@@ -103,6 +107,11 @@ namespace YLFramework.Core.Tests
                     if (consumer == legal)
                     {
                         Assert.That(errors.Select(m => m.file + ":" + m.line + ": " + m.message), Is.Empty);
+                        Assert.That(messages.Where(message => message.type == CompilerMessageType.Warning &&
+                            System.Text.RegularExpressions.Regex.IsMatch(message.message, @"\bCS(?:0618|0672)\b") &&
+                            Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(message.file)) == legal)
+                            .Select(message => message.message), Is.Empty,
+                            "The supported built-in config-table contract must compile without obsolete API warnings or suppression.");
                         Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(output)), Is.True);
                     }
                     else

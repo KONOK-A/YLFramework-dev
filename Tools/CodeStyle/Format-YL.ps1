@@ -40,7 +40,7 @@ $files = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgn
 function Test-AllowedPath {
     param([string] $RelativePath)
     if ($RelativePath -match '(^|/)(Plugins|Generated|obj|bin)(/|$)|\.(g|generated)\.cs$' -or
-        $RelativePath -match '^PackageSources/com.kano.ylframework/Runtime/Utilities/(Json|ZipTool/ICSharpCode\.SharpZipLib)(/|$)' -or
+        $RelativePath -match '^PackageSources/com.kano.ylframework/Runtime/Utilities/ZipTool/ICSharpCode\.SharpZipLib(/|$)' -or
         $RelativePath -match '^Assets/Tests/YLFramework/Integrations/HybridCLR/PlayMode/Resources(/|$)') {
         return $false
     }

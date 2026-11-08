@@ -59,7 +59,7 @@ else
 
 [`CustomAsyncOperation<T>`](../../Runtime/Foundation/Async/CustomAsyncOperation.cs) 只提供 `IsDone`、`Progress`、`Error`、协程等待与同步完成通知，不自动启动工作或切换线程。
 
-- `AddCompleteEvent` 在请求已结束时立即同步调用新增订阅；异常仍会传给注册者。常规通知先调用旧 `Completed`，再调用新订阅；基类不逐个隔离回调异常。
+- `AddCompleteEvent` 在请求已结束时立即同步调用新增订阅；异常仍会传给注册者。常规通知按注册顺序同步执行，基类不逐个隔离回调异常。需要解绑时保存同一委托并配对调用 `RemoveCompleteEvent`；不再提供旧 `Completed` 事件。
 - 派生类使用 `Complete` 或 `CompleteWithoutNotify`。基类重复完成仍可更新 Error，基类 Abort 不天然拥有稳定终态或实际生产者取消权。
 - HTTP 自管终态与独占传输；View/Panel、Audio、Resource 的取消、租约和共享生产者遵循各自合同，不由这个基类统一接管。
 

@@ -8,6 +8,18 @@ namespace YLFramework.Tests.Extensions.Domain
     public class ReddotLifecycleTests
     {
         [Test]
+        public void DisplayExposesRefreshButNoBusinessMutation()
+        {
+            var methods = typeof(Reddot).GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.DeclaredOnly);
+            Assert.That(System.Linq.Enumerable.Select(System.Linq.Enumerable.Where(methods, method => !method.IsSpecialName), method => method.Name),
+                Is.EquivalentTo(new[] { nameof(Reddot.Refresh) }));
+            foreach (var field in typeof(Reddot).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.DeclaredOnly))
+                Assert.That(field.GetCustomAttributes(typeof(UnityEngine.Serialization.FormerlySerializedAsAttribute), false), Is.Empty);
+        }
+
+        [Test]
         public void NumericPathSubscriptionsRebindWithoutUnrelatedOrUnchangedRedraws()
         {
             var owner = new GameObject("Domain.Reddot.NumericOwner");
@@ -92,7 +104,7 @@ namespace YLFramework.Tests.Extensions.Domain
 
         [TestCase("path", "_path", typeof(string))]
         [TestCase("indicator", "_indicator", typeof(GameObject))]
-        public void SerializedFieldsAndFormerNamesRemainConsumable(string name, string oldName, System.Type type)
+        public void CurrentSerializedFieldsRemainConsumableWithoutOldReaders(string name, string oldName, System.Type type)
         {
             var field = typeof(Reddot).GetField(name,
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
@@ -101,7 +113,8 @@ namespace YLFramework.Tests.Extensions.Domain
             Assert.That(field.IsDefined(typeof(SerializeField), false), Is.True);
             var former = (UnityEngine.Serialization.FormerlySerializedAsAttribute)System.Attribute.GetCustomAttribute(
                 field, typeof(UnityEngine.Serialization.FormerlySerializedAsAttribute));
-            Assert.That(former.oldName, Is.EqualTo(oldName));
+            Assert.That(former, Is.Null);
+            Assert.That(typeof(Reddot).GetField(oldName, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic), Is.Null);
         }
 
         [Test]

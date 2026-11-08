@@ -30,60 +30,6 @@ namespace YLFramework.Tests.Resource
             }
         }
 
-        [Serializable]
-        private sealed class AssemblyMoveTable
-        {
-            public AssemblyMove[] moves;
-        }
-
-        [Serializable]
-        private sealed class AssemblyMove
-        {
-            public string fullName;
-            public string legacyName;
-            public string currentAssembly;
-            public string package;
-        }
-
-        private static IEnumerable<TestCaseData> PublicAssemblyMoves()
-        {
-            const string Path = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblyMoves.json";
-            var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(Path);
-            Assert.That(asset, Is.Not.Null, Path);
-            var table = JsonUtility.FromJson<AssemblyMoveTable>(asset.text);
-            Assert.That(table.moves, Is.Not.Empty);
-            foreach (var move in table.moves)
-            {
-                string currentPackage = move.currentAssembly == "YLFramework.Runtime" ? "com.kano.ylframework" : move.package;
-                yield return new TestCaseData(move.fullName, move.legacyName, move.currentAssembly, currentPackage);
-            }
-        }
-
-        [TestCaseSource(nameof(PublicAssemblyMoves))]
-        public void FunctionalDomainsKeepOneDeclaredAssemblyIdentity(string fullName, string legacyName, string expectedAssembly, string currentPackage)
-        {
-            var runtime = typeof(ResourceSystem).Assembly;
-            if (!UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Any(package => package.name == currentPackage))
-            {
-                Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(fullName) != null), Is.False,
-                    "An uninstalled feature cannot be supplied by the main assembly or an alias.");
-                return;
-            }
-            var owner = System.Reflection.Assembly.Load(expectedAssembly);
-            var type = owner.GetType(fullName);
-            Assert.That(type, Is.Not.Null, fullName);
-            Assert.That(type.IsPublic, Is.True, fullName);
-            Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(assembly => assembly.GetType(fullName) != null), Is.EqualTo(1), fullName);
-            if (!string.IsNullOrEmpty(legacyName))
-            {
-                Assert.That(AppDomain.CurrentDomain.GetAssemblies().Any(assembly => assembly.GetType(legacyName) != null), Is.False, legacyName);
-            }
-            if (owner != runtime)
-            {
-                Assert.That(runtime.GetType(fullName), Is.Null, "A migrated type must not remain in the main Runtime.");
-            }
-        }
-
         [Test]
         public void CompressionWrapperMovesWithoutRenamingTheBundledVendor()
         {

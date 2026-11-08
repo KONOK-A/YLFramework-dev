@@ -310,6 +310,8 @@ namespace YLFramework.Resource
                     }
                 }
                 // Check只取得进程内读责任；缺失的持久lock也不能由只读查询创建。
+                RejectUnsupportedControlRecords();
+                ReadReleaseFloors();
                 if (readOnly)
                 {
                     return new StoreLock(this, null);
@@ -447,7 +449,7 @@ namespace YLFramework.Resource
         // 构造完整闭包索引，并携带当前可读的最高已确认发布历史。
         private JObject Index(IEnumerable<ResourceLocalSnapshot> snapshots) => WithFloors(new JObject
         {
-            ["Version"] = 1,
+            ["Version"] = 2,
             ["OwnerId"] = _ownerId,
             ["Projects"] = new JArray(snapshots.OrderBy(x => x.Document.ProjectId, StringComparer.Ordinal).Select(x => new JObject
             {
@@ -460,17 +462,14 @@ namespace YLFramework.Resource
         // 验证索引归属、历史门槛和完整项目平台集合，此处不验证版本文件内容。
         private JObject ValidateIndex(JObject index)
         {
-            var version = ResourceCatalogCodec.Integer(index, "Version");
-            ResourceCatalogCodec.Fields(index, version == 2 ? "Version,OwnerId,Projects,ReleaseFloors" : "Version,OwnerId,Projects");
-            if (version != 1 && version != 2 || ResourceCatalogCodec.Text(index, "OwnerId") != _ownerId)
+            RequireControlVersion(index);
+            ResourceCatalogCodec.Fields(index, "Version,OwnerId,Projects,ReleaseFloors");
+            if (ResourceCatalogCodec.Text(index, "OwnerId") != _ownerId)
             {
                 throw new InvalidDataException("Activation index ownership mismatch.");
             }
 
-            if (version == 2)
-            {
-                ValidateFloors(index["ReleaseFloors"]);
-            }
+            ValidateFloors(index["ReleaseFloors"]);
 
             var projects = ReadArray(index, "Projects");
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -855,11 +854,7 @@ namespace YLFramework.Resource
                 }
                 releases = authorizations.Values.OrderBy(x => x.ProjectId, StringComparer.Ordinal).ToArray();
             }
-            var record = new JObject { ["Version"] = releases.Length == 0 ? 1 : 2, ["OwnerId"] = _ownerId, ["State"] = "Complete", ["Transition"] = transition };
-            if (releases.Length != 0)
-            {
-                record["Releases"] = ReleaseRecords(releases);
-            }
+            var record = new JObject { ["Version"] = 2, ["OwnerId"] = _ownerId, ["State"] = "Complete", ["Transition"] = transition, ["Releases"] = ReleaseRecords(releases) };
 
             if (!JToken.DeepEquals(previous, record))
             {

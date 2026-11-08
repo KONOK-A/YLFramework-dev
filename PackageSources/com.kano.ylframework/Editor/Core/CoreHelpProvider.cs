@@ -51,7 +51,7 @@ namespace YLFramework.Editor.Core
                         "UIRootContext 只保留 Canvas、GraphicRaycaster、显式层和可选遮罩；Camera/RenderMode 直接配置 Canvas，缩放只配置原生 CanvasScaler 与 AutomaticAdaptationCanvasScaler。根注册不改变对象寿命。"),
                     HelpBlock.Paragraph("显示与输入", "Layer → 同层 Modal 分组 → Priority → 接受/前置序号生成顺序。CoversRoot 只声明覆盖，不改布局；ParticipatesInTop 独立于 Modal。" +
                         "使用 Hide/Show/BringToFront/UpdateDisplay 五字段更新；OnOpen 中只读显示，不能 Close 当前 Panel/owner 或重入本 Module 的 Panel 打开。输入只门禁标准 UI，不关闭业务 ActionMap，不改写控件业务字段。"),
-                    HelpBlock.Notice("资产迁移", "已有资产不会运行时自修复。集成后显式执行 YLFramework/Core/UI Panel/核验资产迁移，再执行资产迁移，核对 GUID/fileID、CanvasScaler、Tips Variant 和 Unity 生成的 meta。完成源码或离线编译不等于两种预设已验收。"),
+                    HelpBlock.Notice("资产核验", "已有资产不会运行时自修复。使用 YLFramework/Core/UI Panel/核验正式资产 只读检查正式模板；一次性迁移与旧 fileID 修补入口已退役。自有模板通过 Unity 流程检查实际引用和差异；只读检查或编译不等于输入、连续 Play 或 Player 验收。"),
                     Document("UI 接入、Tips 与 ColorSelector", "Modules/UI.md")),
                 Guide("authoring", "创建与生成入口", "创建操作留在所属工具，帮助只提供导航，不执行生成器。",
                     new[] { typeof(Module), typeof(PanelRule) },

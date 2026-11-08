@@ -96,33 +96,21 @@ namespace YLFramework.Overlap.Tests
         }
 
         [Test]
-        public void LegacyBoxSphereAndNew3DDetectorCoexistInTheRealMovementInstallation()
+        public void BoxSphereUnionKeepsRealContactIdentityInTheMovementInstallation()
         {
             var target = Own("Native3DTarget", new Vector3(50, 50, 7)).AddComponent<BoxCollider>();
             target.gameObject.layer = 11;
-            var host = Own("LegacyAndNew", new Vector3(50, 50, 7));
-            var box = host.AddComponent<OverlapBox3D>();
-            box.IsRunning = false;
-            box.LayerMask = 1 << 11;
-            box.Size = Vector3.one * 3;
-            var sphere = host.AddComponent<OverlapSphere3D>();
-            sphere.IsRunning = false;
-            sphere.LayerMask = 1 << 11;
-            sphere.Radius = 2;
+            var host = Own("Union", new Vector3(50, 50, 7));
             var detector = host.AddComponent<OverlapDetector3D>();
             detector.Filter = new OverlapFilter3D(1 << 11);
-            detector.Composite = new OverlapComposite3D(OverlapShape3D.Sphere(Vector3.zero, 2));
+            detector.Composite = new OverlapComposite3D(OverlapShape3D.Box(Vector3.zero, Vector3.one * 3, Quaternion.identity),
+                OverlapShape3D.Sphere(Vector3.zero, 2));
             Physics.SyncTransforms();
-            box.CheckOverlap();
-            sphere.CheckOverlap();
-            Assert.That(box.results.Count, Is.EqualTo(1));
-            Assert.That(sphere.results.Count, Is.EqualTo(1));
-            Assert.That(box.results[0].point, Is.EqualTo(new Vector2(50, 50)));
             Assert.That(detector.Sample(), Is.True);
             Assert.That(detector.LastComplete.Single().Collider, Is.SameAs(target));
-            box.enabled = false;
-            Assert.That(box.results, Is.Empty);
-            Assert.That(detector.LastComplete.Count, Is.EqualTo(1));
+            Assert.That(detector.LastComplete.Single().Point.z, Is.EqualTo(7));
+            detector.enabled = false;
+            Assert.That(detector.LastComplete, Is.Empty);
         }
     }
 }

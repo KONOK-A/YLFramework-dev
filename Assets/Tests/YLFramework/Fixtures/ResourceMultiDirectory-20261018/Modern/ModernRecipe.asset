@@ -12,10 +12,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: efbfe2b778a7a3642844022cb04d1672, type: 3}
   m_Name: ModernRecipe
   m_EditorClassIdentifier: 
-  Project: {fileID: 11400000, guid: 5c0f01c44d4e08a4c92590c5632501d2, type: 2}
-  Target: 19
-  AppContentCompatibilityId: multidirectory-modern-v1
-  Action: 1
-  ForceRebuild: 0
-  GenerateReferences: 0
-  ReferenceDirectory: Assets/YLFramework/Tests/Fixtures/ResourceMultiDirectory-20261018/Modern/Generated/BlockedReferences
+  project: {fileID: 11400000, guid: 5c0f01c44d4e08a4c92590c5632501d2, type: 2}
+  target: 19
+  appContentCompatibilityId: multidirectory-modern-v1
+  action: 1
+  forceRebuild: 0
+  generateReferences: 0
+  referenceDirectory: Assets/YLFramework/Tests/Fixtures/ResourceMultiDirectory-20261018/Modern/Generated/BlockedReferences

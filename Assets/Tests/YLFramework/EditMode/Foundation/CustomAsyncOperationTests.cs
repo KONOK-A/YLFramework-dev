@@ -55,16 +55,15 @@ namespace YLFramework.Foundation.Tests
         }
 
         [Test]
-        public void CompletionNotifiesLegacyThenRegisteredCallbacksThenHook()
+        public void CompletionNotifiesCallbacksInRegistrationOrderThenHook()
         {
             var operation = new Probe();
-#pragma warning disable CS0618
-            operation.Completed += value =>
+            Action<Probe> first = value =>
             {
                 Assert.That(value, Is.SameAs(operation));
-                operation.Calls.Add("legacy");
+                operation.Calls.Add("first");
             };
-#pragma warning restore CS0618
+            operation.AddCompleteEvent(first);
             operation.AddCompleteEvent(value =>
             {
                 Assert.That(value, Is.SameAs(operation));
@@ -74,7 +73,8 @@ namespace YLFramework.Foundation.Tests
                 operation.Calls.Add("registered");
             });
             operation.Finish("failure");
-            Assert.That(operation.Calls, Is.EqualTo(new[] { "legacy", "registered", "hook" }));
+            operation.RemoveCompleteEvent(first);
+            Assert.That(operation.Calls, Is.EqualTo(new[] { "first", "registered", "hook" }));
         }
 
         [Test]
@@ -124,25 +124,19 @@ namespace YLFramework.Foundation.Tests
         }
 
         [Test]
-        public void RemoveAllOnlyClearsRegisteredCallbacksNotLegacyEvent()
+        public void RemoveAllClearsCompletionCallbacksWithoutSkippingTheHook()
         {
             var operation = new Probe();
-#pragma warning disable CS0618
-            operation.Completed += _ => operation.Calls.Add("legacy");
-#pragma warning restore CS0618
             operation.AddCompleteEvent(_ => operation.Calls.Add("registered"));
             operation.RemoveAllCompleteEvent();
             operation.Finish();
-            Assert.That(operation.Calls, Is.EqualTo(new[] { "legacy", "hook" }));
+            Assert.That(operation.Calls, Is.EqualTo(new[] { "hook" }));
         }
 
         [Test]
         public void SilentCompletionRunsHookButNotEventsAndStillAllowsLateCallback()
         {
             var operation = new Probe();
-#pragma warning disable CS0618
-            operation.Completed += _ => operation.Calls.Add("legacy");
-#pragma warning restore CS0618
             operation.AddCompleteEvent(_ => operation.Calls.Add("registered"));
             operation.FinishSilently("silent failure");
             Assert.That(operation.IsDone, Is.True);
@@ -193,6 +187,32 @@ namespace YLFramework.Foundation.Tests
             Assert.That(operation.Calls, Is.Empty);
             operation.Finish();
             Assert.That(operation.Calls, Is.Empty);
+        }
+
+        [Test]
+        public void ReentrantRegistrationAndRemovalKeepTheCommittedStateAndOriginalNotificationSnapshot()
+        {
+            var operation = new Probe();
+            Action<Probe> later = _ => operation.Calls.Add("later");
+            Action<Probe> immediate = value =>
+            {
+                Assert.That(value.IsDone, Is.True);
+                Assert.That(value.Progress, Is.EqualTo(1f));
+                operation.Calls.Add("immediate");
+            };
+            Action<Probe> first = _ =>
+            {
+                operation.Calls.Add("first");
+                operation.RemoveCompleteEvent(later);
+                operation.AddCompleteEvent(immediate);
+            };
+            operation.AddCompleteEvent(first);
+            operation.AddCompleteEvent(later);
+            operation.Finish();
+            operation.RemoveCompleteEvent(first);
+            operation.RemoveCompleteEvent(immediate);
+            operation.Finish();
+            Assert.That(operation.Calls, Is.EqualTo(new[] { "first", "immediate", "later", "hook" }));
         }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using NUnit.Framework;
 using YLFramework.Pooling;
@@ -11,18 +12,35 @@ namespace YLFramework.Core.Tests
     public class CoreIdentityTests
     {
         [Test]
+        public void ViewLoadingHasOneTypedInitializationAndNoRetiredControllerPolicy()
+        {
+            var loaded = typeof(View).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Where(method => method.Name == nameof(View.OnLoaded)).ToArray();
+            Assert.That(loaded.Length, Is.EqualTo(1));
+            Assert.That(loaded[0].GetParameters().Select(parameter => parameter.ParameterType), Is.EqualTo(new[] { typeof(LoadViewArgs) }));
+            var entryPoints = typeof(Module).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Where(method => method.Name == "LoadView" || method.Name == "LoadViewAsync").ToArray();
+            Assert.That(entryPoints.Length, Is.EqualTo(8));
+            Assert.That(entryPoints.All(method => method.GetParameters().Last().ParameterType == typeof(LoadViewArgs)), Is.True);
+            Assert.That(typeof(Controller).Assembly.GetType("YLFramework.Core.ControllerType"), Is.Null);
+            Assert.That(typeof(Controller).GetProperty("Type", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly), Is.Null);
+        }
+
+        [Test]
         public void CoreResponsibilitiesHaveOneOwnerAcrossSmallPartialDeclarations()
         {
             const string Root = "Packages/com.kano.ylframework/Runtime/Core/";
             foreach (var path in new[] { "Modules/Module.cs", "Modules/ModuleManager.cs", "Modules/SingletonModule.cs",
                 "Modules/Requests/StartUpModuleRequest.cs", "MVC/Models/Model.cs", "MVC/Models/ModelManager.cs",
                 "MVC/Controllers/Controller.cs", "MVC/Controllers/ControllerManager.cs", "MVC/Views/View.cs",
-                "Events/EventManager.cs", "UI/Windows/Panel.cs", "UI/Windows/PanelConfig.cs", "UI/Windows/PanelOverrides.cs",
+                "Events/CoreEvents.cs", "UI/Windows/Panel.cs", "UI/Windows/PanelConfig.cs", "UI/Windows/PanelOverrides.cs",
                 "UI/Windows/PanelRule.cs", "UI/Windows/PanelManager.Requests.cs", "UI/Roots/UIRootContext.cs",
                 "UI/Input/InputSystemBridge.cs", "UI/Tips/UITipsPresenter.cs", "Attributes/MustCallBaseAttribute.cs" })
             {
                 Assert.That(System.IO.File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Root + path)), Is.True, path);
             }
+            Assert.That(CoreEvents.ViewRemoved, Is.EqualTo("ON_REMOVE_VIEW"),
+                "The persisted event key must not change when its publisher uses EventBus directly.");
 
             foreach (var family in new[] {
                 new[] { "Modules/Module", "Models", "Controllers", "Views", "Panels" },

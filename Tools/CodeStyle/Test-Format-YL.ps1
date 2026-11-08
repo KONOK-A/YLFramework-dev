@@ -74,7 +74,6 @@ try {
     $protectedPaths = @(
         'Assets/Games/Example.cs',
         'PackageSources/com.kano.ylframework/Plugins/Example.cs',
-        'PackageSources/com.kano.ylframework/Runtime/Utilities/Json/Example.cs',
         'PackageSources/com.kano.ylframework/Runtime/Utilities/ZipTool/ICSharpCode.SharpZipLib/Example.cs',
         'PackageSources/com.kano.ylframework.excel/Editor/Plugins/Example.cs',
         'PackageSources/com.kano.ylframework/Runtime/Generated/Example.cs',

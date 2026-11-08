@@ -36,10 +36,10 @@ namespace YLFramework.Editor
                 throw new InvalidOperationException("缺少正式 UIAcceptance 场景。");
             }
 
-            var basic = AssetDatabase.LoadAssetAtPath<GameObject>(UIPanelAssetMigration.BaseRootPath);
-            if (!basic || !basic.GetComponent<global::YLFramework.Core.UIRootContext>() || !AssetDatabase.LoadAssetAtPath<GameObject>(UIPanelAssetMigration.TipsVariantPath))
+            var basic = AssetDatabase.LoadAssetAtPath<GameObject>(UIPanelAssetValidator.BaseRootPath);
+            if (!basic || !basic.GetComponent<global::YLFramework.Core.UIRootContext>() || !AssetDatabase.LoadAssetAtPath<GameObject>(UIPanelAssetValidator.TipsVariantPath))
             {
-                throw new InvalidOperationException("先完成显式资产迁移及导入核验，再构建 IL2CPP 关口。");
+                throw new InvalidOperationException("先核验正式资产及导入结果，再构建 IL2CPP 关口。");
             }
 
             var moduleType = Type.GetType("UnityEngine.InputSystem.UI.InputSystemUIInputModule, Unity.InputSystem", true);

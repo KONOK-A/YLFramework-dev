@@ -9,6 +9,50 @@ namespace YLFramework.Resource
     /// <remarks>ReleaseFloor 按项目与频道记录最高已确认序号及摘要；内容回滚不降低历史门槛。</remarks>
     public sealed partial class ArtifactStore
     {
+        // Incompatible controls are not damaged content and must not enter recovery fallback.
+        private static void RequireControlVersion(JObject record)
+        {
+            if (ResourceCatalogCodec.Integer(record, "Version") != 2)
+            {
+                throw new ResourceException(ResourceError.Unsupported, "Unsupported ArtifactStore control format; this root requires an explicit trusted rebuild.");
+            }
+        }
+
+        // Inspect every owned slot before creating a write lock or removing interrupted replacements.
+        private void RejectUnsupportedControlRecords()
+        {
+            var prepared = Directory.Exists(PreparedRoot)
+                ? Directory.EnumerateFiles(PreparedRoot).Where(path => path.EndsWith(".json", StringComparison.Ordinal) || path.EndsWith(".json.next", StringComparison.Ordinal))
+                : Enumerable.Empty<string>();
+            foreach (var path in ControlFiles().SelectMany(path => new[] { path, path + ".next" }).Concat(prepared))
+            {
+                if (!Exists(path))
+                {
+                    continue;
+                }
+                JObject record;
+                try
+                {
+                    record = Read(path);
+                }
+                catch (InvalidDataException)
+                {
+                    continue;
+                }
+                RequireControlVersion(record);
+                if (path == JournalPath || path == JournalPath + ".next")
+                {
+                    foreach (var name in new[] { "ActiveBefore", "GoodBefore" })
+                    {
+                        if (record[name] is JObject previous)
+                        {
+                            RequireControlVersion(previous);
+                        }
+                    }
+                }
+            }
+        }
+
         // 验证历史条目的有界集合、挂载范围及每个项目频道的唯一身份。
         private JArray ValidateFloors(JToken token)
         {
@@ -70,6 +114,8 @@ namespace YLFramework.Resource
         private JArray ReadReleaseFloors()
         {
             var entries = new List<JObject>();
+            var found = false;
+            var trusted = false;
             if (!ValidateOwner())
             {
                 return new JArray();
@@ -80,26 +126,35 @@ namespace YLFramework.Resource
                 foreach (var name in new[] { "active.json", "last-known-good.json" })
                 {
                     var path = Path.Combine(ProjectRoot(project.ProjectId), name);
-                    if (!File.Exists(path))
+                    if (!Exists(path))
                     {
                         continue;
                     }
+                    found = true;
 
                     JObject index;
                     try
                     {
                         index = ValidateIndex(Read(path));
+                        trusted = true;
                     }
                     catch (InvalidDataException error)
                     {
                         _recoveryNotes[path] = name + ": " + error.Message;
                         continue;
                     }
-                    if ((long)index["Version"] == 2)
-                    {
-                        entries.AddRange(ValidateFloors(index["ReleaseFloors"]).Cast<JObject>());
-                    }
+                    entries.AddRange(ValidateFloors(index["ReleaseFloors"]).Cast<JObject>());
                 }
+            }
+            if (found && !trusted)
+            {
+                if (!File.Exists(JournalPath))
+                {
+                    throw new InvalidDataException("Persistent release floor history cannot be trusted; refusing to replace it with empty history.");
+                }
+                var journal = ValidateJournal(Read(JournalPath));
+                entries.AddRange(ValidateFloors(journal["ReleaseFloorsBefore"]).Cast<JObject>());
+                entries.AddRange(ValidateFloors(journal["ReleaseFloorsAfter"]).Cast<JObject>());
             }
 
             return MergeFloors(entries);
@@ -128,15 +183,10 @@ namespace YLFramework.Resource
                 ((long)x["Sequence"] > release.Sequence || (long)x["Sequence"] == release.Sequence && (string)x["CatalogDigest"] == release.CatalogDigest)));
         }
 
-        // 将非空历史副本写入索引并升级其格式，不创建独立的安全存储。
+        // Every v2 index persists its floor collection, including a trusted empty history.
         private JObject WithFloors(JObject index, JArray floors)
         {
             ValidateFloors(floors);
-            if (floors.Count == 0)
-            {
-                return index;
-            }
-
             index["Version"] = 2;
             index["ReleaseFloors"] = floors.DeepClone();
             return index;

@@ -18,6 +18,17 @@ namespace YLFramework.Tests.Help
         private const string First = "__helpkit_test_first";
         private const string Second = "__helpkit_test_second";
 
+        [TestCase(typeof(Editor.HelpWindow))]
+        [TestCase(typeof(YLFramework.Editor.Common.SplitWindow))]
+        [TestCase(typeof(YLFramework.Editor.Common.TreeViewStateGroup))]
+        [TestCase(typeof(YLFramework.Editor.Common.TreeViewStateInfo))]
+        public void CurrentEditorStateHasNoRetiredTypeOrFieldReaders(Type type)
+        {
+            Assert.That(type.GetCustomAttributes(typeof(UnityEngine.Scripting.APIUpdating.MovedFromAttribute), false), Is.Empty);
+            Assert.That(type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+                .SelectMany(field => field.GetCustomAttributes<UnityEngine.Serialization.FormerlySerializedAsAttribute>()), Is.Empty);
+        }
+
         [TearDown]
         public void RemoveTestProviders()
         {
@@ -27,10 +38,10 @@ namespace YLFramework.Tests.Help
 
         [TestCase(false)]
         [TestCase(true)]
-        public void LegacyWindowStateRetainsSelectedPagesWidthsAndBooleanDefaults(bool initialized)
+        public void CurrentWindowStateRetainsSelectedPagesWidthsAndBooleanDefaults(bool initialized)
         {
             var window = ScriptableObject.CreateInstance<Editor.HelpWindow>();
-            string folder = "Assets/Tests/YLFramework/EditMode/Editor/Help/LegacyWindow-" + Guid.NewGuid().ToString("N");
+            string folder = "Assets/Tests/YLFramework/EditMode/Editor/Help/CurrentWindow-" + Guid.NewGuid().ToString("N");
             Assert.That(AssetDatabase.CreateFolder("Assets/Tests/YLFramework/EditMode/Editor/Help", Path.GetFileName(folder)), Is.Not.Empty);
             try
             {
@@ -58,19 +69,8 @@ namespace YLFramework.Tests.Help
                 AssetDatabase.CreateAsset(window, path);
                 EditorUtility.SetDirty(window);
                 AssetDatabase.SaveAssetIfDirty(window);
-                string yaml = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path));
-                var aliases = names.Select(entry => (entry.Item1, entry.Item2)).Concat(new[]
-                {
-                    ("mTab", "tab"), ("mSidebarWidth", "sidebarWidth"),
-                    ("mCollapsedGroups", "collapsedGroups"), ("mInitialGroupsSet", "hasInitializedGroups")
-                });
-                foreach (var alias in aliases)
-                {
-                    yaml = System.Text.RegularExpressions.Regex.Replace(yaml, @"(?m)^  " + alias.Item2 + @":", "  " + alias.Item1 + ":");
-                    Assert.That(System.Text.RegularExpressions.Regex.Matches(yaml, @"(?m)^  " + alias.Item1 + @":").Count, Is.EqualTo(1));
-                }
-
-                File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), yaml, new System.Text.UTF8Encoding(false));
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                var metadata = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"));
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
                 serialized = new SerializedObject(AssetDatabase.LoadAssetAtPath<Editor.HelpWindow>(path));
                 foreach (var entry in names)
@@ -82,6 +82,8 @@ namespace YLFramework.Tests.Help
                 Assert.That(serialized.FindProperty("hasInitializedGroups").boolValue, Is.EqualTo(initialized));
                 Assert.That(serialized.FindProperty("collapsedGroups").arraySize, Is.EqualTo(1));
                 Assert.That(serialized.FindProperty("collapsedGroups").GetArrayElementAtIndex(0).stringValue, Is.EqualTo("guide:legacy"));
+                Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+                Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")), Is.EqualTo(metadata));
             }
             finally
             {
@@ -95,10 +97,10 @@ namespace YLFramework.Tests.Help
 
         [TestCase(0f)]
         [TestCase(0.57f)]
-        public void LegacySplitWindowRatioRetainsExplicitValuesAcrossReimport(float ratio)
+        public void CurrentSplitWindowRatioRetainsExplicitValuesAcrossReimport(float ratio)
         {
             var window = ScriptableObject.CreateInstance<YLFramework.Editor.Common.SplitWindow>();
-            string folder = "Assets/Tests/YLFramework/EditMode/Editor/Help/LegacySplit-" + Guid.NewGuid().ToString("N");
+            string folder = "Assets/Tests/YLFramework/EditMode/Editor/Help/CurrentSplit-" + Guid.NewGuid().ToString("N");
             Assert.That(AssetDatabase.CreateFolder("Assets/Tests/YLFramework/EditMode/Editor/Help", Path.GetFileName(folder)), Is.Not.Empty);
             try
             {
@@ -113,10 +115,8 @@ namespace YLFramework.Tests.Help
                 AssetDatabase.CreateAsset(window, path);
                 EditorUtility.SetDirty(window);
                 AssetDatabase.SaveAssetIfDirty(window);
-                string yaml = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path));
-                yaml = System.Text.RegularExpressions.Regex.Replace(yaml, @"(?m)^  horizontalSplitPercent:", "  horizontal_split_percent:");
-                Assert.That(yaml, Does.Contain("  horizontal_split_percent:"));
-                File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), yaml, new System.Text.UTF8Encoding(false));
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                var metadata = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"));
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
                 var restored = AssetDatabase.LoadAssetAtPath<YLFramework.Editor.Common.SplitWindow>(path);
                 Assert.That(restored.HorizontalSplitPercent, Is.EqualTo(ratio));
@@ -125,6 +125,8 @@ namespace YLFramework.Tests.Help
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
                 Assert.That(AssetDatabase.LoadAssetAtPath<YLFramework.Editor.Common.SplitWindow>(path).HorizontalSplitPercent, Is.EqualTo(ratio));
                 Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Does.Not.Contain("  horizontal_split_percent:"));
+                Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+                Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")), Is.EqualTo(metadata));
             }
             finally
             {
@@ -137,17 +139,26 @@ namespace YLFramework.Tests.Help
         }
 
         [Test]
-        public void LegacyCommonTreeStateSurvivesNamespaceMigrationAndReimport()
+        public void CurrentCommonTreeStateSurvivesFormalSaveUnloadAndColdReimport()
         {
-            const string Source = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/EditorCommonStateBefore.asset";
-            byte[] original = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(Source));
-            string folder = "Assets/Tests/YLFramework/EditMode/Editor/Help/LegacyCommon-" + Guid.NewGuid().ToString("N");
+            string folder = "Assets/Tests/YLFramework/EditMode/Editor/Help/CurrentCommon-" + Guid.NewGuid().ToString("N");
             Assert.That(AssetDatabase.CreateFolder("Assets/Tests/YLFramework/EditMode/Editor/Help", Path.GetFileName(folder)), Is.Not.Empty);
             try
             {
-                Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Source)), Does.Contain("ns: YLFramework.Editor.Utilities"));
                 string path = folder + "/State.asset";
-                Assert.That(AssetDatabase.CopyAsset(Source, path), Is.True);
+                var input = ScriptableObject.CreateInstance<EditorCommonStateFixture>();
+                input.group = new YLFramework.Editor.Common.TreeViewStateGroup();
+                input.group.Get(42).selectedIDs = new List<int> { 73 };
+                input.group.Get(42).expandedIDs = new List<int> { 99 };
+                input.info = new YLFramework.Editor.Common.TreeViewStateInfo(17, input.group.Get(17));
+                input.info.treeViewState.selectedIDs = new List<int> { 5 };
+                AssetDatabase.CreateAsset(input, path);
+                EditorUtility.SetDirty(input);
+                AssetDatabase.SaveAssetIfDirty(input);
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                var metadata = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"));
+                Assert.That(guid, Is.Not.EqualTo("8b22906969d1b5148831d1f8485b23da"));
+                Resources.UnloadAsset(input);
                 for (int pass = 0; pass < 2; pass++)
                 {
                     AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
@@ -159,35 +170,50 @@ namespace YLFramework.Tests.Help
                     Assert.That(state.group.Get(42).expandedIDs, Is.EqualTo(new[] { 99 }));
                     Assert.That(state.info.id, Is.EqualTo(17));
                     Assert.That(state.info.treeViewState, Is.Not.Null);
+                    Assert.That(state.info.treeViewState.selectedIDs, Is.EqualTo(new[] { 5 }));
+                    Assert.That(state.group.Get(17).selectedIDs, Is.EqualTo(new[] { 5 }));
+                    Assert.That(File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Does.Contain("ns: YLFramework.Editor.Common"));
+                    Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+                    Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")), Is.EqualTo(metadata));
                     EditorUtility.SetDirty(state);
                     AssetDatabase.SaveAssetIfDirty(state);
+                    Resources.UnloadAsset(state);
                 }
             }
             finally
             {
                 Assert.That(AssetDatabase.DeleteAsset(folder), Is.True);
-                Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(Source)), Is.EqualTo(original));
             }
         }
 
         [Test]
-        public void LegacySplitWindowAssetSurvivesNamespaceMigrationAndReimport()
+        public void CurrentSplitWindowAssetPreservesItsIdentityAndRatioAcrossFormalSaves()
         {
-            const string Source = "Assets/Tests/YLFramework/Fixtures/NamespaceMigration/SplitWindowBefore.asset";
-            byte[] original = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(Source));
-            string folder = "Assets/Tests/YLFramework/EditMode/Editor/Help/LegacySplitAsset-" + Guid.NewGuid().ToString("N");
+            string folder = "Assets/Tests/YLFramework/EditMode/Editor/Help/CurrentSplitAsset-" + Guid.NewGuid().ToString("N");
             Assert.That(AssetDatabase.CreateFolder("Assets/Tests/YLFramework/EditMode/Editor/Help", Path.GetFileName(folder)), Is.Not.Empty);
             YLFramework.Editor.Common.SplitWindow window = null;
             try
             {
                 string path = folder + "/Window.asset";
-                Assert.That(AssetDatabase.CopyAsset(Source, path), Is.True);
+                window = ScriptableObject.CreateInstance<YLFramework.Editor.Common.SplitWindow>();
+                window.hideFlags = HideFlags.None;
+                var input = new SerializedObject(window);
+                input.FindProperty("horizontalSplitPercent").floatValue = 0.57f;
+                input.ApplyModifiedPropertiesWithoutUndo();
+                AssetDatabase.CreateAsset(window, path);
+                EditorUtility.SetDirty(window);
+                AssetDatabase.SaveAssetIfDirty(window);
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                var metadata = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"));
+                Assert.That(guid, Is.Not.EqualTo("15a3cfad3e8049f40b4239b8b2404e17"));
                 for (int pass = 0; pass < 2; pass++)
                 {
                     AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
                     window = AssetDatabase.LoadAssetAtPath<YLFramework.Editor.Common.SplitWindow>(path);
                     Assert.That(window, Is.Not.Null);
                     Assert.That(window.HorizontalSplitPercent, Is.EqualTo(0.57f));
+                    Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+                    Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")), Is.EqualTo(metadata));
                     EditorUtility.SetDirty(window);
                     AssetDatabase.SaveAssetIfDirty(window);
                 }
@@ -199,7 +225,6 @@ namespace YLFramework.Tests.Help
                 {
                     UnityEngine.Object.DestroyImmediate(window);
                 }
-                Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(Source)), Is.EqualTo(original));
             }
         }
 
@@ -309,7 +334,7 @@ namespace YLFramework.Tests.Help
         }
 
         [Test]
-        public void HelpBoundaryAndPersistedWindowIdentityArePreserved()
+        public void CurrentHelpBoundaryAndScriptIdentityArePreserved()
         {
             const string AssemblyPath = "Packages/com.kano.ylframework/Editor/Help/YLFramework.Editor.Help.asmdef";
             Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(AssemblyPath)), Is.False);
@@ -324,10 +349,8 @@ namespace YLFramework.Tests.Help
             Assert.That(definition.overrideReferences, Is.True);
             CollectionAssert.AreEqual(new[] { "Newtonsoft.Json.dll" }, definition.precompiledReferences);
             Assert.That(typeof(HelpWindowTests).Assembly.GetName().Name, Is.EqualTo("YLFramework.Tests.EditMode"));
-            var moved = typeof(Editor.HelpWindow).GetCustomAttributesData()
-                .Single(attribute => attribute.AttributeType == typeof(UnityEngine.Scripting.APIUpdating.MovedFromAttribute));
-            CollectionAssert.AreEqual(new object[] { true, "Project.HelpKit.Editor", "Project.HelpKit.Editor", "HelpWindow" },
-                moved.ConstructorArguments.Select(argument => argument.Value).ToArray());
+            Assert.That(typeof(Editor.HelpWindow).GetCustomAttributesData()
+                .Where(attribute => attribute.AttributeType == typeof(UnityEngine.Scripting.APIUpdating.MovedFromAttribute)), Is.Empty);
         }
 
         [Serializable]

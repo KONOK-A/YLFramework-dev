@@ -14,6 +14,14 @@ namespace YLFramework.Tests.Extensions.Domain
         [TearDown]
         public void Clean() => ReddotManager.Reset();
 
+        [Test]
+        public void OnlyPathObserversAndTheirDiagnosticsRemain()
+        {
+            Assert.That(typeof(ReddotManager).GetMethod("RegisterChanged"), Is.Null);
+            Assert.That(typeof(ReddotDiagnosticSnapshot).GetProperty("GlobalSubscriberCount"), Is.Null);
+            Assert.That(typeof(ReddotDiagnosticSnapshot).GetProperty("GlobalPending"), Is.Null);
+        }
+
         [TestCase("Mail", true)]
         [TestCase("Mail/Gift", true)]
         [TestCase("Mai", false)]
@@ -30,20 +38,20 @@ namespace YLFramework.Tests.Extensions.Domain
         {
             var displays = new List<bool>();
             Action changed = () => displays.Add(ReddotManager.ShouldBeDisplayed("Mail"));
-            var token = ReddotManager.RegisterChanged(changed);
+            var token = ReddotManager.Subscribe("Mail", _ => changed(), false);
             try
             {
                 ReddotManager.AddPath("Mail");
                 ReddotManager.AddPath("/Mail/");
                 ReddotManager.Reset();
                 Assert.That(displays, Is.EqualTo(new[] { true, false }));
-                token.Unregister();
+                token.Dispose();
                 ReddotManager.AddPath("Mail");
                 Assert.That(displays.Count, Is.EqualTo(2));
             }
             finally
             {
-                token.Unregister();
+                token.Dispose();
             }
         }
 
@@ -86,8 +94,8 @@ namespace YLFramework.Tests.Extensions.Domain
         public void FailedRegistrationPublishesRollbackAndPreservesBothObserverErrors()
         {
             var visible = false;
-            var display = ReddotManager.RegisterChanged(() => visible = ReddotManager.ShouldBeDisplayed("Mail"));
-            var throwing = ReddotManager.RegisterChanged(() => throw new InvalidOperationException("observer-marker"));
+            var display = ReddotManager.Subscribe("Mail", _ => visible = ReddotManager.ShouldBeDisplayed("Mail"), false);
+            var throwing = ReddotManager.Subscribe("Mail", _ => throw new InvalidOperationException("observer-marker"), false);
             try
             {
                 var error = Assert.Throws<AggregateException>(() => ReddotManager.RegisterPath("Mail"));
@@ -98,8 +106,8 @@ namespace YLFramework.Tests.Extensions.Domain
             }
             finally
             {
-                display.Unregister();
-                throwing.Unregister();
+                display.Dispose();
+                throwing.Dispose();
             }
         }
     }
@@ -123,33 +131,24 @@ namespace YLFramework.Tests.Extensions.Domain
             ReddotManager.AddPath("Mail/Gift");
             ReddotManager.SetAggregation("Mail", ReddotAggregation.Any);
             using var listener = ReddotManager.Subscribe("Mail", _ => { }, false);
-            var global = ReddotManager.RegisterChanged(() => { });
-            try
-            {
-                var snapshot = Capture();
-                Assert.That(Nodes(snapshot).Select(node => Read<string>(node, "Path")),
-                    Is.EqualTo(new[] { "Mail/", "Mail/Gift/" }));
-                var parent = Node(snapshot, "Mail/");
-                var child = Node(snapshot, "Mail/Gift/");
-                Assert.That(Read<long>(parent, "Value"), Is.EqualTo(1));
-                Assert.That(Read<ReddotAggregation>(parent, "Aggregation"), Is.EqualTo(ReddotAggregation.Any));
-                Assert.That(Read<int>(parent, "SubscriberCount"), Is.EqualTo(1));
-                Assert.That(Read<long>(parent, "OwnValue"), Is.Zero);
-                Assert.That(Read<long>(child, "OwnValue"), Is.EqualTo(7));
-                Assert.That(Read<long>(child, "LeaseCount"), Is.EqualTo(1));
-                Assert.That(Read<bool>(child, "HasPath"), Is.True);
-                Assert.That(Read<int>(snapshot, "GlobalSubscriberCount"), Is.EqualTo(1));
-                var sources = Items(Read<object>(child, "Sources"));
-                Assert.That(sources.Select(source => Read<string>(source, "SourceId")), Is.EqualTo(new[] { "a", "z" }));
-                Assert.That(sources.Select(source => Read<long>(source, "Value")), Is.EqualTo(new long[] { 2, 3 }));
-                Assert.That(Items(Read<object>(parent, "Sources")), Is.Empty, "Ancestors must not pretend to own descendants' sources.");
-                Assert.That(Read<int>(snapshot, "DirtyNodeCount"), Is.Zero);
-                Assert.That(Read<int>(snapshot, "BatchDepth"), Is.Zero);
-            }
-            finally
-            {
-                global.Unregister();
-            }
+            var snapshot = Capture();
+            Assert.That(Nodes(snapshot).Select(node => Read<string>(node, "Path")),
+                Is.EqualTo(new[] { "Mail/", "Mail/Gift/" }));
+            var parent = Node(snapshot, "Mail/");
+            var child = Node(snapshot, "Mail/Gift/");
+            Assert.That(Read<long>(parent, "Value"), Is.EqualTo(1));
+            Assert.That(Read<ReddotAggregation>(parent, "Aggregation"), Is.EqualTo(ReddotAggregation.Any));
+            Assert.That(Read<int>(parent, "SubscriberCount"), Is.EqualTo(1));
+            Assert.That(Read<long>(parent, "OwnValue"), Is.Zero);
+            Assert.That(Read<long>(child, "OwnValue"), Is.EqualTo(7));
+            Assert.That(Read<long>(child, "LeaseCount"), Is.EqualTo(1));
+            Assert.That(Read<bool>(child, "HasPath"), Is.True);
+            var sources = Items(Read<object>(child, "Sources"));
+            Assert.That(sources.Select(source => Read<string>(source, "SourceId")), Is.EqualTo(new[] { "a", "z" }));
+            Assert.That(sources.Select(source => Read<long>(source, "Value")), Is.EqualTo(new long[] { 2, 3 }));
+            Assert.That(Items(Read<object>(parent, "Sources")), Is.Empty, "Ancestors must not pretend to own descendants' sources.");
+            Assert.That(Read<int>(snapshot, "DirtyNodeCount"), Is.Zero);
+            Assert.That(Read<int>(snapshot, "BatchDepth"), Is.Zero);
         }
 
         [Test]
@@ -201,14 +200,12 @@ namespace YLFramework.Tests.Extensions.Domain
                 Assert.That(Read<long>(during, "CaptureSequence"), Is.EqualTo(Read<long>(before, "CaptureSequence") + 1));
                 Assert.That(Read<int>(during, "BatchDepth"), Is.EqualTo(2));
                 Assert.That(Read<int>(during, "DirtyNodeCount"), Is.EqualTo(2));
-                Assert.That(Read<bool>(during, "GlobalPending"), Is.True);
                 Assert.That(Read<bool>(Node(during, "Mail/"), "IsDirty"), Is.True);
                 Assert.That(values, Is.Empty);
             }
             Assert.That(values, Is.EqualTo(new long[] { 4 }));
             var after = Capture();
             Assert.That(Read<int>(after, "DirtyNodeCount"), Is.Zero);
-            Assert.That(Read<bool>(after, "GlobalPending"), Is.False);
             Assert.That(Read<int>(after, "BatchDepth"), Is.Zero);
         }
 
@@ -318,8 +315,6 @@ namespace YLFramework.Tests.Extensions.Domain
             Assert.That(batched.RootNotifications, Is.EqualTo(129));
             Assert.That(unbatched.LeafNotifications, Is.EqualTo(24576));
             Assert.That(batched.LeafNotifications, Is.EqualTo(8192));
-            Assert.That(unbatched.GlobalNotifications, Is.EqualTo(24577));
-            Assert.That(batched.GlobalNotifications, Is.EqualTo(129));
             Assert.That(unbatched.MaximumCallbackDepth, Is.EqualTo(1));
             Assert.That(batched.MaximumCallbackDepth, Is.EqualTo(1));
             TestContext.WriteLine("Real core, not Unity native: machine={0}; OS={1}; CPU={2}; processors={3}; CLR={4}; pointerBits={5}",
@@ -327,8 +322,8 @@ namespace YLFramework.Tests.Extensions.Domain
                 Environment.ProcessorCount, Environment.Version, IntPtr.Size * 8);
             foreach (var result in new[] { unbatched, batched })
             {
-                TestContext.WriteLine("batch={0}; groups=4; branchesPerGroup=4; leavesPerBranch=4; pathDepth=4; leaves=64; sourcesPerLeaf=3; echoSources=1; warmIterations=8; iterations=128; updates=24576; final={1}; rootNotifications={2}; leafNotifications={3}; globalNotifications={4}; maxCallbackDepth={5}; updateMs={6:F3}; updateAllocatedBytes={7}; warmedReadPairs=100000; readChecksum={8}; readMs={9:F3}; readAllocatedBytes={10}; diagnosticNodes={11}; diagnosticSources={12}; diagnosticSubscribers={13}; diagnosticMs={14:F3}; diagnosticAllocatedBytes={15}",
-                    result.Batch, result.FinalValue, result.RootNotifications, result.LeafNotifications, result.GlobalNotifications,
+                TestContext.WriteLine("batch={0}; groups=4; branchesPerGroup=4; leavesPerBranch=4; pathDepth=4; leaves=64; sourcesPerLeaf=3; echoSources=1; warmIterations=8; iterations=128; updates=24576; final={1}; rootNotifications={2}; leafNotifications={3}; maxCallbackDepth={4}; updateMs={5:F3}; updateAllocatedBytes={6}; warmedReadPairs=100000; readChecksum={7}; readMs={8:F3}; readAllocatedBytes={9}; diagnosticNodes={10}; diagnosticSources={11}; diagnosticSubscribers={12}; diagnosticMs={13:F3}; diagnosticAllocatedBytes={14}",
+                    result.Batch, result.FinalValue, result.RootNotifications, result.LeafNotifications,
                     result.MaximumCallbackDepth, result.UpdateMilliseconds, result.UpdateAllocatedBytes, result.ReadChecksum,
                     result.ReadMilliseconds, result.ReadAllocatedBytes, result.DiagnosticNodes, result.DiagnosticSources,
                     result.DiagnosticSubscribers, result.DiagnosticMilliseconds, result.DiagnosticAllocatedBytes);
@@ -346,7 +341,6 @@ namespace YLFramework.Tests.Extensions.Domain
             internal long FinalValue;
             internal int RootNotifications;
             internal int LeafNotifications;
-            internal int GlobalNotifications;
             internal int MaximumCallbackDepth;
             internal double UpdateMilliseconds;
             internal long UpdateAllocatedBytes;
@@ -387,7 +381,6 @@ namespace YLFramework.Tests.Extensions.Domain
                 }
                 depth--;
             }, false);
-            var global = ReddotManager.RegisterChanged(() => result.GlobalNotifications++);
             try
             {
                 for (var index = 0; index < 64; index++)
@@ -434,7 +427,7 @@ namespace YLFramework.Tests.Extensions.Domain
                     subscriptions.Add(ReddotManager.Subscribe("Perf/G" + index / 16 + "/B" + index / 4 % 4 + "/L" + index % 4 + "/",
                         _ => result.LeafNotifications++, false));
                 }
-                result.RootNotifications = result.LeafNotifications = result.GlobalNotifications = result.MaximumCallbackDepth = 0;
+                result.RootNotifications = result.LeafNotifications = result.MaximumCallbackDepth = 0;
                 echoed = false;
                 allocated();
                 var watch = Stopwatch.StartNew();
@@ -475,7 +468,6 @@ namespace YLFramework.Tests.Extensions.Domain
             }
             finally
             {
-                global.Unregister();
                 foreach (var subscription in subscriptions)
                 {
                     subscription.Dispose();
@@ -781,7 +773,7 @@ namespace YLFramework.Tests.Extensions.Domain
         }
 
         [Test]
-        public void NumericImportFailureAndRollbackObserverFailureAreBothVisible()
+        public void NumericImportFailureRestoresAllMetadataWithoutAnUnchangedPathNotification()
         {
             using var state = new ReddotReadState("slot-0");
             state.MarkRead("b", "v1");
@@ -790,25 +782,16 @@ namespace YLFramework.Tests.Extensions.Domain
             using var a = state.BindUnreadSource("Mail/A", "a", "a", "v1");
             using var b = state.BindUnreadSource("Mail/B", "b", "b", "v1");
             using var c = state.BindUnreadSource("Mail/C", "c", "c", "v1");
-            var legacy = ReddotManager.RegisterChanged(() => throw new InvalidOperationException("rollback-marker"));
-            try
-            {
-                var error = Assert.Throws<AggregateException>(() => state.Import(Snapshot("slot-0", "a", "v1")));
-                var failures = error.Flatten().InnerExceptions;
-                Assert.That(failures, Has.Count.EqualTo(2));
-                Assert.That(failures[0], Is.TypeOf<OverflowException>());
-                Assert.That(failures[1].Message, Is.EqualTo("rollback-marker"));
-                Assert.That(state.IsRead("a", "v1"), Is.False);
-                Assert.That(state.IsRead("b", "v1"), Is.True);
-                Assert.That(state.IsRead("c", "v1"), Is.True);
-                Assert.That(ReddotManager.GetValue("Mail/A"), Is.EqualTo(1));
-                Assert.That(ReddotManager.GetValue("Mail/B"), Is.Zero);
-                Assert.That(ReddotManager.GetValue("Mail/C"), Is.Zero);
-            }
-            finally
-            {
-                legacy.Unregister();
-            }
+            var values = new List<long>();
+            using var subscription = ReddotManager.Subscribe("Mail", snapshot => values.Add(snapshot.Value), false);
+            Assert.Throws<OverflowException>(() => state.Import(Snapshot("slot-0", "a", "v1")));
+            Assert.That(values, Is.Empty);
+            Assert.That(state.IsRead("a", "v1"), Is.False);
+            Assert.That(state.IsRead("b", "v1"), Is.True);
+            Assert.That(state.IsRead("c", "v1"), Is.True);
+            Assert.That(ReddotManager.GetValue("Mail/A"), Is.EqualTo(1));
+            Assert.That(ReddotManager.GetValue("Mail/B"), Is.Zero);
+            Assert.That(ReddotManager.GetValue("Mail/C"), Is.Zero);
         }
 
         [Test]
@@ -835,7 +818,7 @@ namespace YLFramework.Tests.Extensions.Domain
             Assert.Throws<ArgumentException>(() => new ReddotReadState(" \t "));
             using var state = new ReddotReadState("slot-0");
             var calls = 0;
-            var global = ReddotManager.RegisterChanged(() => calls++);
+            var observer = ReddotManager.Subscribe("Mail", _ => calls++, false);
             try
             {
                 Assert.Throws<ArgumentException>(() => state.IsRead(" ", "v1"));
@@ -855,7 +838,7 @@ namespace YLFramework.Tests.Extensions.Domain
             }
             finally
             {
-                global.Unregister();
+                observer.Dispose();
             }
         }
 
@@ -1034,11 +1017,11 @@ namespace YLFramework.Tests.Extensions.Domain
         public void Clean() => ResetSession();
 
         [Test]
-        public void LegacyPathTruthAndLeasesUnchanged()
+        public void PathTruthAndIndependentLeasesRemainValueSensitive()
         {
             Assert.That(ReddotManager.NormalizePath(" /Mail/ / Gift // "), Is.EqualTo("Mail/Gift/"));
             var calls = 0;
-            var changed = ReddotManager.RegisterChanged(() => calls++);
+            var changed = ReddotManager.Subscribe("Mail/Gift", _ => calls++, false);
             try
             {
                 Assert.That(calls, Is.Zero);
@@ -1059,7 +1042,7 @@ namespace YLFramework.Tests.Extensions.Domain
             }
             finally
             {
-                changed.Unregister();
+                changed.Dispose();
             }
         }
 
@@ -1104,38 +1087,27 @@ namespace YLFramework.Tests.Extensions.Domain
             var child = new List<long>();
             using var parentSubscription = ReddotManager.Subscribe("Mail", snapshot => parent.Add(snapshot.Value), false);
             using var childSubscription = ReddotManager.Subscribe("Mail/A", snapshot => child.Add(snapshot.Value), false);
-            var globalCalls = 0;
-            var global = ReddotManager.RegisterChanged(() => globalCalls++);
-            try
+            using (ReddotManager.BeginBatch())
             {
+                first.SetValue(1);
                 using (ReddotManager.BeginBatch())
                 {
-                    first.SetValue(1);
-                    using (ReddotManager.BeginBatch())
-                    {
-                        first.SetValue(3);
-                        second.SetValue(4);
-                    }
-                    Assert.That(parent, Is.Empty);
-                    Assert.That(child, Is.Empty);
-                    Assert.That(globalCalls, Is.Zero);
-                    Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(7), "Reads see completed valid writes in a batch.");
-                }
-                Assert.That(parent, Is.EqualTo(new long[] { 7 }));
-                Assert.That(child, Is.EqualTo(new long[] { 3 }));
-                Assert.That(globalCalls, Is.EqualTo(1));
-                using (ReddotManager.BeginBatch())
-                {
-                    first.SetValue(8);
                     first.SetValue(3);
+                    second.SetValue(4);
                 }
-                Assert.That(parent, Is.EqualTo(new long[] { 7 }), "Returning to the original value is not a redraw.");
-                Assert.That(child, Is.EqualTo(new long[] { 3 }));
+                Assert.That(parent, Is.Empty);
+                Assert.That(child, Is.Empty);
+                Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(7), "Reads see completed valid writes in a batch.");
             }
-            finally
+            Assert.That(parent, Is.EqualTo(new long[] { 7 }));
+            Assert.That(child, Is.EqualTo(new long[] { 3 }));
+            using (ReddotManager.BeginBatch())
             {
-                global.Unregister();
+                first.SetValue(8);
+                first.SetValue(3);
             }
+            Assert.That(parent, Is.EqualTo(new long[] { 7 }), "Returning to the original value is not a redraw.");
+            Assert.That(child, Is.EqualTo(new long[] { 3 }));
         }
 
         [Test]
@@ -1202,38 +1174,28 @@ namespace YLFramework.Tests.Extensions.Domain
         {
             using var source = ReddotManager.RegisterSource("Mail/Gift", "id", 2);
             var snapshots = new List<ReddotSnapshot>();
-            var oldCalls = 0;
-            var old = ReddotManager.RegisterChanged(() => oldCalls++);
-            try
-            {
-                var subscription = ReddotManager.Subscribe(" /Mail// ", callback: snapshots.Add, emitInitial: true);
-                using var empty = ReddotManager.Subscribe(null,
-                    snapshot => Assert.That(snapshot.Value, Is.Zero), emitInitial: true);
-                Assert.That(oldCalls, Is.Zero, "Subscribing must not replay the legacy global channel.");
-                Assert.That(snapshots.Count, Is.EqualTo(1));
-                Assert.That(snapshots[0].Path, Is.EqualTo("Mail/"));
-                source.SetValue(3);
-                source.SetValue(3);
-                ReddotManager.AddPath("Mailbox");
-                ReddotManager.AddPath("Other");
-                Assert.That(snapshots.Count, Is.EqualTo(2));
-                Assert.That(snapshots[0].Value, Is.EqualTo(2), "Previously delivered snapshots must not mutate.");
-                ReddotManager.SetAggregation("Mail", ReddotAggregation.Any);
-                source.SetValue(4);
-                Assert.That(snapshots.Count, Is.EqualTo(3));
-                Assert.That(snapshots[2].Value, Is.EqualTo(1));
-                subscription.Dispose();
-                subscription.Dispose();
-                source.SetValue(0);
-                Assert.That(snapshots.Count, Is.EqualTo(3));
-                Assert.That(typeof(ReddotSnapshot).GetProperty("Value").CanWrite, Is.False);
-                Assert.That(typeof(ReddotSnapshot).GetProperty("Path").CanWrite, Is.False);
-                Assert.That(typeof(ReddotSource).GetProperty("Value").CanWrite, Is.False);
-            }
-            finally
-            {
-                old.Unregister();
-            }
+            var subscription = ReddotManager.Subscribe(" /Mail// ", callback: snapshots.Add, emitInitial: true);
+            using var empty = ReddotManager.Subscribe(null,
+                snapshot => Assert.That(snapshot.Value, Is.Zero), emitInitial: true);
+            Assert.That(snapshots.Count, Is.EqualTo(1));
+            Assert.That(snapshots[0].Path, Is.EqualTo("Mail/"));
+            source.SetValue(3);
+            source.SetValue(3);
+            ReddotManager.AddPath("Mailbox");
+            ReddotManager.AddPath("Other");
+            Assert.That(snapshots.Count, Is.EqualTo(2));
+            Assert.That(snapshots[0].Value, Is.EqualTo(2), "Previously delivered snapshots must not mutate.");
+            ReddotManager.SetAggregation("Mail", ReddotAggregation.Any);
+            source.SetValue(4);
+            Assert.That(snapshots.Count, Is.EqualTo(3));
+            Assert.That(snapshots[2].Value, Is.EqualTo(1));
+            subscription.Dispose();
+            subscription.Dispose();
+            source.SetValue(0);
+            Assert.That(snapshots.Count, Is.EqualTo(3));
+            Assert.That(typeof(ReddotSnapshot).GetProperty("Value").CanWrite, Is.False);
+            Assert.That(typeof(ReddotSnapshot).GetProperty("Path").CanWrite, Is.False);
+            Assert.That(typeof(ReddotSource).GetProperty("Value").CanWrite, Is.False);
         }
 
         [Test]
@@ -1333,7 +1295,7 @@ namespace YLFramework.Tests.Extensions.Domain
         {
             using var source = ReddotManager.RegisterSource("Mail", "id");
             var values = new List<long>();
-            var legacy = ReddotManager.RegisterChanged(() => throw new InvalidOperationException("legacy-marker"));
+            var peer = ReddotManager.Subscribe("Mail", _ => throw new InvalidOperationException("peer-path-marker"), false);
             var throwing = ReddotManager.Subscribe("Mail", _ => throw new ArgumentException("path-marker"), false);
             using var healthy = ReddotManager.Subscribe("Mail", snapshot => values.Add(snapshot.Value), false);
             try
@@ -1345,7 +1307,7 @@ namespace YLFramework.Tests.Extensions.Domain
             }
             finally
             {
-                legacy.Unregister();
+                peer.Dispose();
                 throwing.Dispose();
             }
             source.SetValue(3);
@@ -1416,16 +1378,13 @@ namespace YLFramework.Tests.Extensions.Domain
         }
 
         [Test]
-        public void SessionResetClearsBothSubscriptionKindsRulesAndAllOldCredentials()
+        public void SessionResetClearsPathSubscriptionsRulesAndAllOldCredentials()
         {
             ReddotManager.SetAggregation("Mail", ReddotAggregation.Any);
             using var oldSource = ReddotManager.RegisterSource("Mail", "id", 2);
             var calls = 0;
             Action<ReddotSnapshot> callback = _ => calls++;
             var oldSubscription = ReddotManager.Subscribe("Mail", callback, false);
-            var legacyCalls = 0;
-            Action legacyCallback = () => legacyCalls++;
-            var oldLegacy = ReddotManager.RegisterChanged(legacyCallback);
             var oldBatch = ReddotManager.BeginBatch();
             oldSource.SetValue(3);
             ResetSession();
@@ -1433,23 +1392,13 @@ namespace YLFramework.Tests.Extensions.Domain
             Assert.That(ReddotManager.GetValue("Mail"), Is.Zero);
             Assert.That(calls, Is.Zero);
             using var currentSubscription = ReddotManager.Subscribe("Mail", callback, false);
-            var currentLegacy = ReddotManager.RegisterChanged(legacyCallback);
-            try
-            {
-                using var current = ReddotManager.RegisterSource("Mail", "id", 7);
-                oldSubscription.Dispose();
-                oldLegacy.Unregister();
-                oldBatch.Dispose();
-                oldSource.Dispose();
-                current.SetValue(8);
-                Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(8), "A new session must return to Sum.");
-                Assert.That(calls, Is.EqualTo(2));
-                Assert.That(legacyCalls, Is.EqualTo(2));
-            }
-            finally
-            {
-                currentLegacy.Unregister();
-            }
+            using var current = ReddotManager.RegisterSource("Mail", "id", 7);
+            oldSubscription.Dispose();
+            oldBatch.Dispose();
+            oldSource.Dispose();
+            current.SetValue(8);
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(8), "A new session must return to Sum.");
+            Assert.That(calls, Is.EqualTo(2));
         }
 
         [Test]
@@ -1512,7 +1461,6 @@ namespace YLFramework.Tests.Extensions.Domain
             var newValues = new List<long>();
             IDisposable newSubscription = null;
             ReddotSource newSource = null;
-            var legacy = ReddotManager.RegisterChanged(() => oldCalls++);
             using var first = ReddotManager.Subscribe("Mail", _ =>
             {
                 ResetSession();
@@ -1529,7 +1477,6 @@ namespace YLFramework.Tests.Extensions.Domain
             }
             finally
             {
-                legacy.Unregister();
                 newSubscription?.Dispose();
                 newSource?.Dispose();
             }
@@ -1727,29 +1674,22 @@ namespace YLFramework.Tests.Extensions.Domain
         }
 
         [Test]
-        public void LegacyListAddsAndZeroValuedSourceKeepTheirDistinctOwnership()
+        public void ListAddsAndZeroValuedSourceKeepTheirDistinctOwnershipWithoutSpuriousNotifications()
         {
-            var calls = 0;
-            var global = ReddotManager.RegisterChanged(() => calls++);
-            try
-            {
-                using var zero = ReddotManager.RegisterSource("Mail/Gift", "zero");
-                Assert.That(ReddotManager.ShouldBeDisplayed("Mail"), Is.False);
-                ReddotManager.AddPath(new[] { "Mail/Gift", " /Mail/Gift/ ", " / / ", "Mail/Other" });
-                Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(2));
-                Assert.That(calls, Is.EqualTo(2), "One zero-source registration and one successful list Add.");
-                ReddotManager.AddPath((IList<string>)null);
-                ReddotManager.AddPath(new[] { "Mail/Other", " / / " });
-                Assert.That(calls, Is.EqualTo(2));
-                ReddotManager.RemovePath("Mail/Gift");
-                Assert.That(ReddotManager.ReddotPath, Is.EqualTo(new[] { "Mail/Gift/", "Mail/Other/" }));
-                zero.SetValue(5);
-                Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(6));
-            }
-            finally
-            {
-                global.Unregister();
-            }
+            var values = new List<long>();
+            using var listener = ReddotManager.Subscribe("Mail", snapshot => values.Add(snapshot.Value), false);
+            using var zero = ReddotManager.RegisterSource("Mail/Gift", "zero");
+            Assert.That(ReddotManager.ShouldBeDisplayed("Mail"), Is.False);
+            ReddotManager.AddPath(new[] { "Mail/Gift", " /Mail/Gift/ ", " / / ", "Mail/Other" });
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(2));
+            Assert.That(values, Is.EqualTo(new long[] { 2 }), "Registering a zero source changes ownership, not the path value.");
+            ReddotManager.AddPath((IList<string>)null);
+            ReddotManager.AddPath(new[] { "Mail/Other", " / / " });
+            Assert.That(values, Is.EqualTo(new long[] { 2 }));
+            ReddotManager.RemovePath("Mail/Gift");
+            Assert.That(ReddotManager.ReddotPath, Is.EqualTo(new[] { "Mail/Gift/", "Mail/Other/" }));
+            zero.SetValue(5);
+            Assert.That(ReddotManager.GetValue("Mail"), Is.EqualTo(6));
         }
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
@@ -1798,12 +1738,12 @@ namespace YLFramework.Tests.Extensions.Domain
             .Invoke(null, null);
 
         [Test]
-        public void LegacyReentrantNotificationsUseIterativeWaves()
+        public void ValueChangingReentrantNotificationsUseIterativeWaves()
         {
             var depth = 0;
             var maximumDepth = 0;
             var calls = 0;
-            var changed = ReddotManager.RegisterChanged(() =>
+            var changed = ReddotManager.Subscribe("Mail", _ =>
             {
                 depth++;
                 maximumDepth = Math.Max(maximumDepth, depth);
@@ -1812,7 +1752,7 @@ namespace YLFramework.Tests.Extensions.Domain
                     ReddotManager.AddPath("Mail/Reentrant" + calls);
                 }
                 depth--;
-            });
+            }, false);
             try
             {
                 ReddotManager.AddPath("Mail/Start");
@@ -1821,7 +1761,7 @@ namespace YLFramework.Tests.Extensions.Domain
             }
             finally
             {
-                changed.Unregister();
+                changed.Dispose();
             }
         }
     }

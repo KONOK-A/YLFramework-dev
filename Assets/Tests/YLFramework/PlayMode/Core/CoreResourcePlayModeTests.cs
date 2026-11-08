@@ -784,7 +784,7 @@ namespace YLFramework.Core.Tests
             args.SetInt("token", 41);
             var view = Track(_module.LoadView<YLCoreSmokeView>(nameof(YLCoreSmokeView), parent, loadViewArgs: args));
             AssertView(view, parent, 41, 1);
-            YLFramework.Core.EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+            YLFramework.Events.EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
             Assert.That(view.EventCount, Is.EqualTo(1));
             view.Close();
             AssertRemoved(view, nameof(YLCoreSmokeView));
@@ -1284,9 +1284,7 @@ namespace YLFramework.Core.Tests
             args = NewArgs();
             Assert.Throws<InvalidCastException>(() => _module.LoadView<YLCoreSmokePanel>(nameof(YLCoreSmokeView), loadViewArgs: args));
             Assert.Throws<ObjectDisposedException>(() => args.GetInt("token"));
-#pragma warning disable CS0618
-            Assert.Throws<InvalidCastException>(() => _module.LoadView<YLCoreSmokePanel>(nameof(YLCoreSmokeView), null, new object[0]));
-#pragma warning restore CS0618
+            Assert.Throws<InvalidCastException>(() => _module.LoadView<YLCoreSmokePanel>(nameof(YLCoreSmokeView), loadViewArgs: null));
             Assert.That(_module.GetViews<YLFramework.Core.View>(), Is.Empty);
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(YLCoreSmokeModule.FixtureRoot + "/" + nameof(YLCoreSmokeView) + ".prefab");
             Assert.That(FixtureInstanceCount(prefab), Is.Zero, "Prefab validation precedes instance checkout.");
@@ -1304,9 +1302,9 @@ namespace YLFramework.Core.Tests
             var removed = 0;
             view.ViewRemoved = () => removed++;
             view.Close();
-#pragma warning disable CS0618
-            var reused = Track(_module.LoadView<YLCoreSmokeView>(nameof(YLCoreSmokeView), parent, new object[] { "new session" }));
-#pragma warning restore CS0618
+            var reusedArgs = NewArgs();
+            reusedArgs.SetObject("parameter", "new session");
+            var reused = Track(_module.LoadView<YLCoreSmokeView>(nameof(YLCoreSmokeView), parent, loadViewArgs: reusedArgs));
             Assert.That(reused, Is.SameAs(view));
             AssertView(reused, parent, 0, 2);
             Assert.That(reused.Model, Is.Null);
@@ -2776,10 +2774,11 @@ namespace YLFramework.Core.Tests
                 Assert.That(request.Exception, Is.Not.Null);
                 Assert.That(request.Error, Is.Not.Null.And.Not.Empty);
             }
-            foreach (var name in new[] { "_owner", "_lifecycle", "_assetName", "_projects", "_parent", "_args", "_param" })
+            foreach (var name in new[] { "_owner", "_lifecycle", "_assetName", "_projects", "_parent", "_args" })
             {
                 Assert.That(Field(request, name), Is.Null, "Terminal request retains " + name);
             }
+            Assert.That(request.GetType().GetField("_param", InstancePrivate), Is.Null, "The retired positional parameter bridge must not be retained.");
 
             Assert.That((IList)Field(request, "_parentSessions"), Is.Empty);
             Assert.That(((Scene)Field(request, "_targetScene")).IsValid(), Is.False);

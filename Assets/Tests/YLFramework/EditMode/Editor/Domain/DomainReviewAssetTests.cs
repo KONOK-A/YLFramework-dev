@@ -22,7 +22,6 @@ namespace YLFramework.Tests.Extensions.Domain
         {
             _absentParents = DomainTestAssets.CaptureAbsentParents();
             _folder = "Assets/DomainReviewFixture-" + Guid.NewGuid().ToString("N");
-            DomainTestAssets.OwnPath(_folder);
             AssetDatabase.CreateFolder("Assets", System.IO.Path.GetFileName(_folder));
         }
         [TearDown] public void Cleanup() => DomainTestAssets.DeleteFolder(_folder, _absentParents);

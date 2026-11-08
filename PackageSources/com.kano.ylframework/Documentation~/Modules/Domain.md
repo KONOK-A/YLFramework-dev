@@ -19,6 +19,8 @@ Skill/Buff/Mission/Equipment安装 [Gameplay包](../../../com.kano.ylframework.g
 
 ## 配置与资源
 
+Skill/Buff/Mission/Equipment 当前字段采用已声明的 camelCase，旧 Unity 字段 reader 已退役；`ExcelColumnName`、任务 `JsonProperty` 和剪贴板前缀属于仍有效的独立协议，不随字段清理改键。当前根/条目/参数/效果由 Unity 正式保存后冷读，脚本与资产 GUID、false/zero、父子/效果引用保留；真实旧字段输入须在原版本仍可读时先转换自己的资产，不能重写冻结样本或改名壳掩盖丢值。
+
 Skill / Buff / Mission / Equipment 使用各自的 `SkillsConfig`、`BuffsConfig`、`MissionsConfig`、`EquipmentsConfig`，不依赖 DataAssets 基类。
 
 - `AddConfig` 借用已经加载的定义，外部 owner 负责保活。
@@ -70,23 +72,24 @@ Skill / Buff / Mission / Equipment 使用各自的 `SkillsConfig`、`BuffsConfig
 
 窗口为 `Window/YLFramework/SkillSystem`、`Window/YLFramework/BuffSystem/Buff` / `Effect`、`Window/YLFramework/MissionSystem`。支持重排、Undo 与资源预览；条目只删除自己拥有的子资产或根 GUID 目录，外部引用仅解除关联。
 
-### Buff 设置迁移
+### Buff 当前设置
 
-默认加载器遇到精确旧路径时拒绝写入，使用 `YLFramework/Buff/Migrate Legacy Project Settings` 显式迁移：
+当前设置只按实际类型全名访问下列精确路径，不扫描、读取或移动旧名称及未知外部设置：
 
 ```text
-旧：ProjectSettings/YLFramework/Core/YLFramework.BuffSystem.BuffSystemSettings.asset
-新：ProjectSettings/YLFramework/Core/YLFramework.Editor.Buff.BuffSystemSettings.asset
+ProjectSettings/YLFramework/Core/YLFramework.Editor.Buff.BuffSystemSettings.asset
 ```
 
-迁移先验证类型、备份原始字节，再不覆盖地移动与重载；不改写 YAML 或认领外部框架设置。新旧并存、类型错误或路径冲突会拒绝；中途失败保留现场，按报错路径处理，不自动覆盖或删除。使用真实旧资产验证，合成夹具不代表所有外部数据已迁移。
+一次性 BuffSettingsMigration、旧名称标注及加载器旧路径分支已退役，不提供迁移菜单或换名壳。缺失时正常创建当前设置；当前文件不是唯一且类型完全匹配的对象、或路径包含链接/类型冲突时拒绝，不覆盖未知输出。已有旧工程升级前须在旧定义仍可用时定向保存/保全自己的实际数据；本仓库当前设置目录为空，未创建假旧文件来代替真实迁移，也未接管旧外部根。
 
 ## DomainExcel
 
 领域适配已包含在`com.kano.ylframework.excel/Editor/Gameplay`，同时安装Gameplay后由包Version Define启用原`YLFramework.Domain.Excel.Editor`，不再安装独立DomainExcel包。Git消费方显式声明main、DataAssets、Excel、Gameplay四项同SHA。Excel与Gameplay产品不互相依赖，不要求或改写任何全局宏；已有业务`#if YL_DOMAIN_EXCEL`仍由使用工程自行审查，不会自动变成包存在性判断。
 
 - `DomainExcelCommands.PreviewImport` 接受显式工作簿路径，预览后确认或取消；不提供 Mission 条目与参数跨 sheet 原子事务，也不导入全局 Buff Effect 库。
+- 全部类型化暂存行通过现有 afterImport 规范化与校验，不从展示差异的 JSON 反解析领域对象。未变化的非法行同样阻止提交；行错误进入原计划错误列表，根/外部引用校验通过既有 AddValidation 在预览与实际写入前各执行，不在预览改资源。
 - Skill / Buff / Mission 没有最近工作簿入口。Equipment 的导出、预览 / 确认 / 取消及最近工作簿目录菜单为 `Assets/YLFramework/Domain Excel/`；这是 Project 右键菜单名，不是安装或输出目录。
 - Equipment 工作簿路径按根 GUID 存 EditorPrefs，不进资产；暂存阶段同步 Script 类 / GUID，跨根 ID 在预览和提交前复核，失败不部分写入。
+- 参数根的 Clean/引用复核属于参数计划本身，即使不通过 UI 提交也生效。菜单复用公共 ExcelPreviewWindow，Applied 后才保存/刷新根；列表、JSON 和 SO 仍各自负责提交与恢复，不保留第二套参数预览窗口。
 
 表头、类型映射和提交边界见 [Excel 作者后端](Data.md#excel-作者后端)。

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.ExceptionServices;
-using YLFramework.Events;
 using YLFramework.Singletons;
 
 namespace YLFramework.RedDots
@@ -16,11 +15,9 @@ namespace YLFramework.RedDots
         private static readonly Dictionary<string, Node> _nodes = new(StringComparer.Ordinal);
         private static readonly HashSet<Node> _dirty = new();
         private static readonly List<Subscription> _initial = new();
-        private static EventChannel _changed = new();
         private static object _generation = new();
         private static object _session = new();
         private static int _batchDepth;
-        private static bool _globalPending;
         private static bool _isFlushing;
         private static long _diagnosticGeneration = 1;
         private static long _diagnosticSequence;
@@ -45,11 +42,6 @@ namespace YLFramework.RedDots
                 return result.AsReadOnly();
             }
         }
-
-        /// <summary>旧全局变更通道，不补初始状态；Batch 内合并一次，回调重入在下一轮广播。</summary>
-        /// <param name="callback">变更后重新查询聚合状态的同步回调。</param>
-        /// <returns>用于解除本次订阅的凭据。</returns>
-        public static IUnregister RegisterChanged(Action callback) => _changed.Register(callback);
 
         /// <summary>读取节点聚合值；空路径不是默认根，空路径或未登记节点返回零。</summary>
         public static long GetValue(string path)
@@ -84,7 +76,7 @@ namespace YLFramework.RedDots
                     node.HasPath, node.LeaseCount, node.Listeners.Count, _dirty.Contains(node), sources.AsReadOnly()));
             }
             return new ReddotDiagnosticSnapshot(_diagnosticGeneration, ++_diagnosticSequence, _batchDepth,
-                _dirty.Count, _initial.Count, _changed.ListenerCount, _globalPending, _isFlushing, nodes.AsReadOnly());
+                _dirty.Count, _initial.Count, _isFlushing, nodes.AsReadOnly());
         }
 
         /// <summary>登记唯一的 path + Ordinal sourceId；initialValue 非负，通知失败时回滚未交付的凭据。</summary>
@@ -323,7 +315,7 @@ namespace YLFramework.RedDots
         /// <param name="path">要查询的业务路径；规范化后为空时固定返回 false。</param>
         public static bool ShouldBeDisplayed(string path) => GetValue(path) > 0;
 
-        /// <summary>清空来源并使旧来源及 Batch 失效，保留规则和两类订阅；只通知实际变化的路径。</summary>
+        /// <summary>清空来源并使旧来源及 Batch 失效，保留规则和路径订阅；只通知实际变化的路径。</summary>
         public static void Reset()
         {
             _generation = new object();
@@ -331,7 +323,6 @@ namespace YLFramework.RedDots
             _batchDepth = 0;
             foreach (var node in _nodes.Values)
             {
-                _globalPending |= node.HasPath || node.LeaseCount != 0 || node.Sources.Count != 0;
                 if (node.Value != 0)
                 {
                     _dirty.Add(node);
@@ -345,7 +336,7 @@ namespace YLFramework.RedDots
             Flush();
         }
 
-        /// <summary>切换会话时清空来源、使旧凭据失效，并释放旧事件通道以移除上一轮订阅。</summary>
+        /// <summary>切换会话时清空来源并使旧凭据、旧节点路径订阅全部失效。</summary>
         private static void ResetSession()
         {
             _generation = new object();
@@ -369,9 +360,6 @@ namespace YLFramework.RedDots
             _nodes.Clear();
             _dirty.Clear();
             _initial.Clear();
-            _globalPending = false;
-            _changed.Dispose();
-            _changed = new EventChannel();
         }
 
         internal static bool IsCurrent(ReddotSource source) => ReferenceEquals(source.Generation, _generation);
@@ -497,7 +485,6 @@ namespace YLFramework.RedDots
                 change.Node.Value = change.Value;
                 _dirty.Add(change.Node);
             }
-            _globalPending = true;
             Flush();
         }
 
@@ -511,20 +498,17 @@ namespace YLFramework.RedDots
             _isFlushing = true;
             try
             {
-                while (_initial.Count != 0 || (_batchDepth == 0 && (_globalPending || _dirty.Count != 0)))
+                while (_initial.Count != 0 || (_batchDepth == 0 && _dirty.Count != 0))
                 {
                     var generation = _generation;
-                    var session = _session;
                     var notifications = new List<Notification>();
                     foreach (var subscription in _initial)
                     {
                         notifications.Add(new Notification(subscription, GetSnapshot(subscription.Path), true));
                     }
                     _initial.Clear();
-                    var broadcast = _batchDepth == 0 && _globalPending;
                     if (_batchDepth == 0)
                     {
-                        _globalPending = false;
                         foreach (var node in _dirty)
                         {
                             var snapshot = new ReddotSnapshot(node.Path, node.Value);
@@ -557,24 +541,6 @@ namespace YLFramework.RedDots
                         catch (Exception error)
                         {
                             (errors ??= new List<Exception>()).Add(error);
-                        }
-                    }
-                    if (broadcast && ReferenceEquals(session, _session))
-                    {
-                        if (!ReferenceEquals(generation, _generation))
-                        {
-                            _globalPending = true;
-                        }
-                        else
-                        {
-                            try
-                            {
-                                _changed.TriggerAll();
-                            }
-                            catch (Exception error)
-                            {
-                                (errors ??= new List<Exception>()).Add(error);
-                            }
                         }
                     }
                 }
@@ -787,16 +753,6 @@ namespace YLFramework.RedDots
         {
             get;
         }
-        /// <summary>旧全局变更通道当前实际订阅数。</summary>
-        public int GlobalSubscriberCount
-        {
-            get;
-        }
-        /// <summary>是否有等待发送的全局变更通知。</summary>
-        public bool GlobalPending
-        {
-            get;
-        }
         /// <summary>是否正位于迭代通知循环内。</summary>
         public bool IsFlushing
         {
@@ -809,7 +765,7 @@ namespace YLFramework.RedDots
         }
 
         internal ReddotDiagnosticSnapshot(long generation, long captureSequence, int batchDepth, int dirtyNodeCount,
-            int pendingInitialCount, int globalSubscriberCount, bool globalPending, bool isFlushing,
+            int pendingInitialCount, bool isFlushing,
             IReadOnlyList<ReddotDiagnosticNode> nodes)
         {
             Generation = generation;
@@ -817,8 +773,6 @@ namespace YLFramework.RedDots
             BatchDepth = batchDepth;
             DirtyNodeCount = dirtyNodeCount;
             PendingInitialCount = pendingInitialCount;
-            GlobalSubscriberCount = globalSubscriberCount;
-            GlobalPending = globalPending;
             IsFlushing = isFlushing;
             Nodes = nodes;
         }

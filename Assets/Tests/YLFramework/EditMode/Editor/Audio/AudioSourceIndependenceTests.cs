@@ -28,6 +28,9 @@ namespace YLFramework.Tests.Audio
         private static IEnumerator CompileSourceClosure(AssemblyBuilderFlags flags)
         {
             var runtime = global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework/Runtime");
+            var editor = (flags & AssemblyBuilderFlags.EditorAssembly) != 0;
+            var profile = CompilationPipeline.GetAssemblies(editor ? AssembliesType.Editor : AssembliesType.Player).Single(x => x.name == "YLFramework.Runtime");
+            var runtimeSources = profile.sourceFiles.Select(Path.GetFullPath).ToArray();
             // Audio及Root的Core依赖全量收集；不能用缺失UIRootContext的伪闭包证明独立编译。
             var directories = new[]
             {
@@ -54,7 +57,9 @@ namespace YLFramework.Tests.Audio
             };
             var sources = directories.SelectMany(directory => Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(runtime, directory)),
                     "*.cs", SearchOption.AllDirectories))
+                .Where(source => runtimeSources.Contains(Path.GetFullPath(source), StringComparer.OrdinalIgnoreCase))
                 .Concat(files.Select(file => Path.Combine(runtime, file)))
+                .Select(Path.GetFullPath)
                 .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(path => path, StringComparer.Ordinal).ToArray();
             foreach (var source in sources)
             {
@@ -65,6 +70,11 @@ namespace YLFramework.Tests.Audio
             Assert.That(sources.Where(source => IsInsideFolder(source, Path.Combine(runtime, "Core"))),
                 Is.EquivalentTo(Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(runtime, "Core")), "*.cs", SearchOption.AllDirectories)));
             Assert.That(Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(runtime, "Systems/Audio")), "*.cs", SearchOption.AllDirectories), Is.Not.Empty);
+            Assert.That(sources.Where(source => IsInsideFolder(source, Path.Combine(runtime, "Systems/Audio"))),
+                Is.EquivalentTo(Directory.GetFiles(Path.Combine(runtime, "Systems/Audio"), "*.cs", SearchOption.AllDirectories).Select(Path.GetFullPath)));
+            Assert.That(sources.Where(source => IsInsideFolder(source, Path.Combine(runtime, "Systems/Action"))),
+                Is.EquivalentTo(runtimeSources.Where(source => IsInsideFolder(source, Path.Combine(runtime, "Systems/Action")))),
+                "Respect the actual main assembly boundary; DOTween has its own asmdef and dependency, not a guessed filename exclusion.");
 
             var folder = Path.Combine(Path.GetTempPath(), "kilo", "YLFramework.Audio.SourceClosure-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(folder));
@@ -79,8 +89,6 @@ namespace YLFramework.Tests.Audio
                     referencesOptions = ReferencesOptions.UseEngineModules,
                     additionalDefines = Array.Empty<string>()
                 };
-                var editor = (flags & AssemblyBuilderFlags.EditorAssembly) != 0;
-                var profile = CompilationPipeline.GetAssemblies(editor ? AssembliesType.Editor : AssembliesType.Player).Single(x => x.name == "YLFramework.Runtime");
                 builder.compilerOptions = new ScriptCompilerOptions
                 {
                     ApiCompatibilityLevel = profile.compilerOptions.ApiCompatibilityLevel,

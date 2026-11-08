@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -295,13 +296,12 @@ namespace YLFramework.Tests.ResourceBuild
         }
 
         [Test]
-        public void SigningEncryptedBytesRequiresExplicitCapableChannelConfirmationWithoutChangingTheThirteenFieldPayload()
+        public void SigningEncryptedBytesUsesTheActualInspectedFilesWithoutASeparateLegacyClientConfirmation()
         {
             var method = Method(typeof(ResourceReleaseSigner), "Create", typeof(ResourceRelease), typeof(string), typeof(long), typeof(string),
-                typeof(RSA), typeof(DateTimeOffset), typeof(bool));
-            var confirmation = method.GetParameters().Last();
-            Assert.That(confirmation.Name, Is.EqualTo("channelSupportsContentEncryption"));
-            Assert.That(confirmation.IsOptional && Equals(confirmation.DefaultValue, false), Is.True);
+                typeof(RSA), typeof(DateTimeOffset));
+            Assert.That(typeof(ResourceReleaseSigner).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Where(candidate => candidate.Name == "Create").SelectMany(candidate => candidate.GetParameters()).Any(parameter => parameter.ParameterType == typeof(bool)), Is.False);
             using var fixture = new ContentBuildFixture();
             fixture.Configure();
             using var keys = fixture.Keys();
@@ -310,8 +310,7 @@ namespace YLFramework.Tests.ResourceBuild
             fixture.Configure(ResourceContentEncryption.None, "");
             using var rsa = new RSACryptoServiceProvider(2048);
             var expires = DateTimeOffset.UtcNow.AddDays(1);
-            Assert.Throws<InvalidOperationException>(() => Invoke<byte[]>(method, release, "g2-legacy", 1L, "signing-test-only", rsa, expires, false));
-            var bytes = Invoke<byte[]>(method, release, "g2-e04", 2L, "signing-test-only", rsa, expires, true);
+            var bytes = Invoke<byte[]>(method, release, "g2-e04", 2L, "signing-test-only", rsa, expires);
             var payload = ResourceReleaseSignature.Verify(bytes, "signing-test-only", rsa.ExportParameters(false));
             CollectionAssert.AreEquivalent(new[] { "ProjectId", "Platform", "UnityCompatibility", "AppContentCompatibilityId", "Channel", "ReleaseSequence",
                 "CatalogDigest", "CatalogLength", "BuildId", "CompleteLength", "CompleteSha256", "IssuedUnixSeconds", "ExpiresUnixSeconds" }, payload.Properties().Select(x => x.Name));

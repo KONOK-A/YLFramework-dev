@@ -23,6 +23,27 @@ namespace YLFramework.Core.Tests
         protected override void OnClose() => CloseAction?.Invoke();
     }
 
+    public sealed class YLCoreUnobservedView : View
+    {
+    }
+
+    public sealed class YLCoreTypedInitializationView : View
+    {
+        internal int InitializeCalls;
+        internal object Payload;
+
+        public override void OnLoaded(LoadViewArgs args)
+        {
+            InitializeCalls++;
+            Payload = args.GetObject("payload");
+            Assert.That(args.GetObject("nullable"), Is.Null);
+            Assert.Throws<InvalidOperationException>(() => args.SetObject("payload", new object()));
+            var reclaim = Assert.Throws<InvalidOperationException>(() =>
+                Module.LoadView<YLCoreTypedInitializationView>("must-not-reach-resource-loading", loadViewArgs: args));
+            StringAssert.Contains("Claimed LoadViewArgs", reclaim.Message);
+        }
+    }
+
     public sealed class YLCoreSelectionInputProbe : MonoBehaviour, UnityEngine.EventSystems.ICancelHandler, UnityEngine.EventSystems.IDeselectHandler, UnityEngine.EventSystems.ISelectHandler
     {
         [global::UnityEngine.Serialization.FormerlySerializedAs("Cancels")]
@@ -256,6 +277,66 @@ namespace YLFramework.Core.Tests
         }
 
         [UnityTest]
+        public IEnumerator TypedInitializationKeepsLegalObjectValuesBorrowedAndReturnsTheContainerOnce()
+        {
+            yield return StartModule();
+            var payload = new object();
+            var args = LoadViewArgs.New();
+            args.SetObject("payload", payload);
+            args.SetObject("nullable", null);
+            var prefab = Template<YLCoreTypedInitializationView>("YLView.TypedInitialization");
+            var view = Track(_module.LoadView<YLCoreTypedInitializationView>(prefab, loadViewArgs: args));
+            Assert.That(view.InitializeCalls, Is.EqualTo(1));
+            Assert.That(view.Payload, Is.SameAs(payload));
+            Assert.Throws<ObjectDisposedException>(() => args.GetObject("payload"));
+            var next = LoadViewArgs.New();
+            Assert.That(next, Is.SameAs(args));
+            Assert.That(next.GetObject("payload"), Is.Null);
+            Assert.That(next.GetObject("nullable"), Is.Null);
+            var empty = Track(_module.LoadView<YLCoreTypedInitializationView>(prefab, loadViewArgs: next));
+            Assert.That(empty.InitializeCalls, Is.EqualTo(1));
+            Assert.That(empty.Payload, Is.Null);
+            empty.Close();
+            view.Close();
+            Assert.That(view.Payload, Is.SameAs(payload), "Returning args does not dispose or claim a borrowed business value.");
+        }
+
+        [UnityTest]
+        public IEnumerator RemovingAnUnobservedViewDoesNotCreateTheSharedEventContext()
+        {
+            yield return StartModule();
+            var field = typeof(EventBus).GetField("_default", BindingFlags.Static | BindingFlags.NonPublic);
+            var previous = field.GetValue(null);
+            field.SetValue(null, null);
+            YLCoreUnobservedView view = null;
+            try
+            {
+                var prefab = Template<YLCoreUnobservedView>("YLView.Unobserved");
+                view = Track(_module.LoadView<YLCoreUnobservedView>(prefab));
+                Assert.That(EventBus.TryGetDefault(out _), Is.False);
+                view.Close();
+                Assert.That(view.Module, Is.Null);
+                Assert.That(EventBus.TryGetDefault(out _), Is.False,
+                    "Publishing an unobserved ViewRemoved must not create Default merely to do nothing.");
+            }
+            finally
+            {
+                try
+                {
+                    if (view && view.Module != null)
+                    {
+                        view.Close();
+                    }
+                }
+                finally
+                {
+                    EventBus.ResetDefault();
+                    field.SetValue(null, previous);
+                }
+            }
+        }
+
+        [UnityTest]
         public IEnumerator PanelDefaultsRulesAndTemporaryOverridesDriveARealReopen()
         {
             yield return StartModule();
@@ -358,7 +439,7 @@ namespace YLFramework.Core.Tests
                 Assert.That(panel.Canvas, Is.Not.Null);
                 panel.UpdateDisplay(new PanelOverrides { Layer = 1, Priority = 7 });
                 panel.Hide();
-                EventManager.TriggerEvent(YLCoreSmokePanel.ProbeEvent);
+                EventBus.Default.Send(YLCoreSmokePanel.ProbeEvent);
                 Assert.That(panel.EventCount, Is.Zero);
                 calls.Add("loaded");
             };
@@ -406,7 +487,7 @@ namespace YLFramework.Core.Tests
             result.Show();
             Assert.That(result.IsVisible, Is.True);
             Assert.That(calls, Has.Count.EqualTo(4), "显示调整不能重放数据或启用轮次。");
-            EventManager.TriggerEvent(YLCoreSmokePanel.ProbeEvent);
+            EventBus.Default.Send(YLCoreSmokePanel.ProbeEvent);
             Assert.That(result.EventCount, Is.EqualTo(1));
         }
 
@@ -876,7 +957,7 @@ namespace YLFramework.Core.Tests
                 Assert.That(previous, Is.SameAs(model));
                 Assert.That(view.Model, Is.Null);
                 int before = view.EventCount;
-                EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+                EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
                 Assert.That(view.EventCount, Is.EqualTo(before), "Framework subscriptions end before the unbind hook.");
             };
             Action<View> broadcast = removed =>
@@ -899,7 +980,7 @@ namespace YLFramework.Core.Tests
                 Assert.That(view.gameObject.activeSelf, Is.False);
                 view.Close();
             };
-            var firstBroadcastToken = EventManager.AddEvent<View>(CoreEvents.ViewRemoved, removed =>
+            var firstBroadcastToken = EventBus.Default.Register<View>(CoreEvents.ViewRemoved, removed =>
             {
                 if (!ReferenceEquals(removed, view))
                 {
@@ -909,7 +990,7 @@ namespace YLFramework.Core.Tests
                 events.Add("broadcast.throw");
                 throw broadcastError;
             });
-            var broadcastToken = EventManager.AddEvent(CoreEvents.ViewRemoved, broadcast);
+            var broadcastToken = EventBus.Default.Register(CoreEvents.ViewRemoved, broadcast);
             try
             {
                 var error = Assert.Throws<AggregateException>(() => view.Close());
@@ -983,7 +1064,7 @@ namespace YLFramework.Core.Tests
                         replacement.Close();
                     }
                 };
-                EventManager.AddEvent(CoreEvents.ViewRemoved, broadcast);
+                EventBus.Default.Register(CoreEvents.ViewRemoved, broadcast);
                 try
                 {
                     view.Close();
@@ -1009,7 +1090,7 @@ namespace YLFramework.Core.Tests
                 }
                 finally
                 {
-                    EventManager.RemoveEvent(CoreEvents.ViewRemoved, broadcast);
+                    EventBus.Default.Unregister(CoreEvents.ViewRemoved, broadcast);
                     view.AfterClose = null;
                     view.Close();
                 }
@@ -1202,7 +1283,7 @@ namespace YLFramework.Core.Tests
             Assert.That(view.Module, Is.Null, "Start must not guess the current Module for a scene View.");
             Assert.That(view.IsLoaded, Is.False);
             Assert.That(view.LoadedCount, Is.Zero);
-            EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+            EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
             Assert.That(view.EventCount, Is.Zero);
             view.LoadedAction = () =>
             {
@@ -1211,7 +1292,7 @@ namespace YLFramework.Core.Tests
                 Assert.Throws<InvalidOperationException>(() => view.Close());
                 Assert.Throws<InvalidOperationException>(() => InvokeViewManager("AddView", _module, view));
             };
-            InvokeViewManager("InitView", _module, view, prefab.name, null, new object[0]);
+            InvokeViewManager("InitView", _module, view, prefab.name, null);
             Assert.That(view.IsLoaded, Is.True);
             Assert.That(view.LoadedCount, Is.EqualTo(1));
             Assert.That(view.ArgsCount, Is.EqualTo(1));
@@ -1234,7 +1315,7 @@ namespace YLFramework.Core.Tests
                 view.BoundModel = model;
                 throw failure;
             };
-            Assert.That(Assert.Throws<InvalidOperationException>(() => InvokeViewManager("InitView", _module, view, prefab.name, null, new object[0])), Is.SameAs(failure));
+            Assert.That(Assert.Throws<InvalidOperationException>(() => InvokeViewManager("InitView", _module, view, prefab.name, null)), Is.SameAs(failure));
             Assert.That(view.Module, Is.Null);
             Assert.That(view.Model, Is.Null);
             Assert.That(view.IsLoaded, Is.False);
@@ -1295,8 +1376,8 @@ namespace YLFramework.Core.Tests
                         Assert.That(panel.Module, Is.Null);
                         throw failure;
                     };
-                    var broadcastToken = EventManager.AddEvent(CoreEvents.ViewRemoved, broadcast);
-                    var followingToken = EventManager.AddEvent<View>(CoreEvents.ViewRemoved, removed =>
+                    var broadcastToken = EventBus.Default.Register(CoreEvents.ViewRemoved, broadcast);
+                    var followingToken = EventBus.Default.Register<View>(CoreEvents.ViewRemoved, removed =>
                     {
                         if (!ReferenceEquals(removed, panel))
                         {
@@ -1384,7 +1465,9 @@ namespace YLFramework.Core.Tests
             first.Close();
             Assert.That(removed, Is.EqualTo(1));
             Assert.That(first.ClosedCount, Is.EqualTo(1));
-            var second = Track(_module.LoadView<YLCoreSmokeView>(prefab, null, new object[] { "reused" }));
+            var secondArgs = LoadViewArgs.New();
+            secondArgs.SetObject("parameter", "reused");
+            var second = Track(_module.LoadView<YLCoreSmokeView>(prefab, loadViewArgs: secondArgs));
             Assert.That(second, Is.SameAs(first));
             Assert.That(second.LoadedCount, Is.EqualTo(2));
             Assert.That(second.Parameter, Is.EqualTo("reused"));
@@ -1402,19 +1485,19 @@ namespace YLFramework.Core.Tests
             yield return StartModule();
             var prefab = Template<YLCoreSmokeView>("YLCoreDirectEventsPrefab");
             var view = Track(_module.LoadView<YLCoreSmokeView>(prefab, loadViewArgs: null));
-            EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+            EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
             Assert.That(view.EventCount, Is.EqualTo(1));
             view.gameObject.SetActive(false);
-            EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+            EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
             Assert.That(view.EventCount, Is.EqualTo(1));
             view.gameObject.SetActive(true);
-            EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+            EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
             Assert.That(view.EventCount, Is.EqualTo(2));
             view.Close();
-            EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+            EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
             Assert.That(view.EventCount, Is.EqualTo(2));
             Assert.That(Track(_module.LoadView<YLCoreSmokeView>(prefab, loadViewArgs: null)), Is.SameAs(view));
-            EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+            EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
             Assert.That(view.EventCount, Is.EqualTo(3));
             Assert.That(view.EnabledCount, Is.EqualTo(3));
             Assert.That(view.DisabledCount, Is.EqualTo(2));
@@ -1488,13 +1571,13 @@ namespace YLFramework.Core.Tests
                             replacement = view;
                         }
                     };
-                    EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+                    EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
                     Assert.That(replacement, Is.SameAs(view));
                     Assert.That(ViewSession(replacement), phase == 0 ? Is.Not.SameAs(session) : Is.SameAs(session));
                     Assert.That(replacement.EventCount, Is.EqualTo(1), "Remaining callbacks belong to the old session or subscription epoch.");
                     Assert.That(replacement.IsLoaded, Is.True);
                     Assert.That(replacement.Module, Is.SameAs(_module));
-                    EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+                    EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
                     Assert.That(replacement.EventCount, Is.EqualTo(3), "Both handlers remain registered exactly once in the new round.");
                     replacement.Close();
                 }
@@ -1522,7 +1605,7 @@ namespace YLFramework.Core.Tests
                 var prefab = Template<YLCoreSmokeView>("YLCorePartialEventRegistrationPrefab");
                 var sibling = Track(_module.LoadView<YLCoreSmokeView>(prefab, loadViewArgs: null));
                 sharedToken = EventBus.Default.Register(YLCoreSmokeView.ProbeEvent, shared);
-                conflictToken = EventManager.AddEvent(conflict, () => conflictCalls++);
+                conflictToken = EventBus.Default.Register(conflict, () => conflictCalls++);
                 YLCoreSmokeView.SignatureConflictEvent = conflict;
                 YLCoreSmokeView.LoadingProbe = view => failed = Track(view);
                 Assert.Throws<InvalidOperationException>(() => _module.LoadView<YLCoreSmokeView>(prefab, loadViewArgs: null));
@@ -1536,12 +1619,12 @@ namespace YLFramework.Core.Tests
                 Assert.That(sibling.RemovedCount, Is.Zero);
                 Assert.That(_module.State, Is.EqualTo(ModuleState.Running));
                 Assert.That(EventBus.Default.ListenerCount(YLCoreSmokeView.ProbeEvent), Is.EqualTo(2));
-                EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+                EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
                 Assert.That(sharedCalls, Is.EqualTo(2), "Rollback preserves both the sibling View and the equal direct Default callback.");
-                EventManager.TriggerEvent(conflict);
+                EventBus.Default.Send(conflict);
                 Assert.That(conflictCalls, Is.EqualTo(1));
                 sibling.Close();
-                EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+                EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
                 Assert.That(sharedCalls, Is.EqualTo(3), "Closing the sibling removes only its own subscription token.");
             }
             finally
@@ -1736,7 +1819,7 @@ namespace YLFramework.Core.Tests
                 }
 
                 Assert.That(inactive.Canvas.sortingOrder, Is.EqualTo(preparedOrder), "First native Canvas activation must restore the prepared order.");
-                YLCoreSmokePanel.VisibleProbe = panel => EventManager.TriggerEvent(YLCoreSmokePanel.ProbeEvent);
+                YLCoreSmokePanel.VisibleProbe = panel => EventBus.Default.Send(YLCoreSmokePanel.ProbeEvent);
                 parent.SetActive(false);
                 Assert.That(inactive.EventCount, Is.Zero, "The disabled Panel must unsubscribe before restoring the previous Panel's business callback.");
                 Assert.That(visible.EventCount, Is.EqualTo(1));
@@ -1778,7 +1861,7 @@ namespace YLFramework.Core.Tests
                 Assert.That(second.IsLoaded, Is.True);
                 Assert.That(second.gameObject.activeSelf, Is.False);
                 Assert.That(first.Canvas.enabled, Is.True);
-                EventManager.TriggerEvent(YLCoreSmokePanel.ProbeEvent);
+                EventBus.Default.Send(YLCoreSmokePanel.ProbeEvent);
                 Assert.That(YLCoreSmokePanel.SharedEventCount, Is.EqualTo(1), "Rollback of an activating Panel cannot remove the other Panel's equal delegate.");
                 first.Close();
                 second.Close();
@@ -1883,7 +1966,7 @@ namespace YLFramework.Core.Tests
             // 普通 View 没有公开 direct Async 重载，直接覆盖已有生产内核的同一拒绝边界。
             var start = typeof(View).Assembly.GetType("YLFramework.Core.ViewManager", true)
                 .GetMethod("StartAsync", BindingFlags.Static | BindingFlags.NonPublic).MakeGenericMethod(typeof(View));
-            var pending = (LoadViewRequest<View>)start.Invoke(null, new object[] { _module, prefab.name, null, args, null, prefab });
+            var pending = (LoadViewRequest<View>)start.Invoke(null, new object[] { _module, prefab.name, null, args, prefab });
             yield return pending;
             Assert.That(pending.Status, Is.EqualTo(LoadViewStatus.Failed));
             Assert.That(pending.Exception, Is.TypeOf<InvalidOperationException>());
@@ -2119,13 +2202,11 @@ namespace YLFramework.Core.Tests
         }
 
         [UnityTest]
-        public IEnumerator LegacyGenericMismatchIsRejectedBeforeInitialization()
+        public IEnumerator GenericMismatchWithDefaultArgsIsRejectedBeforeInitialization()
         {
             yield return StartModule();
             var prefab = Template<YLCoreSmokeView>("YLCoreLegacyMismatchPrefab");
-#pragma warning disable CS0618
-            Assert.Throws<InvalidCastException>(() => _module.LoadView<YLCoreSmokePanel>(prefab, null, new object[0]));
-#pragma warning restore CS0618
+            Assert.Throws<InvalidCastException>(() => _module.LoadView<YLCoreSmokePanel>(prefab, loadViewArgs: null));
             Assert.That(_module.GetViews<View>(), Is.Empty);
             Assert.That(prefab.GetComponent<YLCoreSmokeView>().LoadedCount, Is.Zero);
         }
@@ -2186,13 +2267,14 @@ namespace YLFramework.Core.Tests
                 Assert.That(view.IsLoaded, Is.False);
                 Assert.That(_module.GetView(prefab.name, view.Id), Is.SameAs(view));
                 Assert.That(_module.GetView<YLCoreSmokeView>(view.Id), Is.SameAs(view));
-                Assert.Throws<InvalidOperationException>(() => InvokeViewManager("InitView", _module, view, prefab.name, null, new object[0]));
+                Assert.Throws<InvalidOperationException>(() => InvokeViewManager("InitView", _module, view, prefab.name, null));
                 Assert.Throws<InvalidOperationException>(() => view.Close());
                 Assert.Throws<InvalidOperationException>(() => _module.Close());
                 Assert.Throws<InvalidOperationException>(() => ModuleManager.Shutdown());
-                Assert.Throws<InvalidOperationException>(() => args.GetInt("token"));
+                Assert.That(args.GetInt("token"), Is.EqualTo(91), "The single typed initialization owns the borrowing window from entry.");
+                Assert.Throws<InvalidOperationException>(() => args.SetInt("token", 2));
                 Assert.Throws<InvalidOperationException>(() => _module.LoadView(prefab, loadViewArgs: args));
-                EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+                EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
                 Assert.That(view.EventCount, Is.Zero);
                 var sibling = Track(_module.LoadPanel<YLCoreSmokePanel>(siblingPrefab, root: siblingRoot));
                 Assert.That(sibling.IsLoaded, Is.True, "Other valid objects may initialize inside the transaction.");
@@ -2217,12 +2299,12 @@ namespace YLFramework.Core.Tests
             Assert.That(loaded.LoadedCount, Is.EqualTo(1));
             Assert.That(loaded.ArgsCount, Is.EqualTo(1));
             Assert.That(_module.GetViews<View>(), Has.Count.EqualTo(2));
-            Assert.Throws<InvalidOperationException>(() => InvokeViewManager("InitView", _module, loaded, prefab.name, null, new object[0]));
+            Assert.Throws<InvalidOperationException>(() => InvokeViewManager("InitView", _module, loaded, prefab.name, null));
             Assert.That(loaded.LoadedCount, Is.EqualTo(1));
         }
 
         [UnityTest]
-        public IEnumerator BothBusinessLoadHooksAndEventActivationFailureRollbackWithoutReusingDamagedInstance()
+        public IEnumerator BusinessInitializationAndEventActivationFailuresRollbackWithoutReusingDamagedInstance()
         {
             yield return StartModule();
             var model = _module.LoadModel<YLCoreProbeModel>();
@@ -2328,12 +2410,12 @@ namespace YLFramework.Core.Tests
             Assert.That(view.Token, Is.EqualTo(51));
             view.BoundModel = model;
             view.ViewRemoved = () => { };
-            EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+            EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
             Assert.That(view.EventCount, Is.Zero);
             parent.SetActive(true);
             Assert.That(view.AwakeCount, Is.EqualTo(1));
             Assert.That(view.EnabledCount, Is.EqualTo(1));
-            EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+            EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
             Assert.That(view.EventCount, Is.EqualTo(1));
             parent.SetActive(false);
             Assert.That(view.Module, Is.SameAs(_module));
@@ -2352,7 +2434,7 @@ namespace YLFramework.Core.Tests
             parent.SetActive(true);
             parent.SetActive(true);
             Assert.That(reused.EnabledCount, Is.EqualTo(2));
-            EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+            EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
             Assert.That(reused.EventCount, Is.EqualTo(2));
             Assert.That(model.ExitCount, Is.Zero);
         }
@@ -2433,7 +2515,7 @@ namespace YLFramework.Core.Tests
                 Assert.That(replacement.IsLoaded, Is.True);
                 Assert.That(replacement.Module, Is.SameAs(_module));
                 var count = replacement.EventCount;
-                EventManager.TriggerEvent(YLCoreSmokeView.ProbeEvent);
+                EventBus.Default.Send(YLCoreSmokeView.ProbeEvent);
                 Assert.That(replacement.EventCount, Is.EqualTo(count + 1), "Old hook cleanup must not stop the replacement's listeners.");
                 YLCoreSmokeView.EnabledProbe = null;
                 YLCoreSmokeView.DisabledProbe = null;

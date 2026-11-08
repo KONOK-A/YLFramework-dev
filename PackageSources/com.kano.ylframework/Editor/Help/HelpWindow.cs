@@ -5,30 +5,27 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Serialization;
 
 namespace YLFramework.Editor.Help
 {
     /// <summary>项目模块共用的只读帮助窗口，展示通过 <see cref="HelpRegistry"/> 注册的模块内容。</summary>
     /// <remarks>窗口只读取模块提供的展示数据，不执行示例代码；多个模块共用一个窗口实例，内容在切换到该模块时创建。</remarks>
-    [UnityEngine.Scripting.APIUpdating.MovedFrom(true, sourceNamespace: "Project.HelpKit.Editor",
-        sourceAssembly: "Project.HelpKit.Editor", sourceClassName: "HelpWindow")]
     public sealed class HelpWindow : EditorWindow
     {
         internal const string MenuPath = "YLFramework/帮助";
         private static readonly string[] _tabs = { "使用指南", "API 参考", "关于" };
         private static readonly string[] _memberGroups = { "构造函数", "属性", "事件", "字段与常量", "枚举值", "方法", "扩展方法" };
-        [FormerlySerializedAs("mModuleId"), SerializeField] private string moduleId = "";
-        [FormerlySerializedAs("mSearch"), SerializeField] private string search = "";
-        [FormerlySerializedAs("mGuideId"), SerializeField] private string guideId = "";
-        [FormerlySerializedAs("mApiId"), SerializeField] private string apiId = "";
-        [FormerlySerializedAs("mAboutId"), SerializeField] private string aboutId = "";
-        [FormerlySerializedAs("mMemberSearch"), SerializeField] private string memberSearch = "";
-        [FormerlySerializedAs("mApiCategory"), SerializeField] private string apiCategory = "";
-        [FormerlySerializedAs("mTab"), SerializeField] private int tab;
-        [FormerlySerializedAs("mSidebarWidth"), SerializeField] private float sidebarWidth = 230;
-        [FormerlySerializedAs("mCollapsedGroups"), SerializeField] private List<string> collapsedGroups = new List<string>();
-        [FormerlySerializedAs("mInitialGroupsSet"), SerializeField] private bool hasInitializedGroups;
+        [SerializeField] private string moduleId = "";
+        [SerializeField] private string search = "";
+        [SerializeField] private string guideId = "";
+        [SerializeField] private string apiId = "";
+        [SerializeField] private string aboutId = "";
+        [SerializeField] private string memberSearch = "";
+        [SerializeField] private string apiCategory = "";
+        [SerializeField] private int tab;
+        [SerializeField] private float sidebarWidth = 230;
+        [SerializeField] private List<string> collapsedGroups = new List<string>();
+        [SerializeField] private bool hasInitializedGroups;
         private Vector2 _navScroll;
         private Vector2 _readerScroll;
         private HelpApiType[] _index = Array.Empty<HelpApiType>();

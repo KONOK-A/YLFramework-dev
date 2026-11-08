@@ -72,14 +72,10 @@ namespace YLFramework.Core.Tests
         private static void SharedHandler() => SharedEventCount++;
         private void HandleEvent() => EventCount++;
 
-        public override void OnLoaded(params object[] param)
+        public override void OnLoaded(LoadViewArgs args)
         {
             LoadedCount++;
             LoadingProbe?.Invoke(this);
-        }
-
-        public override void OnLoaded(LoadViewArgs args)
-        {
             ArgsCount++;
             Token = args.GetInt("token");
             ArgsProbe?.Invoke(this, args);

@@ -4,8 +4,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text;
-using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -32,7 +30,6 @@ namespace YLFramework.Tests.Extensions.Domain
         {
             _absentParents = DomainTestAssets.CaptureAbsentParents();
             _folder = "Assets/DomainFixture-" + Guid.NewGuid().ToString("N");
-            DomainTestAssets.OwnPath(_folder);
             AssetDatabase.CreateFolder("Assets", System.IO.Path.GetFileName(_folder));
         }
         [TearDown] public void Cleanup() => DomainTestAssets.DeleteFolder(_folder, _absentParents);
@@ -76,9 +73,7 @@ namespace YLFramework.Tests.Extensions.Domain
         [TestCase("Mission", true)]
         [TestCase("Equipment", false)]
         [TestCase("Equipment", true)]
-        [TestCase("DataAssets", false)]
-        [TestCase("DataAssets", true)]
-        public void LegacyRootAndRowYamlKeepValuesListsParentAndScriptBindings(string module, bool enabled)
+        public void CurrentDomainRootsKeepValuesListsParentAndScriptBindings(string module, bool enabled)
         {
             var types = module switch
             {
@@ -86,7 +81,7 @@ namespace YLFramework.Tests.Extensions.Domain
                 "Buff" => (typeof(BuffsConfig), typeof(BuffConfigData), "buffs"),
                 "Mission" => (typeof(MissionsConfig), typeof(MissionConfigData), "missions"),
                 "Equipment" => (typeof(YLFramework.Equipment.EquipmentsConfig), typeof(YLFramework.Equipment.EquipmentConfigData), "equipments"),
-                _ => (typeof(YLFramework.DataAssets.ScriptableObjectConfigs), typeof(YLFramework.DataAssets.ScriptableObjectData), "configs")
+                _ => throw new ArgumentOutOfRangeException(nameof(module), module, "Unknown Gameplay domain.")
             };
             var root = ScriptableObject.CreateInstance(types.Item1);
             var row = ScriptableObject.CreateInstance(types.Item2);
@@ -100,26 +95,23 @@ namespace YLFramework.Tests.Extensions.Domain
             list.Add(row);
             types.Item2.GetField("parent").SetValue(row, root);
             string scriptGuid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(row)));
-            var rootFields = new List<(string Old, string Current, object Value)>
+            var rootFields = new List<(string Current, object Value)>
             {
-                ("type_script_guid", "typeScriptGuid", scriptGuid)
+                ("typeScriptGuid", scriptGuid),
+                ("startId", enabled ? 42 : 0)
             };
-            if (module != "DataAssets")
-            {
-                rootFields.Add(("start_id", "startId", enabled ? 42 : 0));
-            }
 
-            var rowFields = new List<(string Old, string Current, object Value)>();
+            var rowFields = new List<(string Current, object Value)>();
             EffectData effect = null;
-            var effectFields = new[] { (Old: "effect_name", Current: "effectName", Value: (object)"legacy-effect") };
+            var effectFields = new[] { (Current: "effectName", Value: (object)"legacy-effect") };
             if (module == "Skill")
             {
-                rowFields.AddRange(new (string, string, object)[]
+                rowFields.AddRange(new (string, object)[]
                 {
-                    ("skill_name", "skillName", "legacy-name"), ("cooling_time", "cooldownSeconds", enabled ? 1.75f : 0f),
-                    ("canbe_released_at_the_same_time", "simultaneousSkillIds", new[] { 7, 9 }),
-                    ("active_cancellation", "allowCancellation", enabled),
-                    ("skill_class_full_name", "skillClassFullName", "Legacy.Runtime.Skill"), ("skill_class_guid", "skillClassGuid", "legacy-guid")
+                    ("skillName", "legacy-name"), ("cooldownSeconds", enabled ? 1.75f : 0f),
+                    ("simultaneousSkillIds", new[] { 7, 9 }),
+                    ("allowCancellation", enabled),
+                    ("skillClassFullName", "Legacy.Runtime.Skill"), ("skillClassGuid", "legacy-guid")
                 });
             }
             else if (module == "Buff")
@@ -127,52 +119,46 @@ namespace YLFramework.Tests.Extensions.Domain
                 effect = ScriptableObject.CreateInstance<EffectData>();
                 AssetDatabase.AddObjectToAsset(effect, row);
                 ((BuffConfigData)row).effects.Add(effect);
-                rowFields.AddRange(new (string, string, object)[]
+                rowFields.AddRange(new (string, object)[]
                 {
-                    ("buff_id", "id", enabled ? 17 : 0), ("buff_name", "buffName", "legacy-name"),
-                    ("buff_class_full_name", "buffClassFullName", "Legacy.Runtime.Buff"), ("buff_class_guid", "buffClassGuid", "legacy-guid")
+                    ("id", enabled ? 17 : 0), ("buffName", "legacy-name"),
+                    ("buffClassFullName", "Legacy.Runtime.Buff"), ("buffClassGuid", "legacy-guid")
                 });
             }
             else if (module == "Mission")
             {
-                rootFields.Add(("display_name", "displayName", "legacy-root"));
+                rootFields.Add(("displayName", "legacy-root"));
                 ((MissionsConfig)root).parameters.Add(new MissionParameter { name = "amount" });
                 ((MissionConfigData)row).conditions.Add(new MissionCondition { paramName = "amount" });
-                rootFields.AddRange(new (string, string, object)[]
+                rootFields.AddRange(new (string, object)[]
                 {
-                    ("param", "parameters", null),
-                    ("param.Array.data[0].only_can_set_in_progress", "parameters.Array.data[0].onlySetInProgress", !enabled),
-                    ("param.Array.data[0].only_can_set_larger", "parameters.Array.data[0].onlySetLarger", enabled),
-                    ("param.Array.data[0].custom_data", "parameters.Array.data[0].customData", new[] { "legacy-custom" })
+                    ("parameters", null),
+                    ("parameters.Array.data[0].onlySetInProgress", !enabled),
+                    ("parameters.Array.data[0].onlySetLarger", enabled),
+                    ("parameters.Array.data[0].customData", new[] { "legacy-custom" })
                 });
-                rowFields.AddRange(new (string, string, object)[]
+                rowFields.AddRange(new (string, object)[]
                 {
-                    ("mission_name", "missionName", "legacy-name"), ("mission_type_guid", "missionTypeGuid", "legacy-guid"),
-                    ("mission_type_class_fullname", "missionTypeClassFullName", "Legacy.Runtime.Mission"),
-                    ("reset_param_on_completed", "resetParamOnCompleted", enabled),
-                    ("conditions.Array.data[0].param_name", "conditions.Array.data[0].paramName", "amount")
+                    ("missionName", "legacy-name"), ("missionTypeGuid", "legacy-guid"),
+                    ("missionTypeClassFullName", "Legacy.Runtime.Mission"),
+                    ("resetParamOnCompleted", enabled),
+                    ("conditions.Array.data[0].paramName", "amount")
                 });
             }
             else if (module == "Equipment")
             {
-                rowFields.AddRange(new (string, string, object)[]
+                rowFields.AddRange(new (string, object)[]
                 {
-                    ("equipment_name", "equipmentName", "legacy-name"),
-                    ("equipment_class_full_name", "equipmentClassFullName", "Legacy.Runtime.Equipment"),
-                    ("equipment_class_guid", "equipmentClassGuid", "legacy-guid")
+                    ("equipmentName", "legacy-name"),
+                    ("equipmentClassFullName", "Legacy.Runtime.Equipment"),
+                    ("equipmentClassGuid", "legacy-guid")
                 });
             }
-            else
-            {
-                rowFields.Add(("config_name", "configName", "legacy-name"));
-                rowFields.Add(("des", "description", "legacy-description"));
-            }
-
-            LegacyAssetValues(new SerializedObject(root), rootFields, true);
-            LegacyAssetValues(new SerializedObject(row), rowFields, true);
+            CurrentAssetValues(new SerializedObject(root), rootFields, true);
+            CurrentAssetValues(new SerializedObject(row), rowFields, true);
             if (effect)
             {
-                LegacyAssetValues(new SerializedObject(effect), effectFields, true);
+                CurrentAssetValues(new SerializedObject(effect), effectFields, true);
                 EditorUtility.SetDirty(effect);
             }
             var icon = new SerializedObject(row);
@@ -185,18 +171,20 @@ namespace YLFramework.Tests.Extensions.Domain
             AssetDatabase.SaveAssetIfDirty(row);
             string rootGuid = AssetDatabase.AssetPathToGUID(rootPath);
             string rowGuid = AssetDatabase.AssetPathToGUID(rowPath);
-            LegacyAssetYaml(rootPath, rootFields);
-            LegacyAssetYaml(rowPath, effect ? rowFields.Concat(effectFields) : rowFields);
+            var rootMeta = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(rootPath + ".meta"));
+            var rowMeta = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(rowPath + ".meta"));
+            Resources.UnloadAsset(row);
+            Resources.UnloadAsset(root);
             AssetDatabase.ImportAsset(rootPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
             AssetDatabase.ImportAsset(rowPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
             root = (ScriptableObject)AssetDatabase.LoadAssetAtPath(rootPath, types.Item1);
             row = (ScriptableObject)AssetDatabase.LoadAssetAtPath(rowPath, types.Item2);
-            LegacyAssetValues(new SerializedObject(root), rootFields, false);
-            LegacyAssetValues(new SerializedObject(row), rowFields, false);
+            CurrentAssetValues(new SerializedObject(root), rootFields, false);
+            CurrentAssetValues(new SerializedObject(row), rowFields, false);
             if (module == "Buff")
             {
                 var restoredEffect = AssetDatabase.LoadAllAssetsAtPath(rowPath).OfType<EffectData>().Single();
-                LegacyAssetValues(new SerializedObject(restoredEffect), effectFields, false);
+                CurrentAssetValues(new SerializedObject(restoredEffect), effectFields, false);
                 Assert.That(((BuffConfigData)row).effects.Single(), Is.SameAs(restoredEffect));
             }
             Assert.That(types.Item2.GetField("parent").GetValue(row), Is.SameAs(root));
@@ -204,42 +192,42 @@ namespace YLFramework.Tests.Extensions.Domain
             Assert.That(new SerializedObject(row).FindProperty("icon.iconName").stringValue, Is.EqualTo("icons/legacy"));
             Assert.That(AssetDatabase.AssetPathToGUID(rootPath), Is.EqualTo(rootGuid));
             Assert.That(AssetDatabase.AssetPathToGUID(rowPath), Is.EqualTo(rowGuid));
+            Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(rootPath + ".meta")), Is.EqualTo(rootMeta));
+            Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(rowPath + ".meta")), Is.EqualTo(rowMeta));
             EditorUtility.SetDirty(root);
             EditorUtility.SetDirty(row);
             AssetDatabase.SaveAssetIfDirty(root);
             AssetDatabase.SaveAssetIfDirty(row);
             AssetDatabase.ImportAsset(rootPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
             AssetDatabase.ImportAsset(rowPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
-            LegacyAssetValues(new SerializedObject(AssetDatabase.LoadAssetAtPath(rootPath, types.Item1)), rootFields, false);
-            LegacyAssetValues(new SerializedObject(AssetDatabase.LoadAssetAtPath(rowPath, types.Item2)), rowFields, false);
+            CurrentAssetValues(new SerializedObject(AssetDatabase.LoadAssetAtPath(rootPath, types.Item1)), rootFields, false);
+            CurrentAssetValues(new SerializedObject(AssetDatabase.LoadAssetAtPath(rowPath, types.Item2)), rowFields, false);
         }
 
-        private static void LegacyAssetYaml(string path, IEnumerable<(string Old, string Current, object Value)> fields)
+        [TestCase(typeof(SkillsConfig))]
+        [TestCase(typeof(SkillConfigData))]
+        [TestCase(typeof(BuffsConfig))]
+        [TestCase(typeof(BuffConfigData))]
+        [TestCase(typeof(EffectData))]
+        [TestCase(typeof(MissionsConfig))]
+        [TestCase(typeof(MissionConfigData))]
+        [TestCase(typeof(MissionCondition))]
+        [TestCase(typeof(MissionParameter))]
+        [TestCase(typeof(YLFramework.Equipment.EquipmentsConfig))]
+        [TestCase(typeof(YLFramework.Equipment.EquipmentConfigData))]
+        public void CurrentDomainFieldsHaveNoRetiredUnityReader(Type type)
         {
-            string yaml = File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path));
-            foreach (var field in fields)
-            {
-                string oldName = field.Old.Split('.').Last();
-                string newName = field.Current.Split('.').Last();
-                yaml = Regex.Replace(yaml, @"(?m)^([ \t]*(?:-[ \t]+)?)" + Regex.Escape(newName) + @":", "$1" + oldName + ":");
-                Assert.That(Regex.IsMatch(yaml, @"(?m)^[ \t]*(?:-[ \t]+)?" + Regex.Escape(oldName) + @":"), Is.True, oldName);
-            }
-
-            File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(path), yaml, new UTF8Encoding(false));
+            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .SelectMany(field => field.GetCustomAttributes<UnityEngine.Serialization.FormerlySerializedAsAttribute>()), Is.Empty);
         }
 
-        private static void LegacyAssetValues(SerializedObject serialized,
-            IEnumerable<(string Old, string Current, object Value)> fields, bool prepare)
+        private static void CurrentAssetValues(SerializedObject serialized,
+            IEnumerable<(string Current, object Value)> fields, bool prepare)
         {
             foreach (var field in fields)
             {
                 var property = serialized.FindProperty(field.Current);
-                if (prepare && property == null)
-                {
-                    property = serialized.FindProperty(field.Old);
-                }
-
-                Assert.That(property, Is.Not.Null, "Migration target field missing: " + field.Current);
+                Assert.That(property, Is.Not.Null, "Current field missing: " + field.Current);
                 if (field.Value == null)
                 {
                     Assert.That(property.arraySize, Is.EqualTo(1));
@@ -533,17 +521,6 @@ namespace YLFramework.Tests.Extensions.Domain
             "Assets/YLFrameworkData/Skill/Skills", "Assets/YLFrameworkData/Buff/Buffs", "Assets/YLFrameworkData/Skill",
             "Assets/YLFrameworkData/Buff", "Assets/YLFrameworkData/Mission", "Assets/YLFrameworkData"
         }.Where(path => !Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)) && !File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)) && !File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"))).ToArray();
-
-        internal static void OwnPath(string path)
-        {
-            if (!SessionState.GetBool("YLFramework.Domain.MainAcceptance.Protection", false))
-            {
-                return;
-            }
-
-            var entry = Type.GetType("YLFramework.Tests.DomainMain.DomainMainAcceptance, Assembly-CSharp-Editor", true);
-            entry.GetMethod("OwnPath").Invoke(null, new object[] { path });
-        }
 
         internal static void DeleteFolder(string folder, string[] absentParents)
         {

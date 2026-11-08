@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.SceneManagement;
 
 namespace YLFramework.Overlap
@@ -17,6 +18,9 @@ namespace YLFramework.Overlap
         [SerializeField] private int maxCapacity = 256;
         [SerializeField] private bool growBuffer;
         [SerializeField] private bool runOnEnable = true;
+        [SerializeField] private UnityEvent<OverlapContact<Collider>> enteredEvent = new UnityEvent<OverlapContact<Collider>>();
+        [SerializeField] private UnityEvent<OverlapContact<Collider>> stayedEvent = new UnityEvent<OverlapContact<Collider>>();
+        [SerializeField] private UnityEvent<OverlapContact<Collider>, OverlapExitReason> exitedEvent = new UnityEvent<OverlapContact<Collider>, OverlapExitReason>();
         [SerializeField] private LayerMask layerMask = ~0;
         [SerializeField] private QueryTriggerInteraction triggerInteraction = QueryTriggerInteraction.Ignore;
         [SerializeField] private Collider ignoredCollider;
@@ -36,6 +40,9 @@ namespace YLFramework.Overlap
         private bool _hasCommittedFilter;
         private double _elapsed;
         private long _generation;
+        private int _serializedNotificationDepth;
+        private OverlapExitReason? _deferredRelease;
+        private bool _clearObserversAfterNotification;
         private int _sceneHandle;
         private bool _filterChanged;
         private bool _configurationChanged;
@@ -85,6 +92,12 @@ namespace YLFramework.Overlap
                 _exitObservers = _exited?.GetInvocationList() ?? Array.Empty<Delegate>();
             }
         }
+        /// <summary>同一已提交 Enter 的序列化适配，先于 CLR 监听。一次 UnityEvent 通知是不可拆分的监听者批次。</summary>
+        /// <remarks>批内停止/停用先更新运行意图，在批次结束后才清空快照和通知 Exit；旧代次的 CLR 监听与后续接触不再派发。</remarks>
+        public UnityEvent<OverlapContact<Collider>> EnteredEvent => enteredEvent;
+        public UnityEvent<OverlapContact<Collider>> StayedEvent => stayedEvent;
+        public UnityEvent<OverlapContact<Collider>, OverlapExitReason> ExitedEvent => exitedEvent;
+
         public OverlapComposite3D Composite
         {
             get => composite;
@@ -196,6 +209,7 @@ namespace YLFramework.Overlap
             _generation++;
         }
 
+        /// <summary>停止后续采样并释放联系人；若在 UnityEvent 内调用，释放/Exit 延后到当前监听者批次末尾。</summary>
         public void Stop()
         {
             IsRunning = false;
@@ -226,10 +240,10 @@ namespace YLFramework.Overlap
             }
             finally
             {
-                _entered = null;
-                _stayed = null;
-                _exited = null;
-                _enterObservers = _stayObservers = _exitObservers = Array.Empty<Delegate>();
+                if (_serializedNotificationDepth != 0)
+                    _clearObserversAfterNotification = true;
+                else
+                    ClearObservers();
             }
         }
 
@@ -239,7 +253,8 @@ namespace YLFramework.Overlap
             _configurationChanged = true;
         }
 
-        private void Update() => Tick(OverlapSamplingMode.Update, Time.deltaTime);
+        private void Update() => Tick(samplingMode == OverlapSamplingMode.UnscaledUpdate ? OverlapSamplingMode.UnscaledUpdate :
+            OverlapSamplingMode.Update, samplingMode == OverlapSamplingMode.UnscaledUpdate ? Time.unscaledDeltaTime : Time.deltaTime);
         private void FixedUpdate() => Tick(OverlapSamplingMode.FixedUpdate, Time.fixedDeltaTime);
 
         private void Tick(OverlapSamplingMode mode, float delta)
@@ -301,6 +316,7 @@ namespace YLFramework.Overlap
                 }
                 var filter = Filter;
                 var scene = gameObject.scene.GetPhysicsScene();
+                Vector3 reference = transform.position;
                 while (true)
                 {
                     _tracker.Begin();
@@ -323,7 +339,7 @@ namespace YLFramework.Overlap
                             UnityEngine.Object target = filter.GroupByRigidbody && body ? (UnityEngine.Object)body : collider;
                             int identity = target.GetInstanceID();
                             complete &= _tracker.Add(identity,
-                                new OverlapContact<Collider>(collider, target, identity, collider.GetInstanceID()), _buffer.Length);
+                                new OverlapContact<Collider>(collider, target, identity, collider.GetInstanceID(), collider.ClosestPoint(reference)), _buffer.Length);
                         }
                     }
                     LastQuery = new OverlapQueryResult3D(_tracker.Pending.Count, rawCount,
@@ -348,8 +364,8 @@ namespace YLFramework.Overlap
                 _filterChanged = _configurationChanged = false;
                 _tracker.Commit();
                 DispatchExits(_tracker.Exits, reason, generation, true);
-                Dispatch(_tracker.Enters, _enterObservers, generation);
-                Dispatch(_tracker.Stays, _stayObservers, generation);
+                Dispatch(_tracker.Enters, enteredEvent, _enterObservers, generation);
+                Dispatch(_tracker.Stays, stayedEvent, _stayObservers, generation);
                 return _generation == generation;
             }
             finally
@@ -427,11 +443,17 @@ namespace YLFramework.Overlap
             return true;
         }
 
-        private void Dispatch(List<OverlapContact<Collider>> contacts, Delegate[] observers, long generation)
+        private void Dispatch(List<OverlapContact<Collider>> contacts, UnityEvent<OverlapContact<Collider>> serialized, Delegate[] observers, long generation)
         {
             for (int i = 0; i < contacts.Count && generation == _generation; i++)
             {
                 var contact = contacts[i];
+                _serializedNotificationDepth++;
+                try
+                {
+                    serialized.Invoke(contact);
+                }
+                finally { EndSerializedNotification(); }
                 for (int j = 0; j < observers.Length && generation == _generation; j++)
                 {
                     ((Action<OverlapContact<Collider>>)observers[j])(contact);
@@ -459,6 +481,12 @@ namespace YLFramework.Overlap
                         actual = OverlapExitReason.TargetDisabled;
                     }
                 }
+                _serializedNotificationDepth++;
+                try
+                {
+                    exitedEvent.Invoke(contact, actual);
+                }
+                finally { EndSerializedNotification(); }
                 for (int j = 0; j < observers.Length && generation == _generation; j++)
                 {
                     ((Action<OverlapContact<Collider>, OverlapExitReason>)observers[j])(contact, actual);
@@ -466,9 +494,43 @@ namespace YLFramework.Overlap
             }
         }
 
+        private void EndSerializedNotification()
+        {
+            if (--_serializedNotificationDepth != 0)
+                return;
+            var reason = _deferredRelease;
+            _deferredRelease = null;
+            bool clear = _clearObserversAfterNotification;
+            _clearObserversAfterNotification = false;
+            try
+            {
+                if (reason.HasValue)
+                    Release(reason.Value);
+            }
+            finally
+            {
+                if (clear)
+                    ClearObservers();
+            }
+        }
+
+        private void ClearObservers()
+        {
+            _entered = null;
+            _stayed = null;
+            _exited = null;
+            _enterObservers = _stayObservers = _exitObservers = Array.Empty<Delegate>();
+        }
+
         private void Release(OverlapExitReason reason)
         {
             _generation++;
+            if (_serializedNotificationDepth != 0)
+            {
+                // UnityEvent cannot interrupt its internal invocation list. Keep its snapshot atomic before Exit.
+                _deferredRelease ??= reason;
+                return;
+            }
             _workspace?.Dispose();
             _workspace = null;
             _elapsed = 0;

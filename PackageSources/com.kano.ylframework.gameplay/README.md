@@ -12,7 +12,11 @@ SHA; package-level SemVer dependencies do not fetch sibling Git packages.
 Authoring for all four domains and its internal shared helpers belongs to
 `YLFramework.Gameplay.Editor`. It includes the existing common session cleanup
 and the separate Equipment lifecycle hook. Namespaces, script GUIDs, asset
-fields, JSON keys, Excel column mappings and manager behavior are unchanged.
+current fields, JSON keys, Excel column mappings and manager behavior retain
+their identities. Retired Unity field-name aliases are not a second reader;
+save owned old-field inputs through Unity while their original definitions can
+read them before upgrading. Do not rewrite frozen bundles or guess a new type
+or project identity from old strings.
 Gameplay does not depend on Excel, DataAssets, Localization or Save. Excel
 contains a conditional domain adapter enabled only when Gameplay is installed;
 there is no separate DomainExcel package or reverse product dependency.

@@ -1,5 +1,4 @@
 using System;
-using UnityEngine.Serialization;
 
 namespace YLFramework.Core
 {
@@ -17,19 +16,19 @@ namespace YLFramework.Core
     public struct PanelConfig
     {
         /// <summary>实际根内的显式层索引，必须非负且存在。</summary>
-        [FormerlySerializedAs("Layer")] public int layer;
+        public int layer;
         /// <summary>同层同 Modal 分组内的优先级，不是原生 Canvas 顺序。</summary>
-        [FormerlySerializedAs("Priority")] public int priority;
+        public int priority;
         /// <summary>是否阻挡同根排序更低的标准 UI 输入。</summary>
-        [FormerlySerializedAs("Modal")] public bool modal;
+        public bool modal;
         /// <summary>完整覆盖声明；只允许停绘低于它的同根 Panel，不改变布局。</summary>
-        [FormerlySerializedAs("CoversRoot")] public bool coversRoot;
+        public bool coversRoot;
         /// <summary>是否参与 Top 查询，不影响 Modal 本身的阻挡资格。</summary>
-        [FormerlySerializedAs("ParticipatesInTop")] public bool participatesInTop;
+        public bool participatesInTop;
         /// <summary>同 Module、实际根和可证明来源内的实例模式。</summary>
-        [FormerlySerializedAs("InstanceMode")] public PanelInstanceMode instanceMode;
+        public PanelInstanceMode instanceMode;
         /// <summary>正常结束时是否允许后端缓存；损坏或来源责任不可转移时仍会丢弃。</summary>
-        [FormerlySerializedAs("CacheOnClose")] public bool cacheOnClose;
+        public bool cacheOnClose;
 
         /// <summary>轻量窗口默认：Layer/Priority 为 0，非模态、不覆盖、参与 Top、单实例且可缓存。</summary>
         public static PanelConfig Default => new PanelConfig { participatesInTop = true, cacheOnClose = true };

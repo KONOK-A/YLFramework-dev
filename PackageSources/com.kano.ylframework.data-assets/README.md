@@ -15,7 +15,8 @@ https://github.com/KONOK-A/YLFramework-dev.git?path=PackageSources/com.kano.ylfr
 
 `YLFramework.DataAssets` owns the unchanged `YLFramework.DataAssets` namespace;
 `YLFramework.DataAssets.Editor` owns the unchanged authoring namespace. Original
-script GUIDs and serialized field aliases are retained. Runtime consumers must
+script GUIDs are retained. Current Unity field names are the single reader;
+the retired config_name/des/type_script_guid aliases are not kept. Runtime consumers must
 declare their own asmdef reference when using assembly definitions.
 
 `ScriptableObjectManager.Load` returns a registration that owns its root resource
@@ -33,8 +34,11 @@ It edits explicitly selected roots and creates project-owned rows under
 
 The persistent field protocols remain `displayName/configs/typeScriptGuid` on
 configuration roots and `parent/id/configName/icon/description` on rows. Existing
-Unity aliases and explicit Excel column names are preserved, rather than adding
-an Excel file path to runtime data.
+Excel column names remain explicitly config_name/des/type_script_guid. These are
+workbook protocols, not old Unity readers; do not rename workbook headers or JSON
+keys when updating C# fields. Before retiring an older application version, save
+its owned old-field assets through Unity while the old definitions can read them,
+preserving GUIDs and object references. Do not rewrite frozen fixtures or bundles.
 
 Excel import/export is an optional consumer in `com.kano.ylframework.excel`.
 DataAssets does not reference Excel or MiniExcel. Recent-workbook memory and
@@ -47,3 +51,10 @@ DataAssets project from `YLFramework.Runtime`, rebuild content and its catalog
 with the formal Resource builder/publisher; do not edit the old JSON or reuse its
 catalog digest. An old assembly tuple is intentionally rejected by the new type
 table. Removing this package does not delete project assets or workbooks.
+
+The development repository's current publication test uses the existing author
+API to create and save a new root and independent rows, cold-reads their actual
+references, and runs the formal Bundle/Catalog publisher and two real Player
+processes. It no longer copies frozen assembly-migration assets into current
+publication. Those historical inputs remain unchanged until their other owners
+have migrated; Editor, runtime lease, session and Player evidence are separate.

@@ -56,11 +56,9 @@ namespace YLFramework.Tests.Extensions.Data
             }.Where(path => !Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)) && !File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)) && !File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"))).ToArray();
             EnsureFolder(Parent);
             _path = Parent + "/Run-" + Guid.NewGuid().ToString("N") + ".asset";
-            YLFramework.Tests.DataAssets.DataAcceptanceOwnership.Own(_path);
             _root = ScriptableObject.CreateInstance<MultiLanguageConfigs>();
             AssetDatabase.CreateAsset(_root, _path);
             _languagesPath = LocalizationAuthoring.GetLanguageFolder(_root);
-            YLFramework.Tests.DataAssets.DataAcceptanceOwnership.Own(_languagesPath);
         }
 
         [TearDown]

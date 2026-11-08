@@ -346,7 +346,6 @@ namespace YLFramework.Tests.ResourceBuild
             public int StartCount;
             public bool ReadyAtStart;
             public override string DefaultStartUpScene => WithScene ? "Owned.unity" : string.Empty;
-            [Obsolete("Compatibility preload table contract.")]
             public override Dictionary<string, Type> PreloadConfigTables => WithTables
                 ? new() { { "Core86Rows.json", typeof(YLCoreSmokeRow[]) } } : new();
             public override void OnStart()

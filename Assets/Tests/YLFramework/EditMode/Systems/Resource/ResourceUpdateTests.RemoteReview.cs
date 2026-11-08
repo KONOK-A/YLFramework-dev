@@ -67,7 +67,7 @@ namespace YLFramework.Tests.ResourceBuild
         }
 
         [UnityTest]
-        public IEnumerator SameTransitionUpgradesV1PreparedAndRefreshesAuthenticatedMetadataWithoutLosingHigherSequence()
+        public IEnumerator SameTransitionRefreshesV2LocalAuthorizationWithoutLosingHigherSignedSequence()
         {
             using var certificate = ResourceDownloadTests.Certificate();
             using var server = new ResourceTlsServer(certificate);

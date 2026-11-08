@@ -7,6 +7,7 @@ using YLFramework.Resource;
 
 namespace YLFramework.Tests.ResourceBuild
 {
+    [Category("YL.Special.ResourceUpdates")]
     public class ResourceSignatureTests
     {
         private static byte[] Envelope(RSA key, string keyId = "isolated-test")

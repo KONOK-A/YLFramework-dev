@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
-using UnityEngine.Serialization;
 
 namespace YLFramework.StateMachine
 {
@@ -41,7 +40,7 @@ namespace YLFramework.StateMachine
         /// <summary>
         /// 是否为直接父层的默认进入节点。
         /// </summary>
-        [FormerlySerializedAs("defaultState")] public bool isDefaultState;
+        public bool isDefaultState;
         /// <summary>
         /// 配置内全局唯一的节点名称，用于过渡和父层引用。
         /// </summary>
@@ -50,7 +49,7 @@ namespace YLFramework.StateMachine
         /// <summary>
         /// 按执行顺序排列的状态脚本绑定记录。
         /// </summary>
-        [FormerlySerializedAs("StateScripts")] public List<FsmStateScriptInfo> stateScripts = new List<FsmStateScriptInfo>();
+        public List<FsmStateScriptInfo> stateScripts = new List<FsmStateScriptInfo>();
 
         /// <summary>
         /// 从外到内排列的完整祖先名称列表；空列表或 null 表示基础层。
@@ -65,12 +64,12 @@ namespace YLFramework.StateMachine
         /// <summary>
         /// 是否具有编辑器内置节点身份，需与内置种类共同判定。
         /// </summary>
-        [FormerlySerializedAs("isBuildInState")] public bool isBuiltInState = false;
+        public bool isBuiltInState = false;
 
         /// <summary>
         /// 内置节点种类标识，不由显示名称推断。
         /// </summary>
-        [FormerlySerializedAs("buildInStateName")] public string builtInStateName = null;
+        public string builtInStateName = null;
 
         #region 属性
 

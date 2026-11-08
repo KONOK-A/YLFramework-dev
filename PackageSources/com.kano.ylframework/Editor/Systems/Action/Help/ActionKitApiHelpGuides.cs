@@ -36,7 +36,7 @@ namespace YLFramework.Editor.Actions
             },
             new Topic("lifecycle", "初始化与模块关闭", "入门与生命周期",
                 "由应用入口管理整个模块的初始化、关闭和重新启用。",
-                "Initialize 与 InitArchitecture 在同一轮初始化中不会重复创建实例。OnRegisterPatch 对每个新初始化的实例执行一次，" +
+                "Initialize 是唯一标准初始化入口，在同一轮初始化中不会重复创建实例。OnRegisterPatch 对每个新初始化的实例执行一次，" +
                 "Interface 返回本模块的 ActionKit 实例，并在需要时初始化。\n" +
                 "Shutdown 取消模块管理的执行，释放模块自己的执行器、宿主、资源和全局事件监听；" +
                 "保留用户 GameObject 及不属于模块的协程。IdGenerator 和 OnRegisterPatch 不会因此重置。" +
@@ -378,20 +378,20 @@ namespace YLFramework.Editor.Actions
                 "FadeIn 默认使用黑色遮罩，透明度从 0 到 1；FadeOut 从 1 到 0，两者默认时长均为一秒。" +
                 "Duration 设置秒数，Color 设置颜色，FromAlpha 与 ToAlpha 设置透明度起止值。" +
                 "独立淡入和淡出动作可通过 Append 放入同一序列，由父序列统一等待和取消。",
-                "先通过 YLFramework > Action > 创建屏幕过渡资源 创建资源，加载路径为 " +
+                "主包已包含正式遮罩 Prefab，加载路径为 " +
                 "ActionKit/ScreenTransitionCanvas。当前资源根节点缩放为 0，且没有 GraphicRaycaster；" +
                 "实际显示及输入遮挡效果需要检查，不能仅凭动作完成判断可见。\n" +
-                "FadeInOut 会另外启动全局子序列，但父动作不会随它完成，父动作取消也不会取消该子序列，" +
-                "暂停和未缩放时间设置同样不会传递。不要把它作为需要可靠完成的序列子项。\n" +
-                "所有过渡共享同一个 Image，重叠执行会相互覆盖；取消不会恢复透明度。直接 Allocate 或复用实例可能保留设置，" +
-                "优先使用工厂并明确配置。",
+                "FadeInOut(onInFinish) 返回普通 ISequence，由父序列统一等待、暂停和取消，不隐式创建全局宿主；" +
+                "中段回调同步执行，异常由所选执行器按普通序列处理。需要自定义时序时显式组合独立 FadeIn 与 FadeOut。\n" +
+                "所有过渡共享同一个 Image，重叠执行会相互覆盖；取消不会恢复透明度。Fade 回收会恢复颜色、透明度、时长与进度的默认值，" +
+                "Reset 保留用于重复执行的本轮配置。",
                 MethodContext + "\n先创建并检查遮罩资源。OwnedFadeSequence(owner) 使用独立 FadeIn 和 FadeOut，" +
-                "避免 FadeInOut 的父子生命周期限制；日志只表示动作时序，不证明画面已正确覆盖。",
+                "显式控制各段时长；日志只表示动作时序，不证明画面已正确覆盖。",
                 "public static void OwnedFadeSequence(MonoBehaviour owner)\n{\n" +
                 "    ActionKit.Sequence().Append(ActionKit.ScreenTransition.FadeIn().Duration(0.3f))\n" +
                 "        .Callback(() => Debug.Log(\"遮罩淡入动作结束\"))\n" +
                 "        .Append(ActionKit.ScreenTransition.FadeOut().Duration(0.3f)).Start(owner);\n}",
-                "ScreenTransition", "ScreenTransitionFade", "ScreenTransitionInOut", "ISequence")
+                "ScreenTransition", "ScreenTransitionFade", "ISequence")
             {
                 FeaturedTypeNames = new[] { "ActionKit.ScreenTransition", "ScreenTransitionFade", "ISequence" }
             },

@@ -44,6 +44,19 @@ function Assert-Rejected([scriptblock] $Action, [string] $Pattern) {
     Assert-That $rejected "Expected rejection matching: $Pattern"
 }
 
+function Assert-ResourceCurrentPlayerIsolation([Collections.IDictionary] $Probe) {
+    Assert-That ($Probe.name -ceq 'YLFramework.Tests.ResourceCurrent.Player' -and
+        @($Probe.references).Count -eq 1 -and $Probe.references[0] -ceq 'YLFramework.Runtime') 'ResourceCurrent Player isolation requires only its actual main runtime reference.'
+    Assert-That (@($Probe.defineConstraints).Count -eq 1 -and
+        $Probe.defineConstraints[0] -ceq 'UNITY_EDITOR || YL_RESOURCE_CURRENT_ACCEPTANCE') 'ResourceCurrent Player isolation requires the exact Editor-or-explicit-acceptance condition.'
+    Assert-That (@($Probe.precompiledReferences).Count -eq 0 -and
+        (-not $Probe.Contains('optionalUnityReferences') -or @($Probe.optionalUnityReferences).Count -eq 0)) 'ResourceCurrent Player isolation cannot acquire NUnit or TestRunner dependencies.'
+    Assert-That (@($Probe.includePlatforms).Count -eq 0 -and @($Probe.excludePlatforms).Count -eq 0 -and
+        @($Probe.versionDefines).Count -eq 0) 'ResourceCurrent Player isolation cannot restrict the acceptance platform or implicitly enable its symbol.'
+    Assert-That ($Probe.autoReferenced -is [bool] -and -not $Probe.autoReferenced -and
+        $Probe.noEngineReferences -is [bool] -and -not $Probe.noEngineReferences) 'ResourceCurrent Player isolation requires explicit consumers and real Unity engine references.'
+}
+
 function Test-Case([string] $Name, [scriptblock] $Body) {
     $script:cases++
     try { & $Body; "PASS: $Name" }
@@ -104,6 +117,24 @@ function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minut
 
 try {
     if ($Group -in @('All', 'Workspace')) {
+        Test-Case 'HybridCLR Daily selects both original test assemblies and its explicit sample with only the real package closure' {
+            . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $entries = @($configuration.modules | Where-Object name -CEQ 'HybridCLR')
+            Assert-That ($entries.Count -eq 1) 'The changed Async consumer has no maintained HybridCLR behavior entry.'
+            $module = $entries[0]
+            Assert-That (($module.suites -join ',') -ceq 'Daily' -and $module.nativeLayout -ceq 'Framework' -and
+                $module.graphics -and $module.nativeSdk -ceq 'HybridCLR') 'HybridCLR behavior must use its explicit graphical native host and approved Git SDK.'
+            Assert-That (($module.packageInputs -join ',') -ceq 'com.kano.ylframework.hybridclr' -and
+                (@(Get-YLUpmPackages -Repository $repoRoot -Ids $module.packageInputs).id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.hybridclr') 'HybridCLR acquired an unrelated optional package.'
+            Assert-That (($module.assemblies -join ',') -ceq 'YLFramework.HybridCLR.Tests.EditMode,YLFramework.HybridCLR.Tests.PlayMode' -and
+                ($module.editTests -join ',') -ceq 'Assets/Tests/YLFramework/Integrations/HybridCLR/EditMode' -and
+                ($module.playTests -join ',') -ceq 'Assets/Tests/YLFramework/Integrations/HybridCLR/PlayMode') 'Both original HybridCLR test sources and roles must remain selected.'
+            Assert-That ($module.sampleInputs.Count -eq 1 -and $module.sampleInputs[0].package -ceq 'com.kano.ylframework.hybridclr' -and
+                $module.sampleInputs[0].name -ceq 'HybridCLR Module' -and
+                'Assets/Tests/YLFramework/Fixtures/Shared' -cin $module.nativeSources) 'HybridCLR requires its explicit sample import and shared fixture, not a fabricated test assembly.'
+        }
         Test-Case 'Complete Help API and XML coverage uses the maintained native CLI with only the main product' {
             . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
@@ -114,7 +145,36 @@ try {
             Assert-That ($help.category -ceq '' -and $help.graphics -and ($help.modes -join ',') -ceq 'EditMode' -and ($help.suites -join ',') -ceq 'Daily') 'Help must retain actual graphical Editor execution, not a partial category or a managed substitute.'
             Assert-That (($help.editTests -join ',') -ceq 'Assets/Tests/YLFramework/EditMode/Editor/Help' -and ($help.packageInputs -join ',') -ceq 'com.kano.ylframework') 'Help must compile every original API/XML/window fixture without forcing optional products.'
             Assert-That (($help.outputEnvironment -join ',') -ceq 'BEE_CACHE_DIRECTORY') 'The real compiler XML side output must be produced in an owned cold compiler cache, not fabricated or borrowed from a global cache.'
-            Assert-That ('Assets/Tests/YLFramework/Fixtures/NamespaceMigration' -cin $help.nativeSources -and 'Assets/Tests/YLFramework/EditMode/Editor/Common/EditorCommonStateFixture.cs' -cin $help.editTests + $help.nativeSources) 'Help cold-state fixtures must be copied with their original owner, not recreated.'
+            Assert-That ('Assets/Tests/YLFramework/Fixtures/NamespaceMigration' -cnotin $help.nativeSources -and 'Assets/Tests/YLFramework/EditMode/Editor/Common/EditorCommonStateFixture.cs' -cin $help.editTests + $help.nativeSources) 'Help must cold-read formally saved current state without copying the retired legacy snapshot group.'
+        }
+        Test-Case 'Core selects the actual HTTP PlayMode completion and cancellation consumers' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $core = @($configuration.modules | Where-Object name -CEQ 'Core')[0]
+            Assert-That ('Assets/Tests/YLFramework/PlayMode/Systems/Http' -cin $core.playTests) 'The changed Async HTTP consumers must be compiled and run by Core, not left outside every Daily selection.'
+        }
+        Test-Case 'Core real UI acceptance has a separately selected two-Play native session and original scene inputs' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $core = @($configuration.modules | Where-Object name -CEQ 'Core')[0]
+            Assert-That ('Special' -cin $core.suites -and $core.specialBackend -ceq 'SessionNative' -and
+                $core.specialCategory -ceq 'YL.Special.CoreSession' -and ($core.specialModes -join ',') -ceq 'EditMode' -and
+                $core.disableDomainReload -and $core.prepareSessionScene -and $core.prepareSceneTemplates -and $core.graphics) 'Two real Plays require an explicit owned graphical session profile with no domain reload.'
+            Assert-That ('YL.Special.CoreSession' -cin $core.excludedCategories -and
+                'Assets/Tests/YLFramework/Acceptance/Core/UIAcceptanceEntry.cs' -cin $core.nativeSources -and
+                'Assets/Tests/YLFramework/Acceptance/Core/UIAcceptance.unity' -cin $core.nativeSources -and
+                'Assets/Tests/YLFramework/Acceptance/Core/YLFramework.UI.Acceptance.asmdef' -cin $core.assemblyMetadata -and
+                ($core.nativeUnityPackages -join ',') -ceq 'com.unity.inputsystem') 'Daily must not silently compile a session test without its actual scene, input assembly, target-locked Input System and settings.'
+        }
+        Test-Case 'Approved DOTween runs the original Help XML consumer with its actual optional assembly loaded' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $dotween = @($configuration.modules | Where-Object name -CEQ 'DOTween')[0]
+            Assert-That ('Assets/Tests/YLFramework/EditMode/Editor/Help/ApiHelpTests.cs' -cin $dotween.editTests -and
+                'YLFramework.Tests.EditMode' -cin $dotween.assemblies -and
+                'Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef' -cin $dotween.assemblyMetadata) 'Optional XML remarks cannot be validated by a core-only Help run or a selector that omits its real consumer.'
+            Assert-That ($dotween.nativeSdk -ceq 'DOTween' -and ($dotween.packageInputs -join ',') -ceq 'com.kano.ylframework' -and
+                ($dotween.outputEnvironment -join ',') -ceq 'BEE_CACHE_DIRECTORY') 'Help validation must retain the approved SDK profile and owned cold XML output without installing unrelated optional packages.'
         }
         Test-Case 'Offline references bind the exact real UPM resolution and refuse missing or escaping package files' {
             $root = Join-Path $sandbox ('InstalledReference-' + [Guid]::NewGuid().ToString('N'))
@@ -159,7 +219,7 @@ try {
         Test-Case 'Localization consumers declare their test closure without adding a product dependency' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
-            foreach ($name in @('Excel', 'Domain')) {
+            foreach ($name in @('Excel', 'Data')) {
                 $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
                 Assert-That (@($module.packageInputs) -ccontains 'com.kano.ylframework.localization') "$name test sources consume Localization but the declared installation closure omits it."
             }
@@ -175,7 +235,7 @@ try {
                 $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($module.packageInputs))
                 Assert-That ((@($closure.id | Sort-Object) -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.gameplay') "$name acquired an unrelated optional feature."
             }
-            foreach ($name in @('Data', 'ExcelGameplay', 'Domain', 'MigrationFixtures')) {
+            foreach ($name in @('Data', 'ExcelGameplay', 'Domain')) {
                 $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
                 Assert-That (@($module.packageInputs) -ccontains 'com.kano.ylframework.gameplay') "$name copies actual Gameplay consumers without declaring their package."
             }
@@ -200,18 +260,14 @@ try {
             $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($movement.packageInputs))
             Assert-That ((@($closure.id | Sort-Object) -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.movement2d') 'Standalone movement acquired an unrelated feature package.'
             $consumers = @($configuration.modules | Where-Object { $_.Contains('packageInputs') -and @($_.packageInputs) -ccontains 'com.kano.ylframework.movement2d' })
-            Assert-That ((@($consumers.name | Sort-Object) -join ',') -ceq 'Behavior,MigrationFixtures,Movement2D,OverlapMovement') 'Only actual movement consumers may install the package.'
+            Assert-That ((@($consumers.name | Sort-Object) -join ',') -ceq 'Behavior,BehaviorPlayer,Movement2D,OverlapMovement') 'Only actual movement consumers may install the package.'
             Assert-That ($movement.sortingLayer -ceq '' -and $movement.prepareSessionScene -and $movement.prepareSceneTemplates) 'Movement Player authoring requires a real owned empty scene.'
-            $producer = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/YLFramework.MigrationFixtures.Tests.EditMode.asmdef')
-            foreach ($reference in @('YLFramework.Character2D', 'YLFramework.Platform2D')) {
-                Assert-That (@($producer.references) -ccontains $reference) "Historical producer compilation lost an actual movement consumer: $reference"
-            }
             $edit = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef')
             Assert-That (@($edit.references) -cnotcontains 'YLFramework.Movement2D.Acceptance') 'The standalone probe reference cannot leak to every shared test consumer.'
             $probe = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/Movement2D/Runtime/YLFramework.Movement2D.Acceptance.asmdef')
             Assert-That (($probe.references -join ',') -ceq 'YLFramework.Character2D,YLFramework.Platform2D') 'The probe must not declare unrelated products or UI dependencies to repair an implicit Unity graph reference.'
         }
-        Test-Case 'Overlap keeps standalone and Behavior native selections while Quick compiles only its managed guard' {
+        Test-Case 'Overlap selects current native contracts without a legacy Quick guard' {
             $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
             $overlap = @($configuration.modules | Where-Object name -CEQ 'Overlap')
@@ -221,13 +277,13 @@ try {
             $closure = @(Get-YLUpmPackages -Repository $repository -Ids @($definition.packageInputs))
             Assert-That (($closure.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.overlap') 'Overlap has lost its exact two-product closure.'
             Assert-That (($definition.nativeAssemblies -join ',') -ceq 'YLFramework.Overlap.Tests.EditMode,YLFramework.Overlap.Tests.PlayMode') 'Both real native test assemblies must run independently.'
-            Assert-That (($definition.suites -join ',') -ceq 'Quick,Daily' -and $definition.nativeLayout -ceq 'Framework' -and $definition.graphics) 'Quick is logic-only; Daily must retain actual Unity physics.'
-            Assert-That (($definition.runtimeSources -join ',') -ceq 'PackageSources/com.kano.ylframework.overlap/Runtime/Utilities/Overlap/OverlapQueryCycle.cs') 'Do not compile fake physics to run the original managed guard.'
+            Assert-That (($definition.suites -join ',') -ceq 'Daily' -and $definition.nativeLayout -ceq 'Framework' -and $definition.graphics) 'Current Detector contracts require real Unity physics, not a fabricated logic-only substitute.'
+            Assert-That (($definition.runtimeSources -join ',') -ceq 'PackageSources/com.kano.ylframework.overlap/Runtime') 'The current package must replace the retired query-cycle guard.'
             $behavior = @($configuration.modules | Where-Object name -CEQ 'Behavior')[0]
             foreach ($assembly in $definition.nativeAssemblies) {
-                Assert-That (@($behavior.nativeAssemblies) -ccontains $assembly) "Behavior lost original native tests after the asmdef split: $assembly"
+                Assert-That (@($behavior.nativeAssemblies) -cnotcontains $assembly) "Standalone Overlap tests must execute in Overlap, not repeat in Behavior: $assembly"
             }
-            foreach ($name in @('Behavior', 'MigrationFixtures')) {
+            foreach ($name in @('Behavior', 'BehaviorPlayer')) {
                 $consumer = @($configuration.modules | Where-Object name -CEQ $name)[0]
                 Assert-That (@($consumer.packageInputs) -ccontains 'com.kano.ylframework.overlap') "$name omits its actual Overlap dependency."
                 foreach ($side in @('Runtime/YLFramework.Overlap.asmdef', 'Editor/YLFramework.Overlap.Editor.asmdef')) {
@@ -235,17 +291,19 @@ try {
                 }
             }
             $consumers = @($configuration.modules | Where-Object { 'packageInputs' -cin $_.PSObject.Properties.Name -and @($_.packageInputs) -ccontains 'com.kano.ylframework.overlap' })
-            Assert-That (($consumers.name | Sort-Object) -join ',' -ceq 'Behavior,MigrationFixtures,Overlap,OverlapEditor,OverlapMovement,OverlapPlayer') 'Do not install Overlap merely to preserve an absent feature identity.'
+            Assert-That (($consumers.name | Sort-Object) -join ',' -ceq 'Behavior,BehaviorPlayer,Overlap,OverlapEditor,OverlapMovement,OverlapPlayer') 'Do not install Overlap merely to preserve an absent feature identity.'
             $tokens = $null; $errors = $null
             $syntax = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'Tools/Testing/Invoke-YLTests.ps1'), [ref]$tokens, [ref]$errors)
             Assert-That ($errors.Count -eq 0) 'The maintained entry does not parse.'
             $function = $syntax.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-SelectedSources' }, $true)
             . ([scriptblock]::Create($function.Extent.Text))
             $selected = Get-SelectedSources
-            Assert-That (($selected.runtime -join ',') -ceq ($definition.runtimeSources -join ',')) 'Standalone Quick must compile the real managed guard only.'
-            $cycle = $definition.runtimeSources[0]
-            foreach ($input in @($cycle, ($cycle + '.meta'), 'PackageSources/com.kano.ylframework.overlap/package.json', 'PackageSources/com.kano.ylframework.overlap/Runtime/YLFramework.Overlap.asmdef')) {
-                Assert-That (@($selected.inputs) -ccontains $input) "Quick lost its actual package input identity: $input"
+            Assert-That (@($selected.runtime) -ccontains 'PackageSources/com.kano.ylframework.overlap/Runtime/Detection/OverlapDetector2D.cs') 'The native input must bind its actual current Detector.'
+            Assert-That (-not (@($selected.runtime) -match '/Utilities/Overlap/')) 'Retired Overlap sources cannot remain in the selected compilation.'
+            foreach ($input in @('PackageSources/com.kano.ylframework.overlap/Runtime/Detection/OverlapDetector2D.cs',
+                'PackageSources/com.kano.ylframework.overlap/Runtime/Detection/OverlapDetector2D.cs.meta',
+                'PackageSources/com.kano.ylframework.overlap/package.json', 'PackageSources/com.kano.ylframework.overlap/Runtime/YLFramework.Overlap.asmdef')) {
+                Assert-That (@($selected.inputs) -ccontains $input) "Selection lost its actual package input identity: $input"
             }
         }
         Test-Case 'Overlap Player and movement coexistence are explicit isolated native consumers' {
@@ -257,6 +315,13 @@ try {
                 @($player.assemblies).Count -eq 0 -and $player.category -ceq '') 'Player must not leak into Daily/Quick or combine category with assembly selectors.'
             Assert-That ($player.prepareSessionScene -and $player.prepareSceneTemplates -and $player.nativeLayout -ceq 'Framework') 'The maintained shared Player helper requires the real empty owned scene profile.'
             Assert-That (($player.packageInputs -join ',') -ceq 'com.kano.ylframework.overlap') 'Minimal Player must not force movement or unrelated features.'
+            $behaviorPlayer = @($configuration.modules | Where-Object name -CEQ 'BehaviorPlayer')[0]
+            Assert-That (($behaviorPlayer.suites -join ',') -ceq 'Special' -and $behaviorPlayer.specialBackend -ceq 'PlayerNative' -and
+                $behaviorPlayer.specialCategory -ceq 'YL.Special.BehaviorPlayer' -and $behaviorPlayer.prepareSessionScene -and
+                $behaviorPlayer.prepareSceneTemplates) 'Current Behavior must run its actual Player probe through the owned shared helper.'
+            Assert-That (@($behaviorPlayer.nativeSources) -ccontains 'Assets/Tests/YLFramework/Fixtures/Extensions/Behavior') 'The current authored producer and Contact consumer must be compiled, not replaced by the historical main receiver.'
+            $behavior = @($configuration.modules | Where-Object name -CEQ 'Behavior')[0]
+            Assert-That (@($behavior.excludedCategories) -ccontains $behaviorPlayer.specialCategory) 'Actual Player construction cannot leak into the ordinary Daily gate.'
             Assert-That (@($player.nativeSources) -ccontains 'Assets/Tests/YLFramework/Fixtures/Shared' -and
                 @($player.nativeFixtureInputs) -ccontains 'Assets/Tests/YLFramework/Fixtures/Shared') 'Real shared helper sources and metadata must be installed.'
             Assert-That (@($player.nativeSources + $player.nativeFixtureInputs) -cnotcontains 'Assets/Tests/YLFramework/Fixtures/Overlap') 'Minimal Player cannot recursively copy the optional movement fixture.'
@@ -276,10 +341,9 @@ try {
                 Assert-That (@($fixture.references) -ccontains $reference) "Missing real combination consumer: $reference"
             }
         }
-        Test-Case 'Overlap consumers and migration anchors name only the actual new owners' {
+        Test-Case 'Overlap consumers and Catalog require only the current implementation' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             foreach ($relative in @('EditMode/YLFramework.Tests.EditMode.asmdef', 'PlayMode/YLFramework.Tests.PlayMode.asmdef',
-                'EditMode/Editor/MigrationFixtures/YLFramework.MigrationFixtures.Tests.EditMode.asmdef',
                 'Fixtures/Extensions/Behavior/Player/YLFramework.Behavior.Acceptance.asmdef',
                 'Fixtures/Extensions/Behavior/Editor/YLFramework.Behavior.Acceptance.Editor.asmdef')) {
                 $consumer = Read-YLPackageEvidenceJson (Join-Path $repoRoot "Assets/Tests/YLFramework/$relative")
@@ -290,17 +354,14 @@ try {
                 Assert-That ($consumer.name -ceq "YLFramework.Overlap.Tests.$side" -and @($consumer.references) -ccontains 'YLFramework.Runtime' -and
                     @($consumer.references) -ccontains 'YLFramework.Overlap' -and @($consumer.references) -ccontains 'YLFramework.Tests.Fixtures') 'The standalone tests must use real product and fixture owners.'
             }
-            $table = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblyMoves.json')
-            Assert-That ($table.moves.Count -eq 26) 'Retain the original 24 anchors and add exactly two actual Overlap identities.'
-            foreach ($anchor in @(
-                @{ fullName = 'YLFramework.Overlap.OverlapCircle2D'; source = 'YLFramework.Runtime'; owner = 'YLFramework.Overlap'; guid = 'c08500f745b47234a8b6ef0ff49d0dce' },
-                @{ fullName = 'YLFramework.Editor.Overlap.OverlapArea2DInspector'; source = 'YLFramework.Editor'; owner = 'YLFramework.Overlap.Editor'; guid = 'eb43a55cda803a04f983f8861a47ee99' })) {
-                $moves = @($table.moves | Where-Object fullName -CEQ $anchor.fullName)
-                Assert-That ($moves.Count -eq 1) "Missing unique Overlap anchor: $($anchor.fullName)"
-                $move = $moves[0]
-                Assert-That ($move.sourceAssembly -ceq $anchor.source -and $move.currentAssembly -ceq $anchor.owner -and
-                    $move.targetAssembly -ceq $anchor.owner -and $move.package -ceq 'com.kano.ylframework.overlap' -and
-                    $move.scriptGuid -ceq $anchor.guid -and -not $move.Contains('legacyName')) 'Do not invent namespace changes or rewrite historical source owners.'
+            $catalog = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Packaging/PackageCatalog.json')
+            $package = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework.overlap')[0]
+            Assert-That (-not (@($package.requiredFiles) -match 'Utilities/Overlap')) 'A historical migration row is not a current required product file.'
+            foreach ($path in @('Runtime/Detection/OverlapDetector2D.cs', 'Runtime/Detection/OverlapDetector3D.cs',
+                'Runtime/Detection/OverlapDetectionState.cs', 'Runtime/Queries/OverlapQuery2D.cs', 'Runtime/Queries/OverlapQuery3D.cs',
+                'Runtime/Queries/OverlapQueryWorkspace2D.cs', 'Runtime/Queries/OverlapQueryWorkspace3D.cs', 'Editor/OverlapDetectorInspector.cs')) {
+                Assert-That (@($package.requiredFiles) -ccontains $path -and @($package.requiredFiles) -ccontains ($path + '.meta')) "Missing current required file/identity: $path"
+                Assert-That ([IO.File]::Exists((Join-Path $repoRoot "PackageSources/com.kano.ylframework.overlap/$path"))) "Missing current implementation: $path"
             }
         }
         Test-Case 'Configured FSM standalone keeps its exact two-package closure and real reload scene preconditions' {
@@ -310,7 +371,7 @@ try {
             Assert-That (@($fsm.packageInputs).Count -eq 1 -and $fsm.packageInputs[0] -ceq 'com.kano.ylframework.state-machine') 'The standalone configured FSM root must be declared exactly.'
             Assert-That ($fsm.Contains('sortingLayer') -and $fsm.sortingLayer -ceq '') 'The owned native host requires an explicit no-sorting-layer declaration.'
             $consumers = @($configuration.modules | Where-Object { $_.Contains('packageInputs') -and @($_.packageInputs) -ccontains 'com.kano.ylframework.state-machine' })
-            Assert-That ((@($consumers.name | Sort-Object) -join ',') -ceq 'Behavior,MigrationFixtures,StateMachine') 'Only actual FSM consumers may declare this optional package.'
+            Assert-That ((@($consumers.name | Sort-Object) -join ',') -ceq 'Behavior,BehaviorPlayer,StateMachine') 'Only actual FSM consumers may declare this optional package.'
             $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($fsm.packageInputs))
             Assert-That (($closure.id | Sort-Object) -join ',' -ceq 'com.kano.ylframework,com.kano.ylframework.state-machine') 'The standalone FSM acquired an unrelated functional package.'
             Assert-That ($fsm.Contains('prepareSessionScene') -and $fsm.prepareSessionScene -is [bool] -and $fsm.prepareSessionScene -and
@@ -328,19 +389,143 @@ try {
                 Assert-That ([regex]::Matches([IO.File]::ReadAllText($metadata), '(?m)^guid: [0-9a-f]{32}\s*$').Count -eq 1) "Unity cannot import a malformed standalone fixture identity: $metadata"
             }
         }
-        Test-Case 'Historical migration producer declares its current compile owners without recapturing old assets' {
+        Test-Case 'ResourceUpdates selects its real transaction signature TLS and native crypto sources explicitly' {
+            $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
+            $modules = @($configuration.modules | Where-Object name -CEQ 'ResourceUpdates')
+            Assert-That ($modules.Count -eq 1) 'The original Resource update tests have no explicit native entry.'
+            $definition = $modules[0]
+            Assert-That (($definition.suites -join ',') -ceq 'Special' -and $definition.specialBackend -ceq 'SessionNative' -and
+                ($definition.specialModes -join ',') -ceq 'EditMode' -and $definition.specialCategory -ceq 'YL.Special.ResourceUpdates' -and
+                @($definition.assemblies).Count -eq 0 -and $definition.category -ceq '') 'Resource updates require one explicit native category, not a Daily or broad assembly selection.'
+            Assert-That ($definition.nativeLayout -ceq 'Framework' -and $definition.prepareSessionScene -and $definition.prepareSceneTemplates -and
+                $definition.shortHostKey -and $definition.graphics) 'Real bundle and coroutine update tests require their saved owned scene and native host.'
+            $closure = @(Get-YLUpmPackages -Repository $repository -Ids @($definition.packageInputs))
+            Assert-That (($closure.id -join ',') -ceq 'com.kano.ylframework') 'Resource updates cannot acquire Audio, Localization, DataAssets or other optional products.'
+            $expected = @('ArtifactStoreQueryTests.cs', 'ResourceUpdateTests.cs', 'ResourceUpdateTests.Native.cs', 'ResourceUpdateTests.Query.cs',
+                'ResourceUpdateTests.Recovery.cs', 'ResourceUpdateTests.Remote.cs', 'ResourceUpdateTests.RemoteDownload.cs',
+                'ResourceUpdateTests.RemoteReview.cs', 'ResourceUpdateTests.RemoteSecurity.cs', 'ResourceContentUpdateTests.cs',
+                'ResourceContentUpdateTests.CheckIO.cs', 'ResourceContentUpdateTests.Encrypted.cs', 'ResourceContentUpdateTests.RemoteIO.cs',
+                'ResourceSignatureTests.cs', 'ResourceDownloadTests.cs', 'ResourceDownloadTests.Tls.cs',
+                'ResourceContentTests.cs', 'ResourceContentTests.Envelope.cs', 'ResourceContentTests.Native.cs') |
+                ForEach-Object { 'Assets/Tests/YLFramework/EditMode/Systems/Resource/' + $_ }
+            $expected += @('ResourceContentBuildTests.cs', 'ResourceContentBuildTests.Publishing.cs') |
+                ForEach-Object { 'Assets/Tests/YLFramework/EditMode/Editor/Resource/' + $_ }
+            $expected += 'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.ControlRecords.cs'
+            Assert-That ((($definition.editTests | Sort-Object) -join ',') -ceq (($expected | Sort-Object) -join ',')) 'Current updates must retain every original baseline source and the explicit v2 control regression partial.'
+            Assert-That (@($definition.sourceEnvironment).Count -eq 0 -and
+                ($definition.outputEnvironment -join ',') -ceq 'YL_TEST_OUTPUT_ROOT') 'TLS credentials must inherit the explicit process environment; sourceEnvironment replaces values with repository paths and cannot forward credentials.'
+            $tokens = $null; $errors = $null
+            $syntax = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'Tools/Testing/Invoke-YLTests.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'The maintained test entry does not parse.'
+            $function = $syntax.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-SelectedSources' }, $true)
+            . ([scriptblock]::Create($function.Extent.Text))
+            $profile = @($configuration.editors | Where-Object version -CEQ '6000.3.27f1')[0]
+            $selected = Get-SelectedSources -Native -EditorProfile $profile
+            Assert-That ((($selected.tests | Sort-Object) -join ',') -ceq (($expected | Sort-Object) -join ',')) 'The actual source selector differs from the declared baseline.'
+            foreach ($source in $expected + @('Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs',
+                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs',
+                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceTlsServer.cs',
+                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs',
+                'Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs')) {
+                Assert-That (@($selected.inputs) -ccontains $source -and @($selected.inputs) -ccontains ($source + '.meta')) "The actual native input identity lost source or metadata: $source"
+            }
+            foreach ($source in @('Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCurrentPublicationTests.cs',
+                'Assets/Tests/YLFramework/Fixtures/ResourceCurrent/ResourceCurrentPlayerProbe.cs')) {
+                Assert-That (@($selected.inputs) -cnotcontains $source) "Author asset/Player acceptance remains a separate native selection: $source"
+            }
+            foreach ($type in @('ArtifactStoreQueryTests', 'ResourceUpdateTests', 'ResourceContentUpdateTests', 'ResourceSignatureTests', 'ResourceDownloadTests', 'ResourceContentTests', 'ResourceContentBuildTests')) {
+                $source = @($expected | Where-Object { [IO.Path]::GetFileName($_) -ceq ($type + '.cs') })[0]
+                Assert-That ([IO.File]::ReadAllText((Join-Path $repository $source)).Contains('[Category("YL.Special.ResourceUpdates")]')) "The declared native class would be silently unselected: $type"
+            }
+            $definition = @($configuration.modules | Where-Object name -CEQ 'ResourceCurrentPublication')[0]
+            Assert-That ($definition.specialBackend -ceq 'SessionNative' -and $definition.specialCategory -ceq 'YL.Special.ResourceCurrent' -and
+                $definition.nativeLayout -ceq 'Framework' -and ($definition.packageInputs -join ',') -ceq 'com.kano.ylframework') 'Current Resource authors and actual Players require their own main-only native selection.'
+            $selected = Get-SelectedSources -Native -EditorProfile $profile
+            foreach ($source in @('Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCurrentPublicationTests.cs',
+                'Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceEditorTests.cs',
+                'Assets/Tests/YLFramework/Fixtures/ResourceCurrent/ResourceCurrentPlayerProbe.cs',
+                'Assets/Tests/YLFramework/Fixtures/ResourceCurrent/YLFramework.Tests.ResourceCurrent.Player.asmdef')) {
+                Assert-That (@($selected.inputs) -ccontains $source -and @($selected.inputs) -ccontains ($source + '.meta')) "Actual current author/Player source identity is missing: $source"
+            }
+            Assert-That (@($selected.inputs | Where-Object { $_.StartsWith('Assets/Tests/YLFramework/Fixtures/', [StringComparison]::Ordinal) -and $_ -cmatch '\.(png|jpg|tga|spriteatlasv2?)$' }).Count -eq 0 -and
+                @($selected.inputs | Where-Object { $_ -cmatch '/(NamespaceMigration|ResourceV1~)/' }).Count -eq 0) 'The current producer cannot import historical textures or frozen Resource migration originals.'
+            Assert-That (@($definition.nativeFixtureInputs | Where-Object { $_.EndsWith('.asset', [StringComparison]::Ordinal) }).Count -eq 18) 'Current maintained author bytes must be an exact 18-asset input, not a whole historical fixture directory.'
+            $probe = Read-YLPackageEvidenceJson (Join-Path $repository 'Assets/Tests/YLFramework/Fixtures/ResourceCurrent/YLFramework.Tests.ResourceCurrent.Player.asmdef')
+            Assert-ResourceCurrentPlayerIsolation $probe
+        }
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+        $resourceProbe = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/ResourceCurrent/YLFramework.Tests.ResourceCurrent.Player.asmdef')
+        foreach ($mutation in @(
+            @{ label = 'unconditional'; key = 'defineConstraints'; value = @() },
+            @{ label = 'Editor-only'; key = 'defineConstraints'; value = @('UNITY_EDITOR') },
+            @{ label = 'acceptance-only'; key = 'defineConstraints'; value = @('YL_RESOURCE_CURRENT_ACCEPTANCE') },
+            @{ label = 'test-only'; key = 'defineConstraints'; value = @('UNITY_INCLUDE_TESTS') },
+            @{ label = 'Editor-or-tests'; key = 'defineConstraints'; value = @('UNITY_EDITOR || UNITY_INCLUDE_TESTS') },
+            @{ label = 'wrong-symbol'; key = 'defineConstraints'; value = @('UNITY_EDITOR || YL_OTHER_ACCEPTANCE') },
+            @{ label = 'extra-test-alternative'; key = 'defineConstraints'; value = @('UNITY_EDITOR || YL_RESOURCE_CURRENT_ACCEPTANCE || UNITY_INCLUDE_TESTS') },
+            @{ label = 'ordinary-Player-alternative'; key = 'defineConstraints'; value = @('UNITY_EDITOR || YL_RESOURCE_CURRENT_ACCEPTANCE || !UNITY_EDITOR') },
+            @{ label = 'additional-test-condition'; key = 'defineConstraints'; value = @('UNITY_EDITOR || YL_RESOURCE_CURRENT_ACCEPTANCE', 'UNITY_INCLUDE_TESTS') },
+            @{ label = 'NUnit-reference'; key = 'references'; value = @('YLFramework.Runtime', 'nunit.framework') },
+            @{ label = 'TestRunner-reference'; key = 'references'; value = @('YLFramework.Runtime', 'UnityEngine.TestRunner') },
+            @{ label = 'Editor-reference'; key = 'references'; value = @('YLFramework.Runtime', 'UnityEditor.CoreModule') },
+            @{ label = 'NUnit-plugin'; key = 'precompiledReferences'; value = @('nunit.framework.dll') },
+            @{ label = 'implicit-test-assembly'; key = 'optionalUnityReferences'; value = @('TestAssemblies') },
+            @{ label = 'Editor-platform'; key = 'includePlatforms'; value = @('Editor') },
+            @{ label = 'excluded-Player'; key = 'excludePlatforms'; value = @('WindowsStandalone64') },
+            @{ label = 'automatic-reference'; key = 'autoReferenced'; value = $true },
+            @{ label = 'implicit-acceptance-symbol'; key = 'versionDefines'; value = @(@{ name = 'com.unity.modules.jsonserialize'; expression = '0.0.0'; define = 'YL_RESOURCE_CURRENT_ACCEPTANCE' }) }
+        )) {
+            Test-Case ("ResourceCurrent Player isolation rejects " + $mutation.label) {
+                $invalid = $resourceProbe | ConvertTo-Json -Depth 10 | ConvertFrom-Json -AsHashtable -DateKind String
+                $invalid[$mutation.key] = $mutation.value
+                Assert-Rejected { Assert-ResourceCurrentPlayerIsolation $invalid } 'ResourceCurrent Player isolation'
+            }
+        }
+        Test-Case 'AudioNative preserves original audible bundle fixtures and current saved Player inputs with exact ownership and metadata' {
+            $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
+            $modules = @($configuration.modules | Where-Object name -CEQ 'AudioNative')
+            Assert-That ($modules.Count -eq 1) 'The original AudioNative fixture has no explicit executable selector.'
+            $definition = $modules[0]
+            Assert-That (($definition.suites -join ',') -ceq 'Special' -and $definition.specialBackend -ceq 'SessionNative' -and
+                ($definition.specialModes -join ',') -ceq 'EditMode' -and $definition.specialCategory -ceq 'YL.Special.AudioNative' -and
+                @($definition.assemblies).Count -eq 0 -and $definition.category -ceq '') 'Audible native tests cannot be substituted by Daily or AudioSession.'
+            Assert-That ($definition.nativeLayout -ceq 'Framework' -and $definition.graphics -and $definition.shortHostKey -and
+                $definition.prepareSceneTemplates -and $definition.prepareSessionScene) 'The native audio fixture requires graphics and its saved owned scene.'
+            $closure = @(Get-YLUpmPackages -Repository $repository -Ids @($definition.packageInputs))
+            Assert-That (($closure.id -join ',') -ceq 'com.kano.ylframework') 'AudioNative may only consume its main package and current Resource authority.'
+            $source = 'Assets/Tests/YLFramework/EditMode/Systems/Audio/AudioResourceBundleTests.cs'
+            $current = 'Assets/Tests/YLFramework/EditMode/Systems/Audio/AudioAcceptanceResourceTests.cs'
+            Assert-That (($definition.editTests -join ',') -ceq "$source,$current" -and @($definition.playTests).Count -eq 0) 'The native fixture and formal current Player must remain explicit, separately selected inputs.'
+            Assert-That ([IO.File]::ReadAllText((Join-Path $repository $source)).Contains('[Category("YL.Special.AudioNative")]')) 'The native category must select real existing tests.'
+            $tokens = $null; $errors = $null
+            $syntax = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'Tools/Testing/Invoke-YLTests.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'The maintained entry does not parse.'
+            $function = $syntax.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-SelectedSources' }, $true)
+            . ([scriptblock]::Create($function.Extent.Text))
+            $profile = @($configuration.editors | Where-Object version -CEQ '6000.3.27f1')[0]
+            $selected = Get-SelectedSources -Native -EditorProfile $profile
+            Assert-That (@($selected.tests).Count -eq 2 -and @($selected.tests) -ccontains $source -and @($selected.tests) -ccontains $current) 'The actual native selector must execute the original fixture and the current saved input.'
+            foreach ($relative in @($source, $current, 'Assets/Tests/YLFramework/Acceptance/Core/AudioAcceptanceEntry.cs', 'Assets/Tests/YLFramework/EditMode/Systems/Audio/AudioCoreTests.cs',
+                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs',
+                'Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs',
+                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs',
+                'Assets/Tests/YLFramework/Fixtures/Shared/Editor/StandaloneFixturePlayer.cs',
+                'Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef')) {
+                Assert-That (@($selected.inputs) -ccontains $relative -and @($selected.inputs) -ccontains ($relative + '.meta')) "The native closure lost source or independent metadata: $relative"
+            }
+            Assert-That ([IO.File]::ReadAllText((Join-Path $repository $current)).Contains('graphics: true')) 'Real audible Players must opt into graphics, not inherit the headless default.'
+        }
+        Test-Case 'Historical snapshot producers are not current test selectors or export commands' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
-            $module = @($configuration.modules | Where-Object name -CEQ 'MigrationFixtures')[0]
-            Assert-That (@($module.packageInputs) -ccontains 'com.kano.ylframework.state-machine') 'MigrationFixtures copies real FSM consumers but omits their installation input.'
-            $assembly = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/YLFramework.MigrationFixtures.Tests.EditMode.asmdef')
-            foreach ($reference in @('YLFramework.StateMachine', 'YLFramework.StateMachine.Editor')) {
-                Assert-That (@($assembly.references) -ccontains $reference) "MigrationFixtures is missing its actual compile reference: $reference"
+            Assert-That (@($configuration.modules | Where-Object name -CEQ 'MigrationFixtures').Count -eq 0) 'A retired pre-split producer cannot be a current execution target.'
+            foreach ($relative in @('Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/AssemblyMigrationFixtureFreezeTests.cs',
+                'Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/YLFramework.MigrationFixtures.Tests.EditMode.asmdef',
+                'Tools/Testing/Tests/Export-YLAssemblyMigrationFixtures.ps1')) {
+                Assert-That (-not [IO.File]::Exists((Join-Path $repoRoot $relative))) "A historical writer must not remain as an unselected current entry: $relative"
             }
-            $source = [IO.File]::ReadAllText((Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/MigrationFixtures/AssemblyMigrationFixtureFreezeTests.cs'))
-            Assert-That ([regex]::Matches($source, 'typeof\(YLFramework[.]Editor[.]StateMachine[.]FsmEditorWindow\)[.]Assembly[.]GetType').Count -eq 2) 'Both FSM factory lookups need their real Editor owner, not the Resource Editor assembly.'
-            $frozenIdentity = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/NamespaceMigration/AssemblySplitV1/FixtureIdentity.json')
-            Assert-That ($module.description.Contains('Historical pre-split') -and $module.description.Contains('independently identified pre-split checkout') -and $module.description.Contains('not a source commit') -and -not $frozenIdentity.Contains('sourceCommit')) 'The historical producer must preserve its pre-split boundary without inventing a source commit in the frozen identity.'
         }
         Test-Case 'Quick excludes the disabled adapter from compilation but binds its complete product input' {
             $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
@@ -378,7 +563,7 @@ try {
             Assert-That ($modules.Count -eq 1) 'The original DOTween behavior tests have no native automation entry.'
             $module = $modules[0]
             Assert-That ($module.nativeSdk -ceq 'DOTween' -and ($module.packageInputs -join ',') -ceq 'com.kano.ylframework') 'The SDK module must install the main product, not the retired adapter package.'
-            Assert-That (($module.assemblies -join ',') -ceq 'YLFramework.Actions.DOTween.Tests.EditMode,YLFramework.Actions.DOTween.Tests.PlayMode') 'Both original test assemblies must be selected.'
+            Assert-That (($module.assemblies -join ',') -ceq 'YLFramework.Actions.DOTween.Tests.EditMode,YLFramework.Actions.DOTween.Tests.PlayMode,YLFramework.Tests.EditMode') 'Both original test assemblies and the original Help XML consumer assembly must be selected.'
             $action = @($configuration.modules | Where-Object name -CEQ 'Action')[0]
             Assert-That (-not $action.Contains('nativeSdk')) 'Ordinary Action must remain independent of SDK preparation.'
             foreach ($side in @('EditMode', 'PlayMode')) {
@@ -386,11 +571,95 @@ try {
                 Assert-That (($assembly.defineConstraints -join ',') -ceq 'DOTWEEN,UNITY_INCLUDE_TESTS' -and $assembly.versionDefines.Count -eq 0) 'The original tests must not silently disappear behind a retired package presence gate.'
             }
         }
-        Test-Case 'Domain authoring tests declare Save without adding it to main-only modules' {
+        Test-Case 'Daily selectors have one owner while distinct session and package evidence remains explicit' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            Assert-That (($configuration.suites.name -join ',') -ceq 'Quick,Daily,Special') 'The empty Integration suite must not remain an executable contract.'
+            Assert-That (@($configuration.modules | Where-Object { $_.name -cin @('ActionHelp', 'Logging') }).Count -eq 0) 'Help aliases and standalone Logging must not duplicate their current owners.'
+            $entry = Get-Command (Join-Path $repoRoot 'Tools/Testing/Invoke-YLTests.ps1')
+            $suiteValues = @($entry.Parameters['Suite'].Attributes | Where-Object { $_ -is [Management.Automation.ValidateSetAttribute] })[0].ValidValues
+            Assert-That (($suiteValues -join ',') -ceq 'Quick,Daily,Special') 'The public Suite ValidateSet differs from the executable suite registry.'
+            foreach ($path in @('Tools/Testing/Tests/Test-YLIntegrationPackages.ps1', 'Tools/Testing/Tests/Test-YLIntegrationPackagesNoUnity.ps1', 'Tools/Testing/Tests/Test-YLDistribution.ps1')) {
+                Assert-That ([IO.File]::Exists((Join-Path $repoRoot $path))) "Removing an empty suite cannot retire a real tool: $path"
+            }
+            $gameplay = @($configuration.modules | Where-Object name -CEQ 'Gameplay')[0]
+            foreach ($path in @('Assets/Tests/YLFramework/EditMode/Editor/Domain', 'Assets/Tests/YLFramework/EditMode/Editor/Equipment')) {
+                Assert-That (@($gameplay.editTests) -ccontains $path) "Gameplay lost a real authoring gate: $path"
+            }
+            $equipment = @($configuration.modules | Where-Object name -CEQ 'Equipment')[0]
+            $domain = @($configuration.modules | Where-Object name -CEQ 'Domain')[0]
+            Assert-That (($equipment.suites -join ',') -ceq 'Special' -and $equipment.specialCategory -ceq 'YL.Special.EquipmentSession') 'Equipment must retain its own session/admission evidence, not another Daily gameplay copy.'
+            Assert-That (($domain.suites -join ',') -ceq 'Quick,Special' -and $domain.specialCategory -ceq 'YL.Special.Session') 'Domain must retain Quick and real combination sessions without repeating Gameplay Daily.'
+            Assert-That (@($equipment.editTests) -ccontains 'Assets/Tests/YLFramework/EditMode/Editor/Equipment/EquipmentSettingsAdmissionTests.cs') 'The unique settings admission gate disappeared during the Daily move.'
+            $tools = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/Authoring/YLFramework.Tests.Tools.Editor.asmdef')
+            Assert-That (($tools.references -join ',') -ceq 'YLFramework.Runtime,YLFramework.Editor,YLFramework.Equipment,YLFramework.Equipment.Acceptance.Player,YLFramework.Tests.Fixtures') 'Authoring tools must reference retained consumers without forcing DataAssets, Localization or Save.'
+            $authoring = [IO.File]::ReadAllText((Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/Domain/DomainAuthoringTests.cs'))
+            Assert-That (-not $authoring.Contains('YLFramework.DataAssets.')) 'Pure Gameplay authoring still directly consumes optional DataAssets.'
+            $dataAuthoring = [IO.File]::ReadAllText((Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/DataAssets/DataAssetAuthoringTests.cs'))
+            Assert-That ($dataAuthoring.Contains('CurrentDataRootAndRowColdReadKeepsExplicitValuesListsParentAndScriptBindings') -and $dataAuthoring.Contains('[TestCase(0, "", "")]')) 'Moving pure Data authorship must keep current root/row cold-read and explicit zero/empty values.'
+            $help = @($configuration.modules | Where-Object name -CEQ 'Help')[0]
+            $dotween = @($configuration.modules | Where-Object name -CEQ 'DOTween')[0]
+            Assert-That (($help.editTests -join ',') -ceq 'Assets/Tests/YLFramework/EditMode/Editor/Help' -and @($dotween.editTests) -ccontains 'Assets/Tests/YLFramework/EditMode/Editor/Help/ApiHelpTests.cs') 'Removing ActionHelp cannot remove the full Help or actual SDK XML consumer.'
+        }
+        Test-Case 'Foundation owns native Logging while LoggingOnly retains its separate source isolation proof' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $foundation = @($configuration.modules | Where-Object name -CEQ 'Foundation')[0]
+            Assert-That (@($foundation.editTests) -ccontains 'Assets/Tests/YLFramework/EditMode/Systems/Logging' -and @($foundation.playTests) -ccontains 'Assets/Tests/YLFramework/PlayMode/Systems/Logging' -and @($foundation.assemblies) -ccontains 'YLFramework.Tests.PlayMode') 'Logging EditMode and actual lifecycle leaves must execute in Foundation, not only compile.'
+            $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($foundation.packageInputs))
+            Assert-That (($closure.id -join ',') -ceq 'com.kano.ylframework') 'Ordinary Logging cannot force an optional product.'
+            $only = @($configuration.modules | Where-Object name -CEQ 'LoggingOnly')[0]
+            Assert-That (($only.suites -join ',') -ceq 'Special' -and $only.nativeLayout -ceq 'Slice' -and $only.specialCategory -ceq 'YL.Special.LoggingOnly' -and @($only.packageInputs).Count -eq 0) 'Source-slice sessions are not equivalent to Foundation package execution.'
+            Assert-That (($only.runtimeSources -join ',') -ceq 'PackageSources/com.kano.ylframework/Runtime/Foundation/Singleton/Internal/SingletonSessionState.cs,PackageSources/com.kano.ylframework/Runtime/Systems/Logging') 'LoggingOnly acquired unrelated lifecycle owners.'
+        }
+        Test-Case 'Data Daily selects real composition without executing independent package directories' {
+            $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
+            $definition = @($configuration.modules | Where-Object name -CEQ 'Data')[0]
+            Assert-That ($definition.category -ceq 'YL.Module.Data' -and @($definition.assemblies).Count -eq 0 -and
+                'nativeAssemblies' -cnotin $definition.PSObject.Properties.Name -and ($definition.modes -join ',') -ceq 'EditMode') 'Data Daily must keep its positive category after native request normalization, not replace it with an empty assembly selection.'
+            Assert-That (($definition.editTests -join ',') -ceq 'Assets/Tests/YLFramework/EditMode/Editor/Data' -and @($definition.playTests).Count -eq 0) 'Independent Save, DataAssets and Localization directories still execute again in Data Daily.'
+            $tokens = $null; $errors = $null
+            $syntax = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'Tools/Testing/Invoke-YLTests.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'The maintained entry does not parse.'
+            $function = $syntax.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-SelectedSources' }, $true)
+            . ([scriptblock]::Create($function.Extent.Text))
+            $selected = Get-SelectedSources -Native -EditorProfile @($configuration.editors | Where-Object version -CEQ '6000.3.27f1')[0]
+            foreach ($file in @('DataSourceOwnershipTests.cs', 'SerializedDictionarySaveTests.cs', 'SaveManagerFacadeTests.cs')) {
+                $path = 'Assets/Tests/YLFramework/EditMode/Editor/Data/' + $file
+                Assert-That (@($selected.tests) -ccontains $path -and [IO.File]::ReadAllText((Join-Path $repository $path)).Contains('[Category("YL.Module.Data")]')) "A current composition consumer silently disappeared: $path"
+            }
+            Assert-That (@($selected.inputs) -ccontains 'Assets/Tests/YLFramework/EditMode/Editor/DataAssets/DataAssetSessionAndPublicationTests.cs' -and @($selected.inputs) -ccontains 'Assets/Tests/YLFramework/EditMode/Editor/Localization/LocalizationSessionAndPublicationTests.cs' -and $definition.specialCategory -ceq 'YL.Special.Session') 'Daily deduplication cannot remove the distinct combined session/publication inputs.'
+            Assert-That (@($selected.inputs | Where-Object { $_.StartsWith('Assets/Tests/YLFramework/Fixtures/Authoring/', [StringComparison]::Ordinal) }).Count -eq 0) 'Current Data must not acquire optional Equipment tools or the historical Data player just to audit their source.'
+            $composition = [IO.File]::ReadAllText((Join-Path $repository 'Assets/Tests/YLFramework/EditMode/Editor/Data/DataSourceOwnershipTests.cs'))
+            Assert-That ($composition.Contains('AuthoredDataAndLanguageColdReadFeedOneExplicitStoreDictionary')) 'The current Data/Language author-to-Save consumer is missing.'
+        }
+        Test-Case 'Behavior keeps Quick mathematics and authored combinations without repeating standalone native directories' {
+            $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
+            $definition = @($configuration.modules | Where-Object name -CEQ 'Behavior')[0]
+            Assert-That ('modes' -cin $definition.PSObject.Properties.Name -and ($definition.modes -join ',') -ceq 'EditMode' -and @($definition.playTests).Count -eq 0 -and ($definition.nativeAssemblies -join ',') -ceq 'YLFramework.Tests.EditMode') 'Behavior Daily must execute authored and dual-FSM combinations, not standalone physics suites.'
+            $quickOnly = @('Assets/Tests/YLFramework/EditMode/Utilities/CharacterController2D/CharacterMotorOfflineTests.cs', 'Assets/Tests/YLFramework/EditMode/Utilities/MoveablePlatform/MovingPlatformOfflineTests.cs')
+            foreach ($source in $quickOnly) { Assert-That (@($definition.testSupport) -ccontains $source) "Quick lost its distinct managed mathematics evidence: $source" }
+            $tokens = $null; $errors = $null
+            $syntax = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'Tools/Testing/Invoke-YLTests.ps1'), [ref]$tokens, [ref]$errors)
+            Assert-That ($errors.Count -eq 0) 'The maintained entry does not parse.'
+            $function = $syntax.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-SelectedSources' }, $true)
+            . ([scriptblock]::Create($function.Extent.Text))
+            $quick = Get-SelectedSources
+            foreach ($source in $quickOnly) { Assert-That (@($quick.tests) -ccontains $source) "Actual Quick compilation lost its test support: $source" }
+            $native = Get-SelectedSources -Native -EditorProfile @($configuration.editors | Where-Object version -CEQ '6000.3.27f1')[0]
+            foreach ($source in $quickOnly) { Assert-That (@($native.tests) -cnotcontains $source -and @($native.inputs) -cnotcontains $source) "Quick mathematics still repeats in native Behavior: $source" }
+            Assert-That (@($native.tests) -ccontains 'Assets/Tests/YLFramework/EditMode/Systems/Behavior/DualFsmLegacyTests.cs' -and @($native.inputs) -ccontains 'Assets/Tests/YLFramework/EditMode/Editor/Behavior/BehaviorAuthoringTests.cs') 'The real dual-FSM or authored consumer was discarded.'
+            $player = @($configuration.modules | Where-Object name -CEQ 'BehaviorPlayer')[0]
+            Assert-That (($player.suites -join ',') -ceq 'Special' -and $player.specialBackend -ceq 'PlayerNative' -and $definition.specialCategory -ceq 'YL.Special.NativeInput' -and $definition.interactiveDesktop) 'Daily deduplication cannot replace the independent Player or native input contracts.'
+        }
+        Test-Case 'Domain declares its actual Gameplay and Reddot combination without obsolete Data probe dependencies' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
             $domain = @($configuration.modules | Where-Object name -CEQ 'Domain')[0]
-            Assert-That (@($domain.packageInputs) -ccontains 'com.kano.ylframework.save') 'Domain copies the DataPlayerProbe Save consumer but omits its declared installation input.'
+            $closure = @(Get-YLUpmPackages -Repository $repoRoot -Ids @($domain.packageInputs))
+            Assert-That (($closure.id -join ',') -ceq 'com.kano.ylframework,com.kano.ylframework.gameplay,com.kano.ylframework.reddot') 'Domain must not install DataAssets, Localization, Excel or Save for retired fixture references.'
             foreach ($name in @('Core', 'Foundation', 'Localization', 'DataAssets')) {
                 $module = @($configuration.modules | Where-Object name -CEQ $name)[0]
                 Assert-That (@($module.packageInputs) -cnotcontains 'com.kano.ylframework.save') "$name must not acquire Save to repair a test identity anchor."
@@ -668,7 +937,7 @@ try {
     }
     if ($Group -in @('All', 'Results')) {
         . (Join-Path $PSScriptRoot 'Test-YLDistributionContracts.ps1')
-        function Invoke-NativePackageFixture([string] $EditorVersion = '2022.3.62f3', [string] $Fault = '') {
+        function Invoke-NativePackageFixture([string] $EditorVersion = '2022.3.62f3', [string] $Fault = '', [string] $NativeSdk = '') {
             $root = Join-Path $sandbox ('NativePackages-' + [Guid]::NewGuid().ToString('N'))
             $repository = Join-Path $root 'Repository'
             $fixtureWorkspace = Join-Path $root 'Workspace'
@@ -697,6 +966,22 @@ try {
                 'Tools/Testing/Profiles/Unity2022/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.1"}}}'
                 'Unity.exe' = 'native-editor-fixture'
             }
+            if ($NativeSdk -ceq 'HybridCLR') {
+                $sdkId = 'com.code-philosophy.hybridclr'
+                $sdkUrl = 'https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3'
+                $sdkHash = '6cadd24d101f4cbd00cd80190106f6621132d24d'
+                $manifest = ConvertFrom-Json -InputObject $files['Packages/manifest.json'] -AsHashtable
+                $manifest.dependencies[$sdkId] = $sdkUrl
+                $files['Packages/manifest.json'] = ConvertTo-Json -InputObject $manifest -Depth 10
+                $lock = ConvertFrom-Json -InputObject $files['Packages/packages-lock.json'] -AsHashtable
+                $lock.dependencies[$sdkId] = @{ version = $sdkUrl; source = 'git'; hash = $sdkHash }
+                $files['Packages/packages-lock.json'] = ConvertTo-Json -InputObject $lock -Depth 10
+                $files['PackageSources/com.kano.ylframework.hybridclr/package.json'] = '{"name":"com.kano.ylframework.hybridclr","version":"0.1.0-preview.1","dependencies":{"com.kano.ylframework":"0.1.0-preview.1","com.code-philosophy.hybridclr":"9.0.3"}}'
+                $files['PackageSources/com.kano.ylframework.hybridclr/Runtime/Consumer.cs'] = 'class Consumer {}'
+                $files['PackageSources/com.kano.ylframework.hybridclr/Dependencies.json'] = ConvertTo-Json -Depth 10 -InputObject @{
+                    package = @{ name = $sdkId; version = '9.0.3'; url = $sdkUrl; commit = $sdkHash; bundled = $false }
+                }
+            }
             foreach ($entry in $files.GetEnumerator()) {
                 $target = Join-Path $repository $entry.Key
                 $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
@@ -711,6 +996,30 @@ try {
                 editTests = @('Assets/Tests/EditMode'); playTests = @('Assets/Tests/PlayMode'); nativeLayout = 'Framework'; graphics = $false
                 category = ''; assemblies = @('Fixture.Tests'); excludedCategories = @(); sortingLayer = ''
                 packageInputs = @('com.kano.ylframework'); sampleInputs = @()
+            }
+            if ($NativeSdk) { $definition | Add-Member -NotePropertyName nativeSdk -NotePropertyValue $NativeSdk }
+            if ($NativeSdk -ceq 'HybridCLR') {
+                $definition.packageInputs = @('com.kano.ylframework.hybridclr')
+                $sdkManifestPath = Join-Path $repository 'Packages/manifest.json'
+                $sdkLockPath = Join-Path $repository 'Packages/packages-lock.json'
+                $sdkApprovalPath = Join-Path $repository 'PackageSources/com.kano.ylframework.hybridclr/Dependencies.json'
+                switch -CaseSensitive ($Fault) {
+                    'sdk-declaration' {
+                        $document = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($sdkManifestPath)) -AsHashtable
+                        $document.dependencies[$sdkId] = $true
+                        [IO.File]::WriteAllText($sdkManifestPath, (ConvertTo-Json -InputObject $document -Depth 10))
+                    }
+                    'sdk-source' {
+                        $document = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($sdkLockPath)) -AsHashtable
+                        $document.dependencies[$sdkId].source = 'registry'
+                        [IO.File]::WriteAllText($sdkLockPath, (ConvertTo-Json -InputObject $document -Depth 10))
+                    }
+                    'sdk-approval' {
+                        $document = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($sdkApprovalPath)) -AsHashtable
+                        $document.package.commit = 'a' * 40
+                        [IO.File]::WriteAllText($sdkApprovalPath, (ConvertTo-Json -InputObject $document -Depth 10))
+                    }
+                }
             }
             $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
             $editor = @($configuration.editors | Where-Object { $_.version -ceq $EditorVersion })[0]
@@ -734,6 +1043,12 @@ try {
                 $project = $Arguments[[Array]::IndexOf($Arguments, '-projectPath') + 1]
                 $packagePrefix = if ($EditorVersion -ceq '6000.3.27f1') { 'Packages' } else { 'Tools/Testing/Profiles/Unity2022' }
                 [IO.File]::Copy((Join-Path $repository "$packagePrefix/packages-lock.json"), (Join-Path $project 'Packages/packages-lock.json'), $true)
+                if ($NativeSdk -ceq 'HybridCLR') {
+                    $locked = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText((Join-Path $project 'Packages/packages-lock.json'))) -AsHashtable
+                    $locked.dependencies[$sdkId] = (ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($sdkLockPath)) -AsHashtable).dependencies[$sdkId]
+                    if ($Fault -ceq 'sdk-resolved-revision') { $locked.dependencies[$sdkId].hash = 'a' * 40 }
+                    [IO.File]::WriteAllText((Join-Path $project 'Packages/packages-lock.json'), (ConvertTo-Json -InputObject $locked -Depth 10))
+                }
                 $tests = @(
                     @{ assembly = 'Fixture.Tests'; fullName = 'Fixture.Edit'; mode = 'EditMode'; runState = 'Runnable' },
                     @{ assembly = 'Fixture.Tests'; fullName = 'Fixture.Play'; mode = 'PlayMode'; runState = 'Runnable' }
@@ -754,6 +1069,9 @@ try {
                         'manifest-drift' { [IO.File]::AppendAllText((Join-Path $repository "$packagePrefix/manifest.json"), ' ') }
                         'lock-drift' { [IO.File]::AppendAllText((Join-Path $repository "$packagePrefix/packages-lock.json"), ' ') }
                         'unselected-drift' { [IO.File]::AppendAllText((Join-Path $repository 'Packages/manifest.json'), ' ') }
+                        'sdk-manifest-drift' { [IO.File]::AppendAllText($sdkManifestPath, ' ') }
+                        'sdk-lock-drift' { [IO.File]::AppendAllText($sdkLockPath, ' ') }
+                        'sdk-approval-drift' { [IO.File]::AppendAllText($sdkApprovalPath, ' ') }
                     }
                 }
                 return [pscustomobject]@{ status = 'Exited'; observedExit = $true; exitCode = 0; timedOut = $false; cancelled = $false
@@ -762,9 +1080,9 @@ try {
             $summary = [ordered]@{ xml = @() }
             try {
                 Invoke-YLUnitySuite -Repository $repository -Definition $definition -EditorProfile $editor -Unity (Join-Path $repository 'Unity.exe') `
-                    -WorkspaceRoot $fixtureWorkspace -Action Run -Suite Daily -Module Fixture -TimeoutSeconds 15 -Selection '' -KeepArtifacts $false -Summary $summary
+                    -WorkspaceRoot $fixtureWorkspace -Action Run -Suite Daily -Module $(if ($NativeSdk -ceq 'HybridCLR') { 'HybridCLR' } else { 'Fixture' }) -TimeoutSeconds 15 -Selection '' -KeepArtifacts $false -Summary $summary
             } catch {
-                if ($Fault -cin @('unknown-profile', 'mismatched-profile', 'boolean-profile', 'missing-packages')) {
+                if ($Fault -cin @('unknown-profile', 'mismatched-profile', 'boolean-profile', 'missing-packages', 'sdk-declaration', 'sdk-source', 'sdk-approval')) {
                     Assert-That ($state.calls -eq 0 -and -not [IO.Path]::Exists($fixtureWorkspace)) 'An invalid package source was rejected only after workspace creation or engine invocation.'
                 }
                 throw
@@ -818,6 +1136,34 @@ try {
             Assert-That ($fixture.summary.status -ceq 'Passed') 'An unselected development-host package file contaminated the 2022 source identity.'
         }
 
+        foreach ($editorVersion in @('2022.3.62f3', '6000.3.27f1')) {
+            Test-Case "Native HybridCLR $editorVersion injects only its approved SDK and binds declaration lock and approval" {
+                $fixture = Invoke-NativePackageFixture -EditorVersion $editorVersion -NativeSdk HybridCLR
+                $dependencies = $fixture.manifest.dependencies
+                Assert-That ($dependencies.'com.code-philosophy.hybridclr' -ceq 'https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3' -and
+                    $dependencies.'com.kano.ylframework.hybridclr' -ceq 'file:../PackageSources/com.kano.ylframework.hybridclr') 'The native host lost its approved Git SDK or original product package.'
+                Assert-That ($dependencies.'com.unity.nuget.newtonsoft-json' -ceq $(if ($editorVersion -ceq '2022.3.62f3') { '3.2.1' } else { '3.2.2' }) -and
+                    'com.unity.render-pipelines.universal' -cnotin $dependencies.PSObject.Properties.Name) 'SDK installation replaced target dependencies or copied the development manifest wholesale.'
+                foreach ($path in @('Packages/manifest.json', 'Packages/packages-lock.json', 'PackageSources/com.kano.ylframework.hybridclr/Dependencies.json')) {
+                    Assert-That ($path -cin $fixture.summary.inputIdentity.files.path) "HybridCLR source identity omitted $path."
+                }
+                Assert-That ($fixture.summary.status -ceq 'Passed' -and $fixture.summary.testResult.total -eq 2 -and $fixture.calls -eq 3) 'The SDK consumer did not retain both declared native execution modes.'
+            }
+        }
+        foreach ($fault in @('sdk-declaration', 'sdk-source', 'sdk-approval', 'sdk-resolved-revision')) {
+            Test-Case "Native HybridCLR rejects $fault instead of accepting Registry or unapproved source" {
+                Assert-Rejected { Invoke-NativePackageFixture -NativeSdk HybridCLR -Fault $fault } 'HybridCLR SDK'
+            }
+        }
+        foreach ($fault in @('sdk-manifest-drift', 'sdk-lock-drift', 'sdk-approval-drift')) {
+            Test-Case "Native HybridCLR rejects $fault after discovery instead of accepting an old input selection" {
+                Assert-Rejected { Invoke-NativePackageFixture -NativeSdk HybridCLR -Fault $fault } 'drift'
+            }
+        }
+        Test-Case 'Native hosts reject undeclared SDK kinds rather than treating every SDK as DOTween' {
+            Assert-Rejected { Invoke-NativePackageFixture -NativeSdk Unexpected } 'Unsupported native SDK'
+        }
+
         function Invoke-DistributionSdkFixture([string] $EditorVersion, [string] $Fault = '') {
             $fixtureRoot = Join-Path $sandbox ('DistributionSdk-' + [Guid]::NewGuid().ToString('N'))
             $repository = Join-Path $fixtureRoot 'Repository'
@@ -826,6 +1172,7 @@ try {
                 'Tools/Testing/HybridCLRSmoke.cs', 'Tools/Testing/UnityHost.ps1', 'Tools/Testing/TestSuites.json',
                 'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1',
                 'Tools/Testing/Tests/Test-YLDistribution.ps1', 'Packages/manifest.json', 'Packages/packages-lock.json',
+                'PackageSources/com.kano.ylframework.hybridclr/Dependencies.json',
                 'Tools/Testing/Profiles/Unity2022/manifest.json', 'Tools/Testing/Profiles/Unity2022/packages-lock.json')) {
                 $target = Join-Path $repository $relative
                 $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
@@ -842,6 +1189,7 @@ try {
             $sdkKey = 'com.code-philosophy.hybridclr'
             $sdkManifestPath = Join-Path $repository 'Packages/manifest.json'
             $sdkLockPath = Join-Path $repository 'Packages/packages-lock.json'
+            $sdkApprovalPath = Join-Path $repository 'PackageSources/com.kano.ylframework.hybridclr/Dependencies.json'
             if ($Fault -cin @('missing-declaration', 'boolean-declaration', 'empty-declaration', 'object-declaration', 'unpinned-declaration')) {
                 $document = [IO.File]::ReadAllText($sdkManifestPath) | ConvertFrom-Json -AsHashtable -DateKind String
                 switch -CaseSensitive ($Fault) {
@@ -864,13 +1212,33 @@ try {
                 }
                 [IO.File]::WriteAllText($sdkLockPath, (ConvertTo-Json -InputObject $document -Depth 10), [Text.UTF8Encoding]::new($false))
             }
+            if ($Fault -cin @('unapproved-declaration', 'unapproved-sdk-hash')) {
+                $manifest = Read-YLPackageEvidenceJson $sdkManifestPath
+                $lock = Read-YLPackageEvidenceJson $sdkLockPath
+                if ($Fault -ceq 'unapproved-declaration') {
+                    $manifest.dependencies[$sdkKey] = 'https://invalid.example/hybridclr.git#v9.0.3'
+                    $lock.dependencies[$sdkKey].version = $manifest.dependencies[$sdkKey]
+                } else { $lock.dependencies[$sdkKey].hash = 'b' * 40 }
+                [IO.File]::WriteAllText($sdkManifestPath, (ConvertTo-Json -InputObject $manifest -Depth 10), [Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText($sdkLockPath, (ConvertTo-Json -InputObject $lock -Depth 10), [Text.UTF8Encoding]::new($false))
+            }
+            if ($Fault -ceq 'missing-sdk-approval') { [IO.File]::Delete($sdkApprovalPath) }
+            if ($Fault -cin @('wrong-sdk-approval-version', 'wrong-sdk-approval-commit', 'bundled-sdk-approval')) {
+                $approval = Read-YLPackageEvidenceJson $sdkApprovalPath
+                switch -CaseSensitive ($Fault) {
+                    'wrong-sdk-approval-version' { $approval.package.version = '9.0.2' }
+                    'wrong-sdk-approval-commit' { $approval.package.commit = 'c' * 40 }
+                    'bundled-sdk-approval' { $approval.package.bundled = $true }
+                }
+                [IO.File]::WriteAllText($sdkApprovalPath, (ConvertTo-Json -InputObject $approval -Depth 10), [Text.UTF8Encoding]::new($false))
+            }
             $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
             $editor = @($configuration.editors | Where-Object { $_.version -ceq $EditorVersion })[0]
             $Unity = Join-Path $repository 'Unity.exe'
             $tokens = $null; $errors = $null
             $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Test-YLDistribution.ps1'), [ref]$tokens, [ref]$errors)
             Assert-That ($errors.Count -eq 0) 'The distribution SDK binding must parse.'
-            foreach ($name in @('Get-DistributionSdk', 'Get-DistributionHostPackages')) {
+            foreach ($name in @('Get-DistributionHostPackages')) {
                 $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
                 Assert-That ($null -ne $function) "The real package preparation function is missing: $name"
                 . ([scriptblock]::Create($function.Extent.Text))
@@ -880,6 +1248,7 @@ try {
             $identity = Get-YLTestInputIdentity -Repository $repository -Paths $prepared.inputs -Toolchain @($Unity) -Profile 'Distribution-Sdk-Fixture'
             if ($Fault -ceq 'sdk-manifest-drift') { [IO.File]::AppendAllText($sdkManifestPath, ' ') }
             if ($Fault -ceq 'sdk-lock-drift') { [IO.File]::AppendAllText($sdkLockPath, ' ') }
+            if ($Fault -ceq 'sdk-approval-drift') { [IO.File]::AppendAllText($sdkApprovalPath, ' ') }
             $current = Get-YLTestInputIdentity -Repository $repository -Paths $prepared.inputs -Toolchain @($Unity) -Profile 'Distribution-Sdk-Fixture'
             if ($current.sha256 -cne $identity.sha256) { throw 'Distribution source inputs changed during verification.' }
             return [pscustomobject]@{ bare = [pscustomobject]@{ dependencies = [pscustomobject]$bare.dependencies }; installed = [pscustomobject]@{ dependencies = [pscustomobject]$prepared.dependencies }; identity = $identity }
@@ -900,15 +1269,17 @@ try {
                 $packageFiles = @($fixture.identity.files.path | Where-Object { $_ -match '^(?:Packages|Tools/Testing/Profiles/Unity2022)/' } | Sort-Object)
                 $expectedPackages = if ($unity6) { 'Packages/manifest.json,Packages/packages-lock.json' } else { 'Packages/manifest.json,Packages/packages-lock.json,Tools/Testing/Profiles/Unity2022/manifest.json,Tools/Testing/Profiles/Unity2022/packages-lock.json' }
                 Assert-That (($packageFiles -join ',') -ceq $expectedPackages) 'The SDK declaration and lock are not both covered by the initial source fingerprint.'
+                Assert-That ('PackageSources/com.kano.ylframework.hybridclr/Dependencies.json' -cin $fixture.identity.files.path) 'The SDK source approval must participate in the initial source fingerprint.'
             }
         }
         foreach ($fault in @('missing-declaration', 'boolean-declaration', 'empty-declaration', 'object-declaration', 'unpinned-declaration',
-            'missing-sdk-lock', 'boolean-sdk-lock', 'mismatched-sdk-lock', 'wrong-sdk-source', 'invalid-sdk-hash')) {
+            'missing-sdk-lock', 'boolean-sdk-lock', 'mismatched-sdk-lock', 'wrong-sdk-source', 'invalid-sdk-hash',
+            'unapproved-declaration', 'unapproved-sdk-hash', 'missing-sdk-approval', 'wrong-sdk-approval-version', 'wrong-sdk-approval-commit', 'bundled-sdk-approval')) {
             Test-Case "Distribution HybridCLR rejects $fault explicitly instead of consuming a target-host SDK or coercing values" {
                 Assert-Rejected { Invoke-DistributionSdkFixture -EditorVersion '2022.3.62f3' -Fault $fault } 'HybridCLR SDK'
             }
         }
-        foreach ($fault in @('sdk-manifest-drift', 'sdk-lock-drift')) {
+        foreach ($fault in @('sdk-manifest-drift', 'sdk-lock-drift', 'sdk-approval-drift')) {
             Test-Case "Distribution 2022 HybridCLR detects $fault through the real final input check" {
                 Assert-Rejected { Invoke-DistributionSdkFixture -EditorVersion '2022.3.62f3' -Fault $fault } 'Distribution source inputs changed'
             }

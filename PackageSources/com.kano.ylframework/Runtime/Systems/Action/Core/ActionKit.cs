@@ -6,7 +6,7 @@ using YLFramework.Events;
 namespace YLFramework.Actions
 {
     /// <summary>
-    /// 动作创建、模块生命周期和全局 Unity 消息的入口。
+    /// YLFramework 内建的动作创建、模块生命周期和全局 Unity 消息入口。
     /// </summary>
     /// <remarks>
     /// 创建动作不会自动执行，需调用 Start、StartCurrentScene 或 StartGlobal。
@@ -35,8 +35,8 @@ namespace YLFramework.Actions
             return global::YLFramework.Actions.Sequence.Allocate();
         }
 
-        /// <summary>创建按 Unity 帧数等待的动作，使用 Time.frameCount 计时，与执行器更新次数和 dt 无关。</summary>
-        /// <param name="frameCount">启动帧之后需要经过的帧数；非正数在启动后的首次执行完成，不按秒数换算。</param>
+        /// <summary>创建按 Unity 全局帧计数等待的动作，使用 Time.frameCount 计时，与 dt 无关。</summary>
+        /// <param name="frameCount">启动帧之后需要经过的 Unity 帧数，不是执行钩子调用次数；非正数在启动后的首次执行完成，不按秒数换算。</param>
         /// <param name="onDelayFinish">等待结束时的回调，取消时不调用。</param>
         /// <returns>未启动的帧延迟动作。</returns>
         public static IAction DelayFrame(int frameCount, Action onDelayFinish)
@@ -44,7 +44,7 @@ namespace YLFramework.Actions
             return global::YLFramework.Actions.DelayFrame.Allocate(frameCount, onDelayFinish);
         }
 
-        /// <summary>创建在启动帧之后的首次执行中调用回调的帧延迟动作。</summary>
+        /// <summary>创建等待 Unity 全局帧计数增加一帧后，在首次执行中调用回调的动作。</summary>
         /// <param name="onNextFrame">跨过一个 Unity 帧后、下一次执行动作时调用的回调。</param>
         public static IAction NextFrame(Action onNextFrame)
         {

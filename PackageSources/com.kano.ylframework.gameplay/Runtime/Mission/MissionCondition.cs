@@ -1,7 +1,6 @@
 using System;
 using Newtonsoft.Json;
 using UnityEngine;
-using UnityEngine.Serialization;
 using YLFramework.Events;
 using YLFramework.Foundation;
 
@@ -58,7 +57,7 @@ namespace YLFramework.Mission
         /// 参数名称
         /// </summary>
         [Tooltip("参数名称")]
-        [FormerlySerializedAs("param_name"), JsonProperty("param_name"), global::YLFramework.Excel.ExcelColumnName("param_name")] public string paramName;
+        [JsonProperty("param_name"), global::YLFramework.Excel.ExcelColumnName("param_name")] public string paramName;
         /// <summary>
         /// 比较方式
         /// </summary>

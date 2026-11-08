@@ -6,6 +6,7 @@ using System.Text;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.Events;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -96,6 +97,40 @@ namespace YLFramework.Overlap.Tests
                 newThree.Filter = new OverlapFilter3D(1 << 11);
                 newThree.ConfigureCapacity(16, 16);
                 newThree.ConfigureGeometryWorkspace(0.02f, 192, 192, 16);
+                var eventRoot = new GameObject("CurrentEvents");
+                eventRoot.transform.SetParent(author.transform, false);
+                eventRoot.transform.localPosition = Vector3.up * 120;
+                eventRoot.SetActive(false);
+                var receiver = eventRoot.AddComponent<OverlapPlayerEventReceiver>();
+                GameObject EventChild(string name, Vector3 position)
+                {
+                    var child = new GameObject(name) { layer = 11 };
+                    child.transform.SetParent(eventRoot.transform, false);
+                    child.transform.localPosition = position;
+                    return child;
+                }
+                var from = EventChild("From", new Vector3(-2, -2)).transform;
+                var to = EventChild("To", new Vector3(2, 2)).transform;
+                var eventTwo = EventChild("Area2D", Vector3.zero).AddComponent<OverlapDetector2D>();
+                eventTwo.SetAreaTransforms(new[] { from, to, null, from });
+                eventTwo.Filter = new OverlapFilter2D(new ContactFilter2D { useLayerMask = true, layerMask = 1 << 11 });
+                eventTwo.Frequency = 120;
+                UnityEventTools.AddPersistentListener(eventTwo.EnteredEvent, receiver.Enter2D);
+                UnityEventTools.AddPersistentListener(eventTwo.EnteredEvent, receiver.PeerEnter2D);
+                UnityEventTools.AddPersistentListener(eventTwo.StayedEvent, receiver.Stay2D);
+                UnityEventTools.AddPersistentListener(eventTwo.StayedEvent, receiver.PeerStay2D);
+                UnityEventTools.AddPersistentListener(eventTwo.ExitedEvent, receiver.Exit2D);
+                EventChild("Target2D", new Vector3(0.75f, 0)).AddComponent<CircleCollider2D>().radius = 0.5f;
+                var eventThree = EventChild("Detector3D", new Vector3(0, 20, 7)).AddComponent<OverlapDetector3D>();
+                eventThree.Composite = new OverlapComposite3D(OverlapShape3D.Sphere(Vector3.zero, 2));
+                eventThree.Filter = new OverlapFilter3D(1 << 11);
+                eventThree.Frequency = 120;
+                UnityEventTools.AddPersistentListener(eventThree.EnteredEvent, receiver.Enter3D);
+                UnityEventTools.AddPersistentListener(eventThree.EnteredEvent, receiver.PeerEnter3D);
+                UnityEventTools.AddPersistentListener(eventThree.StayedEvent, receiver.Stay3D);
+                UnityEventTools.AddPersistentListener(eventThree.StayedEvent, receiver.PeerStay3D);
+                UnityEventTools.AddPersistentListener(eventThree.ExitedEvent, receiver.Exit3D);
+                EventChild("Target3D", new Vector3(0.75f, 20, 8)).AddComponent<BoxCollider>();
                 prefab = PrefabUtility.SaveAsPrefabAsset(author, prefabPath);
                 Assert.That(prefab, Is.Not.Null);
             }
@@ -104,6 +139,9 @@ namespace YLFramework.Overlap.Tests
                 Object.DestroyImmediate(author);
             }
             var prefabEvidence = Evidence(prefabPath);
+            Assert.That(prefabEvidence.guid, Is.Not.EqualTo("73dab49f422e8304e846b6bf7838e329"), "Current inputs need a new identity, never a rewritten frozen fixture.");
+            File.Copy(prefabPath, Path.Combine(output, "Overlap-current.prefab"), false);
+            File.Copy(prefabPath + ".meta", Path.Combine(output, "Overlap-current.prefab.meta"), false);
             AssetDatabase.ImportAsset(prefabPath, ImportAssetOptions.ForceUpdate);
             ColdReadPrefab(prefabPath);
             AssertEvidence(prefabEvidence);
@@ -124,7 +162,7 @@ namespace YLFramework.Overlap.Tests
                 Assert.That(EditorSceneManager.SaveScene(scene, folder + "/Player.unity"), Is.True);
                 sceneEvidence = Evidence(folder + "/Player.unity");
                 WriteNew(Path.Combine(output, "Overlap-assets-before.json"), JsonUtility.ToJson(new AssetPair { prefab = prefabEvidence, scene = sceneEvidence }, true));
-            });
+            }, new[] { "YL_OVERLAP_ACCEPTANCE" });
             CollectionAssert.AreEquivalent(_assemblies.Select(name => name + ".dll"),
                 Directory.GetFiles(Path.Combine(player, "P_Data/Managed"), "YLFramework*.dll").Select(Path.GetFileName));
             Assert.That(File.Exists(Path.Combine(player, "P_Data/Managed/nunit.framework.dll")), Is.False);
@@ -195,7 +233,9 @@ namespace YLFramework.Overlap.Tests
             Assert.That(report.Value<int>("targetProxyPositives"), Is.GreaterThan(0));
             Assert.That(report.Value<int>("targetProxyNegatives"), Is.GreaterThan(0));
             Assert.That(report.Value<float>("targetProxyMaxClosestDelta"), Is.LessThanOrEqualTo(0.00001f));
-            foreach (string name in new[] { "resourceWasNull", "serializedPrefab", "queriesAndCasts2D", "queriesAndCasts3D", "partialNoFalseExit", "boundedUnion", "stopPool", "callbackInvalidation", "fakeNull", "legacyBoxSphere", "triggerPrerequisite", "isolatedScenesReleased", "targetProxyGate", "targetProxyScenesReleased", "targetProxyWorldIsolation", "targetProxyNoContactSimulation", "serializedCurvedGeometry", "sectorRing2D", "sectorRingCone3D", "curvedUnsupportedAndPartial", "curvedWorkspaceRelease" })
+            Assert.That(report.Value<bool>("serializedLifecycleBatches"), Is.True);
+            Assert.That(report.Value<int>("serializedLifecycleCases"), Is.EqualTo(12));
+            foreach (string name in new[] { "resourceWasNull", "serializedPrefab", "queriesAndCasts2D", "queriesAndCasts3D", "partialNoFalseExit", "boundedUnion", "stopPool", "callbackInvalidation", "fakeNull", "currentBoxSphere", "persistentContactEvents", "closestPoint3DZ", "destroyedLastPoint", "areaInvalidation", "unscaledUpdate", "triggerPrerequisite", "isolatedScenesReleased", "targetProxyGate", "targetProxyScenesReleased", "targetProxyWorldIsolation", "targetProxyNoContactSimulation", "serializedCurvedGeometry", "sectorRing2D", "sectorRingCone3D", "curvedUnsupportedAndPartial", "curvedWorkspaceRelease" })
             {
                 Assert.That(report[name]?.Type, Is.EqualTo(JTokenType.Boolean), name);
                 Assert.That(report.Value<bool>(name), Is.True, name);
@@ -299,6 +339,35 @@ namespace YLFramework.Overlap.Tests
                 Assert.That(newThree.MaxHierarchyDepth, Is.EqualTo(16));
                 Assert.That(newTwo.BufferCapacity + newThree.BufferCapacity, Is.Zero);
                 Assert.That(newThree.HasGeometryWorkspace, Is.False, "Cold prefab inspection must not create a private scene.");
+                foreach (var child in loaded.GetComponentsInChildren<Transform>(true))
+                    Assert.That(GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(child.gameObject), Is.Zero);
+                var eventsRoot = loaded.transform.Find("CurrentEvents");
+                var receiver = eventsRoot.GetComponent<OverlapPlayerEventReceiver>();
+                var eventTwo = eventsRoot.Find("Area2D").GetComponent<OverlapDetector2D>();
+                var eventThree = eventsRoot.Find("Detector3D").GetComponent<OverlapDetector3D>();
+                using (var data = new SerializedObject(eventTwo))
+                {
+                    Assert.That(data.FindProperty("areaTransforms").arraySize, Is.EqualTo(4));
+                    Assert.That(data.FindProperty("areaTransforms").GetArrayElementAtIndex(0).objectReferenceValue, Is.SameAs(eventsRoot.Find("From")));
+                    Assert.That(data.FindProperty("areaTransforms").GetArrayElementAtIndex(1).objectReferenceValue, Is.SameAs(eventsRoot.Find("To")));
+                    Assert.That(data.FindProperty("areaTransforms").GetArrayElementAtIndex(2).objectReferenceValue, Is.Null);
+                }
+                var events = new UnityEngine.Events.UnityEventBase[] { eventTwo.EnteredEvent, eventTwo.StayedEvent, eventTwo.ExitedEvent,
+                    eventThree.EnteredEvent, eventThree.StayedEvent, eventThree.ExitedEvent };
+                string[] methods = { "Enter2D", "Stay2D", "Exit2D", "Enter3D", "Stay3D", "Exit3D" };
+                for (int i = 0; i < events.Length; i++)
+                {
+                    Assert.That(events[i].GetPersistentEventCount(), Is.EqualTo(i % 3 == 2 ? 1 : 2));
+                    Assert.That(events[i].GetPersistentTarget(0), Is.SameAs(receiver));
+                    Assert.That(events[i].GetPersistentMethodName(0), Is.EqualTo(methods[i]));
+                    Assert.That(events[i].GetPersistentListenerState(0), Is.EqualTo(UnityEngine.Events.UnityEventCallState.RuntimeOnly));
+                    if (i % 3 != 2)
+                    {
+                        Assert.That(events[i].GetPersistentTarget(1), Is.SameAs(receiver));
+                        Assert.That(events[i].GetPersistentMethodName(1), Is.EqualTo("Peer" + methods[i]));
+                        Assert.That(events[i].GetPersistentListenerState(1), Is.EqualTo(UnityEngine.Events.UnityEventCallState.RuntimeOnly));
+                    }
+                }
             }
             finally
             {

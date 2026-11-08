@@ -58,7 +58,7 @@ flowchart LR
     HybridCLR --> HybridCLRSDK[HybridCLR SDK 9.0.3 外置]
 ```
 
-主包不含 MCP、开发宿主、测试或独立选装包。DOTween 适配源码随主包提供，但只在外部 SDK 和 `DOTWEEN` 前置成立时编译。UGUI / Newtonsoft.Json 等 Registry 依赖由 UPM 按包声明解析；自有 Git 包及其 Git 闭包则须在消费工程 manifest 中逐项显式声明。安装方式、完整 SHA 的交付约定与样例导入见[安装文档](PackageSources/com.kano.ylframework/Documentation~/README.md#安装与分发)，旧工程升级见 [Migration-UPM](PackageSources/com.kano.ylframework/Documentation~/Migration-UPM.md)。不要把本文的版本号当作已经发布的 tag 或可用 Git 修订。
+主包不含 MCP、开发宿主、测试或独立选装包。DOTween 适配源码随主包提供，但只在外部 SDK 和 `DOTWEEN` 前置成立时编译。UGUI / Newtonsoft.Json 等 Registry 依赖由 UPM 按包声明解析；自有 Git 包及其 Git 闭包则须在消费工程 manifest 中逐项显式声明。安装方式、完整 SHA 的交付约定与样例导入见[安装文档](PackageSources/com.kano.ylframework/Documentation~/README.md#安装与分发)，自有资产与生成输出见[作者维护](PackageSources/com.kano.ylframework/Documentation~/Modules/Editor.md)。不要把本文的版本号当作已经发布的 tag 或可用 Git 修订。
 
 仓库测试位于 `Assets/Tests/YLFramework`，工具入口见[测试工具说明](Tools/Testing/README.md)，均不随产品交付。
 

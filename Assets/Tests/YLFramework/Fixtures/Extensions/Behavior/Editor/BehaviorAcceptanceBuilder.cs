@@ -1,7 +1,5 @@
 using System;
-using System.IO;
 using UnityEditor;
-using UnityEditor.Build.Reporting;
 using UnityEditor.Events;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -66,8 +64,8 @@ namespace YLFramework.Behavior.Acceptance
                 probe.eventReceiver = events.GetComponent<BehaviorEventReceiver>();
                 probe.eventMotor = events.GetComponentInChildren<CharacterController2D>(true);
                 probe.eventPlatform = events.GetComponentInChildren<Moveable>(true);
-                probe.eventQuery = events.GetComponentInChildren<OverlapCircle2D>(true);
-                probe.eventSphere = events.GetComponentInChildren<OverlapSphere3D>(true);
+                probe.eventQuery = events.GetComponentInChildren<OverlapDetector2D>(true);
+                probe.eventSphere = events.GetComponentInChildren<OverlapDetector3D>(true);
                 probe.eventTarget = events.transform.Find("Target2D").GetComponent<Collider2D>();
                 probe.eventTarget3D = events.transform.Find("Target3D").GetComponent<Collider>();
                 var camera = new GameObject("YL.Behavior.AcceptanceCamera").AddComponent<Camera>();
@@ -110,23 +108,19 @@ namespace YLFramework.Behavior.Acceptance
                 }
                 var receiver = root.AddComponent<BehaviorEventReceiver>();
                 Child("Target2D", Vector3.zero).AddComponent<BoxCollider2D>();
-                var query = Child("Query2D", Vector3.zero).AddComponent<OverlapCircle2D>();
-                query.IsRunning = false;
-                query.Radius = 2;
-                query.LayerMask = 1;
-                query.onColliderEnter = new OverlapEvent2D();
-                query.onColliderExit = new OverlapEvent2D();
-                UnityEventTools.AddPersistentListener(query.onColliderEnter, receiver.ReceiveHit);
-                UnityEventTools.AddPersistentListener(query.onColliderExit, receiver.ReceiveHit);
+                var query = Child("Query2D", Vector3.zero).AddComponent<OverlapDetector2D>();
+                query.Composite = new OverlapComposite2D(OverlapShape2D.Circle(Vector2.zero, 2));
+                query.Filter = new OverlapFilter2D(new ContactFilter2D { useLayerMask = true, layerMask = 1 });
+                UnityEventTools.AddPersistentListener(query.EnteredEvent, receiver.ReceiveHit);
+                UnityEventTools.AddPersistentListener(query.StayedEvent, receiver.ReceiveStay);
+                UnityEventTools.AddPersistentListener(query.ExitedEvent, receiver.ReceiveExit);
                 Child("Target3D", Vector3.forward * 20).AddComponent<BoxCollider>();
-                var sphere = Child("Query3D", Vector3.forward * 20).AddComponent<OverlapSphere3D>();
-                sphere.IsRunning = false;
-                sphere.Radius = 2;
-                sphere.LayerMask = 1;
-                sphere.onColliderEnter = new OverlapEvent3D();
-                sphere.onColliderExit = new OverlapEvent3D();
-                UnityEventTools.AddPersistentListener(sphere.onColliderEnter, receiver.ReceiveHit3D);
-                UnityEventTools.AddPersistentListener(sphere.onColliderExit, receiver.ReceiveHit3D);
+                var sphere = Child("Query3D", Vector3.forward * 20).AddComponent<OverlapDetector3D>();
+                sphere.Composite = new OverlapComposite3D(OverlapShape3D.Sphere(Vector3.zero, 2));
+                sphere.Filter = new OverlapFilter3D(1);
+                UnityEventTools.AddPersistentListener(sphere.EnteredEvent, receiver.ReceiveHit3D);
+                UnityEventTools.AddPersistentListener(sphere.StayedEvent, receiver.ReceiveStay3D);
+                UnityEventTools.AddPersistentListener(sphere.ExitedEvent, receiver.ReceiveExit3D);
                 var motorObject = Child("Motor", Vector3.right * 5);
                 motorObject.AddComponent<Rigidbody2D>().gravityScale = 2;
                 motorObject.AddComponent<BoxCollider2D>().size = new Vector2(1, 2);
@@ -167,50 +161,5 @@ namespace YLFramework.Behavior.Acceptance
             }
         }
 
-        [MenuItem("Tools/YLFramework/Behavior Acceptance/Build Release Mono Windows64")]
-        public static void BuildMono() => Build(ScriptingImplementation.Mono2x, false);
-
-        [MenuItem("Tools/YLFramework/Behavior Acceptance/Build Release IL2CPP Windows64")]
-        public static void BuildIL2CPP() => Build(ScriptingImplementation.IL2CPP, false);
-
-        [MenuItem("Tools/YLFramework/Behavior Acceptance/Build Development Mono Windows64")]
-        public static void BuildDevelopmentMono() => Build(ScriptingImplementation.Mono2x, true);
-
-        [MenuItem("Tools/YLFramework/Behavior Acceptance/Build Development IL2CPP Windows64")]
-        public static void BuildDevelopmentIL2CPP() => Build(ScriptingImplementation.IL2CPP, true);
-
-        internal static BuildReport Build(ScriptingImplementation expected, bool development, string outputDirectory = null)
-        {
-            if (Array.IndexOf(PlayerSettings.GetScriptingDefineSymbolsForGroup(BuildTargetGroup.Standalone).Split(';'), "YL_BEHAVIOR_ACCEPTANCE") < 0)
-            {
-                throw new InvalidOperationException("The explicit Player host must enable YL_BEHAVIOR_ACCEPTANCE before building the probe.");
-            }
-            if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.StandaloneWindows64 || PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone) != expected)
-            {
-                throw new InvalidOperationException($"Select Windows64 and {expected} in the main Unity integration workspace first. This tool does not modify ProjectSettings.");
-            }
-
-            string scene = Generate(development);
-            string directory = outputDirectory == null ? Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical("Temp/Behavior.Acceptance/" + expected + "/" + (development ? "Development/" : "Release/") + Guid.NewGuid().ToString("N"))) : Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(outputDirectory));
-            if (outputDirectory != null && (!directory.StartsWith("C:\\Users\\Kano\\AppData\\Local\\Temp\\kilo\\BA26\\", StringComparison.OrdinalIgnoreCase) || !Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Path.GetDirectoryName(directory)))))
-            {
-                throw new InvalidOperationException("CI output must be a new child of the dedicated A evidence directory.");
-            }
-
-            if (!Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical("Temp")))))
-            {
-                throw new InvalidOperationException("Missing project Temp parent.");
-            }
-
-            Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(directory));
-            var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions { scenes = new[] { scene }, target = BuildTarget.StandaloneWindows64, locationPathName = Path.Combine(directory, "BehaviorAcceptance.exe"), options = development ? BuildOptions.Development : BuildOptions.None });
-            Debug.Log($"Behavior {expected} build: {report.summary.result}; development={development}; errors={report.summary.totalErrors}; output={directory}. Player runtime is not yet verified. Run with -batchmode -nographics -logFile <owned-log-path>, require exit 0 and YL_BEHAVIOR_ACCEPTANCE result=PASS.");
-            if (report.summary.result != BuildResult.Succeeded)
-            {
-                throw new InvalidOperationException("Behavior acceptance Player build failed.");
-            }
-
-            return report;
-        }
     }
 }

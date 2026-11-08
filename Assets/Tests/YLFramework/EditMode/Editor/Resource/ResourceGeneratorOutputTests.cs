@@ -187,7 +187,7 @@ namespace YLFramework.Tests.ResourceEditor
             var error = Assert.Throws<InvalidOperationException>(() => ResourceCodeGenerator.GenerateReferences(new[] { ResourceCodeGenerationTests.Catalog("legacy.key") }));
 
             Assert.That(error.Message.Replace('\\', '/'), Does.Contain(assembly));
-            Assert.That(error.Message, Does.Contain(AssemblyName).And.Contain("Migration-UPM"));
+            Assert.That(error.Message, Does.Contain(AssemblyName).And.Contain("Documentation~/Modules/Resource.md"));
             Assert.That(Directory.Exists(LegacyRoot + "/Generated"), Is.False);
             for (int index = 0; index < paths.Length; index++)
             {
@@ -223,7 +223,7 @@ namespace YLFramework.Tests.ResourceEditor
 
             var error = Assert.Throws<InvalidOperationException>(() => ResourceCodeGenerator.GenerateReferences(new[] { ResourceCodeGenerationTests.Catalog("key") }));
 
-            Assert.That(error.Message, Does.Contain(assembly).And.Contain("Migration-UPM"));
+            Assert.That(error.Message, Does.Contain(assembly).And.Contain("Documentation~/Modules/Resource.md"));
             Assert.That(Directory.Exists(LegacyRoot + "/Generated"), Is.False);
             CollectionAssert.AreEqual(before, File.ReadAllBytes(assembly));
             CollectionAssert.AreEqual(meta, File.ReadAllBytes(assembly + ".meta"));

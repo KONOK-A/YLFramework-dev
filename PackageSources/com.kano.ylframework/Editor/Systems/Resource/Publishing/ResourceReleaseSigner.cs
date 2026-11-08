@@ -16,9 +16,7 @@ namespace YLFramework.Editor.Resource
         /// 复验完整发布文件后签发绑定确切 Catalog 与完成记录字节的 RSA-SHA256-PKCS1 元数据，并用公钥自验。
         /// 序号仅校验正数，到期时间须晚于当前且不超过 31 天；不检查历史递增、不安装信任公钥或部署资源。
         /// </summary>
-        /// <remarks>渠道加密能力由调用方明确确认，不代替渠道隔离或内容解密验证。</remarks>
-        public static byte[] Create(ResourceRelease release, string channel, long sequence, string keyId, RSA signingKey, DateTimeOffset expires,
-            bool channelSupportsContentEncryption = false)
+        public static byte[] Create(ResourceRelease release, string channel, long sequence, string keyId, RSA signingKey, DateTimeOffset expires)
         {
             if (release == null || signingKey == null)
             {
@@ -32,10 +30,7 @@ namespace YLFramework.Editor.Resource
             var snapshot = ResourceLocalSnapshot.Open(release.DirectoryPath, catalog.ProjectId, catalog.CatalogDigest, catalog.Platform, catalog.AppContentCompatibilityId);
             foreach (var file in ResourceContentValidation.ContentFiles(snapshot))
             {
-                if (ResourceContentValidation.Inspect(snapshot, file) != null && !channelSupportsContentEncryption)
-                {
-                    throw new InvalidOperationException("Encrypted content requires explicit channelSupportsContentEncryption confirmation; legacy clients must use a separate endpoint.");
-                }
+                ResourceContentValidation.Inspect(snapshot, file);
             }
 
             var complete = File.ReadAllBytes(Path.Combine(snapshot.DirectoryPath, ".ylr-complete.json"));
@@ -75,8 +70,7 @@ namespace YLFramework.Editor.Resource
         }
 
         /// <summary>读取工程外PFX；路径与密码仅由环境提供，不序列化到Project、日志或Runtime。也可直接调用Create接入HSM/CI提供的RSA。</summary>
-        public static byte[] CreateFromEnvironment(ResourceRelease release, string channel, long sequence, string keyId, DateTimeOffset expires,
-            bool channelSupportsContentEncryption = false)
+        public static byte[] CreateFromEnvironment(ResourceRelease release, string channel, long sequence, string keyId, DateTimeOffset expires)
         {
             var path = Environment.GetEnvironmentVariable("YL_RESOURCE_SIGNING_PFX");
             var project = Path.GetFullPath(Path.Combine(Application.dataPath, "..")) + Path.DirectorySeparatorChar;
@@ -107,7 +101,7 @@ namespace YLFramework.Editor.Resource
             {
                 using var certificate = new X509Certificate2(bytes, Environment.GetEnvironmentVariable("YL_RESOURCE_SIGNING_PASSWORD"), X509KeyStorageFlags.EphemeralKeySet);
                 using var rsa = certificate.GetRSAPrivateKey() ?? throw new InvalidDataException("The external credential has no RSA signing key.");
-                return Create(release, channel, sequence, keyId, rsa, expires, channelSupportsContentEncryption);
+                return Create(release, channel, sequence, keyId, rsa, expires);
             }
             finally
             {

@@ -132,7 +132,7 @@ using (var request = resources.AcquireAsync<TextAsset>(new ResourceAddress("game
 
 要交付内置资源，退出 Play 后保持已选的确切 `catalogDigest`，先点 `Preflight Selected Built-In Release` 查看来源、目标和内容，再点 `Deploy Selected Release To Built-In`。成功仅将样例 `useBuiltIn=true`，不启动服务、不代保存 Scene、不自动改为 Bundles。明确选择 Mode 为 Bundles 并保存应用 Scene 后再运行；后续 Build 会选中新发布并重置 `useBuiltIn=false`，须再次明确预检/部署。中断使用 `Recover Built-In Deployment`，再按结果重新预检。
 
-Player 使用合法 Bundles 配置调用 `BeginBundles()` 或 `Begin/Run`。`useBuiltIn=true` 时只按 ProjectId/Platform/App/CatalogDigest 经 `OpenBuiltIn` 定位，不读取开发机的 `snapshotDirectory`。样例当前序列化字段为 camelCase，只有运行时注入字段保留 `ContentKeyProvider`；`FormerlySerializedAs` 负责读取原 Unity 资产字段，不代表旧源码成员名仍可用。
+Player 使用合法 Bundles 配置调用 `BeginBundles()` 或 `Begin/Run`。`useBuiltIn=true` 时只按 ProjectId/Platform/App/CatalogDigest 经 `OpenBuiltIn` 定位，不读取开发机的 `snapshotDirectory`。样例仅保存当前 camelCase 字段，包括 Data 的 `text`，不再读取旧 PascalCase 字段名；只有非序列化的运行时注入字段保留 `ContentKeyProvider`。当前生成流程保留脚本 GUID、显式项目身份、`message/data/tone` 地址和默认选项。外部导入副本若仍保存旧字段，应在旧定义可读时先用 Unity 正式保存 Scene、Prefab 和 Data，再升级，不要重建资产或把 Bundle 名当作项目身份。
 
 ## 实例与场景
 
@@ -440,6 +440,8 @@ using (var stop = startup.StopAsync())
 
 重启后的Start自动恢复journal并选择active/LKG整组，不挑最新目录。Prepare持久化后可在下一进程用`GetPreparedUpdates()`取回再显式Activate；即使离线激活，也保持同一Project/平台/App及受信远端公钥配置。本地更新用`CheckUpdatesAsync(完整快照闭包)`接同一Prepare/Activate流程。
 
+active/LKG索引、prepared记录和提交journal只读写控制格式v2，空`ReleaseFloors`/`Releases`也显式保存为数组。该变更不升级Catalog、Envelope、签名或归属/Complete协议。不支持的控制版本（包括v1）在恢复、候选清理或写锁创建前以`Unsupported`拒绝，不能当作内容损坏后静默选LKG或内置；所有持久floor都无法确认且没有可验证journal时同样阻塞该root，不写回空历史。保留原文件，依据可信发布和已确认的channel/sequence约束显式创建新的应用自有Store；框架不收养未知旧root、不自动迁移或清理它，其他独立root不受影响。本地unsigned转换也保留已经确认的signed远端floor，显式Rollback不降低已确认历史。
+
 显式 Rollback 不降低最高**成功激活**序号；只读 Check、首次失败下载不确认新序号，不承诺首次安装或本地历史丢失后的抗旧发布冻结。进程强停恢复不等同于断电保证。正常 Stop 后检查 authority/Core 绑定、Lease/Bundle/实例/Scene，以及内容输入、在途、预算和 CNG 责任归还；不要用全局清理或终止主 Editor 代替。
 
 ### Windows64 IL2CPP
@@ -579,10 +581,18 @@ public static class ArtifactQueryExample
 
 ## 代码生成
 
-- 输入为正式发布 Catalog；默认文件 `Assets/YLFrameworkData/YLResourceReferences.cs`、namespace `YLFramework.Resources`，仅生成 ProjectId/Addresses/Aliases/Groups/SubAssets 键，不是可变目录或加载器。
+- 输入为正式发布 Catalog；默认文件 `Assets/YLFrameworkData/Generated/ResourceReferences/YLResourceReferences.cs`、namespace `YLFramework.Resources`，仅生成 ProjectId/Addresses/Aliases/Groups/SubAssets 键，不是可变目录或加载器。显式路径和已保存配置不被自动重定向。
 - 程序集 `YLFramework.Generated.ResourceNames` 不依赖框架/Unity/Editor/插件；预定义程序集自动引用，业务 asmdef 显式引用它及 YLFramework.Runtime。
 - 标识符按 Unicode 字母/数字分词并转为 Invariant PascalCase，例如 `hero_icon` 生成 `HeroIcon`、`http_url` 生成 `HttpUrl`，保留 `UI/IO`；数字开头使用必要的 `_` 前缀。只改 C# 标识符，不改变常量中的资源地址、alias、Group 或 ProjectId；转换后重名仍拒绝生成，不自动添加后缀。
 - 碰撞/类型校验先于写入，未知/篡改文件与孤立 meta 不接管；幂等更新保留 GUID，失败保留旧输出。发布、生成、Unity 消费者编译是三个结果；生成物不属于 UPM 包输入。
+
+引用目录专属 `YLResourceReferences.cs`、`YLFramework.Generated.ResourceNames.asmdef` 和两份 `.meta`，不能混入 Module、ScriptableObject 或未知文件。任何位置已有同名程序集（包括旧 `Assets/YLFrameworkData` 根）都会阻止在新目录写第二个定义；错误指出原位置，不自动移动、替换、认领或删除。显式指定的合法旧目录仍可原位更新，不因此失去身份。
+
+需要移动自有输出时：
+
+1. 备份工程，定位实际同名 asmdef、生成源码和 `.meta`，确认它们确为未篡改的自有生成物；不要删除或合并未知数据来通过检查。
+2. 用 Unity Project 视图把源码、asmdef 及原 `.meta` 一起移动到未占用的独立叶目录，而不是复制。若祖先 asmdef/asmref 仍生效，选择边界外的有效叶目录并显式配置。
+3. 保留程序集名及 GUID 引用，更新显式调用和已保存目录设置，实际导入并编译消费者后再生成。原数据根与自己的 `.meta` 仍归工程，不随输出移动而删除。
 
 ## 常见错误
 
@@ -670,7 +680,7 @@ using (var stop = startup.StopAsync())
 - 每个共享 BundleRecord 只有一个输入。输入与 CNG owner/预算保持到真实 native unload；SceneLease 归还不等于 Scene 卸载，实例 destroy-pending、Audio 尾轨及缓存仍沿原责任图结算。实例化、Ready 复用、Group、Scene、Audio 缓存的新借出均执行依赖闭包故障准入；旧已交付对象不因首 fault 被强销毁。
 - 64KiB 分段、两个明文缓存槽和 32KiB native read buffer；单输入固定数据缓冲为 196576B，默认 128MiB 预算不预分配整笔。新增闭包先原子预留，全部 live 输入与在途预留计量，共享不双计；不足明确失败后显式重试。`GetContentDiagnosticsSnapshot()` 与 `GetDiagnosticsReport().Content` 分列数据预算、native bridge 声明值及进程内该适配器的 CNG provider/key/key-object 成本，绝不是整个密码模块或进程总内存上限。
 - 初始化成功前只对当前所选项目/KeyId 集合做一次轻量认证，同配置 join 不重复；不要求未选历史 key，不以创建 native Bundle 代替探针，全 None 不执行额外密码工作。每次 Prepare（包括重复调用）仍完整验证 To 闭包的 SHA/内容；幂等复用已安装版本及相同准备记录不代表跳过复验。激活/回滚在提交前完整认证，持有稳定输入到提交结束。恢复、Mount、Check 和只读 Store 查询不取 key、不解密；缺 key 不隐式重下载或切 LKG。
-- Catalog v1 不变不代表旧客户端支持密文。签发加密 release 前须确认渠道仅投放给支持此编码的客户端；签名 payload 不增加能力协商字段，不能继续投放给不支持加密的旧客户端。远端仍只开放上述精确版本的 Windows64 Mono/IL2CPP，不因加密配置放宽平台或密码后端。
+- 签发始终重新检查实际发布文件、length/digest和Envelope；没有独立的旧客户端能力确认bool，也不在原13字段签名payload增加能力协商字段。密钥平台、RSA密钥尺寸、签名自验、channel/sequence/过期校验以及文件权限拒绝保持原合同。远端仍只开放上述精确版本的Windows64 Mono/IL2CPP，不因加密配置放宽平台或密码后端。
 
 ### 轮换与交付
 

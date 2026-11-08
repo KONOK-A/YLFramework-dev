@@ -315,12 +315,35 @@ namespace YLFramework.Tests.Audio
         }
 
         [UnityTest]
+        public IEnumerator RuntimeAddedEmitterInheritsGlobalDeduplicationWithoutEditorReset()
+        {
+            AudioKit.PlaySoundMode = AudioKit.PlaySoundModes.IgnoreSameSoundInGlobalFrames;
+            var emitter = Emitter(AudioEmitter.PositionMode.TwoDimensional, false, false);
+            var starts = 0;
+            emitter.Started.AddListener(() => starts++);
+            emitter.Play();
+            emitter.Play();
+            Assert.That(starts, Is.EqualTo(1));
+            Assert.That(AudioKit.SoundCount, Is.EqualTo(1),
+                "Runtime and Editor creation must both inherit the current global policy unless explicitly overridden.");
+            var handle = AudioKit.GetPlayingSounds()[0];
+            Assert.That(handle.Voice.Options.PlaySoundMode, Is.Null);
+            SetField(emitter, "useGlobalPlaySoundMode", false);
+            emitter.Play();
+            emitter.Play();
+            Assert.That(starts, Is.EqualTo(3));
+            Assert.That(AudioKit.SoundCount, Is.EqualTo(3), "Explicit false still selects the stored EveryOne policy.");
+            Assert.That(handle.IsValid, Is.True);
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator EmitterDefaultOldListAndOptInWeightedListRemainIsolated()
         {
             var emitter = Emitter(AudioEmitter.PositionMode.TwoDimensional, false);
             var inherit = typeof(AudioEmitter).GetField("useGlobalPlaySoundMode", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.IsNotNull(inherit);
-            Assert.IsFalse((bool)inherit.GetValue(emitter), "Runtime AddComponent keeps the legacy field default; Editor Reset is a separate contract.");
+            Assert.IsTrue((bool)inherit.GetValue(emitter), "Runtime AddComponent shares the current inherited-policy default with the Editor.");
             SetField(emitter, "weightedClips", new List<AudioWeightedClip> { new AudioWeightedClip(_second, float.NaN) });
             Assert.DoesNotThrow(emitter.Play, "Disabled weighted data must not be validated.");
             var old = AudioKit.GetPlayingSounds()[0];
@@ -342,18 +365,19 @@ namespace YLFramework.Tests.Audio
         }
 
         [UnityTest]
-        public IEnumerator EmitterGlobalModeOptInInheritsDeduplicationWhileLegacyEveryOneStillOverlaps()
+        public IEnumerator EmitterExplicitEveryOneOverridesGlobalDeduplicationAndCanReturnToInheritance()
         {
             AudioKit.PlaySoundMode = AudioKit.PlaySoundModes.IgnoreSameSoundInGlobalFrames;
             foreach (var weighted in new[] { false, true })
             {
                 var emitter = Emitter(AudioEmitter.PositionMode.TwoDimensional, weighted, false);
+                SetField(emitter, "useGlobalPlaySoundMode", false);
                 var starts = 0;
                 emitter.Started.AddListener(() => starts++);
                 emitter.Play();
                 emitter.Play();
                 Assert.AreEqual(2, starts);
-                Assert.AreEqual(2, AudioKit.SoundCount, "Missing/false useGlobalPlaySoundMode preserves the legacy explicit EveryOne mode.");
+                Assert.AreEqual(2, AudioKit.SoundCount, "Explicit false preserves the stored EveryOne policy rather than the current global policy.");
                 foreach (var handle in AudioKit.GetPlayingSounds())
                 {
                     Assert.AreEqual(AudioKit.PlaySoundModes.EveryOne, handle.Voice.Options.PlaySoundMode);
@@ -418,7 +442,7 @@ namespace YLFramework.Tests.Audio
                 Assert.AreEqual(31, old.Voice.Priority);
                 Assert.AreEqual(31, old.Voice.Options.Priority);
                 Assert.IsTrue(source.loop);
-                Assert.AreEqual(AudioKit.PlaySoundModes.EveryOne, old.Voice.Options.PlaySoundMode);
+                Assert.IsNull(old.Voice.Options.PlaySoundMode, "The default emitter preserves policy inheritance in its submitted snapshot.");
                 Assert.AreEqual(AudioOutputRoute.Direct, old.Voice.Options.OutputRoute);
                 Assert.AreEqual(mode == AudioEmitter.PositionMode.TwoDimensional ? 0f : 1f, source.spatialBlend);
                 if (mode != AudioEmitter.PositionMode.TwoDimensional)
@@ -507,6 +531,7 @@ namespace YLFramework.Tests.Audio
                 foreach (AudioEmitter.PositionMode mode in Enum.GetValues(typeof(AudioEmitter.PositionMode)))
                 {
                     var emitter = Emitter(mode, weighted);
+                    SetField(emitter, "useGlobalPlaySoundMode", false);
                     var starts = 0;
                     emitter.Started.AddListener(() => starts++);
                     emitter.Play();

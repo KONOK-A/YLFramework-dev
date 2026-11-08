@@ -14,6 +14,7 @@ using YLFramework.Resource;
 
 namespace YLFramework.Tests.ResourceBuild
 {
+    [Category("YL.Special.ResourceUpdates")]
     public class ArtifactStoreQueryTests
     {
         [Test]

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Serialization;
 using YLFramework.Foundation;
 
 namespace YLFramework.Skill
@@ -38,7 +37,7 @@ namespace YLFramework.Skill
         /// <summary>技能显示名称，不作为运行实例的字典键。</summary>
         [Tooltip("技能名称")]
         [Header("技能名称")]
-        [FormerlySerializedAs("skill_name"), global::YLFramework.Excel.ExcelColumnName("skill_name")] public string skillName;
+        [global::YLFramework.Excel.ExcelColumnName("skill_name")] public string skillName;
 
         /// <summary>技能图标的资源定位信息。</summary>
         [Tooltip("技能图标")]
@@ -48,7 +47,7 @@ namespace YLFramework.Skill
         /// <summary>初始化运行冷却时长，单位为秒；释放结束后才开始推进冷却。</summary>
         [Tooltip("冷却时间")]
         [Header("冷却时间")]
-        [FormerlySerializedAs("cooling_time"), global::YLFramework.Excel.ExcelColumnName("cooling_time")] public float cooldownSeconds;
+        [global::YLFramework.Excel.ExcelColumnName("cooling_time")] public float cooldownSeconds;
         /// <summary>初始化运行持续时长，单位为秒；达到后仍需技能完成检查通过。</summary>
         [Tooltip("持续时间")]
         [Header("持续时间")]
@@ -57,11 +56,11 @@ namespace YLFramework.Skill
         [Tooltip("能够同时释放的技能(默认所有的技能都不能同时释放)")]
         [Header("能够同时释放的技能(默认所有的技能都不能同时释放)")]
 
-        [FormerlySerializedAs("canbe_released_at_the_same_time"), global::YLFramework.Excel.ExcelColumnName("canbe_released_at_the_same_time")] public List<int> simultaneousSkillIds = new List<int>();
+        [global::YLFramework.Excel.ExcelColumnName("canbe_released_at_the_same_time")] public List<int> simultaneousSkillIds = new List<int>();
         /// <summary>初始化主动取消开关，仅约束 Cancel，不阻止强制 Interrupt。</summary>
         [Tooltip("是否能够主动取消")]
         [Header("是否能够主动取消")]
-        [FormerlySerializedAs("active_cancellation"), global::YLFramework.Excel.ExcelColumnName("active_cancellation")] public bool allowCancellation;
+        [global::YLFramework.Excel.ExcelColumnName("active_cancellation")] public bool allowCancellation;
 
         /// <summary>供业务和作者工具显示的技能说明。</summary>
         [Tooltip("技能描述")]
@@ -73,13 +72,13 @@ namespace YLFramework.Skill
         /// <summary>运行技能类型全名，须能解析为带公共无参构造器的非抽象 SkillBase 派生类。</summary>
         [Tooltip("技能类名称(含命名空间)")]
 
-        [FormerlySerializedAs("skill_class_full_name"), global::YLFramework.Excel.ExcelColumnName("skill_class_full_name")] public string skillClassFullName;
+        [global::YLFramework.Excel.ExcelColumnName("skill_class_full_name")] public string skillClassFullName;
 
         /// <summary>供编辑器定位技能脚本的 GUID，运行时类型解析使用类型全名。</summary>
         [Tooltip("技能类脚本guid")]
         [HideInInspector]
         [YLFramework.Excel.ExcelIgnore]
-        [FormerlySerializedAs("skill_class_guid")] public string skillClassGuid;
+        public string skillClassGuid;
 
     }
 }
