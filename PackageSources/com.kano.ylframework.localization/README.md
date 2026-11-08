@@ -1,42 +1,21 @@
-# YLFramework Localization
+# Localization 本地化
 
-Optional explicit localization roots, deterministic language fallback, UGUI and
-TextMesh/string-property bindings, resource-owned images and Unity authoring.
-Install this package and `com.kano.ylframework` at the same validated revision.
-Git consumers explicitly declare both repository subpaths; this package does not
-depend on DataAssets, Excel, Save, TMP or an external localization SDK.
+`com.kano.ylframework.localization` 提供显式多语言配置、确定的逐条回退、UGUI / TextMesh / 字符串成员绑定，以及交由 Resource 管理的图片显示。
 
-The public namespaces remain `YLFramework.Localization` and
-`YLFramework.Editor.Localization`. Their owners are now `YLFramework.Localization`
-and `YLFramework.Localization.Editor`. Original script GUIDs, class names,
-serialized fields, enum values and language preference keys are preserved. Add
-an explicit asmdef reference when your own code uses assembly definitions.
+## 依赖与接入
 
-Register already loaded roots with `LocalizationManager.AddConfig`, or use
-`LoadConfigAsync` with the caller's `ResourceSystem`. Dispose the returned handle
-when the consumer ends. The configuration owner, text subscription, and image
-request/lease remain separate responsibilities. Stop, disable, destroy and scene
-changes must return each consumer's own responsibility, not another owner's.
-Use these APIs on Unity's main thread; they do not introduce a background loader.
+依赖主包 `com.kano.ylframework` 与 `com.unity.ugui`，不依赖 DataAssets、Excel、Save、TMP 或外部本地化 SDK。业务 asmdef 引用 `YLFramework.Localization`；作者工具位于 Editor-only 的 `YLFramework.Localization.Editor`。
 
-Fallback remains requested language, applicable Chinese variants, English, then
-explicit registration order. `LocalizeString.Other` still supports a public
-string field/property (including a consumer's preserved TMP binding) without a
-TMP compile dependency. It is not an arbitrary component factory.
+从当前源码接入时显式提供主包和本包，步骤见[公共安装指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/Installation.md)；基础入门见[快速开始](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/QuickStart.md)。这些链接指向源码仓库当前文档。
 
-`LocalizeImage` still requires the main package's `ResourceImage`. The latter
-owns all image requests, leases, generation/cancellation checks and original
-display restoration. Localization does not copy it or create another image
-service. A late image result cannot republish after the owner is disabled.
+## 开始使用
 
-The authoring window edits explicitly selected roots and creates languages under
-`Assets/YLFrameworkData/Localization/<root-guid>`. Removing a language reference
-does not delete its asset. Save is explicit and limited to the target root and
-language assets, with Undo retained. Removing/upgrading the installed package
-does not delete the consumer's configurations or preferences.
+1. 创建 `MultiLanguageConfigs`，打开 `YLFramework/Localization/多语言配置` 编辑语言与条目。
+2. 用 `LocalizationManager.AddConfig(root)` 登记已加载根，保留返回的 `LocalizationConfigHandle`。
+3. 设置 `LocalizationManager.Language`，用 `GetString(id)` 或显示组件读取内容；使用结束时释放自己的句柄。
 
-Resource catalogs persist `(FullName, AssemblyName)`. Existing Localization
-catalogs built while these types were in `YLFramework.Runtime` must be rebuilt
-together with their bundles using the formal Resource builder/publisher. Do not
-rewrite the old catalog JSON/digest or use reflective alias fallback. There is
-no fabricated managed-reference migration or legacy wrapper in this package.
+完整示例、语言回退、图片与生命周期见[使用手册](Documentation~/README.md)。
+
+## 许可证
+
+本包采用 [MIT 许可证](LICENSE.md)。

@@ -1,68 +1,20 @@
-# YLFramework Excel Authoring
+# Excel 作者工具
 
-Editor-only package `com.kano.ylframework.excel`, version `0.1.0-preview.1`.
-Declare the main package, `com.kano.ylframework.data-assets`, and this package
-explicitly at the same validated revision when installing from Git. DataAssets
-owns the configuration roots and their Editor API without depending on Excel.
-UPM resolves the declared Newtonsoft.Json registry dependency.
+`com.kano.ylframework.excel` 提供 Editor-only 的 `.xlsx` 导出、SO / List / JSON 导入预览、DataAssets 工作簿面板，以及同时安装 Gameplay 时启用的领域适配。Runtime 字段 Attribute 位于主包，本包不提供 Player 工作簿 IO。
 
-For the intended OpenUPM release channel, declare only
-`"com.kano.ylframework.excel": "0.1.0-preview.1"` under the narrow
-`com.kano.ylframework` scope at `https://package.openupm.com`. UPM resolves the
-main and DataAssets packages automatically. Use the [Registry installation configuration](../com.kano.ylframework/README.md#registry-installation)
-only after the frozen Release and acceptance handoff confirm version availability;
-this preview is not claimed published by this README. The explicit main-plus-DataAssets-plus-Excel
-closure below applies to the Git fallback, not Registry installation.
+## 依赖与接入
 
-Excel URL format (`<full-commit-sha>` is notation, not a usable revision):
+依赖主包、`com.kano.ylframework.data-assets` 与 `com.unity.nuget.newtonsoft-json`。当前从源码以本地 UPM 接入，显式提供全部自有包来源；Git 接入也不能靠 SemVer 声明取得未发布的兄弟包。
 
-```text
-https://github.com/KONOK-A/YLFramework-dev.git?path=/PackageSources/com.kano.ylframework.excel#<full-commit-sha>
-```
+安装方式见[公共安装指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/Installation.md)，基础入门见[快速开始](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/QuickStart.md)。这些链接指向源码仓库当前文档。
 
-Use the actual full SHA and main-plus-DataAssets-plus-Excel manifest entries supplied by the
-acceptance handoff. Package-level SemVer dependencies do not fetch sibling Git
-packages. See the [installation guide](../com.kano.ylframework/Documentation~/README.md#git-url-与依赖闭包).
+## 开始使用
 
-MiniExcel 1.31.2 is bundled in `Editor/Plugins/MiniExcel.dll` under Apache-2.0;
-retain its LICENSE and ATTRIBUTION. It is not a developer download cache and is
-not included in Player builds. No NuGet downloader runs on package installation.
-The [license](Editor/Licenses/MiniExcel-LICENSE.txt),
-[attribution](Editor/Licenses/MiniExcel-ATTRIBUTION.txt) and
-[dependency provenance](Editor/Dependencies.json) remain with this package.
+打开 `YLFramework/Excel/Data Assets Workbook`，选择已保存的 DataAssets 根，导出工作簿、编辑后预览导入，再明确确认或取消。预览不提交资产；输出工作簿和配置属于使用工程，不写入安装包。
 
-The backend assembly remains `YLFramework.Excel.Editor`. Runtime field attributes remain
-part of `YLFramework.Runtime`. Generated configurations belong to the consuming
-project, never to this installed package.
+- [Excel 使用手册](Documentation~/README.md)：表头、字段转换、代码入口、提交与故障恢复。
+- [Gameplay 适配](Documentation~/Gameplay.md)：Skill / Buff / Mission / Equipment 的条件程序集和导入流程。
 
-Open `YLFramework/Excel/Data Assets Workbook` to choose a saved DataAssets root,
-restore its existing GUID-keyed workbook preference, preview an import, export
-or reveal the workbook. Preview does not commit assets; confirmation and Undo
-retain the existing import contract. Preferences keep the original
-`YLFramework.DataAssets.LastWorkbook.` keys. The ordinary DataAssets Inspector
-does not require this package. Forgetting a preference does not delete files.
+## 许可证与来源
 
-Installing Gameplay alongside Excel enables the included
-`YLFramework.Domain.Excel.Editor` assembly under `Editor/Gameplay` using the
-actual Gameplay package Version Define. No global scripting symbol is required
-or changed. The original `DomainExcelCommands` API, namespace, GUIDs and typed
-context menus remain. Excel does not depend on Gameplay: generic workbook
-operations work without it, and Gameplay works without Excel. A Git consumer
-using both features explicitly declares main, DataAssets, Excel and Gameplay
-at the same validated SHA. There is no separate DomainExcel package.
-
-Use the lightweight `YLFramework.Excel.ExcelColumnNameAttribute` from the main
-package when a CLR field must keep an existing workbook column across renames
-or assembly moves:
-
-```csharp
-[ExcelColumnName("existing_column")]
-public string renamedField;
-```
-
-The backend uses this exact name or, when unmarked, `field.Name`. Unity's
-`FormerlySerializedAs` remains a Unity serialization contract, not an implicit
-Excel alias. Column names are not inferred from namespaces or assembly names.
-
-Package upgrades and removal do not overwrite/delete existing assets, workbook
-files or workbook selections. Maintained by Kano; original copyrights are retained.
+本包采用 [MIT 及所列第三方许可](LICENSE.md)。随包的 MiniExcel 1.31.2 位于 `Editor/Plugins/MiniExcel.dll`，采用 Apache-2.0，仅用于 Editor，不在安装时执行 NuGet 下载。保留其[许可证](Editor/Licenses/MiniExcel-LICENSE.txt)、[署名](Editor/Licenses/MiniExcel-ATTRIBUTION.txt)与[依赖来源声明](Editor/Dependencies.json)。由 Kano 维护，原始版权声明保留。

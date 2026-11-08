@@ -24,7 +24,7 @@
 
 - 语义：标记需要自定义 Editor 绘制的序列化字段（metadata + Editor 契约）。
 - 目标：`AttributeTargets.Field`；`AllowMultiple = false`；`Inherited = false`。
-- 契约：抽象特性，仅供派生；编辑器下派生类**必须实现** `OnPropertyGui(UnityEditor.SerializedProperty)`。Mission / Skill / Buff Inspector 显式读取字段特性，未标注时按字段名选择领域 Drawer；Equipment Inspector 也通过字段名表使用派生 Drawer。它们不是自动扫描或通用 Inspector 平台。
+- 契约：抽象特性，仅供派生；编辑器下派生类**必须实现** `OnPropertyGui(UnityEditor.SerializedProperty)`。安装 Gameplay 后，Mission / Skill / Buff Inspector 显式读取字段特性，未标注时按字段名选择领域 Drawer；Equipment Inspector 通过字段名表使用派生 Drawer。它们不是自动扫描或通用 Inspector 平台。
 - 构造：无参默认不刷新；`CustomPropertyGui(bool reloadTreeViewOnValueChange)` 配置刷新意图；public 字段 `ReloadTreeViewOnValueChange` 可供命名特性参数与接入方读取/修改，Editor 与 Player 均可用。是否刷新 TreeView 由实际 Inspector 处理。
 
 ## DisableEdit
@@ -52,7 +52,7 @@
 
 [`Editor/Common/Inspector/SerializedPropertyExtensions.cs`](../../Editor/Common/Inspector/SerializedPropertyExtensions.cs) 使用 `YLFramework.Editor.Common`，提供 `CopyToClipboard`、`IsCanPaste`、`PasteFromClipboard` 与 Unity 原生 Clipboard 格式。粘贴先在独立 SerializedObject 缓冲中解析并完整核对，再以 `ApplyModifiedProperties` 应用；支持同类型、非混值的可编辑单对象和多对象，沿用 Undo/Redo 与 Prefab override。拒绝操作不会应用调用者的待修改数据。
 
-混值、不同类型的多对象、不可编辑目标、不兼容或损坏的数据明确拒绝；原生解析器不能可靠处理的 ManagedReference、ExposedReference、FixedBufferSize 和 double 也拒绝。`IsCanPaste` 对这些输入返回 `false`，实际复制/粘贴抛出 `InvalidOperationException` 说明原因；Unity 私有 API 缺失或签名变化时抛出包含 Unity 版本与成员信息的 `NotSupportedException`，不静默回退。空 ObjectReference/ExposedReference 的 `GetValueText` 显示 `None`。专项回归位于 `Tests/EditMode/Editor/Core/CoreSerializedPropertyTests.cs`。
+混值、不同类型的多对象、不可编辑目标、不兼容或损坏的数据明确拒绝；原生解析器不能可靠处理的 ManagedReference、ExposedReference、FixedBufferSize 和 double 也拒绝。`IsCanPaste` 对这些输入返回 `false`，实际复制/粘贴抛出 `InvalidOperationException` 说明原因；Unity 私有 API 缺失或签名变化时抛出包含 Unity 版本与成员信息的 `NotSupportedException`，不静默回退。空 ObjectReference/ExposedReference 的 `GetValueText` 显示 `None`。
 
 这些编辑器功能与下述 Core 使用诊断分属不同消费链。外部框架使用自己的特性，不建立跨框架特性桥。
 
@@ -60,7 +60,7 @@
 
 Editor 内可从 `YLFramework/Core/帮助` 阅读规则和接入摘要；`YLFramework/Toolkit/帮助` 提供 Foundation 展示元数据导航。两个帮助入口均只读。配置与接入自检位于 `Project Settings > YLFramework > Analyzers`，也可从 `YLFramework/Core/分析器规则` 打开；文件写入必须先预览再明确应用。
 
-六个正式 marker 位于 [`Runtime/Core/Attributes/`](../../Runtime/Core/Attributes/)，namespace `YLFramework.Core.RoslynAnalyzers`、程序集 `YLFramework.Runtime`。它们保留原有构造及 AttributeUsage，只提供编译元数据，不执行运行时权限检查。
+六个 marker 位于 [`Runtime/Core/Attributes/`](../../Runtime/Core/Attributes/)，namespace `YLFramework.Core.RoslynAnalyzers`、程序集 `YLFramework.Runtime`，只提供编译元数据，不执行运行时权限检查。
 
 分析器实现和 SDK 测试位于**源码仓库根**的 `Tools/YLFramework.Analyzers/`，不随 UPM 产品包分发。规则目录源文件 [`Editor/Core/Analyzers/AnalyzerRuleCatalog.cs`](../../Editor/Core/Analyzers/AnalyzerRuleCatalog.cs) 随 Editor 交付，并由 SDK 项目链接编译，供诊断实现与设置/帮助共享规则元数据。包内唯一编译器 DLL 为 [`Runtime/Core/Analyzers/YLFramework.Analyzers.dll`](../../Runtime/Core/Analyzers/YLFramework.Analyzers.dll)。十项规则默认启用且均为 **Warning**，项目可按 ID 配置严重级别；分析器不依赖 Unity / Core / Workspaces，默认不分析生成代码，缓存仅限当前 compilation。当前不提供 CodeFix，不通过自动修改所有权、生命周期或不可变设计来消除诊断。
 
@@ -68,7 +68,7 @@ Editor 内可从 `YLFramework/Core/帮助` 阅读规则和接入摘要；`YLFram
 |---|---|
 | <a id="yl0001"></a>YL0001 | `MustCallBase` 的有效 override 链要求当前方法直接调用同一 base 槽；修复为 `base.Start()`，不是同名 overload 或嵌套 callback 中的调用。仅证明存在，不证明所有控制流执行；抽象层级冲突需调整标记/覆写结构。 |
 | <a id="yl0002"></a>YL0002 | `RestrictedCall` 限定直接调用者；例如 `View.RegisterEvent` 在 `Awake` 方法本体调用，callback 参数声明合法，callback 内调用不借用外层身份。 |
-| <a id="yl0003"></a>YL0003 | `WarnInClasses` 对当前词法类型的本身/基类/接口匹配警告；供项目自有方法声明明确的调用边界。普通 nested helper 不自动继承外层调用类型，不为退役入口把标记搬到中立 Foundation。 |
+| <a id="yl0003"></a>YL0003 | `WarnInClasses` 对当前词法类型的本身/基类/接口匹配警告；供项目自有方法声明明确的调用边界。普通 nested helper 不自动继承外层调用类型。 |
 | <a id="yl0004"></a>YL0004 | `DisableNew` 检查外部普通/目标类型 new 及可确定类约束 new T；用 `LoadViewArgs.New()` 等正式工厂。标记类型自身及词法嵌套实现可构造自身，派生类/同程序集不是全免。 |
 | <a id="yl0005"></a>YL0005 | `MethodLocalOnly` 检查显式 field/property 持有；将参数保持在方法借用窗口，不保存回收后的 lease 引用。数组、tuple、真实容器与自有实例值槽都可构成存储。 |
 | <a id="yl0006"></a>YL0006 | `ProtectedHierarchy` 检查指定类型层级对受保护实例 field/property/indexer 的写入和可写 ref 暴露；例如 View 读取 Model 状态，修改通过 Model 的受管方法进行。 |
@@ -113,7 +113,7 @@ protected override void OnViewEnabled() { Refresh(); } // 正确
 
 这些片段是各规则的独立对照，不是可同时声明的完整类型。`OnChanged`/`Refresh` 代表业务回调，不是额外框架 API。
 
-### 新增直接误用示例
+### 注入、Panel 与音频示例
 
 ```csharp
 using YLFramework.DependencyInjection;
@@ -156,7 +156,7 @@ IEnumerator WaitForEnd(AudioPlayRequest request)
 }
 ```
 
-等待开始也检查 IsDone，避免请求失败时一直等不到 HasStarted。循环播放可能永不自然结束；结束后还应区分 `EndReason.Completed` 与失败、取消等终态。不要把等待终结自动替代为等待启播，详见 [Audio](Audio.md#命名加载与资源责任)。
+等待开始也检查 IsDone，避免请求失败时一直等不到 HasStarted。循环播放可能永不自然结束；结束后还应区分 `EndReason.Completed` 与失败、取消等终态。不要把等待终结自动替代为等待启播，详见 [Audio 请求状态](Audio/Resources.md#请求状态与取消)。
 
 ### 匹配与边界
 
@@ -195,7 +195,7 @@ DLL 的 Importer 禁用 Any / Editor / 普通平台，关闭自动 Runtime 引�
 dotnet_diagnostic.YL0002.severity = none
 ```
 
-不要假定 Unity 生成的旧式 IDE 项目一定读取该文件，或它必然覆盖 ruleset；以实际项目系统的单 ID 正反对照为准。本设置页只维护原生 ruleset，不接管 IDE 策略。Unity 2022.3 的实际 csc 不自动跟随 IDE `.editorconfig`；用 asmdef 目录中的叶子 ruleset（例如 `Game.UI.ruleset`），只配置需要的 ID：
+不要假定 Unity 的 IDE 项目一定读取该文件，或它必然覆盖 ruleset；以实际项目系统的单 ID 正反对照为准。本设置页只维护原生 ruleset，不接管 IDE 策略。Unity 2022.3 的实际 csc 不自动跟随 IDE `.editorconfig`；用 asmdef 目录中的叶子 ruleset（例如 `Game.UI.ruleset`），只配置需要的 ID：
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -218,9 +218,9 @@ private readonly HashSet<LoadViewArgs> borrowed = new();
 
 自定义协程调度器若确有识别 AudioPlayRequest 的协议，可用同样方式在对应迭代器声明附近局部关闭/恢复 YL0010；不要为一种非标准调度器关闭整个项目的音频检查。
 
-### 安装、升级与移除
+### 接入与移除
 
-通过 UPM 安装主包时 DLL、原 meta 和 Editor 设置入口一起接入，先用自检核对作用域与编译图。升级时保留原 GUID，不复制第二份 DLL；业务 ruleset 属于使用项目，不由包更新或设置页重建。检查新增 ID 与说明，旧七条规则不因本次增强静默改为全路径等更强语义。
+通过 UPM 安装主包时 DLL、meta 和 Editor 设置入口一起接入，先用自检核对作用域与编译图，不复制第二份 DLL。业务 ruleset 属于使用项目，不由包更新或设置页重建。按上表理解每条规则的实际证明范围，不把静态提示当作完整控制流或运行时权限检查。
 
 仅暂停某条规则优先使用单 ID 的 None 或局部 pragma，不直接删除/修改只读 Git 包或 PackageCache。若确需物理移除编译器输入，应在自维护的包源码副本中明确处理 DLL 及配套 meta，重新构建和验证包身份；marker 源码本身不提供诊断。不要留下孤儿 meta，不删除业务规则集或其他分析器。重新启用应恢复发行包的标签、禁用平台与明确引用配置后重编译核对。
 
@@ -241,18 +241,4 @@ Analyzer 构建收据记录编译源、Analyzer csproj/lock、固定 SDK 配置�
 
 SDK 编译/测试、Unity csc、PlayMode 生命周期、确定性重建和 Player 输出引用是不同证据，不能相互替代。不要将某次 Windows64 / Mono 验收扩展为 IL2CPP、其他平台或任意独立载体的保证。
 
-### 发布支持边界
-
-发行验收目标为 Windows 上 Unity 2022.3 LTS 与 Unity 6.3 LTS，以及对应 Visual Studio / Rider 的诊断和配置读取；每份发行须记录真实补丁、IDE/集成包版本和结果。目标矩阵不是已经通过的声明，缺少某个环境的证据就不能将该项标为已验证。macOS/Linux、Unity 6.0及其他版本不由本矩阵自动承诺；实现不故意依赖 Windows 专用路径。分析器随主 UPM 包接入，不要求另装 IDE 插件、CI 或 CodeFix。
-
-## 测试入口
-
-- `Tests/EditMode/Foundation/AttributesTests.cs`：元数据声明、正式源码及派生构造使用者的 Editor / 无 UnityEditor 引用 Development 源码编译，不等同于完整 Player 构建运行。
-- `Tests/EditMode/Editor/Foundation/Attributes/DisableEditDrawerTests.cs`：SerializedObject、展开高度、子 Drawer 禁用与异常状态恢复。
-- `Tests/EditMode/Editor/Core/CoreSerializedPropertyTests.cs`：原生剪贴板格式与拒绝边界。
-- `Tests/EditMode/Editor/Core/AnalyzerRuleSetFileTests.cs`：局部路径、继承/未知规则保留、无变化不写、冲突拒绝及真实 Unity 编译器 Include/级别见证。
-- `Tests/EditMode/Editor/Core/AnalyzerRuleSettingsTests.cs`：设置路由、只读状态、作用域与真实 Provider 渲染无写入/无脏场景。
-- `Tests/EditMode/Editor/Core/CoreEditorIdentityTests.cs`：真实 Editor/Development 新旧诊断、SDK 收据与编译器资产隔离；UPM 包内容和独立安装另由源码仓库的分发专项验证，不继续使用旧 unitypackage Exporter 门禁。
-- 源码仓库的 `Tools/YLFramework.Analyzers/Tests/`：诊断 ID、级别、位置、符号身份、所有权与配置等离线回归，通过上面的脚本运行。
-
-这些是测试入口，不代表当前环境已执行通过。历史编译器、DLL 和 Player 验收记录见 [集成记录](../IntegrationPlan.md)。
+分析器随主包接入，不要求另装 IDE 插件、CI 或 CodeFix。源码测试与相关平台/IDE 验证见源码当前的[测试工具说明](https://github.com/KONOK-A/YLFramework-dev/blob/main/Tools/Testing/README.md)，不以一次 SDK 测试外推任意 Editor 或 Player。

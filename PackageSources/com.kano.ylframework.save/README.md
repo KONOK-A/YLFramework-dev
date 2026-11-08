@@ -1,50 +1,19 @@
-# YLFramework Save
+# Save 本地存档
 
-Standalone slot metadata, save objects/models/settings, atomic single-file JSON
-writes and explicit backup recovery. This package references Newtonsoft.Json
-directly and does not require `com.kano.ylframework` or another optional package.
-`YLFramework.Save` owns the unchanged `YLFramework.Save` namespace and the
-Save-specific vector/color serialization types. General SerializedDictionary
-contracts remain in the main package and are not duplicated here.
+`com.kano.ylframework.save` 提供存档槽、对象 / 主模型 / 全局设置、单文件原子 JSON 写入和显式备份恢复。`SaveStore` 是业务入口，`SaveManager` 管理 Unity 默认路径与默认 Store 的会话生命周期。
 
-Install this package and let UPM resolve `com.unity.nuget.newtonsoft-json`.
-Declare `YLFramework.Save` in a consumer asmdef. The package does not bundle a
-second Newtonsoft DLL or rely on another package's precompiled-reference list.
-Consumers using `overrideReferences` also explicitly list `Newtonsoft.Json.dll`
-when calling APIs whose signatures expose its settings, even for optional args.
+## 依赖与接入
 
-`SaveStore` is the storage owner. Dispose it before another owner opens the same
-root. `SaveStore` is the sole business API. `SaveManager.Store` publicly borrows
-the default owner; callers must not dispose that borrowed instance. The manager
-only captures the Unity main-thread path, exposes default configuration and
-handles root/session lifetime. Set an explicit root before worker use.
-Changing the default root closes/cancels/drains its previous owner; it does not
-copy or migrate files. Async writes serialize snapshots on the calling thread
-before asynchronous IO; custom converters must not call Unity APIs on workers.
+本包可以独立安装，不要求主包或其他选装包；由 UPM 解析 `com.unity.nuget.newtonsoft-json`。业务 asmdef 引用 `YLFramework.Save`。完整前置与独立用法都在[本包使用手册](Documentation~/README.md)，无需安装主包才能阅读或运行示例。
 
-Slots, backups and serialized JSON field names are unchanged. A malformed primary
-can be read from a valid backup without automatic repair. Recovery must be
-explicit before another write; corruption without a valid backup and unsupported
-index versions remain errors. No multi-file transaction, cloud service, automatic
-old-format migration or new encryption layer is added by this ownership move.
+统一源码接入步骤见[公共安装指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/Installation.md)，框架基础示例见[快速开始](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/QuickStart.md)。这些链接指向源码仓库当前文档，不是 Save 的额外安装依赖。
 
-Slot-requiring synchronous and asynchronous SaveStore reads/writes consistently
-throw for an unknown slot. No logging-and-return facade remains. Use explicit
-file keys and slot IDs, not inferred type names or SaveItem overloads. Queries and deletes keep their false/empty or
-idempotent outcomes. They do not silently create a slot.
+## 开始使用
 
-SaveItem is now a top-level type in the same namespace. Its instances are borrowed mutable metadata. Direct mutation changes only
-the current in-memory object, not the disk immediately; cold reopen before any
-index write discards it. A later index write snapshots current in-memory
-metadata, including such mutations. Explicit rename/note APIs persist at once.
-An already open owner does not merge external edits to the index. These existing
-boundaries are regression-tested rather than normalized into a new format.
+在 Unity 主线程借用 `SaveManager.Store`，先 `CreateSaveItem()`，再用显式文件名与槽 ID 调用 `SaveObject` / `ReadObject<T>`。默认 Store 不能由借用者 `Dispose()`；自己创建的 `new SaveStore(rootPath)` 则由创建者释放。
 
-DefaultSerializerSettings is the shared configuration instance, set before
-concurrent use. DefaultSerializationFormat applies only when the default Store
-is created; Store.SerializationFormat controls the current instance. Getter,
-Close and root changes do not overwrite instance formatting or reset defaults.
+存档只支持索引格式 v2。采用备份值不等于磁盘已修复；写入前按手册显式恢复，不用默认数据覆盖损坏档。并发、取消与恢复边界见[详细说明](Documentation~/README.md)。
 
-The included link.xml preserves SaveIndex and the top-level SaveItem metadata;
-consumers still preserve their own AOT DTOs/converters. Removing/upgrading this
-package never deletes project save data or resolves recovery on the user's behalf.
+## 许可证
+
+本包采用 [MIT 许可证](LICENSE.md)。

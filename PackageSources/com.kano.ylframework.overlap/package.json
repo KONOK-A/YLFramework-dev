@@ -8,6 +8,6 @@
   "license": "MIT",
   "author": { "name": "Kano" },
   "repository": { "type": "git", "url": "https://github.com/KONOK-A/YLFramework-dev.git", "directory": "PackageSources/com.kano.ylframework.overlap" },
-  "files": ["package.json", "package.json.meta", "README.md", "README.md.meta", "LICENSE.md", "LICENSE.md.meta", "Runtime", "Runtime.meta", "Editor", "Editor.meta"],
+  "files": ["package.json", "package.json.meta", "README.md", "README.md.meta", "LICENSE.md", "LICENSE.md.meta", "Runtime", "Runtime.meta", "Editor", "Editor.meta", "Documentation~"],
   "dependencies": { "com.kano.ylframework": "0.1.0-preview.1", "com.unity.modules.physics": "1.0.0", "com.unity.modules.physics2d": "1.0.0" }
 }

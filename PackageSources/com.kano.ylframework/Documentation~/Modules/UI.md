@@ -2,15 +2,40 @@
 
 > [文档首页](../README.md) · [架构总览](../Architecture.md)
 
-本页导航：[打开与配置](#打开与配置) · [实例与请求](#实例与请求) · [生命周期与显示](#生命周期与显示) · [根与资产](#根与资产) · [输入边界](#输入边界) · [Tips 与控件](#资源tips-与控件) · [验证入口](#验证与迁移关口)
+本页导航：[Module 与 MVC](#module-与-mvc) · [打开与配置](#打开与配置) · [实例与请求](#实例与请求) · [生命周期与显示](#生命周期与显示) · [根与资产](#根与资产) · [输入边界](#输入边界) · [Tips 与控件](#资源tips-与控件)
 
 ## 职责与依赖
 
 - `Module` 是唯一业务 owner。`Panel : View` 只扩展独立 UI 会话，复用 Core 的 Model、事件、请求失效与实例归还协议。
 - 主体在 `Runtime/Core/UI/Windows`，根、输入、Tips、适配分别分组；namespace 为 `YLFramework.Core`，程序集为 `YLFramework.Runtime`。主体依赖 UGUI，不要求外部资源后端。
 - `PanelManager` 是同一个协调器的 partial，不是资源服务或第二套窗口 owner。不存在必须先注册的窗口目录、业务 key、另一套加载器或 UI 池。
-- 普通根 View 使用 `LoadView/LoadViewAsync`，已有实例使用 `AttachView`；根组件实际是 Panel 时必须使用 Panel 入口。所有加载只接受 `LoadViewArgs`，通过一次 `OnLoaded(LoadViewArgs)` 初始化；合法对象值仍可用 `SetObject/GetObject` 传递，不保留旧位置数组协议。
+- 普通根 View 使用 `LoadView/LoadViewAsync`，已有实例使用 `AttachView`；根组件实际是 Panel 时必须使用 Panel 入口。加载参数通过 `LoadViewArgs` 传递，一次 `OnLoaded(LoadViewArgs)` 完成初始化；对象值使用 `SetObject/GetObject`。
 - Module/Panel/View、参数袋和显示操作均在 Unity 主线程使用。入口见 [`Module.Panels.cs`](../../Runtime/Core/Modules/Module.Panels.cs)，会话与显示契约见 [`Panel.cs`](../../Runtime/Core/UI/Windows/Panel.cs) 和 [`View.cs`](../../Runtime/Core/MVC/Views/View.cs)。
+
+## Module 与 MVC
+
+`Module` 持有自己的 Model、Controller 和 View。创建具体子类并实现 `OnStart()`，在应用启动协程中调用 `ModuleManager.StartUpModule<T>()`。返回请求可由协程等待，只有请求成功且 `State == ModuleState.Running` 后才进入正常业务；`GetModule<T>()` 可能返回仍在 Starting 的实例，查询可见不代表启动结束。
+
+下面是应用启动协程中的方法体片段，`MenuModule` 是项目自定义、具有无参构造并实现 `OnStart()` 的 Module：
+
+```csharp
+var request = ModuleManager.StartUpModule<MenuModule>();
+yield return request;
+if (request.Exception != null)
+{
+    Debug.LogException(request.Exception);
+    yield break;
+}
+var owner = (MenuModule)request.Module;
+// 在应用决定结束本模块时调用 owner.Close()。
+```
+
+默认空配表和空启动场景无需资源 Provider；设置 `PreloadConfigTables` 或 `DefaultStartUpScene` 后，须先按 [Resource](Resource.md#core-与-audio)装配 `ICoreResourceProvider`。`ProjectName` 是资源项目身份，不是 Module 的完整类型注册名；它应在启动前确定。
+
+- Model 管理业务状态，Controller 组织行为，View 负责表现。通过所属 Module 创建和查询，不把一个 Module 的对象交给另一 Module 结束。
+- `StartUpModule` 对运行中的同一实例不重复启动，启动请求不支持 `Abort`；Starting 期间不允许 Close 或 Shutdown。
+- 普通模块由 `Close()` / `CloseModule<T>()` 结束；基础模块由应用的 `ModuleManager.Shutdown()` 统一关闭。关闭先结束业务钩子，再清理所属对象与在途工作，错误在注销后汇总报告。
+- View 子类使用 `OnViewEnabled`、`OnViewDisabled`、`OnClosed` 接入生命周期，不声明竞争框架消息的 `OnEnable/OnDisable/OnDestroy`；使用诊断见 [Attributes](Attributes.md#core-使用诊断)。
 
 ## 打开与配置
 
@@ -53,7 +78,7 @@ window.Close();
 | instanceMode / InstanceMode | Single | 同 Module、同实际根、同可证明来源的实例模式 |
 | cacheOnClose / CacheOnClose | true | 有效会话正常结束时是否允许既有后端缓存 |
 
-配置值类型为 `YLFramework.Core.PanelConfig`，避免与 UI Toolkit 的同名设置类混淆；不保留旧类型别名。`PanelConfig.Default` 才是框架默认值，结构体零值并不等价。Panel 的序列化字段为 `settings`，成员见上表；保留字段不能替代 Prefab/Variant 的导入核验。`PanelOverrides` 的 nullable 字段用 null 表示未指定，显式 false/0 必须生效，不作 Inspector 序列化。
+配置值类型为 `YLFramework.Core.PanelConfig`，避免与 UI Toolkit 的同名设置类混淆。`PanelConfig.Default` 才是框架默认值，结构体零值并不等价。Panel 的序列化字段为 `settings`，成员见上表。`PanelOverrides` 的 nullable 字段用 null 表示未指定，显式 false/0 必须生效，不作 Inspector 序列化。
 
 `BindPanelRules` 先枚举、复制并完整校验，再原子替换；失败保留旧快照。null/空集合清空可选规则。在途请求不追随重绑，活跃会话不被静默修改。规则按完整地址或 Prefab 二选一；重复身份、空白地址、销毁引用、非法值以及资源解析后证明的多规则冲突均失败，不任意挑选一条。同一资源可有多个业务地址，但不会建立跨会话的永久别名表。
 
@@ -66,8 +91,6 @@ window.Close();
 - 同步调用不等待或接管已确认的异步 Single 首开；若健康实例已存在，可重开，但迟到的旧请求不倒灌旧数据。有效 Close 对关闭前接受的同源请求形成失效屏障。
 - Abort 只影响本消费者，在首个业务初始化回调前有效；进入提交或失败清理后不抢占既定终态。完成通知前归还参数、退出事务，并在每个通知前复核原 Session、Module 代次、根与资源责任。前一个观察者 Close 后复用同一 GameObject，不能使后续旧消费者获得新 Session 的成功结果。
 - `Panel` 非空只代表该次交付时的成功引用，不延长会话寿命；检查 `Status/Exception`，不能只看 `Progress == 1`。观察异常不阻止其他消费者收尾，原错误保留并附带清理错误。
-
-<a id="三个短场景"></a>
 
 ### 常见用例
 
@@ -127,7 +150,7 @@ live.Abort(); // 已终结：不改变结果，也不 Close 已交付的会话�
 
 Camera/RenderMode 直接配置原生 Canvas；分辨率和 match 使用原生 CanvasScaler 与 `AutomaticAdaptationCanvasScaler`，根不再保存另一份配置。层 0 也必须明确配置，没有 UIRootContext、缺层、外根映射、损坏的必需组件或遮罩都不能运行时补齐。已有 Panel 的 Attach 只认真实祖先根，不搬去默认根，也不加入资源 Single 合流范围。
 
-### 资产准备与迁移
+### 资产准备
 
 UPM 包内已保存下列正式资产，路径相对逻辑包根 `Packages/com.kano.ylframework/`，不属于 `Samples~`。可显式调用 `YLFramework.Editor.Core.UIPanelAssetValidator.ValidateAssets()`（菜单 `YLFramework/Core/UI Panel/核验正式资产`）只读检查；它不写入 Prefab、场景或包目录。
 
@@ -139,11 +162,7 @@ UPM 包内已保存下列正式资产，路径相对逻辑包根 `Packages/com.k
 | `Prefabs/UITipsOverlay.prefab` | UITips 的 Variant，仅覆盖 Layer4；完整模板的 Presenter 引用该 Variant |
 | `Prefabs/ColorSelector.prefab` | 显式保存 Panel 默认配置 |
 
-旧 `UIPanelAssetMigration`、`MigrateAssets()`、测试夹具迁移及旧 fileID 修补作者已退役，不留换名的写入入口。包资产损坏时先核对安装来源并重新安装，不通过编辑 PackageCache 或启动时重建修补。只读校验不是 PlayMode、输入或 Player 验收。
-
-升级旧工程时，先备份并区分框架原件与用户自定义模板，再按[作者资产合同](Editor.md#资产编辑)保留原有引用与序列化值。自定义模板放在使用工程的自有目录，使用 Unity Prefab API 检查/迁移真实层映射、Tips 绑定和继承关系，不覆盖包内模板或未知资产，不保存带 Missing Script 的用户场景。保留 GUID/fileID 不能代替重载、实例化与输入验证。
-
-正常的显式默认资源创建与测试夹具维护属于源码开发仓库，不包含在消费方产品 API 中；保留包只读、缺失才创建及未知输出保护，不恢复一次性写入迁移。UPM 包运行不依赖 `Assets/Tests/YLFramework`。
+包资产损坏时先核对安装来源并重新安装，不通过编辑 PackageCache 或启动时重建修补。自定义模板放在使用工程的自有目录，使用 Unity Prefab API 检查真实层映射、Tips 绑定和继承关系，不覆盖未知资产，不保存带 Missing Script 的场景。资产写入约定见 [Editor](Editor.md#资产编辑)。只读校验不是 PlayMode、输入或 Player 验证，运行时不依赖仓库测试夹具。
 
 ## 输入边界
 
@@ -175,33 +194,18 @@ named/direct 解析到同一 Prefab 可共享 Single，但成功实例的租约�
 
 `UITipsPresenter.Show(owner, ...)` 保留 unscaled 时间、位置、淡入淡出、句柄和普通呈现池协议；每次借用仍通过 Module.AttachView，完成/取消/owner 结束沿 View 收尾。不再编码 Overlay 类型或占业务 key；通用 Tips 默认 Layer0、Multiple、非 Modal、不覆盖、不参与 Top，完整模板引用仅覆盖 Layer4 的 UITipsOverlay Variant，Graphics 不拦截射线。
 
-<a id="colorselector"></a>
-
 ### 取色控件（ColorSelector）
 
-四个取色类型位于 `Runtime/Utilities/UI/ColorSelector/`，namespace 为 `YLFramework.UI`；Panel/View 主体为 `YLFramework.Core`，两者同属 `YLFramework.Runtime`。取色工具消费 Core，不新增 UI DLL；旧 Core namespace 调用须更新并重编译，Prefab GUID 与序列化字段保留。
+四个取色类型位于 `Runtime/Utilities/UI/ColorSelector/`，namespace 为 `YLFramework.UI`；Panel/View 主体为 `YLFramework.Core`，两者同属 `YLFramework.Runtime`。取色工具消费 Core，不新增 UI DLL。
 
 正式 `Prefabs/ColorSelector.prefab` 的窗口通过 `owner.LoadPanel<ColorSelectorWindow>(colorPrefab, ColorSelectorWindow.Arguments(initial, changed), root)` 打开；`CurrentColor` 可读，重开替换值和回调，不重放旧通知。独立 `ColorSelector.BeginSession/EndSession`、SDR RGB、Alpha 保持、色环/三角网格和自有 UI 用法不变，无 Panel 时不强制创建 owner。当前实现为 YL 自有代码。
 
 `UIPointer.CheckPositionOnUI/CheckMouseOnUI` 读取实际 EventSystem 的 UGUI 命中，包含真实模态遮罩；没有系统时返回 false，不创建宿主。
 
-## 验证与迁移关口
+## 排错与限制
 
-以下是源码仓库的维护入口，`Tests/...` 表示 `Assets/Tests/YLFramework/...`；Tools 和历史 Plan 不属于产品包的运行依赖：
-
-| 验证 | 入口与边界 |
-|---|---|
-| 源码与日常测试 | `pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -Action Run -Suite Daily -Module Core -Unity <Unity.exe> -WorkspaceRoot <自有工作根>`；Foundation同入口换模块。真实UTF发现、逐模式执行、XML和进程退出闭合；前置、逻辑层与显式专项见源码仓库 `Tools/Testing/README.md`。旧UIPanel辅助编译入口已退役，不能将编译当测试或Player结果 |
-| 包资产检查 | 主包 `Editor/Core/UIPanelAssetValidator.cs`，实际调用只读校验并验证资产与场景不变；用户资产迁移单独检查实际 diff、身份、重载和实例化 |
-| 真实场景与连续 Play | 同上 runner 使用 `-Suite Special -Module Core`。原 `Tests/Acceptance/Core/UIAcceptance.unity` 的输入/渲染探针每轮 READY 后 PrepareExit、真正 ExitPlayMode、VerifyExit；两轮禁 Domain Reload，既有场景和包输入明确绑定。自建设备仅使用临时克隆的输入设置并归还，不修改工程输入资产，不替代 OS 剪贴板或 Player |
-| Windows64 IL2CPP | `YLFramework.Editor.UIPanelAcceptanceBuild.BuildWindows64IL2CPP()` 或菜单 `YLFramework/Core/UI Panel/构建 Windows64 IL2CPP 验收`；源码在 `Tests/EditMode/Editor/Core/UIPanelAcceptanceBuild.cs` |
-
-构建入口生成 Development / Medium stripping 的 `Temp/UI.Panel.IL2CPP/UIAcceptance.exe`，结束后恢复原后端与裁剪设置，不自动运行、不保存脏场景。图形运行需检查 READY、PLAYER_READY_FOR_QUIT、PLAYER_PASS/QUIT_PENDING_PASS、退出码及相关异常；`UI_PANEL_NATIVE_CAPTURE_GATE_REACHED` 只是中间标记。较小 Player 门不替代 Scrollbar/InputField/多指的完整 Editor 矩阵，也不证明原游戏或单后端 Player 全矩阵通过。
-
-输入后端切换须经 Unity 原生重启生效并恢复原设置；Legacy-only 启动询问是否启用新后端时应选 No，避免改变待测模式。原生重启会清理工程 Temp，不能把临时输出目录视作稳定证据存储。
-
-## 历史说明
-
-历史集成、资产迁移、输入后端、连续 Play 与 Windows64 IL2CPP 结果见 [融合记录](../IntegrationPlan.md)；详细版本、稳定证据与未验证范围以对应历史提交为准。当时实际加载的 Unity/包版本与 manifest 的部分声明不同，不能只据配置文件复用验收结论。
-
-历史结果只覆盖对应版本和输入矩阵，不外推到其他平台、自定义输入、零原生泄漏或性能预算。原游戏、Resource 实现与 Workbench 的验证各归其专题。
+- 根、层或原生组件缺失时先修正自己的根/模板配置；不要依赖运行时补齐，也不要修改包缓存。
+- 请求完成先检查 `Status/Exception`，不要用 `Progress == 1` 或非空 Panel 引用推断会话仍存活。
+- 自定义输入处理器、业务 ActionMap 与物理输入不自动受标准 UGUI 门禁管理；根据 Panel 状态建立自己的输入边界。
+- Input System / UGUI 私有布局与裁剪变化需在对应 Editor/Player 验证，编译成功不证明实际手势取消或布局行为正确。
+- 源码仓库的自动化与原生输入检查统一见[测试工具说明](https://github.com/KONOK-A/YLFramework-dev/blob/main/Tools/Testing/README.md)，本页不记录阶段结果。

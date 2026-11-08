@@ -1,66 +1,67 @@
 # Editor 扩展与资产维护
 
-> [文档首页](../README.md) · [架构](../Architecture.md) · [配置数据](Data.md) · [领域系统](Domain.md) · [Help](Help.md)
+> [文档首页](../README.md) · [架构](../Architecture.md) · [Attributes](Attributes.md) · [Help](Help.md)
 
-本页面向扩展作者工具的开发者。主包 Editor 归 `YLFramework.Editor`；各独立功能包的 Editor 程序集归其自身安装单元，完整清单见[架构](../Architecture.md#目录与程序集)。本页维护资产编辑与公共支撑的使用合同。
+本页面向扩展作者工具的开发者。主包 Editor 程序集为 `YLFramework.Editor`，选装包的作者工具归各自安装单元，见[程序集清单](../Architecture.md#目录与程序集)。
 
 ## 资产编辑
 
-- 新增或重构作者工具时，区分只读查询与显式修改；只修改明确选择或拥有的资产，使用适当的 SerializedObject / SerializedProperty、Undo 与 Prefab 保存机制。不能把方法名或 getter 形式视为无副作用保证。
-- 共享配置与运行实例分离；外部引用只解除关联，不按列表成员身份删除外部文件。
-- 配置数据放在使用工程的 `Assets/YLFrameworkData` 等明确 owner 根下，不属于 UPM 包输入；模块代码生成器的输出约定见下节，不与配置数据或待导入样例混同。安装、升级或移除包不覆盖/删除这些数据。
-- `EditorAssetTool` 是资源预览桥，解析器由 Resource Editor 安装。公共层不直接初始化 Runtime 或硬编码 Resource 具体实现。
+- 区分只读查询和显式修改；只修改明确选择或拥有的资产，按操作使用 `SerializedObject` / `SerializedProperty`、Undo 与 Prefab 保存机制。方法名或 getter 形式不是无副作用保证。
+- 配置定义与运行实例分开。外部引用只解除关联，不因其出现在列表里就删除外部文件。
+- 使用工程的配置数据位于 `Assets/YLFrameworkData` 等明确所有者根，不是 UPM 包输入。安装、更新或移除包不覆盖或删除这些数据。
+- `EditorAssetTool` 提供资源预览桥，解析器由 Resource Editor 安装；公共 Editor 层不主动初始化 Runtime 或硬编码 Resource 实现。
+- 剪贴板与序列化属性扩展的限制见 [Attributes](Attributes.md#编辑器剪贴板)，不要直接覆盖共享资源来实现预览。
 
-当前 `ProjectSettingsScriptableObject<T>.Instance` 在设置缺失时会创建默认实例并保存；`BuffSystemSettings.AllEffectDatas` 的读取可能清理失效项、同步扫描 EffectData 并保存设置。二者都不是被动统计或预览入口，调用前应核实资产、设置路径和预期副作用。
+`ProjectSettingsScriptableObject<T>.Instance` 在设置缺失时会创建默认实例并保存。Gameplay 的 `BuffSystemSettings.AllEffectDatas` 读取也可能清理失效项、扫描 EffectData 并保存。因此做只读统计前应先核实调用的真实副作用和资产路径。
 
 ## ReorderableTreeView
 
-`YLFramework.Editor.Common.ReorderableTreeView<T>` 的构造为：
+`YLFramework.Editor.Common.ReorderableTreeView<T>` 构造参数为：
 
 ```text
 (ScriptableObject owner, Func<IList<T>> getData, TreeViewState state[, MultiColumnHeader header])
 ```
 
-- getter 返回 owner 当前的序列化列表，不能捕获 Undo 之前的旧 List；初始化后调用 `Reload`，停用时 `Dispose` 归还订阅和本实例拖拽。
-- 默认一槽位一行，保留空项和重复引用。过滤行或业务 ID 须覆盖 `GetItemIndex(int)` 返回真实数据索引。
-- 陈旧节点起拖时拒绝并刷新；显示字段变化由所属 Inspector 显式 Reload。
-- 工具只重排并标脏当前 owner，不自动去重、删空或保存资产。
+1. 传入实际序列化数据所有者及读取其当前列表的 getter，不捕获 Undo 前的 List。
+2. 初始化后调用 `Reload()`，显示字段变更由所属 Inspector 显式刷新。
+3. 停用时调用 `Dispose()`，归还订阅与本实例的拖拽责任。
+
+默认一槽位一行，保留空项和重复引用。过滤行或使用业务 ID 时，覆盖 `GetItemIndex(int)` 映射真实索引。陈旧节点起拖会拒绝并刷新；重排只标脏当前 owner，不自动去重、删空或保存资产。
 
 ## 设置与生成
 
-Core 的默认资源、Module 生成与专用目录下的 ScriptableObject 创建策略归 `YLFramework.Editor.Core`。中立 Inspector、Scene、Settings、TreeView 与 EditorWindow 支撑归 `YLFramework.Editor.Common`。
+Module 生成器输出到 `Assets/YLFrameworkData/Generated/Modules`，namespace 与程序集身份为 `YLFramework.Core.Examples.<ModuleName>`。任意位置存在同名 asmdef、已加载同名程序集或类型时，写入前拒绝并指出来源；不能通过另选输出目录创建第二个同名身份。
 
-Module 生成器输出到 `Assets/YLFrameworkData/Generated/Modules`，生成 namespace 保留 `YLFramework.Core.Examples`；这是使用工程的代码与程序集，不写安装包或 `Samples~`。迁移旧生成目录时保留真实 GUID/程序集身份，不在两个目录重建同名 asmdef。
+Resource 生成器有独立的专属目录与输出保护，见[地址常量生成](Resource/Authoring.md#地址常量生成)。修改生成器时改源模板和输入，再验证正式输出与消费者，不手补生成代码。
 
-Module 的 namespace 与程序集身份为 `YLFramework.Core.Examples.<ModuleName>`。任何位置已导入的同名 asmdef、或已加载的同名程序集/类型都会在写入前拒绝；错误指出原 asmdef 或程序集位置。先复用或显式移动原模块及其 `.meta`，改变输出根不是重建同名身份的许可。[资源引用生成](Resource.md#代码生成)有独立的专属目录，不与 Module 或 ScriptableObject 输出混用。
+`ScriptableObjectExtensions.CreateAsset()` 默认输出 `Assets/YLFrameworkData/ScriptableObjects`，显式路径也只能在该根或子目录中。它只接受尚未归属 AssetDatabase 的新实例，不移动或覆盖已有资产、不接受链接目录，不注册 Undo。失败时由调用者处理自己仍持有的实例。
 
-`Assets/YLFrameworkData`、Workbook、StreamingAssets 和 HybridCLR 基座属于使用工程；更新包不自动迁移或清理它们。样例导入也生成使用工程自有副本，更新前核对改动与重复程序集，不保留两个同名副本。先验证实际 GUID、序列化值、Resources 与消费者编译；缺失脚本未补齐时不要保存场景。SDK/native/AOT/裁剪输入变化需要另建并验证新基座，不覆盖冻结产物或替换未知 vendor 文件。
+Core 设置根为 `ProjectSettings/YLFramework/Core`；各工具按自己的当前类型和设置身份访问，不扫描或接管外部设置。Gameplay 的 Buff 设置见源码当前 [Gameplay 手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.gameplay/Documentation~/README.md)。
 
-`ScriptableObjectExtensions.CreateAsset()` 默认写入 `Assets/YLFrameworkData/ScriptableObjects`；显式路径只能在该根或其子目录内。只接受尚未归属 AssetDatabase 的新实例，不移动或覆盖已有资产、不接受链接目录。创建不注册 Undo，失败时由调用方处理自己仍持有的实例；不要将该助手当作已有用户资产的迁移工具。
+## 模板与输出所有权
 
-正式 Prefab / 默认 Resources 已随包保存，不在 Editor 启动时重新生成。消费方的 `UIPanelAssetValidator.ValidateAssets()` 只读核验模板，不写包；历史 `MigrateAssets()`、UI 一次性迁移和旧 fileID 修补作者已退役。正常显式缺失资源创建仍保留包只读与未知输出保护；自定义模板留在项目自有目录，见 [UI 资产准备](UI.md#资产准备与迁移)。
+正式 Prefab 与默认 Resources 已随包保存，不在 Editor 启动时重新生成。`UIPanelAssetValidator.ValidateAssets()` 只读核验模板，见 [UI 资产准备](UI.md#资产准备)。自定义模板存放于使用工程自有目录，不修改 PackageCache。
 
-Core 设置根仍为 `ProjectSettings/YLFramework/Core`。类型与文件归位不意味着可以任意更换当前设置路径、生成存储根或窗口持久身份；[Buff 当前设置](Domain.md#buff-当前设置)只访问实际当前类型全名文件，一次性旧路径迁移已退役。链接、类型不匹配及未知输出保护保留，不扫描/接管外部设置。
+显式创建默认资源时仍须保护只读包、未知输出和已经存在的内容。样例导入后也是工程自有副本；检查重复程序集与自己的改动后再更新。缺失脚本未补齐时不要保存场景。
 
-生成器修改源模板与输入，再验证正式输出和消费者，不直接修补生成代码。需要预览或导出时不自动保存用户场景，不认领未知输出或冻结基座。
+工作簿、StreamingAssets、Resource 快照、HybridCLR 基座均由使用工程拥有。预览、导出、包更新或卸载不自动认领、覆盖或清理这些输出。SDK/native/AOT/裁剪输入变化需要新的匹配基座，不能直接覆盖冻结产物。
 
-## Editor namespace 迁移
+## 公共支撑
 
-旧 `YLFramework.Editor.Utilities` 中的公共支撑与领域策略已按所有者归位：
-
-| 类型 / 职责 | 当前归属 |
+| 职责 | 目录与 namespace |
 | --- | --- |
-| AssetNameTools、EditorAssetTool、SerializedObject / SerializedProperty 扩展、HandlesExtensions、设置基类、TreeView、SplitWindow | `Editor/Common`，namespace `YLFramework.Editor.Common` |
-| ClearLog、OpenFolder | `Editor/Tools`，namespace `YLFramework.Editor.Tools` |
-| ScriptableObjectExtensions | `Editor/Core`，namespace `YLFramework.Editor.Core` |
-| DomainAssetOwnership | Gameplay包`Editor/Shared`，namespace `YLFramework.Editor.Domain`，内部归属`YLFramework.Gameplay.Editor` |
+| AssetNameTools、EditorAssetTool、属性扩展、Handles、设置基类、TreeView、SplitWindow | `Editor/Common`，`YLFramework.Editor.Common` |
+| ClearLog、OpenFolder 等独立命令 | `Editor/Tools`，`YLFramework.Editor.Tools` |
+| Core 默认资源、Module 生成、ScriptableObject 创建 | `Editor/Core`，`YLFramework.Editor.Core` |
+| Gameplay 资产所有权与领域共享作者策略 | Gameplay 包 `Editor/Shared`，`YLFramework.Editor.Domain` |
 
-外部源码更新 using、全限定名和反射字符串，不依赖旧 namespace 包装或 CLR 别名。SplitWindow、TreeViewStateGroup、TreeViewStateInfo 与 HelpWindow 使用当前类型/字段保存状态，旧类型和字段 reader 已退役；不提供旧 `Type.GetType` 字符串解析，不扫描、清空或声称自动转换用户 Library/layout。已有自有状态须在仍理解旧格式的版本保存并实际验证后再升级。
+菜单归功能所有者；存在 `MenuItem` 不意味着应移入通用 Tools。作者写入、调试、帮助浏览与发行导出是不同副作用，应在入口上区分。
 
-脚本 GUID 与无关字段保持；迁移用 Unity 实际保存的旧资产检查引用、重导入和持久状态，不用改名后伪造的旧 YAML 代替。
+## 相关文档
 
-## 工具入口
+- [资源工作台与构建](Resource/Authoring.md)
+- [帮助注册与 XML](Help.md)
+- [选装能力与所属手册](../README.md#选装能力)
+- [安装与项目数据](../Installation.md#样例与项目数据)
 
-资源构建与发布见 [Resource](Resource.md)，配置作者流程见 [Data](Data.md)，领域窗口见 [Domain](Domain.md)。帮助提供方、XML 与扩展见 [Help](Help.md)，UPM 安装及消费方边界见 [安装与分发](../README.md#安装与分发)。隐藏的 `Documentation~` 按已解析包的实际文件系统路径打开，不能通过 AssetDatabase 查找。
-
-菜单归模块所有者；存在 MenuItem 不等于应进入通用 Tools。作者操作、调试窗口、帮助浏览与发行导出不能混为同一种副作用。
+`Documentation~` 必须从已解析包的真实文件系统路径打开，不能经 AssetDatabase 查找，也不固定 PackageCache 的哈希目录。

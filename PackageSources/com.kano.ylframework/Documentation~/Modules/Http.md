@@ -55,12 +55,15 @@ else
 
 完成观察时响应快照和 `Status` 已提交，但基类 `IsDone` 与完成通知要等释放后才更新。应用完成逻辑应通过请求的完成订阅或协程等待读取快照。
 
-## 与异步基类的区别
+## 完成订阅
 
-[`CustomAsyncOperation<T>`](../../Runtime/Foundation/Async/CustomAsyncOperation.cs) 只提供 `IsDone`、`Progress`、`Error`、协程等待与同步完成通知，不自动启动工作或切换线程。
+请求继承 [`CustomAsyncOperation<T>`](Async.md#自定义可等待请求)，可用协程等待，也可用同步完成订阅。
 
-- `AddCompleteEvent` 在请求已结束时立即同步调用新增订阅；异常仍会传给注册者。常规通知按注册顺序同步执行，基类不逐个隔离回调异常。需要解绑时保存同一委托并配对调用 `RemoveCompleteEvent`；不再提供旧 `Completed` 事件。
-- 派生类使用 `Complete` 或 `CompleteWithoutNotify`。基类重复完成仍可更新 Error，基类 Abort 不天然拥有稳定终态或实际生产者取消权。
+- `AddCompleteEvent` 在请求已结束时立即同步调用新增订阅；异常会传给注册者。常规通知按注册顺序执行，不逐个隔离回调异常。需要解绑时保存同一委托并配对调用 `RemoveCompleteEvent`。
+- 订阅不会自动移除；局部 owner 退出只清自己的委托，不调用请求的 `RemoveAllCompleteEvent` 清其他消费者。
+- `IsDone` 不代表成功，以本请求的 `Status` 与响应快照为准。HTTP 自行保证稳定终态与独占传输取消，不把基类 Abort 当作统一取消协议。
 - HTTP 自管终态与独占传输；View/Panel、Audio、Resource 的取消、租约和共享生产者遵循各自合同，不由这个基类统一接管。
 
-HTTP 不接管文件日志；应用需要时显式启用 [Logging](Domain.md#logging)。
+`PostBody` 有字典和字符串两个重载；直接传 null 时须显式指定类型，例如 `(string)null` 或 `(Dictionary<string, object>)null`。字符串 null 是参数错误，字典 null 则发送 JSON null。
+
+HTTP 不接管文件日志；应用需要时显式启用 [Logging](Logging.md)。

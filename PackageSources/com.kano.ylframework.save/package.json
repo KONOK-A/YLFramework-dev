@@ -8,6 +8,6 @@
   "license": "MIT",
   "author": { "name": "Kano" },
   "repository": { "type": "git", "url": "https://github.com/KONOK-A/YLFramework-dev.git", "directory": "PackageSources/com.kano.ylframework.save" },
-  "files": ["package.json", "package.json.meta", "README.md", "README.md.meta", "LICENSE.md", "LICENSE.md.meta", "Runtime", "Runtime.meta"],
+  "files": ["package.json", "package.json.meta", "README.md", "README.md.meta", "LICENSE.md", "LICENSE.md.meta", "Runtime", "Runtime.meta", "Documentation~"],
   "dependencies": { "com.unity.nuget.newtonsoft-json": "3.2.1" }
 }

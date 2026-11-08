@@ -9,7 +9,7 @@
 ## 位置
 
 - 运行时：[`Runtime/Foundation/Binding/`](../../Runtime/Foundation/Binding/)
-- namespace 保持 `YLFramework.Binding`，程序集为 `YLFramework.Runtime`。依赖的事件与池分别使用 `YLFramework.Events` / `YLFramework.Pooling`，不因共用 Runtime 反向依赖 Core 或 Systems。
+- namespace 为 `YLFramework.Binding`，程序集为 `YLFramework.Runtime`。带 asmdef 的业务程序集引用 Runtime 即可，无需 Root 或 Module；通知与复用分别使用 [Events](Events.md) 与 [Pool](Pool.md)。
 
 ## 主要功能
 
@@ -64,12 +64,8 @@ using (items.BeginBatchScope())
 
 ## 依赖
 
-- `Events`：变更回调基于 `EasyEvent` / `IUnregister`；可用 `UnregisterWhenGameObjectDestroyed` 等扩展绑定生命周期。
-- `Pool`：`BindableProperty<T>.Allocate/Recycle` 与事件复用。
-
-## 测试入口
-
-`Tests/EditMode/Foundation/Binding/BindingContractTests.cs` 检查绑定契约；`Tests/EditMode/Foundation/FoundationBoundaryTests.cs` 检查 Foundation 源码依赖边界。两者是回归入口，不表示当前环境已执行通过。
+- [Events](Events.md)：变更回调基于 `EasyEvent` / `IUnregister`；可用 `UnregisterWhenGameObjectDestroyed` 等扩展绑定生命周期。
+- [Pool](Pool.md)：`BindableProperty<T>.Allocate/Recycle` 与事件复用。
 
 ## 已知限制
 
@@ -80,4 +76,5 @@ using (items.BeginBatchScope())
 - 派生属性仅支持单源 `Map`，不支持 Where/Merge/CombineLatest/Throttle 等响应式操作符；多源组合需自行用 `Register` 组装并管理注销。
 - 同一个属性在自身回调里再次赋值会导致嵌套分发，后置 listener 可能“先收到新值、再收到外层旧值”；需要严格顺序时应避免在回调里修改同一属性。
 - `Map` 的 selector 在后续源变化时抛异常会向上传播，订阅保留，派生值保持上一次成功结果；恢复后继续更新。
+- `RegisterWithInitValue` 的初始回调期间触发的变化不会交付给尚未注册的本次 listener；需要避免丢失这段变化时，应调整初始化与订阅顺序，而不是将它视作原子读取加注册。
 - 非线程安全；涉及 UnityEvent / Prefs 的操作应在 Unity 主线程调用。
