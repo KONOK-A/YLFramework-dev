@@ -55,7 +55,7 @@ namespace YLFramework.Pooling
             get; private set;
         }
 
-        /// <summary>空闲队列的只读快照；修改快照不影响池，热路径请使用 Count。</summary>
+        /// <summary>存活空闲队列的只读快照；扫描并分配快照，不用于热路径。</summary>
         public IReadOnlyCollection<GameObject> PoolQueue
         {
             get
@@ -65,7 +65,7 @@ namespace YLFramework.Pooling
             }
         }
 
-        /// <summary>存活的空闲数量，不包括借出和转换期实例。</summary>
+        /// <summary>扫描后返回精确存活的空闲数量，不包括借出和转换期实例。</summary>
         public int Count
         {
             get
@@ -210,12 +210,22 @@ namespace YLFramework.Pooling
                     throw new ObjectDisposedException(nameof(GameObjectPoolData));
                 }
             }
-            catch
+            catch (Exception error)
             {
-                OnRecycle();
-                if (root)
+                try
                 {
-                    Object.Destroy(root);
+                    OnRecycle();
+                }
+                catch (Exception cleanup)
+                {
+                    throw new AggregateException(error, cleanup);
+                }
+                finally
+                {
+                    if (root)
+                    {
+                        Object.Destroy(root);
+                    }
                 }
 
                 throw;
@@ -234,7 +244,7 @@ namespace YLFramework.Pooling
         /// <summary>从空闲队列剔除已销毁实例，保留其余实例的 FIFO 顺序。</summary>
         private void PruneDestroyed()
         {
-            // 不新增扫描宿主；在计数、归还、分配及容量操作时惰性剔除 fake-null。
+            // 精确查询/容量压力下才全扫，正常借出沿出队跳过 fake-null。
             var count = _queue.Count;
             for (var i = 0; i < count; i++)
             {
@@ -248,6 +258,16 @@ namespace YLFramework.Pooling
                     entry.State = State.Retired;
                 }
             }
+        }
+
+        private bool HasRoom(int target)
+        {
+            int limit = _maxCapacity < 0 ? target : Math.Min(target, _maxCapacity);
+            if (_queue.Count >= limit)
+            {
+                PruneDestroyed();
+            }
+            return _queue.Count < limit;
         }
 
         /// <summary>永久标记实例后停用并请求延迟销毁，即使停用失败也尝试销毁，不允许重复处理。</summary>
@@ -344,7 +364,7 @@ namespace YLFramework.Pooling
                 _entries.Add(obj, entry);
             }
 
-            var willCache = IsLive(lifetime) && Count < target && (_maxCapacity == -1 || Count < _maxCapacity);
+            var willCache = IsLive(lifetime) && HasRoom(target);
             entry.State = State.Returning;
             try
             {
@@ -358,8 +378,7 @@ namespace YLFramework.Pooling
                     }
                 }
                 if (willCache && obj && IsLive(lifetime) && !obj.activeSelf &&
-                    obj.transform.parent == RootTransform && Count < target &&
-                    (_maxCapacity == -1 || Count < _maxCapacity))
+                    obj.transform.parent == RootTransform && HasRoom(target))
                 {
                     entry.State = State.Idle;
                     _queue.Enqueue(obj);
@@ -409,7 +428,6 @@ namespace YLFramework.Pooling
                 throw new ArgumentException("借出对象的目标场景必须仍然有效。", nameof(targetScene));
             }
 
-            PruneDestroyed();
             while (_queue.Count > 0)
             {
                 var obj = _queue.Dequeue();
@@ -465,11 +483,15 @@ namespace YLFramework.Pooling
         {
             var lifetime = _lifetime;
             var missing = Math.Max(0, target - Count);
-            for (var i = 0; i < missing && Count < target; i++)
+            for (var i = 0; i < missing; i++)
             {
                 if (!IsLive(lifetime))
                 {
                     throw new ObjectDisposedException(nameof(GameObjectPoolData));
+                }
+                if (!HasRoom(target))
+                {
+                    break;
                 }
                 // 在失活缓存根下创建，预热不触发 active Prefab 的 OnEnable。
                 var obj = Object.Instantiate(prefab, RootTransform, false);

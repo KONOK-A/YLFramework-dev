@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using NUnit.Framework;
 using YLFramework.Pooling;
@@ -936,6 +937,102 @@ namespace YLFramework.Foundation.Tests
             Assert.That(reset, Is.EqualTo(new[] { first, first, first, second, third }));
             Assert.That(discarded, Is.EqualTo(new[] { first, second, third }));
             Assert.That(pool.CurStoreCount, Is.Zero);
+        }
+
+        private static ObjectPool<object> RetainingPool(Action<object> reset, Action<object> discard, Func<object, bool> canRetain)
+        {
+            var constructor = typeof(ObjectPool<object>).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic,
+                null, new[] { typeof(Func<object>), typeof(Action<object>), typeof(Action<object>), typeof(Action<object>),
+                    typeof(int), typeof(PoolCacheOrder), typeof(Func<object, bool>) }, null);
+            Assert.That(constructor, Is.Not.Null, "Collections need a narrow internal retention decision, not a public strategy API.");
+            return (ObjectPool<object>)constructor.Invoke(new object[] { (Func<object>)(() => new object()), null, reset,
+                discard, 20, PoolCacheOrder.Fifo, canRetain });
+        }
+
+        [TestCase(PoolPrewarmMode.Raw)]
+        [TestCase(PoolPrewarmMode.Recycle)]
+        public void RetentionVetoCannotBeBypassedByEitherPrewarmMode(PoolPrewarmMode mode)
+        {
+            int resets = 0;
+            int discarded = 0;
+            int checkedItems = 0;
+            using var pool = RetainingPool(_ => resets++, _ => discarded++, _ => { checkedItems++; return false; });
+            Assert.That(pool.Prewarm(2, mode), Is.Zero);
+            Assert.That(checkedItems, Is.EqualTo(2));
+            Assert.That(discarded, Is.EqualTo(2));
+            Assert.That(resets, Is.EqualTo(mode == PoolPrewarmMode.Raw ? 0 : 2));
+            Assert.That(pool.CurStoreCount, Is.Zero);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RetentionVetoOrFailureConsumesTheBorrowAfterReset(bool fails)
+        {
+            int resets = 0;
+            int discarded = 0;
+            var root = new InvalidOperationException("retention");
+            using var pool = RetainingPool(_ => resets++, _ => discarded++, _ =>
+            {
+                Assert.That(resets, Is.EqualTo(1));
+                if (fails)
+                {
+                    throw root;
+                }
+                return false;
+            });
+            var item = pool.Allocate();
+            if (fails)
+            {
+                Assert.That(Assert.Throws<InvalidOperationException>(() => pool.Recycle(item)), Is.SameAs(root));
+            }
+            else
+            {
+                Assert.That(pool.Recycle(item), Is.False);
+            }
+            Assert.That(pool.Recycle(item), Is.False);
+            pool.Discard(item);
+            Assert.That(resets, Is.EqualTo(1));
+            Assert.That(discarded, Is.EqualTo(1));
+            Assert.That(pool.CurStoreCount, Is.Zero);
+        }
+
+        [TestCase("dispose")]
+        [TestCase("capacity")]
+        [TestCase("session")]
+        public void RetentionReentryRechecksTheActualCacheBoundary(string boundary)
+        {
+            ObjectPool<object> pool = null;
+            object peer = null;
+            bool entered = false;
+            pool = RetainingPool(null, null, _ =>
+            {
+                if (!entered)
+                {
+                    entered = true;
+                    if (boundary == "dispose")
+                    {
+                        pool.Dispose();
+                    }
+                    else if (boundary == "capacity")
+                    {
+                        pool.MaxPoolSize = 1;
+                        pool.Recycle(peer);
+                    }
+                    else
+                    {
+                        pool.GetType().GetMethod("ResetSession", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(pool, null);
+                    }
+                }
+                return true;
+            });
+            using (pool)
+            {
+                var first = pool.Allocate();
+                peer = pool.Allocate();
+                Assert.That(pool.Recycle(first), Is.False);
+                Assert.That(pool.CurStoreCount, Is.EqualTo(boundary == "capacity" ? 1 : 0));
+                pool.Discard(peer);
+            }
         }
 
         [Test]

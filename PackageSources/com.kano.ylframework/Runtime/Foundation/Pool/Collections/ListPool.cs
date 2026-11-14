@@ -6,20 +6,21 @@ namespace YLFramework.Pooling
 {
     /// <summary>
     /// List&lt;T&gt; 的静态对象池。
-    /// 回收时只清空元素、保留容量；池为空时按请求容量创建新列表。
+    /// 回收时清空元素，仅保留实际容量在配置上限内的列表。
     /// 非线程安全，只接受从本池取得的列表。
     /// </summary>
     /// <typeparam name="T">列表元素类型。</typeparam>
     public static class ListPool<T>
     {
-        private static int _createCapacity;
+        private static int _maxRetainedCapacity = 4096;
         private static readonly ObjectPool<List<T>> _pool = new(
-            Create, reset: list => list.Clear(), cacheOrder: PoolCacheOrder.Lifo);
+            Create, onAllocate: null, reset: list => list.Clear(), onDiscard: null,
+            maxPoolSize: 20, cacheOrder: PoolCacheOrder.Lifo, canRetain: CanRetain);
 
         /// <summary>登记会话清理，进入新运行会话时丢弃旧的空闲列表缓存。</summary>
         static ListPool()
         {
-            SingletonSessionState.RegisterSessionReset(Clear);
+            SingletonSessionState.RegisterSessionReset(_pool.ResetSession);
         }
 
         /// <summary>
@@ -29,6 +30,28 @@ namespace YLFramework.Pooling
         {
             get => _pool.MaxPoolSize;
             set => _pool.MaxPoolSize = value;
+        }
+
+        /// <summary>
+        /// 可保留的实际槽位上限，默认4096；-1不限，0仅保留零容量列表。
+        /// 降低阈值清空当前闲置缓存，不影响已借出对象；不是精确字节预算。
+        /// </summary>
+        public static int MaxRetainedCapacity
+        {
+            get => _maxRetainedCapacity;
+            set
+            {
+                if (value < -1)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
+                var previous = _maxRetainedCapacity;
+                _maxRetainedCapacity = value;
+                if (value >= 0 && (previous < 0 || value < previous))
+                {
+                    _pool.Clear();
+                }
+            }
         }
 
         /// <summary>
@@ -44,24 +67,31 @@ namespace YLFramework.Pooling
         /// </summary>
         /// <param name="capacity">期望的最小容量。</param>
         /// <exception cref="ArgumentOutOfRangeException">capacity 为负数。</exception>
-        public static List<T> Allocate(int capacity)
+        public static List<T> Allocate(int capacity) => Allocate(capacity, false, out _);
+
+        /// <summary>作用域借用并保证最小容量，必须通过返回的租约结束，不能裸引用归还。</summary>
+        public static PoolLease<List<T>> Rent(out List<T> list, int capacity = 8)
+        {
+            list = Allocate(capacity, true, out var rental);
+            return rental;
+        }
+
+        private static List<T> Allocate(int capacity, bool scoped, out PoolLease<List<T>> rental)
         {
             if (capacity < 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(capacity));
             }
 
-            // 稳定工厂只在冷创建时读取容量，避免每次租用创建捕获闭包。
-            var previousCapacity = _createCapacity;
+            rental = default;
             List<T> list;
-            _createCapacity = capacity;
-            try
+            if (scoped)
+            {
+                rental = _pool.Rent(out list);
+            }
+            else
             {
                 list = _pool.Allocate();
-            }
-            finally
-            {
-                _createCapacity = previousCapacity;
             }
 
             try
@@ -72,9 +102,20 @@ namespace YLFramework.Pooling
                 }
                 return list;
             }
-            catch
+            catch (Exception error)
             {
-                _pool.Discard(list);
+                try
+                {
+                    if (scoped)
+                    {
+                        rental.Discard();
+                    }
+                    else
+                    {
+                        _pool.Discard(list);
+                    }
+                }
+                catch (Exception cleanup) { throw new AggregateException(error, cleanup); }
                 throw;
             }
         }
@@ -98,8 +139,9 @@ namespace YLFramework.Pooling
             _pool.Clear();
         }
 
-        /// <summary>按当前租用请求的容量冷创建列表，供固定工厂复用。</summary>
-        private static List<T> Create() => new(_createCapacity);
+        private static List<T> Create() => new();
+
+        private static bool CanRetain(List<T> list) => _maxRetainedCapacity < 0 || list.Capacity <= _maxRetainedCapacity;
     }
 
     /// <summary>

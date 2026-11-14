@@ -638,7 +638,9 @@ namespace YLFramework.Buff
             _depth++;
             try
             {
-                foreach (var host in _hosts.ToArray())
+                using var hostsRental = ListPool<IAddableBuff>.Rent(out var hosts, _hosts.Count);
+                hosts.AddRange(_hosts);
+                foreach (var host in hosts)
                 {
                     if (host is UnityEngine.Object obj && !obj)
                     {
@@ -650,8 +652,9 @@ namespace YLFramework.Buff
                         continue;
                     }
 
-                    var snapshot = new List<(BuffBase buff, int version)>();
-                    foreach (var buff in host.Buffs)
+                    var buffs = host.Buffs;
+                    using var snapshotRental = ListPool<(BuffBase buff, int version)>.Rent(out var snapshot, buffs.Count);
+                    foreach (var buff in buffs)
                     {
                         snapshot.Add((buff, buff.Version));
                     }

@@ -60,7 +60,36 @@ finally
 
 工厂可以返回接口实现，也可以显式使用 `new ObjectPool<object>(() => MultiObjectFactory.Create(type, constructorArgs))` 创建动态类型。非公开构造可用 `var factory = new NonPublicObjectFactory<MyClass>();`，再传 `factory.Create` 或 `SetObjectFactory(factory)`。这些反射创建工具位于同一 Runtime 的 Foundation；Core 可直接配置自己的显式委托，不新增程序集依赖。IL2CPP/裁剪环境由调用方保留所需构造信息，本专题没有 AOT 自动注册机制。
 
+Unity2022 LTS与IL2CPP属于实际支持目标，不因日常开发优先当前版本而排除。兼容检查按包声明的最低版本和实际后端执行；当前覆盖2022.3.62f3与6000.3.27f1的Windows x64 Mono/IL2CPP构建运行。泛型租约、集合与实际Skill/Buff复用路径不依赖运行时Emit；只靠反射可达的业务类型仍需显式保留，不能将默认裁剪检查扩大成任意High裁剪/任意平台保证。
+
 构造内核时第二个参数是 `onAllocate`，reset 应使用命名参数 `reset:`。涉及借用初始化、资源取得及失败清理时，配置取得/reset/永久丢弃钩子，不把资源销毁寄托于丢引用。
+
+## 作用域租约
+
+`ObjectPool<T>.Rent(out T)` 与 `SafeObjectPool<T>.Rent(out T)` 返回 `PoolLease<T>`，保留相同工厂和领域钩子：
+
+```csharp
+using var pool = new ObjectPool<List<int>>(() => new List<int>(), reset: items => items.Clear());
+using (var rental = pool.Rent(out var items))
+{
+    try
+    {
+        items.Add(1);
+        // 在作用域内使用，不把 items 保存到字段、回调或异步任务。
+    }
+    catch
+    {
+        rental.Discard(); // 由 owner 判断是否不再适合缓存，仍执行清理。
+        throw;
+    }
+} // 正常 Dispose 尝试缓存；已 Discard 时不重复清理。
+```
+
+- `Dispose()` 正常回收，`Discard()` 清理后永久丢弃；两者消费同一个借用代次。复制件、默认租约、重复及旧代次调用不能结束新借用，失败清理也不重放。
+- 有效租约必须通过租约结束，不能用 `Recycle(item)` 或 `Discard(item)` 绕过代次。租约保留原池，原池关闭后晚结束仍清理但不缓存。
+- 工厂返回 null 时输出 null 和默认租约，它可安全结束，不表示取得了有效对象。代次耗尽不回绕，会隔离该对象并报错。
+- 租约是 readonly struct，不逐次创建租约类实例；转存为 `IDisposable` 会装箱，闭包/异步捕获有各自成本，实际分配以对应环境测量为准。
+- 租约不阻止原始引用逃逸或结束后继续写入，也不提供线程安全，不替代 Action/Audio/Resource 的领域句柄。
 
 ## 生命周期与回收约束
 
@@ -71,16 +100,19 @@ finally
 - 取得/reset 错误保留根因，永久清理仍尽力执行；附加清理错误聚合报告。失败隔离只保证不复用污染对象，不等于领域资源必然释放成功。
 - `Clear` 和缩容先摘除/退休空闲快照，再逐项尝试永久清理，最后聚合异常，不再 reset。Clear 回调中新归还的缓存保留；`Clear(callback)` 的附加快照回调也逐项尝试。
 - `Dispose` 先关闭，禁止取得/预热，不主动清理借出对象。晚归还原池仍清理但不缓存；Safe 新单例拒绝旧池借用，原池 Dispose 不会关闭新单例。
-- 普通池不自动反射清零、不自动 Dispose 对象、不管理 Unity fake-null，不提供并发安全或每租用 token。归还后的原始旧别名无法与重新借出的同一引用区分，调用方不得保留。
+- 普通池不自动反射清零、不自动 Dispose 对象、不管理 Unity fake-null 或提供并发安全。原始 Allocate/Recycle/Discard 没有每租用token，不能识别再次借出后的旧别名；代次保护仅属于Rent租约，不能防止调用方直接误用旧对象引用。
 - 弱键状态不会强制保活失联的借出对象；空闲缓存仍强持对象。热路径有状态查找成本，不承诺零分配或未经测量的性能提升。
 
 ## 容量与会话
 
 - 默认空闲容量为 20，正数限制、非正值不限；不是活动配额。调小立即永久丢弃多余空闲对象。普通默认 FIFO，集合/Action/Audio 显式 LIFO；Audio 的 0=no-cache 是领域策略，不是普通池的 0 语义。
 - `Prewarm(count, mode)` 按目标空闲数补齐，受容量裁剪，最多尝试缺口次创建；返回本次新增缓存数。`Recycle` 模式执行 reset，`Raw` 不执行取得/reset；Safe Raw 仍正确标记空闲。null 跳过、不循环重试；已经成功缓存的对象不因随后失败而自动回滚。
-- 集合归还 Clear 元素，保留 backing capacity；List 保证最小容量，Dictionary 仅冷创建应用请求容量。非法负容量在借用前拒绝，不接纳外部 new 或自定义 comparer 字典。
-- 集合与 Core 参数池在新 Play 会话清空闲缓存，不清借出对象；Safe 关闭原会话池并摘单例。实例池由 owner 清理；Action 自己管理 Shutdown 和延迟队列，不受公共池重置顺序替代。
+- List与Dictionary的Allocate/Rent冷热借用均保证最小容量，非法负参数在借用前拒绝；不接纳外部new或自定义comparer字典。归还先Clear元素，再按实际backing capacity决定保留，超大对象丢弃而不是每次Trim。
+- `MaxRetainedCapacity`按封闭类型共享，List默认4096实际槽位、Dictionary默认8192，-1不限，0仅保留实际容量0，其他负数抛错。字典的请求元素数与实际槽位不同；降低阈值直接清当前闲置缓存，不打断借用。它不是字节预算，特殊大容量/长期存储应由明确owner持有，不为一次借用临时改全局配置。
+- 集合的静态Rent入口示例：`using var rental = ListPool<int>.Rent(out var items, capacity: 32);`；字典同理。作用域内不裸归还，需要永久退出可调用`rental.Discard()`；数量上限与保留容量是两个独立约束。
+- 集合新Play会话清闲置并切换缓存代次，旧借用晚归还仍Clear但不能进入新缓存；公共Clear只清闲置，当前借用仍可正常归还。Core参数池保留自己的会话/Claim合同，Safe关闭原会话池并摘单例。实例池由owner清理；Action自己管理Shutdown和延迟队列，不受公共池重置顺序替代。
 - 无普通池 TTL、自动扫描协程或 Update 宿主。有限容量、显式 Clear/缩容/Dispose 替代固定 scaled-time 淘汰；需要 TTL 的领域按实际时钟/释放需求另行设计。
+- 会话重置逐项尽力执行已登记清理，最后聚合错误；任意失败时执行门禁保持关闭，健康初始化才重新开放。它不替代各领域的退出责任，也不以吞异常继续运行。
 
 ## 领域边界
 
@@ -106,7 +138,7 @@ if (instance != null)
 pool.Clear("Projectile");
 ```
 
-- GO 容量为存活空闲上限：`-1` 无限、`0` 禁缓存、其他负数抛错；不是借出数量配额。缩容立即退休多余空闲对象，FIFO 顺序摘除；fake-null 在计数/归还/取得时惰性剔除，不占容量，没有自动 TTL 或扫描宿主。
+- GO 容量为存活空闲上限：`-1` 无限、`0` 禁缓存、其他负数抛错；不是借出数量配额。缩容立即退休多余空闲对象，FIFO 顺序摘除。正常取得沿出队跳过 fake-null，归还仅在容量/目标压力下全队列修剪；显式精确计数、快照与缩容仍扫描，不引入自动 TTL 或扫描宿主。
 - Prefab 初始化按目标空闲数补齐，受已校验的容量限制；在 inactive 缓存根下 Instantiate，不因预热激活对象，不保存 Prefab 引用。非法 key、负预热数、目标超容量、缺少需要的 Prefab 均在修改桶前抛错。
 - 数组初始化保留“数组长度是目标缓存总量”的行为，但按唯一、存活输入实际处理；null/重复/已空闲实例不占实际接纳名额，也不被误销毁。超出目标的未登记或本桶借出输入会退休销毁。数组的外来归属和非法参数先整体校验；生命周期回调错误不提供全有或全无事务。
 - `Recycle(key, obj)` 可接管未登记的场景实例，拒绝 Prefab 资产、缓存根、池宿主及本桶根祖先。首次接管确定归属；跨 key/宿主抛 `InvalidOperationException` 且不修改对象。`Recycle(obj)` 对已登记对象按原 key 路由，只有首次接管使用 `name`，后续改名不改变身份。
@@ -114,7 +146,7 @@ pool.Clear("Projectile");
 - `Clear/ClearAll` 先摘桶再销毁空闲实例及桶根，不主动销毁借出实例；同 key 重建有新生命周期，旧借出对象晚归还到原宿主/key时只销毁，不能进入新桶。内部退休先于停用/Destroy，拒绝同帧待销毁对象重入。宿主销毁和新 Play 会话关闭旧桶；Data 归还原 Safe owner，不静态转接到新池。
 - GO 的 bool 同样仅表示是否缓存，满池/旧桶晚归还的 false 已消费引用。原始旧别名不区分租用代次，归还后禁止保留引用；失活缓存实例和根不得由外部激活、改层级或挂载其他对象。调用方外部 `Destroy` 的同帧排队状态无法被通用池预知，fake-null 后会剔除。
 - Unity 的 OnEnable/OnDisable 等消息异常由引擎记录，通常不从 SetActive 传播；池维持自己的状态但不承诺自动修复组件业务状态。直接向池传播的 API 异常会隔离/销毁当前实例；批量清理尽力处理后聚合错误。
-- `GameObjectPoolData.RootTransform` 只读，`PoolQueue` 只返回队列快照，`Count` 为热路径计数，`MaxCapacity` 负责校验/缩容。不得直接操作内部 Queue 或用字段反射破坏状态。独立 Data 用 `Init/OnRecycle` 管理根；从 Safe 类型单例借出的 Data 可 `RecycleToCache` 归还原池，私有 Safe 使用者显式归还自己的 owner。
+- `GameObjectPoolData.RootTransform` 只读；`PoolQueue` 扫描存活实例并分配快照，`Count` 扫描后返回精确存活数，均有 O(n) 成本，不应每次借还调用。`MaxCapacity` 负责校验/缩容。不得直接操作内部 Queue 或用字段反射破坏状态。独立 Data 用 `Init/OnRecycle` 管理根；从 Safe 类型单例借出的 Data 可 `RecycleToCache` 归还原池，私有 Safe 使用者显式归还自己的 owner。
 - 数组入口为显式三参数 `InitOneGoData(key, capacity, gameObjects)` 或两参数 `InitOneGoData(key, gameObjects)`；容量/Prefab 入口使用前述命名参数，避免误选重载。
 
 GO 池仅共享 Data 的普通缓存和会话支撑，不用 `ObjectPool<GameObject>` 接纳外部实例或处理 fake-null。GameObject 根和实例的所有权不等于 Prefab/Bundle 租约；正式 Resource 的 InstanceLease/实例缓存独占资产 pin、取消和卸载责任，不能由 Foundation 池代替。

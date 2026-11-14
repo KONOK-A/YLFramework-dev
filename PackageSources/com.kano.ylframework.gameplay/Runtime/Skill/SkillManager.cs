@@ -544,7 +544,9 @@ namespace YLFramework.Skill
             _depth++;
             try
             {
-                foreach (var host in _hosts.ToArray())
+                using var hostsRental = ListPool<IEquippableSkill>.Rent(out var hosts, _hosts.Count);
+                hosts.AddRange(_hosts);
+                foreach (var host in hosts)
                 {
                     if (host is UnityEngine.Object obj && !obj)
                     {
@@ -556,8 +558,9 @@ namespace YLFramework.Skill
                         continue;
                     }
 
-                    var snapshot = new List<(SkillBase skill, int version)>();
-                    foreach (var skill in host.Skills.Values)
+                    var skills = host.Skills;
+                    using var snapshotRental = ListPool<(SkillBase skill, int version)>.Rent(out var snapshot, skills.Count);
+                    foreach (var skill in skills.Values)
                     {
                         snapshot.Add((skill, skill.Version));
                     }

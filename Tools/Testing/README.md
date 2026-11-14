@@ -69,6 +69,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Domain | Quick / Special | Gameplay / RedDots / Logging 逻辑及组合退出会话 |
 | Gameplay | Daily / Special | 最小主包+Gameplay，四领域行为、作者工具与 Player |
 | Equipment | Special | 独立 Equipment 退出钩子与连续 Play |
+| PoolingPlayer | Special | 主包+Gameplay，Windows Mono 的 Release 耗时与 Development 分配事件分开测量，各双进程 |
+| PoolingIL2CPP | Special | 相同池/领域负载，实际Windows x64 IL2CPP Release/Development各双进程；用于2022 LTS与Unity 6支持检查 |
 | Behavior | Quick / Daily / Special | 受控数学、双 FSM、作者交互；Special 为原生窗口输入 |
 | BehaviorPlayer | Special | 当前作者输入、持久 Contact Prefab 与双进程 Mono Player |
 | Overlap / OverlapEditor | Daily | 独立检测/物理与 Detector，预览、Handles、Undo、Prefab |
@@ -103,6 +105,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 - DOTween 用 `-DOTweenArchive` 显式提供批准 Standard SDK，测试工具校验完整归档，在自有宿主部署并设置宏，不读取或改写开发宿主 SDK/宏。普通 Action/Help 不安装此 SDK。
 - 连续 Play / SessionScenes 使用工具拥有、已保存的空场景。只在严格确认 UTF 默认布局和测试尚未开始时准备场景，不自动保存未知或脏场景。
 - Player 探针仅在相应 `YL_*_ACCEPTANCE` 构建符号或专用产品外程序集启用，不能进入普通生产编译图。
+- PoolingPlayer选择Mono，PoolingIL2CPP选择实际IL2CPP；两者使用相同负载。Unity2022 LTS和IL2CPP是实际支持目标，应在对应Editor执行检查，不由当前Mono结果替代，也不等于要求每次小改全平台/全补丁矩阵。Release的 `measurementKind=ReleaseTiming`，分配为 `NotMeasured`；Development的 `measurementKind=DevelopmentAllocationEvents`，先验证空区间、32/8192字节分配分别记录0/1/1次事件，再采集当前线程限定区间的 `GC.Alloc` Count。事件不是字节，Development耗时不当作发行性能。记录输入指纹和逐批值，创建/重置/丢弃、活跃数与校验值必须正确；Destroy请求与含帧等待的完成耗时分列。校准/负载失败保留报告并失败退出，不伪造平台支持或零成本。
 
 需要额外参数和特殊上下文时读取对应模块声明，不把上述条件当作 Skip 白名单。
 
