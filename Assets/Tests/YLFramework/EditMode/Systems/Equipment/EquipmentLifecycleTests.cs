@@ -141,6 +141,29 @@ namespace YLFramework.Tests.Extensions.Equipment
         }
 
         [Test]
+        public void ReusedScriptHasNoPreviousHostOrBusinessCallbacks()
+        {
+            var firstHost = new Host();
+            var first = Create();
+            Equip(firstHost, first);
+            int previousCalls = 0;
+            first.Equipping = () => previousCalls++;
+            Destroy(first);
+            Assert.That(firstHost.Equipments, Is.Empty);
+            var next = Create();
+            Assert.That(next, Is.SameAs(first));
+            Assert.That(next.Equipper, Is.Null);
+            Assert.That(next.Equipping, Is.Null);
+            Assert.That(next.Unequipping, Is.Null);
+            Assert.That(next.Unloading, Is.Null);
+            var nextHost = new Host();
+            Equip(nextHost, next);
+            Assert.That(nextHost.Equipments, Is.EqualTo(new[] { next }));
+            Assert.That(previousCalls, Is.Zero);
+            Destroy(next);
+        }
+
+        [Test]
         public void FactoryAssignsDefinitionBeforeCallbackAndReturnsDetachedInstances()
         {
             var first = Create();

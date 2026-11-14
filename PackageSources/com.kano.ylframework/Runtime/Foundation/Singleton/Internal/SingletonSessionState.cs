@@ -59,7 +59,7 @@ namespace YLFramework.Singletons
         /// <summary>
         /// 注册每次进入 Play 时需要重置的会话状态
         /// </summary>
-        /// <remarks>注册表跨会话保留；重置时同步依次调用，不隔离回调异常。</remarks>
+        /// <remarks>注册表跨会话保留；重置时同步依次尝试，最后聚合回调错误。</remarks>
         public static void RegisterSessionReset(Action reset)
         {
             if (reset == null)
@@ -83,7 +83,7 @@ namespace YLFramework.Singletons
         }
 
         /// <summary>关闭门禁并更换执行会话身份，清理已登记的静态状态后再允许新会话执行。</summary>
-        /// <remarks>任一重置回调抛异常都会中断本次初始化，门禁保持关闭。</remarks>
+        /// <remarks>所有回调均尽力执行；任一失败则聚合报错且门禁保持关闭。</remarks>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetForNewSession()
         {
@@ -98,12 +98,24 @@ namespace YLFramework.Singletons
             Application.quitting -= OnApplicationQuitting;
             Application.quitting += OnApplicationQuitting;
 
+            List<Exception> errors = null;
             lock (_sessionResets)
             {
                 for (var i = 0; i < _sessionResets.Count; i++)
                 {
-                    _sessionResets[i]?.Invoke();
+                    try
+                    {
+                        _sessionResets[i]?.Invoke();
+                    }
+                    catch (Exception error)
+                    {
+                        (errors ??= new List<Exception>()).Add(error);
+                    }
                 }
+            }
+            if (errors != null)
+            {
+                throw new AggregateException(errors);
             }
             _isExecutionStopping = false;
         }

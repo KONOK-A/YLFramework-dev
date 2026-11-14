@@ -75,6 +75,8 @@ Manager 不返回 DataAssets 式的每消费者登记 token。配置登记和移
 
 回调同步执行，异常会中断相应通知链；版本检查识别移除和池复用，不是任意重入隔离保证。批量添加 / 移除逐项执行，中途失败不承诺回滚已成功项。
 
+Skill/Buff的三阶段派发使用独立的作用域集合快照，嵌套派发不共享可写缓冲，退出或异常均归还临时集合。实例仍由领域的版本与最外层延迟队列管理，不能改用通用池租约替代；公开返回给调用方的查询集合不会自动回池。预热后的快照分配与发行耗时分别测量，不承诺业务回调、配置复制或整个Player零GC。
+
 ## Buff 与效果
 
 宿主实现 `IAddableBuff`，持有已初始化的 `List<BuffBase> Buffs`，提供 `CanAdd`、`OnAddBuff`、`OnRemoveBuff`。`BuffManager.AddBuff(host, id, userData)` 使用默认时长，也可明确传入本次 `duration`。

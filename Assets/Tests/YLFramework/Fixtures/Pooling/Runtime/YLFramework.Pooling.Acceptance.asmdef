@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Pooling.Acceptance",
+    "rootNamespace": "YLFramework.Pooling.Acceptance",
+    "references": ["YLFramework.Runtime", "YLFramework.Skill", "YLFramework.Buff"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": ["UNITY_EDITOR || YL_POOLING_ACCEPTANCE"],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

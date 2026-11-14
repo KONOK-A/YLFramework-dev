@@ -429,6 +429,98 @@ namespace YLFramework.Tests
         }
 
         [UnityTest]
+        public IEnumerator DestroyedEntriesAreSkippedInFifoWithoutCountRepair()
+        {
+            foreach (int size in new[] { 1, 32, 512 })
+            {
+                string key = "fifo-" + size;
+                _pool.InitOneGoData(key, size);
+                var items = new GameObject[size];
+                for (int index = 0; index < size; index++)
+                {
+                    items[index] = NewObject();
+                    Assert.That(_pool.Recycle(key, items[index]), Is.True);
+                }
+                Object.Destroy(items[0]);
+                if (size > 1)
+                {
+                    Object.Destroy(items[size / 2]);
+                    Object.Destroy(items[size - 1]);
+                }
+                yield return null;
+                foreach (var item in items)
+                {
+                    if (item)
+                    {
+                        Assert.That(_pool.Allocate(key), Is.SameAs(item));
+                    }
+                }
+                Assert.That(_pool.Allocate(key), Is.Null);
+                Assert.That(_pool.GetCachedCount(key), Is.Zero);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator CapacityPressureReclaimsMiddleDeadSlotBeforeDiscardingLiveReturn()
+        {
+            _pool.InitOneGoData("pressure", 4);
+            var items = new[] { NewObject(), NewObject(), NewObject(), NewObject() };
+            foreach (var item in items)
+            {
+                Assert.That(_pool.Recycle("pressure", item), Is.True);
+            }
+            Object.Destroy(items[1]);
+            yield return null;
+            var replacement = NewObject();
+            Assert.That(_pool.Recycle("pressure", replacement), Is.True);
+            foreach (var item in items)
+            {
+                if (item)
+                {
+                    Assert.That(_pool.Allocate("pressure"), Is.SameAs(item));
+                }
+            }
+            Assert.That(_pool.Allocate("pressure"), Is.SameAs(replacement));
+            Assert.That(_pool.Allocate("pressure"), Is.Null);
+        }
+
+        private sealed class FailedCleanupData : GameObjectPoolData, IOfPool
+        {
+            void IOfPool.OnRecycle()
+            {
+                base.OnRecycle();
+                throw new InvalidOperationException("YL.GO.ExpectedCleanupError");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator FailedCreationPreservesItsCauseWhenDataCleanupAlsoFails()
+        {
+            var owner = SafeObjectPool<GameObjectPoolData>.Instance;
+            var factoryField = typeof(SafeObjectPool<GameObjectPoolData>).GetField("ObjectFactory", BindingFlags.NonPublic | BindingFlags.Instance);
+            var originalFactory = (IObjectFactory<GameObjectPoolData>)factoryField.GetValue(owner);
+            owner.Clear();
+            var probe = _pool.gameObject.AddComponent<GameObjectPoolLifecycleProbe>();
+            try
+            {
+                owner.SetFactoryMethod(() => new FailedCleanupData());
+                probe.ChildrenChanged = () => _pool.Clear("failed-creation");
+                var error = Assert.Throws<AggregateException>(() => _pool.InitOneGoData("failed-creation", 1));
+                Assert.That(error.InnerExceptions, Has.Count.EqualTo(2));
+                Assert.That(error.InnerExceptions[0], Is.TypeOf<ObjectDisposedException>());
+                Assert.That(error.InnerExceptions[1].Message, Is.EqualTo("YL.GO.ExpectedCleanupError"));
+                Assert.That(_pool.GetCachedCount("failed-creation"), Is.Zero);
+            }
+            finally
+            {
+                probe.ChildrenChanged = null;
+                owner.SetObjectFactory(originalFactory);
+            }
+            yield return null;
+            Assert.That(_pool.transform.childCount, Is.Zero);
+        }
+
+        [UnityTest]
         public IEnumerator AllocationCannotPutBorrowedObjectsUnderAnotherCacheRoot()
         {
             var root = NewObject("YL.GO.StandaloneRoot");

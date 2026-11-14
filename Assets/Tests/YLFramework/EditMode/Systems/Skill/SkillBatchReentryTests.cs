@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using NUnit.Framework;
 using YLFramework.Pooling;
 using YLFramework.Skill;
@@ -18,6 +19,8 @@ namespace YLFramework.Tests.Extensions.Domain
         public sealed class Probe : SkillBase
         {
             public Action<Probe> Removed;
+            public Action<Probe> Late;
+            protected internal override void OnLateUpdate() => Late?.Invoke(this);
             protected internal override void OnRemove()
             {
                 var callback = Removed;
@@ -28,7 +31,24 @@ namespace YLFramework.Tests.Extensions.Domain
         private ObjectPool<SkillBase> _pool;
         private bool _isOwned;
         private static readonly BindingFlags _privateStatic = BindingFlags.NonPublic | BindingFlags.Static;
-        private static void Reset(SkillBase skill) => typeof(SkillBase).GetMethod("ClearRuntime", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(skill, null);
+        private static void Reset(SkillBase skill)
+        {
+            typeof(SkillBase).GetMethod("ClearRuntime", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(skill, null);
+            ((Probe)skill).Late = null;
+        }
+
+        private static void Dispatch()
+        {
+            try
+            {
+                typeof(SkillManager).GetMethod("Dispatch", _privateStatic).Invoke(null, new object[] { 2 });
+            }
+            catch (TargetInvocationException error)
+            {
+                ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+                throw;
+            }
+        }
         [SetUp]
         public void Setup()
         {
@@ -111,6 +131,132 @@ namespace YLFramework.Tests.Extensions.Domain
             Assert.Throws<AggregateException>(() => SkillManager.RemoveSkills(host, new[] { 1, 2 }));
             Assert.That(host.Skills, Is.Empty);
             Assert.That(SkillManager.HostCount, Is.Zero);
+        }
+
+        [Test]
+        public void NestedDispatchUsesIndependentSnapshotsAndPreservesBothIterations()
+        {
+            var host = new Host();
+            var first = Attach(host, 1);
+            var second = Attach(host, 2);
+            int firstCalls = 0;
+            int secondCalls = 0;
+            bool nested = false;
+            first.Late = _ =>
+            {
+                firstCalls++;
+                if (!nested)
+                {
+                    nested = true;
+                    Dispatch();
+                }
+            };
+            second.Late = _ => secondCalls++;
+            Dispatch();
+            Assert.That(firstCalls, Is.EqualTo(2));
+            Assert.That(secondCalls, Is.EqualTo(2));
+            Assert.That(host.Skills.Count, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void DispatchReplacementWithSameIdIsNotConsumedByTheOldSnapshot()
+        {
+            var host = new Host();
+            var first = Attach(host, 1);
+            var old = Attach(host, 2);
+            int staleCalls = 0;
+            int currentCalls = 0;
+            Probe replacement = null;
+            old.Late = _ => staleCalls++;
+            first.Late = _ =>
+            {
+                first.Late = null;
+                SkillManager.RemoveSkills(host, 2);
+                Assert.That(_pool.CurStoreCount, Is.Zero, "Return is deferred until the outer dispatcher exits.");
+                replacement = Attach(host, 2);
+                replacement.Late = __ => currentCalls++;
+            };
+            Dispatch();
+            Assert.That(replacement, Is.Not.SameAs(old));
+            Assert.That(staleCalls + currentCalls, Is.Zero);
+            Assert.That(_pool.CurStoreCount, Is.EqualTo(1));
+            Dispatch();
+            Assert.That(currentCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ClosingAnotherHostDoesNotDispatchANewHostFromTheSameSnapshot()
+        {
+            var firstHost = new Host();
+            var oldHost = new Host();
+            var newHost = new Host();
+            var first = Attach(firstHost, 1);
+            var old = Attach(oldHost, 1);
+            Probe next = null;
+            int oldCalls = 0;
+            int newCalls = 0;
+            old.Late = _ => oldCalls++;
+            first.Late = _ =>
+            {
+                first.Late = null;
+                SkillManager.CloseHost(oldHost);
+                next = Attach(newHost, 1);
+                next.Late = __ => newCalls++;
+            };
+            Dispatch();
+            Assert.That(oldHost.Skills, Is.Empty);
+            Assert.That(next, Is.Not.SameAs(old));
+            Assert.That(oldCalls + newCalls, Is.Zero);
+            Dispatch();
+            Assert.That(newCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void DispatchExceptionReturnsSnapshotsWithoutChangingBusinessFailure()
+        {
+            var host = new Host();
+            var first = Attach(host, 1);
+            var second = Attach(host, 2);
+            var hosts = ListPool<IEquippableSkill>.Allocate();
+            var skills = ListPool<(SkillBase skill, int version)>.Allocate();
+            hosts.RecycleToPool();
+            skills.RecycleToPool();
+            var error = new InvalidOperationException("dispatch-marker");
+            first.Late = _ => throw error;
+            Assert.That(Assert.Throws<InvalidOperationException>(Dispatch), Is.SameAs(error));
+            Assert.That(typeof(SkillManager).GetField("_depth", _privateStatic).GetValue(null), Is.EqualTo(0));
+            var returnedHosts = ListPool<IEquippableSkill>.Allocate();
+            var returnedSkills = ListPool<(SkillBase skill, int version)>.Allocate();
+            Assert.That(returnedHosts, Is.SameAs(hosts));
+            Assert.That(returnedSkills, Is.SameAs(skills));
+            returnedHosts.RecycleToPool();
+            returnedSkills.RecycleToPool();
+            first.Late = null;
+            int calls = 0;
+            second.Late = _ => calls++;
+            Dispatch();
+            Assert.That(calls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ShutdownInsideDispatchSkipsPeersAndFlushesOnlyAfterTheCallback()
+        {
+            var host = new Host();
+            var first = Attach(host, 1);
+            var second = Attach(host, 2);
+            int peers = 0;
+            second.Late = _ => peers++;
+            first.Late = _ =>
+            {
+                SkillManager.Shutdown();
+                Assert.That(_pool.CurStoreCount, Is.Zero);
+            };
+            Dispatch();
+            Assert.That(peers, Is.Zero);
+            Assert.That(host.Skills, Is.Empty);
+            Assert.That(SkillManager.HostCount, Is.Zero);
+            Assert.That(first.Releaser, Is.Null);
+            Assert.Throws<ObjectDisposedException>(() => _pool.Allocate());
         }
     }
 }

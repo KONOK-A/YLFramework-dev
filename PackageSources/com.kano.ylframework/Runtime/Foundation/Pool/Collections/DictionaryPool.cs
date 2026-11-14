@@ -6,21 +6,22 @@ namespace YLFramework.Pooling
 {
     /// <summary>
     /// Dictionary&lt;TKey, TValue&gt; 的静态对象池。
-    /// 回收时只清空元素、保留容量。
+    /// 回收时清空元素，仅保留实际容量在配置上限内的字典。
     /// 非线程安全，只接受从本池取得的默认比较器字典。
     /// </summary>
     /// <typeparam name="TKey">键类型。</typeparam>
     /// <typeparam name="TValue">值类型。</typeparam>
     public static class DictionaryPool<TKey, TValue>
     {
-        private static int _createCapacity;
+        private static int _maxRetainedCapacity = 8192;
         private static readonly ObjectPool<Dictionary<TKey, TValue>> _pool = new(
-            Create, reset: dictionary => dictionary.Clear(), cacheOrder: PoolCacheOrder.Lifo);
+            Create, onAllocate: null, reset: dictionary => dictionary.Clear(), onDiscard: null,
+            maxPoolSize: 20, cacheOrder: PoolCacheOrder.Lifo, canRetain: CanRetain);
 
         /// <summary>登记会话清理，进入新运行会话时丢弃旧的空闲字典缓存。</summary>
         static DictionaryPool()
         {
-            SingletonSessionState.RegisterSessionReset(Clear);
+            SingletonSessionState.RegisterSessionReset(_pool.ResetSession);
         }
 
         /// <summary>
@@ -33,6 +34,28 @@ namespace YLFramework.Pooling
         }
 
         /// <summary>
+        /// 可保留的实际槽位上限，默认8192；-1不限，0仅保留零容量字典。
+        /// 降低阈值清空当前闲置缓存；请求元素数与实际槽位数不同，不是字节预算。
+        /// </summary>
+        public static int MaxRetainedCapacity
+        {
+            get => _maxRetainedCapacity;
+            set
+            {
+                if (value < -1)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
+                var previous = _maxRetainedCapacity;
+                _maxRetainedCapacity = value;
+                if (value >= 0 && (previous < 0 || value < previous))
+                {
+                    _pool.Clear();
+                }
+            }
+        }
+
+        /// <summary>
         /// 从池中获取字典。
         /// </summary>
         public static Dictionary<TKey, TValue> Allocate()
@@ -41,28 +64,56 @@ namespace YLFramework.Pooling
         }
 
         /// <summary>
-        /// 从池中获取字典，池为空时按 capacity 预分配容量。
-        /// 注意：池中已有缓存时返回现有字典，不保证容量不小于 capacity。
+        /// 从池中获取字典，冷热取得均保证实际容量不小于 capacity。
         /// </summary>
-        /// <param name="capacity">池为空时的初始容量。</param>
+        /// <param name="capacity">本次借用的最小容量。</param>
         /// <exception cref="ArgumentOutOfRangeException">capacity 为负数。</exception>
-        public static Dictionary<TKey, TValue> Allocate(int capacity)
+        public static Dictionary<TKey, TValue> Allocate(int capacity) => Allocate(capacity, false, out _);
+
+        /// <summary>作用域借用并保证最小容量，必须通过返回的租约结束，不接纳外部比较器。</summary>
+        public static PoolLease<Dictionary<TKey, TValue>> Rent(out Dictionary<TKey, TValue> dictionary, int capacity = 0)
+        {
+            dictionary = Allocate(capacity, true, out var rental);
+            return rental;
+        }
+
+        private static Dictionary<TKey, TValue> Allocate(int capacity, bool scoped, out PoolLease<Dictionary<TKey, TValue>> rental)
         {
             if (capacity < 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(capacity));
             }
 
-            // 请求容量只供稳定工厂冷创建使用，热租不创建捕获闭包或扩容字典。
-            var previousCapacity = _createCapacity;
-            _createCapacity = capacity;
+            rental = default;
+            Dictionary<TKey, TValue> dictionary;
+            if (scoped)
+            {
+                rental = _pool.Rent(out dictionary);
+            }
+            else
+            {
+                dictionary = _pool.Allocate();
+            }
             try
             {
-                return _pool.Allocate();
+                dictionary.EnsureCapacity(capacity);
+                return dictionary;
             }
-            finally
+            catch (Exception error)
             {
-                _createCapacity = previousCapacity;
+                try
+                {
+                    if (scoped)
+                    {
+                        rental.Discard();
+                    }
+                    else
+                    {
+                        _pool.Discard(dictionary);
+                    }
+                }
+                catch (Exception cleanup) { throw new AggregateException(error, cleanup); }
+                throw;
             }
         }
 
@@ -85,8 +136,10 @@ namespace YLFramework.Pooling
             _pool.Clear();
         }
 
-        /// <summary>按当前请求的初始容量冷创建字典，使用默认键比较器。</summary>
-        private static Dictionary<TKey, TValue> Create() => new(_createCapacity);
+        private static Dictionary<TKey, TValue> Create() => new();
+
+        private static bool CanRetain(Dictionary<TKey, TValue> dictionary) =>
+            _maxRetainedCapacity < 0 || dictionary.EnsureCapacity(0) <= _maxRetainedCapacity;
     }
 
     /// <summary>

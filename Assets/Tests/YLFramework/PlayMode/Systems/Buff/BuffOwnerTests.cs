@@ -1,7 +1,12 @@
 using System.Collections.Generic;
+using System;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
 using NUnit.Framework;
 using UnityEngine;
 using YLFramework.Buff;
+using YLFramework.Pooling;
+using Object = UnityEngine.Object;
 
 namespace YLFramework.Tests.Extensions.Domain
 {
@@ -24,6 +29,87 @@ namespace YLFramework.Tests.Extensions.Domain
         [UnityEngine.Scripting.Preserve]
         public sealed class Probe : BuffBase
         {
+            public Action<Probe> Tick;
+            public override void OnLateUpdate() => Tick?.Invoke(this);
+            public override void OnRemove() => Tick = null;
+        }
+
+        private static void Dispatch()
+        {
+            try
+            {
+                typeof(BuffManager).GetMethod("Dispatch", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { 2 });
+            }
+            catch (TargetInvocationException error)
+            {
+                ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+                throw;
+            }
+        }
+
+        [Test, Category("YL.Module.Domain")]
+        public void NestedMutationAndFailurePreserveDispatchSnapshots()
+        {
+            var root = ScriptableObject.CreateInstance<BuffsConfig>();
+            var data = ScriptableObject.CreateInstance<BuffConfigData>();
+            try
+            {
+                root.name = "Domain.Buff.Dispatch";
+                data.id = 100;
+                data.duration = 100;
+                data.buffClassFullName = typeof(Probe).FullName;
+                root.buffs.Add(data);
+                BuffManager.AddConfig(root);
+                var host = new Host();
+                var first = (Probe)BuffManager.AddBuff(host, 100);
+                var peer = (Probe)BuffManager.AddBuff(host, 100);
+                int firstCalls = 0;
+                int peerCalls = 0;
+                bool nested = false;
+                first.Tick = _ => { firstCalls++; if (!nested) { nested = true; Dispatch(); } };
+                peer.Tick = _ => peerCalls++;
+                Dispatch();
+                Assert.That(firstCalls, Is.EqualTo(2));
+                Assert.That(peerCalls, Is.EqualTo(2));
+                Probe replacement = null;
+                int replacementCalls = 0;
+                first.Tick = _ =>
+                {
+                    first.Tick = null;
+                    BuffManager.RemoveBuff(host, peer);
+                    replacement = (Probe)BuffManager.AddBuff(host, 100);
+                    replacement.Tick = __ => replacementCalls++;
+                };
+                Dispatch();
+                Assert.That(replacement, Is.Not.SameAs(peer));
+                Assert.That(peerCalls, Is.EqualTo(2));
+                Assert.That(replacementCalls, Is.Zero);
+                var hosts = ListPool<IAddableBuff>.Allocate();
+                var buffs = ListPool<(BuffBase buff, int version)>.Allocate();
+                hosts.RecycleToPool();
+                buffs.RecycleToPool();
+                var error = new InvalidOperationException("buff-dispatch-marker");
+                first.Tick = _ => throw error;
+                Assert.That(Assert.Throws<InvalidOperationException>(Dispatch), Is.SameAs(error));
+                var returnedHosts = ListPool<IAddableBuff>.Allocate();
+                var returnedBuffs = ListPool<(BuffBase buff, int version)>.Allocate();
+                Assert.That(returnedHosts, Is.SameAs(hosts));
+                Assert.That(returnedBuffs, Is.SameAs(buffs));
+                returnedHosts.RecycleToPool();
+                returnedBuffs.RecycleToPool();
+                first.Tick = _ => BuffManager.Shutdown();
+                Dispatch();
+                Assert.That(replacementCalls, Is.Zero);
+                Assert.That(host.Buffs, Is.Empty);
+                Assert.That(BuffManager.HostCount, Is.Zero);
+                Assert.That(first.Owner, Is.Null);
+            }
+            finally
+            {
+                BuffManager.Shutdown();
+                Object.DestroyImmediate(root);
+                Object.DestroyImmediate(data);
+            }
         }
 
         [Test]

@@ -37,7 +37,8 @@ namespace YLFramework.Testing.EditorFixtures
         }
 
         public static void BuildAndRun(string output, string assetRoot, string expectedRuntime, ResourceRelease release, Action<Scene> populate,
-            string[] extraScriptingDefines = null, bool graphics = false)
+            string[] extraScriptingDefines = null, bool graphics = false,
+            ScriptingImplementation scriptingBackend = ScriptingImplementation.Mono2x, bool developmentBuild = true)
         {
             Assert.That(Application.isBatchMode && !EditorApplication.isPlaying, Is.True);
             string project = Path.GetFullPath(Directory.GetParent(Application.dataPath).FullName);
@@ -98,13 +99,13 @@ namespace YLFramework.Testing.EditorFixtures
                 populate(target);
                 string scene = assetRoot + "/Player.unity";
                 Assert.That(EditorSceneManager.SaveScene(target, scene), Is.True);
-                PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, ScriptingImplementation.Mono2x);
+                PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, scriptingBackend);
                 var build = BuildPipeline.BuildPlayer(new BuildPlayerOptions
                 {
                     scenes = new[] { scene },
                     locationPathName = executable,
                     target = BuildTarget.StandaloneWindows64,
-                    options = BuildOptions.Development,
+                    options = developmentBuild ? BuildOptions.Development : BuildOptions.None,
                     extraScriptingDefines = extraScriptingDefines ?? Array.Empty<string>()
                 });
                 Assert.That(build.summary.result, Is.EqualTo(UnityEditor.Build.Reporting.BuildResult.Succeeded));
@@ -115,8 +116,17 @@ namespace YLFramework.Testing.EditorFixtures
                 Assert.That(EditorSceneManager.OpenScene(Empty, OpenSceneMode.Single).path, Is.EqualTo(Empty));
             }
             string managed = Path.Combine(player, "P_Data/Managed");
-            Assert.That(File.Exists(Path.Combine(managed, expectedRuntime + ".dll")), Is.True);
-            Assert.That(File.Exists(Path.Combine(managed, expectedRuntime + ".Editor.dll")), Is.False);
+            if (scriptingBackend == ScriptingImplementation.Mono2x)
+            {
+                Assert.That(File.Exists(Path.Combine(managed, expectedRuntime + ".dll")), Is.True);
+                Assert.That(File.Exists(Path.Combine(managed, expectedRuntime + ".Editor.dll")), Is.False);
+            }
+            else
+            {
+                Assert.That(scriptingBackend, Is.EqualTo(ScriptingImplementation.IL2CPP));
+                Assert.That(File.Exists(Path.Combine(player, "GameAssembly.dll")), Is.True);
+                Assert.That(Directory.Exists(Path.Combine(player, "P_Data/il2cpp_data")), Is.True);
+            }
             int previousPid = 0;
             for (int run = 1; run <= 2; run++)
             {
@@ -128,12 +138,30 @@ namespace YLFramework.Testing.EditorFixtures
                     WorkingDirectory = player,
                     Arguments = "-batchmode " + (graphics ? "" : "-nographics ") + "-ylFeatureResult \"" + path + "\" -logFile \"" + Path.Combine(player, "player-" + run + ".log") + "\""
                 });
-                if (!process.WaitForExit(90000))
+                bool exited = process.WaitForExit(90000);
+                if (!exited)
                 {
                     process.Kill();
-                    process.WaitForExit(10000);
-                    Assert.Fail("The actual standalone Player timed out; it is not a successful exit.");
+                    Assert.That(process.WaitForExit(10000), Is.True, "The timed out Player did not terminate after cleanup.");
                 }
+                foreach (string extension in new[] { ".json", ".log" })
+                {
+                    string artifact = extension == ".json" ? path : Path.Combine(player, "player-" + run + extension);
+                    if (!File.Exists(artifact))
+                    {
+                        continue;
+                    }
+                    foreach (string check in new[] { artifact, output })
+                    {
+                        for (string cursor = Path.GetFullPath(check); cursor != null; cursor = Path.GetDirectoryName(cursor))
+                        {
+                            Assert.That((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) == 0, Is.True,
+                                "Player evidence cannot be archived through linked paths.");
+                        }
+                    }
+                    File.Copy(artifact, Path.Combine(output, "StandalonePlayer-" + run + extension));
+                }
+                Assert.That(exited, Is.True, "The actual standalone Player timed out; it is not a successful exit.");
                 Assert.That(process.ExitCode, Is.Zero);
                 var report = JsonUtility.FromJson<Report>(File.ReadAllText(path));
                 Assert.That(report.status, Is.EqualTo("Passed"), report.error);
@@ -152,7 +180,6 @@ namespace YLFramework.Testing.EditorFixtures
                 }
                 Assert.That(report.leaseCount, Is.Zero);
                 Assert.That(report.recordCount, Is.Zero);
-                File.Copy(path, Path.Combine(output, "StandalonePlayer-" + run + ".json"));
                 previousPid = process.Id;
             }
         }

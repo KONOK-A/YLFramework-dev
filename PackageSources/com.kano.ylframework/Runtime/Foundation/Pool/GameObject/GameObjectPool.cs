@@ -155,11 +155,18 @@ namespace YLFramework.Pooling
                 _pools.Add(key, data);
                 return data;
             }
-            catch
+            catch (Exception error)
             {
                 if (data != null)
                 {
-                    owner.Discard(data);
+                    try
+                    {
+                        owner.Discard(data);
+                    }
+                    catch (Exception cleanup)
+                    {
+                        throw new AggregateException(error, cleanup);
+                    }
                 }
 
                 throw;

@@ -6,13 +6,13 @@ namespace YLFramework.Pooling
 {
     /// <summary>
     /// 普通引用对象的实例池。沿用工厂、FIFO/LIFO、空闲容量与目标数预热，
-    /// 以引用身份维护借用状态；不提供线程安全、Unity fake-null 或租用代次隔离。
+    /// 以引用身份维护借用状态，Rent 额外隔离租用代次；不提供线程安全或 Unity fake-null。
     /// </summary>
     /// <typeparam name="T">不要求实现领域接口的引用类型。</typeparam>
     public sealed class ObjectPool<T> : IPool<T>, IDisposable where T : class
     {
         /// <summary>记录借用与转换阶段，用于拒绝重复归还和同一对象的回调重入。</summary>
-        private enum State
+        internal enum State
         {
             Allocating,
             Leased,
@@ -21,9 +21,12 @@ namespace YLFramework.Pooling
             Retired
         }
         /// <summary>附着于弱键的状态记录，不反向持有被跟踪对象。</summary>
-        private sealed class Entry
+        internal sealed class Entry
         {
             internal State State;
+            internal ulong Generation;
+            internal ulong Session;
+            internal bool HasLease;
         }
 
         // Entry 不持有键：调用方失联的借出对象不会被身份跟踪强制保活。
@@ -33,9 +36,11 @@ namespace YLFramework.Pooling
         private readonly Action<T> _onAllocate;
         private readonly Action<T> _reset;
         private readonly Action<T> _onDiscard;
+        private readonly Func<T, bool> _canRetain;
         private IObjectFactory<T> _factory;
         private int _maxPoolSize;
         private bool _isDisposed;
+        private ulong _session;
 
         /// <summary>
         /// 创建实例池。工厂必须提供独占的新引用；回收 Reset 清租用数据，
@@ -49,6 +54,12 @@ namespace YLFramework.Pooling
         /// <param name="cacheOrder">空闲对象的分配顺序，只支持 FIFO 或 LIFO。</param>
         public ObjectPool(Func<T> factory, Action<T> onAllocate = null, Action<T> reset = null,
             Action<T> onDiscard = null, int maxPoolSize = 20, PoolCacheOrder cacheOrder = PoolCacheOrder.Fifo)
+            : this(factory, onAllocate, reset, onDiscard, maxPoolSize, cacheOrder, null)
+        {
+        }
+
+        internal ObjectPool(Func<T> factory, Action<T> onAllocate, Action<T> reset,
+            Action<T> onDiscard, int maxPoolSize, PoolCacheOrder cacheOrder, Func<T, bool> canRetain)
         {
             if (cacheOrder != PoolCacheOrder.Fifo && cacheOrder != PoolCacheOrder.Lifo)
             {
@@ -59,6 +70,7 @@ namespace YLFramework.Pooling
             _onAllocate = onAllocate;
             _reset = reset;
             _onDiscard = onDiscard;
+            _canRetain = canRetain;
             _maxPoolSize = maxPoolSize;
             if (cacheOrder == PoolCacheOrder.Fifo)
             {
@@ -135,6 +147,7 @@ namespace YLFramework.Pooling
                 throw new InvalidOperationException($"[Pool] {typeof(T).FullName} 尚未设置对象工厂。");
             }
 
+            var session = _session;
             var item = _factory.Create();
             if (ReferenceEquals(item, null))
             {
@@ -146,7 +159,7 @@ namespace YLFramework.Pooling
                 throw new InvalidOperationException("[Pool] 工厂必须返回本池尚未登记的独占新对象。");
             }
 
-            _entries.Add(item, new Entry { State = State.Allocating });
+            _entries.Add(item, new Entry { State = State.Allocating, Session = session });
             return item;
         }
 
@@ -154,28 +167,49 @@ namespace YLFramework.Pooling
         /// 冷/热取得均先执行取得回调，成功后才交付。工厂返回 null 时返回 null；
         /// 取得失败对象永久隔离，清理追加异常与根因一同报告。
         /// </summary>
-        public T Allocate()
+        public T Allocate() => Allocate(false, out _);
+
+        /// <summary>
+        /// 取得带代次的作用域借用；Dispose 正常回收，Discard 永久丢弃。
+        /// null 工厂结果返回默认租约；原始引用不能绕过租约结束借用。
+        /// </summary>
+        public PoolLease<T> Rent(out T item)
+        {
+            item = Allocate(true, out var entry);
+            return ReferenceEquals(item, null) ? default : new PoolLease<T>(this, item, entry, entry.Generation);
+        }
+
+        private T Allocate(bool lease, out Entry entry)
         {
             ThrowIfDisposed();
+            var session = _session;
             var item = CurStoreCount > 0 ? TakeCached() : Create();
+            entry = null;
             if (ReferenceEquals(item, null))
             {
                 return null;
             }
 
-            _entries.TryGetValue(item, out var entry);
+            _entries.TryGetValue(item, out entry);
             entry.State = State.Allocating;
+            entry.HasLease = false;
+            entry.Session = session;
             try
             {
                 ThrowIfDisposed();
                 _onAllocate?.Invoke(item);
                 ThrowIfDisposed();
+                if (lease)
+                {
+                    entry.Generation = checked(entry.Generation + 1);
+                }
             }
             catch (Exception error)
             {
                 RetireFailed(item, entry, error);
                 throw;
             }
+            entry.HasLease = lease;
             entry.State = State.Leased;
             return item;
         }
@@ -217,13 +251,32 @@ namespace YLFramework.Pooling
             {
                 return false;
             }
+            if (entry.HasLease)
+            {
+                throw new InvalidOperationException("[Pool] 必须通过本次租约结束借用，不能使用原始引用归还。");
+            }
 
-            var willCache = allowCache && !_isDisposed && CurStoreCount < cacheTarget &&
-                (_maxPoolSize <= 0 || CurStoreCount < _maxPoolSize);
+            return Return(item, entry, allowCache, cacheTarget);
+        }
+
+        internal void EndLease(T item, Entry entry, ulong generation, bool allowCache)
+        {
+            if (entry == null || entry.State != State.Leased || !entry.HasLease || entry.Generation != generation)
+            {
+                return;
+            }
+            Return(item, entry, allowCache, int.MaxValue);
+        }
+
+        private bool Return(T item, Entry entry, bool allowCache, int cacheTarget)
+        {
+            var willCache = allowCache && CanCache(entry, cacheTarget);
             entry.State = State.Returning;
+            entry.HasLease = false;
             try
             {
                 _reset?.Invoke(item);
+                willCache = willCache && CanCache(entry, cacheTarget) && (_canRetain?.Invoke(item) ?? true);
             }
             catch (Exception error)
             {
@@ -231,8 +284,7 @@ namespace YLFramework.Pooling
                 throw;
             }
             // 保留初判满池的保守丢弃语义，同时复核嵌套归还/缩容/关闭后的真实上限。
-            if (willCache && !_isDisposed && CurStoreCount < cacheTarget &&
-                (_maxPoolSize <= 0 || CurStoreCount < _maxPoolSize))
+            if (willCache && CanCache(entry, cacheTarget))
             {
                 Cache(item, entry);
                 return true;
@@ -241,6 +293,9 @@ namespace YLFramework.Pooling
             _onDiscard?.Invoke(item);
             return false;
         }
+
+        private bool CanCache(Entry entry, int target) => !_isDisposed && entry.Session == _session &&
+            CurStoreCount < target && (_maxPoolSize <= 0 || CurStoreCount < _maxPoolSize);
 
         /// <summary>先永久隔离失败对象再尝试附属资源清理；清理也失败时合并原始异常。</summary>
         private void RetireFailed(T item, Entry entry, Exception error)
@@ -317,9 +372,12 @@ namespace YLFramework.Pooling
                 }
                 else
                 {
+                    bool retain;
                     try
                     {
                         prepareRaw?.Invoke(item);
+                        ThrowIfDisposed();
+                        retain = CanCache(entry, count) && (_canRetain?.Invoke(item) ?? true);
                         ThrowIfDisposed();
                     }
                     catch (Exception error)
@@ -327,7 +385,7 @@ namespace YLFramework.Pooling
                         RetireFailed(item, entry, error);
                         throw;
                     }
-                    if (CurStoreCount < count && (_maxPoolSize <= 0 || CurStoreCount < _maxPoolSize))
+                    if (retain && CanCache(entry, count))
                     {
                         Cache(item, entry);
                         cached++;
@@ -390,6 +448,14 @@ namespace YLFramework.Pooling
 
         /// <summary>清理空闲快照，并逐项执行附加回调；永久清理与附加回调均尽力完成后汇总异常。</summary>
         public void Clear(Action<T> itemClearCallback) => RetireCached(CurStoreCount, itemClearCallback);
+
+        /// <summary>切换共享缓存会话而不关闭实例；旧借用归还仍清理，但不进入新缓存。</summary>
+        internal void ResetSession()
+        {
+            ThrowIfDisposed();
+            _session = checked(_session + 1);
+            Clear();
+        }
 
         /// <summary>
         /// 先关闭再清空闲缓存，重复关闭无操作；不强制清理借出对象。

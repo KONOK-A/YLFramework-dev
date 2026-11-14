@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using NUnit.Framework;
 using YLFramework.Pooling;
 using YLFramework.Singletons;
@@ -41,6 +42,7 @@ namespace YLFramework.Tests
             DictionaryPool<string, Item>.MaxPoolSize = 20;
             DictionaryPool<string, List<Item>>.MaxPoolSize = 20;
             DictionaryPool<ThrowingKey, List<Item>>.MaxPoolSize = 20;
+            RestoreRetentionLimits();
         }
 
         [TearDown]
@@ -51,6 +53,53 @@ namespace YLFramework.Tests
             DictionaryPool<string, Item>.MaxPoolSize = 20;
             DictionaryPool<string, List<Item>>.MaxPoolSize = 20;
             DictionaryPool<ThrowingKey, List<Item>>.MaxPoolSize = 20;
+            RestoreRetentionLimits();
+        }
+
+        private static void RestoreRetentionLimits()
+        {
+            typeof(ListPool<Item>).GetProperty("MaxRetainedCapacity")?.SetValue(null, 4096);
+            typeof(DictionaryPool<string, Item>).GetProperty("MaxRetainedCapacity")?.SetValue(null, 8192);
+        }
+
+        private static PropertyInfo Retention(Type type)
+        {
+            var property = type.GetProperty("MaxRetainedCapacity");
+            Assert.That(property, Is.Not.Null, "A retained backing-capacity limit is required.");
+            return property;
+        }
+
+        private static object Invoke(MethodInfo method, object[] args)
+        {
+            try
+            {
+                return method.Invoke(null, args);
+            }
+            catch (TargetInvocationException error)
+            {
+                ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+                throw;
+            }
+        }
+
+        private static PoolLease<List<Item>> RentList(out List<Item> items, int capacity = 8)
+        {
+            var method = typeof(ListPool<Item>).GetMethod("Rent");
+            Assert.That(method, Is.Not.Null);
+            var args = new object[] { null, capacity };
+            var lease = (PoolLease<List<Item>>)Invoke(method, args);
+            items = (List<Item>)args[0];
+            return lease;
+        }
+
+        private static PoolLease<Dictionary<string, Item>> RentDictionary(out Dictionary<string, Item> items, int capacity = 0)
+        {
+            var method = typeof(DictionaryPool<string, Item>).GetMethod("Rent");
+            Assert.That(method, Is.Not.Null);
+            var args = new object[] { null, capacity };
+            var lease = (PoolLease<Dictionary<string, Item>>)Invoke(method, args);
+            items = (Dictionary<string, Item>)args[0];
+            return lease;
         }
 
         private static void ClearPools()
@@ -102,12 +151,11 @@ namespace YLFramework.Tests
         }
 
         [Test]
-        public void DictionariesOnlyApplyCapacityOnColdCreationAndReuseLifo()
+        public void DictionariesMeetRequestedCapacityOnColdAndHotRentalAndReuseLifo()
         {
             var first = DictionaryPool<string, Item>.Allocate(64);
             var second = DictionaryPool<string, Item>.Allocate(128);
-            var capacity = second.EnsureCapacity(0);
-            Assert.That(capacity, Is.GreaterThanOrEqualTo(128));
+            Assert.That(second.EnsureCapacity(0), Is.GreaterThanOrEqualTo(128));
             first.Add("first", new Item());
             second.Add("second", new Item());
             first.RecycleToPool();
@@ -116,10 +164,185 @@ namespace YLFramework.Tests
             Assert.That(second, Is.Empty);
             var hot = DictionaryPool<string, Item>.Allocate(256);
             Assert.That(hot, Is.SameAs(second));
-            Assert.That(hot.EnsureCapacity(0), Is.EqualTo(capacity));
+            Assert.That(hot.EnsureCapacity(0), Is.GreaterThanOrEqualTo(256));
             Assert.That(DictionaryPool<string, Item>.Allocate(), Is.SameAs(first));
             hot.RecycleToPool();
             first.RecycleToPool();
+        }
+
+        [Test]
+        public void DefaultsUseActualCapacityAndKeepAStableFourThousandEntryDictionary()
+        {
+            Assert.That(Retention(typeof(ListPool<Item>)).GetValue(null), Is.EqualTo(4096));
+            Assert.That(Retention(typeof(DictionaryPool<string, Item>)).GetValue(null), Is.EqualTo(8192));
+            var dictionary = DictionaryPool<string, Item>.Allocate(4096);
+            Assert.That(dictionary.EnsureCapacity(0), Is.InRange(4096, 8192));
+            dictionary.RecycleToPool();
+            var next = DictionaryPool<string, Item>.Allocate(4096);
+            Assert.That(next, Is.SameAs(dictionary));
+            next.RecycleToPool();
+        }
+
+        [Test]
+        public void ExpandedThenClearedCollectionsAreStillDiscardedByActualCapacity()
+        {
+            var list = ListPool<Item>.Allocate(65536);
+            var dictionary = DictionaryPool<string, Item>.Allocate(65536);
+            list.Add(new Item());
+            dictionary.Add("item", new Item());
+            list.Clear();
+            dictionary.Clear();
+            list.RecycleToPool();
+            dictionary.RecycleToPool();
+            var smallList = ListPool<Item>.Allocate();
+            var smallDictionary = DictionaryPool<string, Item>.Allocate();
+            Assert.That(smallList, Is.Not.SameAs(list));
+            Assert.That(smallDictionary, Is.Not.SameAs(dictionary));
+            smallList.RecycleToPool();
+            smallDictionary.RecycleToPool();
+        }
+
+        [Test]
+        public void LoweringRetentionRetiresIdleButDoesNotInterruptBorrowedObjects()
+        {
+            var list = ListPool<Item>.Allocate(16);
+            var dictionary = DictionaryPool<string, Item>.Allocate(16);
+            list.RecycleToPool();
+            dictionary.RecycleToPool();
+            var listLease = RentList(out var borrowedList, 32);
+            var dictionaryLease = RentDictionary(out var borrowedDictionary, 32);
+            borrowedList.Add(new Item());
+            borrowedDictionary.Add("owned", new Item());
+            Retention(typeof(ListPool<Item>)).SetValue(null, 0);
+            Retention(typeof(DictionaryPool<string, Item>)).SetValue(null, 0);
+            Assert.That(borrowedList.Count, Is.EqualTo(1));
+            Assert.That(borrowedDictionary.Count, Is.EqualTo(1));
+            listLease.Dispose();
+            dictionaryLease.Dispose();
+            Assert.That(borrowedList, Is.Empty);
+            Assert.That(borrowedDictionary, Is.Empty);
+            var emptyList = ListPool<Item>.Allocate(0);
+            var emptyDictionary = DictionaryPool<string, Item>.Allocate(0);
+            Assert.That(emptyList.Capacity, Is.Zero);
+            Assert.That(emptyDictionary.EnsureCapacity(0), Is.Zero);
+            emptyList.RecycleToPool();
+            emptyDictionary.RecycleToPool();
+            Assert.That(ListPool<Item>.Allocate(0), Is.SameAs(emptyList));
+            Assert.That(DictionaryPool<string, Item>.Allocate(0), Is.SameAs(emptyDictionary));
+            emptyList.RecycleToPool();
+            emptyDictionary.RecycleToPool();
+        }
+
+        [Test]
+        public void RetentionUnlimitedKeepsLargeObjectsAndRejectsOtherNegativeLimits()
+        {
+            var listLimit = Retention(typeof(ListPool<Item>));
+            var dictionaryLimit = Retention(typeof(DictionaryPool<string, Item>));
+            Assert.That(Assert.Throws<TargetInvocationException>(() => listLimit.SetValue(null, -2)).InnerException,
+                Is.TypeOf<ArgumentOutOfRangeException>());
+            Assert.That(Assert.Throws<TargetInvocationException>(() => dictionaryLimit.SetValue(null, -2)).InnerException,
+                Is.TypeOf<ArgumentOutOfRangeException>());
+            Assert.That(listLimit.GetValue(null), Is.EqualTo(4096));
+            Assert.That(dictionaryLimit.GetValue(null), Is.EqualTo(8192));
+            listLimit.SetValue(null, -1);
+            dictionaryLimit.SetValue(null, -1);
+            var list = ListPool<Item>.Allocate(65536);
+            var dictionary = DictionaryPool<string, Item>.Allocate(65536);
+            list.RecycleToPool();
+            dictionary.RecycleToPool();
+            Assert.That(ListPool<Item>.Allocate(), Is.SameAs(list));
+            Assert.That(DictionaryPool<string, Item>.Allocate(), Is.SameAs(dictionary));
+            list.RecycleToPool();
+            dictionary.RecycleToPool();
+        }
+
+        [Test]
+        public void CollectionLeasesMeetCapacityAndDoNotAllowBareReturnOrStaleClearing()
+        {
+            var listLease = RentList(out var list, 64);
+            var dictionaryLease = RentDictionary(out var dictionary, 64);
+            var staleList = listLease;
+            var staleDictionary = dictionaryLease;
+            Assert.That(list.Capacity, Is.GreaterThanOrEqualTo(64));
+            Assert.That(dictionary.EnsureCapacity(0), Is.GreaterThanOrEqualTo(64));
+            list.Add(new Item());
+            dictionary.Add("owned", new Item());
+            Assert.Throws<InvalidOperationException>(() => list.RecycleToPool());
+            Assert.Throws<InvalidOperationException>(() => dictionary.RecycleToPool());
+            Assert.That(list.Count, Is.EqualTo(1));
+            Assert.That(dictionary.Count, Is.EqualTo(1));
+            listLease.Dispose();
+            dictionaryLease.Dispose();
+            var nextList = RentList(out var reusedList, 128);
+            var nextDictionary = RentDictionary(out var reusedDictionary, 128);
+            reusedList.Add(new Item());
+            reusedDictionary.Add("next", new Item());
+            staleList.Discard();
+            staleDictionary.Dispose();
+            Assert.That(reusedList, Is.SameAs(list));
+            Assert.That(reusedDictionary, Is.SameAs(dictionary));
+            Assert.That(reusedList.Count, Is.EqualTo(1));
+            Assert.That(reusedDictionary.Count, Is.EqualTo(1));
+            Assert.That(reusedDictionary.EnsureCapacity(0), Is.GreaterThanOrEqualTo(128));
+            nextList.Discard();
+            nextDictionary.Discard();
+            Assert.That(reusedList, Is.Empty);
+            Assert.That(reusedDictionary, Is.Empty);
+        }
+
+        [Test]
+        public void InvalidRentDoesNotConsumeAnIdleCollection()
+        {
+            var list = ListPool<Item>.Allocate();
+            var dictionary = DictionaryPool<string, Item>.Allocate();
+            list.RecycleToPool();
+            dictionary.RecycleToPool();
+            Assert.Throws<ArgumentOutOfRangeException>(() => RentList(out _, -1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => RentDictionary(out _, -1));
+            Assert.That(ListPool<Item>.Allocate(), Is.SameAs(list));
+            Assert.That(DictionaryPool<string, Item>.Allocate(), Is.SameAs(dictionary));
+            list.RecycleToPool();
+            dictionary.RecycleToPool();
+        }
+
+        [Test]
+        public void RegisteredCollectionSessionBoundaryDoesNotCacheOldBorrowers()
+        {
+            var rawList = ListPool<Item>.Allocate();
+            var rawDictionary = DictionaryPool<string, Item>.Allocate();
+            var oldList = RentList(out var oldListValue);
+            var oldDictionary = RentDictionary(out var oldDictionaryValue);
+            var listPool = typeof(ListPool<Item>).GetField("_pool", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            var dictionaryPool = typeof(DictionaryPool<string, Item>).GetField("_pool", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            var state = typeof(ObjectPool<>).Assembly.GetType("YLFramework.Singletons.SingletonSessionState", true);
+            var resets = (List<Action>)state.GetField("_sessionResets", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            int invoked = 0;
+            foreach (var reset in new List<Action>(resets))
+            {
+                if (ReferenceEquals(reset.Target, listPool) || ReferenceEquals(reset.Target, dictionaryPool))
+                {
+                    reset();
+                    invoked++;
+                }
+            }
+            Assert.That(invoked, Is.EqualTo(2));
+            var currentList = RentList(out _);
+            var currentDictionary = RentDictionary(out _);
+            rawList.Add(new Item());
+            oldListValue.Add(new Item());
+            rawDictionary.Add("raw", new Item());
+            oldDictionaryValue.Add("lease", new Item());
+            rawList.RecycleToPool();
+            rawDictionary.RecycleToPool();
+            oldList.Dispose();
+            oldDictionary.Dispose();
+            Assert.That(rawList.Count + oldListValue.Count + rawDictionary.Count + oldDictionaryValue.Count, Is.Zero);
+            Assert.That(((ObjectPool<List<Item>>)listPool).CurStoreCount, Is.Zero);
+            Assert.That(((ObjectPool<Dictionary<string, Item>>)dictionaryPool).CurStoreCount, Is.Zero);
+            currentList.Dispose();
+            currentDictionary.Dispose();
+            Assert.That(((ObjectPool<List<Item>>)listPool).CurStoreCount, Is.EqualTo(1));
+            Assert.That(((ObjectPool<Dictionary<string, Item>>)dictionaryPool).CurStoreCount, Is.EqualTo(1));
         }
 
         [Test]

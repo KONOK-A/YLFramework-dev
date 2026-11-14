@@ -82,6 +82,9 @@ namespace YLFramework.Pooling
         /// <summary>工厂返回 null 时为 false，工厂及回调异常仍传播。</summary>
         public bool TryAllocate(out T item) => _pool.TryAllocate(out item);
 
+        /// <summary>以原内核的代次租约取得对象；结束时保留领域钩子及原池责任。</summary>
+        public PoolLease<T> Rent(out T item) => _pool.Rent(out item);
+
         /// <summary>
         /// 只归还本池借出对象。false 仅表示未缓存，不代表可继续使用或重试；
         /// 外来对象抛错，重复/转换期归还拒绝，失败对象永久隔离。

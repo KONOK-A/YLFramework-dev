@@ -117,6 +117,40 @@ function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minut
 
 try {
     if ($Group -in @('All', 'Workspace')) {
+        Test-Case 'Pooling Player selects the real split-metric cost fixture without leaking probes into products' {
+            . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $entries = @($configuration.modules | Where-Object name -CEQ 'PoolingPlayer')
+            Assert-That ($entries.Count -eq 1) 'Pooling costs have no maintained actual Player selection.'
+            $module = $entries[0]
+            Assert-That (($module.suites -join ',') -ceq 'Special' -and $module.specialBackend -ceq 'PlayerNative' -and
+                $module.specialCategory -ceq 'YL.Special.PoolingPlayer' -and ($module.specialModes -join ',') -ceq 'EditMode') 'Pool measurements require the actual Player backend, not an Editor or offline substitute.'
+            Assert-That ((@(Get-YLUpmPackages -Repository $repoRoot -Ids $module.packageInputs).id -join ',') -ceq
+                'com.kano.ylframework,com.kano.ylframework.gameplay') 'The cost fixture must retain its real Skill/Buff consumers without installing unrelated products.'
+            Assert-That (($module.editTests -join ',') -ceq 'Assets/Tests/YLFramework/Fixtures/Pooling/Editor' -and
+                'Assets/Tests/YLFramework/Fixtures/Pooling' -cin $module.nativeFixtureInputs -and
+                $module.prepareSessionScene -and $module.prepareSceneTemplates) 'Player discovery requires the original probe sources and owned saved empty scene.'
+            $probe = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/Pooling/Runtime/YLFramework.Pooling.Acceptance.asmdef')
+            Assert-That (($probe.references -join ',') -ceq 'YLFramework.Runtime,YLFramework.Skill,YLFramework.Buff' -and
+                -not $probe.autoReferenced -and ($probe.defineConstraints -join ',') -ceq 'UNITY_EDITOR || YL_POOLING_ACCEPTANCE' -and
+                @($probe.precompiledReferences).Count -eq 0) 'Runtime probes cannot enter normal Players or depend on NUnit/Editor.'
+        }
+        Test-Case 'Pooling IL2CPP selects the same workload with its own native acceptance category' {
+            . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $entries = @($configuration.modules | Where-Object name -CEQ 'PoolingIL2CPP')
+            Assert-That ($entries.Count -eq 1) 'The actual IL2CPP support target has no selectable native pool check.'
+            $module = $entries[0]
+            $mono = @($configuration.modules | Where-Object name -CEQ 'PoolingPlayer')[0]
+            Assert-That (($module.suites -join ',') -ceq 'Special' -and $module.specialBackend -ceq 'PlayerNative' -and
+                $module.specialCategory -ceq 'YL.Special.PoolingIL2CPP' -and ($module.specialModes -join ',') -ceq 'EditMode' -and
+                $module.shortHostKey -and $module.graphics -and $module.prepareSessionScene -and $module.prepareSceneTemplates) 'AOT checks must build and execute real owned Players, independently from the Mono selection.'
+            foreach ($field in @('runtimeSources', 'nativeSources', 'nativeFixtureInputs', 'editTests', 'playTests', 'assemblyMetadata', 'packageInputs', 'sampleInputs')) {
+                Assert-That (($module.$field -join ',') -ceq ($mono.$field -join ',')) "IL2CPP changed the workload/package closure: $field"
+            }
+        }
         Test-Case 'HybridCLR Daily selects both original test assemblies and its explicit sample with only the real package closure' {
             . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
