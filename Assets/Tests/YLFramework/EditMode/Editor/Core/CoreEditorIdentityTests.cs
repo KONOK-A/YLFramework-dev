@@ -145,10 +145,13 @@ namespace YLFramework.Core.Editor.Tests
             {
                 foreach (var negative in new[] { true, false })
                 {
-                    var source = "using System.Collections;using System.Collections.Generic;using UnityEngine;using YLFramework.Core;using YLFramework.Audio;using YLFramework.DependencyInjection;class Probe{" +
+                    var source = "using System.Collections;using System.Collections.Generic;using UnityEngine;using YLFramework.Core;using YLFramework.Audio;using YLFramework.DependencyInjection;using YLFramework.Pooling;class Probe{" +
                         (negative
                             ? "[Inject]public static object Bad;[field:Inject]static event System.Action Changed;void Load(Module owner){owner.LoadView<Panel>(\"name\",loadViewArgs:null);}IEnumerator Run(AudioPlayRequest request){yield return request;}"
                             : "[Inject]public object Dependency{get;private set;}[field:Inject]event System.Action Changed;void Load(Module owner){owner.LoadView<View>(\"name\",loadViewArgs:null);owner.LoadPanel<Panel>(\"name\");owner.GetView<Panel>(\"name\");owner.AttachView<Panel>(null);}IEnumerator Run(AudioPlayRequest request){yield return new WaitUntil(()=>request.HasStarted||request.IsDone);yield return new WaitUntil(()=>request.IsDone);}") +
+                        (negative
+                            ? "void Rent(ObjectPool<object> pool,SafeObjectPool<GameObjectPoolData> safe){pool.Rent(out _);_=safe.Rent(out _);ListPool<int>.Rent(out _);DictionaryPool<int,int>.Rent(out _);}"
+                            : "void Rent(ObjectPool<object> pool,SafeObjectPool<GameObjectPoolData> safe){using var a=pool.Rent(out _);using var b=safe.Rent(out _);using var c=ListPool<int>.Rent(out _);using var d=DictionaryPool<int,int>.Rent(out _);}") +
                         "IEnumerable<AudioPlayRequest> Data(AudioPlayRequest request){yield return request;}}" +
                         (negative ? "record Consumer([field:Inject]object Service);" : "record Consumer([property:Inject]object Service);") +
                         "namespace System.Runtime.CompilerServices{public sealed class IsExternalInit{}}";
@@ -181,7 +184,7 @@ namespace YLFramework.Core.Editor.Tests
                     Assert.That(messages.Any(message => message.message.Contains("AD0001") || message.message.Contains("CS8032")), Is.False);
                     var own = messages.Where(message => Regex.IsMatch(message.message, @"\bYL\d{4}\b")).ToArray();
                     Assert.That(own.Select(message => Regex.Match(message.message, @"\bYL\d{4}\b").Value),
-                        Is.EquivalentTo(negative ? new[] { "YL0008", "YL0008", "YL0008", "YL0009", "YL0010" } : Array.Empty<string>()));
+                        Is.EquivalentTo(negative ? new[] { "YL0008", "YL0008", "YL0008", "YL0009", "YL0010", "YL0011", "YL0011", "YL0011", "YL0011" } : Array.Empty<string>()));
                     Assert.That(own.All(message => message.type == CompilerMessageType.Warning), Is.True);
                     Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(output)), Is.True);
                 }

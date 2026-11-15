@@ -51,6 +51,29 @@ namespace YLFramework.Tests.Actions
         }
 
         [Test]
+        public void PoolKeepsMoreThanDefaultTwentyObjectsUnderExplicitUnlimitedPolicy()
+        {
+            int created = 0;
+            int resets = 0;
+            var pool = new ActionPool<object>(() => { created++; return new object(); }, _ => resets++, initCount: 32);
+            var items = new object[32];
+            for (int index = 0; index < items.Length; index++)
+            {
+                items[index] = pool.Allocate();
+            }
+            foreach (var item in items)
+            {
+                Assert.That(pool.Recycle(item), Is.True);
+            }
+            for (int index = items.Length - 1; index >= 0; index--)
+            {
+                Assert.That(pool.Allocate(), Is.SameAs(items[index]));
+            }
+            Assert.That(created, Is.EqualTo(32));
+            Assert.That(resets, Is.EqualTo(32));
+        }
+
+        [Test]
         public void PoolUsesLifoForWarmObjectsAndInterfaceFactories()
         {
             var first = new Callback(() => { });

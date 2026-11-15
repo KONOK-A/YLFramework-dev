@@ -62,7 +62,7 @@ Editor 内可从 `YLFramework/Core/帮助` 阅读规则和接入摘要；`YLFram
 
 六个 marker 位于 [`Runtime/Core/Attributes/`](../../Runtime/Core/Attributes/)，namespace `YLFramework.Core.RoslynAnalyzers`、程序集 `YLFramework.Runtime`，只提供编译元数据，不执行运行时权限检查。
 
-分析器实现和 SDK 测试位于**源码仓库根**的 `Tools/YLFramework.Analyzers/`，不随 UPM 产品包分发。规则目录源文件 [`Editor/Core/Analyzers/AnalyzerRuleCatalog.cs`](../../Editor/Core/Analyzers/AnalyzerRuleCatalog.cs) 随 Editor 交付，并由 SDK 项目链接编译，供诊断实现与设置/帮助共享规则元数据。包内唯一编译器 DLL 为 [`Runtime/Core/Analyzers/YLFramework.Analyzers.dll`](../../Runtime/Core/Analyzers/YLFramework.Analyzers.dll)。十项规则默认启用且均为 **Warning**，项目可按 ID 配置严重级别；分析器不依赖 Unity / Core / Workspaces，默认不分析生成代码，缓存仅限当前 compilation。当前不提供 CodeFix，不通过自动修改所有权、生命周期或不可变设计来消除诊断。
+分析器实现和 SDK 测试位于**源码仓库根**的 `Tools/YLFramework.Analyzers/`，不随 UPM 产品包分发。规则目录源文件 [`Editor/Core/Analyzers/AnalyzerRuleCatalog.cs`](../../Editor/Core/Analyzers/AnalyzerRuleCatalog.cs) 随 Editor 交付，并由 SDK 项目链接编译，供诊断实现与设置/帮助共享规则元数据。包内唯一编译器 DLL 为 [`Runtime/Core/Analyzers/YLFramework.Analyzers.dll`](../../Runtime/Core/Analyzers/YLFramework.Analyzers.dll)。十一项规则默认启用且均为 **Warning**，项目可按 ID 配置严重级别；分析器不依赖 Unity / Core / Workspaces，默认不分析生成代码，缓存仅限当前 compilation。当前不提供 CodeFix，不通过自动修改所有权、生命周期或不可变设计来消除诊断。
 
 | ID | 契约与典型修复 |
 |---|---|
@@ -76,6 +76,7 @@ Editor 内可从 `YLFramework/Core/帮助` 阅读规则和接入摘要；`YLFram
 | <a id="yl0008"></a>YL0008 | 真实 `InjectAttribute`（包括派生特性）用于 static 成员、const/readonly 字段、无 setter 属性或 indexer；改用构造注入、显式 Resolve 或可写实例成员。允许 private setter，不猜容器扫描模式或注册完整性。 |
 | <a id="yl0009"></a>YL0009 | 真实 `Module.LoadView<T>` / `LoadViewAsync<T>` 的 T 确定为 Panel 或其派生/类约束时，改用 `LoadPanel` / `LoadPanelAsync`。覆盖全部现用 LoadViewArgs 泛型入口，不把 Transform parent 自动替换成 UIRootContext root。 |
 | <a id="yl0010"></a>YL0010 | 非泛型 `IEnumerator` 协程直接 `yield return AudioPlayRequest` 不会按 Unity 协议等待请求；显式选择等待开始或结束。普通泛型数据枚举、object 擦除不追踪；自定义调度器可局部抑制。 |
+| <a id="yl0011"></a>YL0011 | 真实框架四种池的 `Rent` 返回租约被表达式语句或 `_ =` 直接丢弃；用 `using var rental = ...`，或显式保存/转移并管理 Dispose/Discard。实际名为 `_` 的变量不是 discard，不推断跨方法释放。 |
 
 ### 错误与正确示例
 
@@ -158,6 +159,14 @@ IEnumerator WaitForEnd(AudioPlayRequest request)
 
 等待开始也检查 IsDone，避免请求失败时一直等不到 HasStarted。循环播放可能永不自然结束；结束后还应区分 `EndReason.Completed` 与失败、取消等终态。不要把等待终结自动替代为等待启播，详见 [Audio 请求状态](Audio/Resources.md#请求状态与取消)。
 
+```csharp
+ListPool<int>.Rent(out var items);             // YL0011：丢失唯一租约凭证
+_ = ListPool<int>.Rent(out var other);         // YL0011：显式 discard 同样丢失
+using var rental = ListPool<int>.Rent(out var owned); // 正常作用域归还
+```
+
+这条诊断不强制所有租约必须使用using：显式保存并Dispose/Discard、返回给明确owner或作为参数交接都允许。它也不因变量名为`_`就判定弃值，以实际C# discard符号为准。见[对象池租约](Pool.md#作用域租约)。
+
 ### 匹配与边界
 
 - marker/View/ObjectPool/Inject/Module/Panel/AudioPlayRequest 必须解析到真实 `YLFramework.Runtime` 的符号；支持主体自身 source compilation 与引用主体的 metadata consumer，短名或同 namespace 的异程序集类型不替代它们。方法 marker 只按真实 AttributeUsage 和 override 链取得，接口只在调用的静态目标本身带标记时生效，不叠加任意实现接口的契约。
@@ -170,6 +179,7 @@ IEnumerator WaitForEnd(AudioPlayRequest request)
 - YL0007 是声明级提示，普通 MonoBehaviour、非 Core 的 View 或伪同名 View、普通 nested helper、static/有参/generic/非 void overload 不报。消息遮蔽可能破坏订阅轮次，使 OnDestroy 的及时关闭延后到兜底扫描；不等于必然永久泄漏，也不改变 Runtime 可见性。
 - YL0008 不检查 init-only **属性**的构造期约束，不推断 private 扫描、容器配置或依赖是否能解析；显式 field-target 按实际字段检查，包括属性/record 参数的 readonly backing field 与 static 事件字段。`[property: Inject]` 的合法可写或 init 属性不等同于 readonly 字段。YL0009 只匹配真实 Module 的两个泛型方法族，同名业务包装方法不是自动受管入口。
 - YL0010 只看 yield 所直接归属方法/局部函数的非泛型 `System.Collections.IEnumerator` 返回类型和表达式原始静态类型，不把外层协程身份套给内部泛型数据迭代器。自定义调度器可自定义对象等待协议，因此这条规则按标准 Unity 协程解释，不推测调用者意图。
+- YL0011只匹配真实ObjectPool/SafeObjectPool/ListPool/DictionaryPool的Rent方法符号与PoolLease返回类型，覆盖void方法/Lambda/local body和for中的直接弃值、内置转换后的discard。合法using、命名变量/成员保存、返回或作为参数传递不报；用户转换可能接管所有权，不展开。不会检查全部执行路径、tuple内弃值或租约/对象逃逸，不等于证明调用方已正确释放。故意失联测试用单ID局部pragma解释，不全局关闭。
 - object/接口擦除、反射/Activator/dynamic、无约束泛型工厂、所有执行路径和跨过程所有权不保证。错误符号交给编译器，不吞异常或把 analyzer failure 当无诊断；这些 Warning 不是运行时安全边界。
 
 ### Unity 接入与配置

@@ -26,7 +26,7 @@ namespace YLFramework.Pooling.Acceptance
         public sealed class Report
         {
             public int schemaVersion = 2;
-            public int workloadVersion = 3;
+            public int workloadVersion = 4;
             public string status;
             public string error;
             public string unityVersion;

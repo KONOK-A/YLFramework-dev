@@ -8,7 +8,7 @@ namespace YLFramework.Actions
     {
         private readonly ObjectPool<T> _pool;
 
-        // LIFO 空闲缓存；每次回收都调用可选重置回调；容量不设上限（MaxPoolSize=0 表示无限）；
+        // LIFO 空闲缓存；每次回收都调用可选重置回调；-1表示不限，保留原Action容量策略。
         // 预热使用 Raw 模式跳过重置回调，因为新建实例无需重置。
         internal ActionPool(Func<T> factory, Action<T> reset = null, int initCount = 0,
             Action<T> onAllocate = null)
@@ -19,7 +19,7 @@ namespace YLFramework.Actions
             }
 
             _pool = new ObjectPool<T>(factory, onAllocate: onAllocate, reset: reset,
-                maxPoolSize: 0, cacheOrder: PoolCacheOrder.Lifo);
+                maxPoolSize: -1, cacheOrder: PoolCacheOrder.Lifo);
             _pool.Prewarm(initCount, PoolPrewarmMode.Raw);
         }
 

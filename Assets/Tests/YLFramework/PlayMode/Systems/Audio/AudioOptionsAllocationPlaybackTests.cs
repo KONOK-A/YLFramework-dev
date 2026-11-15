@@ -62,6 +62,34 @@ namespace YLFramework.Tests.Audio
             public long Ticks;
         }
 
+        private sealed class PendingOwner : IDisposable
+        {
+            internal int Releases;
+            public void Dispose() => Releases++;
+        }
+
+        private sealed class DeferredProvider : IAudioClipProvider
+        {
+            internal int Loads;
+            private Action<AudioClipLease, Exception> _completion;
+            public bool CanCache => true;
+            public AudioClipLease Load(string key) => throw new InvalidOperationException("Only the actual asynchronous entry is exercised.");
+            public void LoadAsync(string key, Action<AudioClipLease, Exception> completed, Action<float> progress)
+            {
+                Loads++;
+                _completion = completed;
+                progress?.Invoke(.4f);
+            }
+            internal PendingOwner Complete(AudioClip clip)
+            {
+                var completion = _completion;
+                _completion = null;
+                var owner = new PendingOwner();
+                completion(new AudioClipLease(clip, owner), null);
+                return owner;
+            }
+        }
+
         private readonly bool[] _hadKeys = new bool[6];
         private readonly int[] _switches = new int[3];
         private readonly float[] _volumes = new float[3];
@@ -499,6 +527,112 @@ namespace YLFramework.Tests.Audio
 
         private static long AllocationEvents(ProfilerRecorder recorder) =>
             recorder.Count == 0 ? 0 : recorder.GetSample(0).Count;
+
+        [UnityTest]
+        public IEnumerator WaitingPendingUpdatesReportCalibratedAllocationAndTiming()
+        {
+            AudioKit.SoundConcurrency = new AudioSoundConcurrency { Limit = 0 };
+            AudioKit.ClipCacheCapacity = 0;
+            var manager = AudioManager.Instance;
+            var method = typeof(AudioManager).GetMethod("Update", BindingFlags.NonPublic | BindingFlags.Instance);
+            var update = (Action)Delegate.CreateDelegate(typeof(Action), manager, method);
+            Stopwatch.GetTimestamp();
+            using (var recorder = ProfilerRecorder.StartNew(ProfilerCategory.Internal, "GC.Alloc", 1, Recording))
+            {
+                recorder.Stop();
+                AllocationEvents(recorder);
+            }
+            Measurement calibration;
+            using (var recorder = ProfilerRecorder.StartNew(ProfilerCategory.Internal, "GC.Alloc", 1, Recording))
+            {
+                _calibrationProbe = new byte[4096];
+                recorder.Stop();
+                calibration = new Measurement { Valid = recorder.Valid, Events = AllocationEvents(recorder) };
+            }
+            Assert.That(calibration.Valid && calibration.Events > 0, Is.True, "Known allocation must be observable.");
+            const int Iterations = 64;
+            const int Samples = 31;
+            var empty = MeasurePendingUpdates(update, Iterations);
+            Assert.That(empty.Valid, Is.True);
+            Assert.That(empty.Events, Is.Zero, "An empty actual manager Update interval must not include harness allocations.");
+            foreach (int count in new[] { 0, 1, 24, 128 })
+            {
+                var provider = new DeferredProvider();
+                var address = new AudioClipAddress(provider, "pending-update-snapshot");
+                var requests = new AudioPlayRequest[count];
+                try
+                {
+                    for (int index = 0; index < count; index++)
+                    {
+                        requests[index] = AudioKit.PlaySoundAsync(address);
+                    }
+                    yield return null;
+                    yield return null;
+                    foreach (var request in requests)
+                    {
+                        Assert.That(request.State, Is.EqualTo(AudioPlayState.Loading));
+                        Assert.That(request.IsDone || request.IsAssetReady, Is.False);
+                    }
+                    Assert.That(provider.Loads, Is.EqualTo(count == 0 ? 0 : 1), "Only provider completion is deferred; requests really share an in-flight load.");
+                    for (int warm = 0; warm < 8; warm++)
+                    {
+                        update();
+                    }
+                    var samples = new Measurement[Samples];
+                    for (int sample = 0; sample < samples.Length; sample++)
+                    {
+                        samples[sample] = MeasurePendingUpdates(update, Iterations);
+                    }
+                    var times = new double[Samples];
+                    for (int sample = 0; sample < samples.Length; sample++)
+                    {
+                        Assert.That(samples[sample].Valid, Is.True);
+                        Assert.That(samples[sample].Events, Is.Zero, "A warmed pending snapshot must not allocate per Update.");
+                        times[sample] = samples[sample].Ticks * 1000000d / Stopwatch.Frequency / Iterations;
+                        TestContext.WriteLine("Audio pending updates: count={0}; sample={1}; updates={2}; events={3}; ticks={4}; units=events-not-bytes; Unity={5}",
+                            count, sample, Iterations, samples[sample].Events, samples[sample].Ticks, Application.unityVersion);
+                    }
+                    Array.Sort(times);
+                    TestContext.WriteLine("Audio pending updates summary: count={0}; median-us/update={1:F3}; p95-us/update={2:F3}; calibrated-events={3}; empty-events={4}",
+                        count, times[Samples / 2], times[(int)Math.Ceiling(Samples * .95) - 1], calibration.Events, empty.Events);
+                    foreach (var request in requests)
+                    {
+                        Assert.That(request.State, Is.EqualTo(AudioPlayState.Loading), "The workload must stay pending throughout sampling.");
+                    }
+                    Assert.That(AudioKit.SoundCount, Is.Zero);
+                }
+                finally
+                {
+                    foreach (var request in requests)
+                    {
+                        request?.Cancel();
+                    }
+                }
+                foreach (var request in requests)
+                {
+                    Assert.That(request.EndReason, Is.EqualTo(AudioPlayEnd.Canceled));
+                }
+                if (count > 0)
+                {
+                    var owner = provider.Complete(_clip);
+                    Assert.That(owner.Releases, Is.EqualTo(1), "Late provider completion must release its original lease exactly once.");
+                    Assert.That(AudioKit.SoundCount, Is.Zero);
+                }
+            }
+        }
+
+        private static Measurement MeasurePendingUpdates(Action update, int iterations)
+        {
+            using var recorder = ProfilerRecorder.StartNew(ProfilerCategory.Internal, "GC.Alloc", 1, Recording);
+            long start = Stopwatch.GetTimestamp();
+            for (int index = 0; index < iterations; index++)
+            {
+                update();
+            }
+            long elapsed = Stopwatch.GetTimestamp() - start;
+            recorder.Stop();
+            return new Measurement { Valid = recorder.Valid, Events = AllocationEvents(recorder), Ticks = elapsed };
+        }
 
         private Measurement Measure(Path path, bool empty = false)
         {

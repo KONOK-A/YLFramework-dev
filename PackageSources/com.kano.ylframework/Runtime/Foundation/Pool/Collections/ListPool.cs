@@ -24,7 +24,7 @@ namespace YLFramework.Pooling
         }
 
         /// <summary>
-        /// 空闲列表数量上限，默认 20；非正值表示不限。
+        /// 空闲列表数量上限，默认20；-1不限，0禁缓存，其他负值非法。
         /// </summary>
         public static int MaxPoolSize
         {

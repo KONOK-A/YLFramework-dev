@@ -106,6 +106,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 - 连续 Play / SessionScenes 使用工具拥有、已保存的空场景。只在严格确认 UTF 默认布局和测试尚未开始时准备场景，不自动保存未知或脏场景。
 - Player 探针仅在相应 `YL_*_ACCEPTANCE` 构建符号或专用产品外程序集启用，不能进入普通生产编译图。
 - PoolingPlayer选择Mono，PoolingIL2CPP选择实际IL2CPP；两者使用相同负载。Unity2022 LTS和IL2CPP是实际支持目标，应在对应Editor执行检查，不由当前Mono结果替代，也不等于要求每次小改全平台/全补丁矩阵。Release的 `measurementKind=ReleaseTiming`，分配为 `NotMeasured`；Development的 `measurementKind=DevelopmentAllocationEvents`，先验证空区间、32/8192字节分配分别记录0/1/1次事件，再采集当前线程限定区间的 `GC.Alloc` Count。事件不是字节，Development耗时不当作发行性能。记录输入指纹和逐批值，创建/重置/丢弃、活跃数与校验值必须正确；Destroy请求与含帧等待的完成耗时分列。校准/负载失败保留报告并失败退出，不伪造平台支持或零成本。
+- 当前Pooling工作负载版本4为76病例，在原72固定输入后追加 `Audio.Pending.0/1/24/128`：真实公开异步请求持续Loading，同址共享一次provider，采样外绑定实际宿主Update；每批64次更新。Audio病例中的 `medianNanosecondsPerPair` 是通用报告字段，此处pairsPerIteration=1，单位为ns/Update；不是声部吞吐或真实帧FPS。取消和late lease释放在采样外断言，不将同帧接纳/List.Remove成本混入等待快照。
 
 需要额外参数和特殊上下文时读取对应模块声明，不把上述条件当作 Skip 白名单。
 

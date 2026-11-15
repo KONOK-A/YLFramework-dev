@@ -50,6 +50,11 @@ namespace YLFramework.Analyzers
                     start.RegisterSyntaxNodeAction(c => AudioRules.Yield(c, symbols), SyntaxKind.YieldReturnStatement);
                 }
 
+                if (symbols.PoolRents.Count != 0)
+                {
+                    start.RegisterOperationAction(c => PoolRules.Invocation(c, symbols), OperationKind.Invocation);
+                }
+
                 if (symbols.Markers[0] != null)
                 {
                     start.RegisterSyntaxNodeAction(c => CallRules.MustCallBase(c, symbols), SyntaxKind.MethodDeclaration);

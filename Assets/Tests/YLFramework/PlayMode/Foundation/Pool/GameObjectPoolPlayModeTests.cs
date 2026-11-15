@@ -497,7 +497,7 @@ namespace YLFramework.Tests
         public IEnumerator FailedCreationPreservesItsCauseWhenDataCleanupAlsoFails()
         {
             var owner = SafeObjectPool<GameObjectPoolData>.Instance;
-            var factoryField = typeof(SafeObjectPool<GameObjectPoolData>).GetField("ObjectFactory", BindingFlags.NonPublic | BindingFlags.Instance);
+            var factoryField = typeof(SafeObjectPool<GameObjectPoolData>).GetField("_objectFactory", BindingFlags.NonPublic | BindingFlags.Instance);
             var originalFactory = (IObjectFactory<GameObjectPoolData>)factoryField.GetValue(owner);
             owner.Clear();
             var probe = _pool.gameObject.AddComponent<GameObjectPoolLifecycleProbe>();
