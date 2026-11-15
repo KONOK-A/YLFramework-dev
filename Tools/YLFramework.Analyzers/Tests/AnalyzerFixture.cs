@@ -22,7 +22,15 @@ namespace YLFramework.Analyzers.Tests
         internal static readonly MetadataReference[] Platform = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES"))
             .Split(Path.PathSeparator).Select(p => MetadataReference.CreateFromFile(p)).ToArray();
         internal static readonly string Root = FindRoot();
-        internal const string PoolSource = "namespace YLFramework.Pooling { public class ObjectPool<T> { private T[] storage; public ObjectPool(System.Func<T> factory) {} public T Allocate()=>default; } }";
+        internal const string PoolSource = @"namespace YLFramework.Pooling {
+ public readonly struct PoolLease<T>:System.IDisposable { public void Dispose(){} public void Discard(){} }
+ public class ObjectPool<T> { private T[] storage; public ObjectPool(System.Func<T> factory){} public T Allocate()=>default;
+  public PoolLease<T> Rent(out T item){item=default;return default;} }
+ public interface IOfPool { bool IsRecycled{get;set;} void OnAllocate(); void OnRecycle(); }
+ public class SafeObjectPool<T> where T:class,IOfPool,new() { public PoolLease<T> Rent(out T item){item=default;return default;} }
+ public static class ListPool<T> { public static PoolLease<System.Collections.Generic.List<T>> Rent(out System.Collections.Generic.List<T> item,int capacity=8){item=default;return default;} }
+ public static class DictionaryPool<K,V> { public static PoolLease<System.Collections.Generic.Dictionary<K,V>> Rent(out System.Collections.Generic.Dictionary<K,V> item,int capacity=0){item=default;return default;} }
+}";
         internal static readonly MetadataReference Core = CreateCore();
 
         private static string FindRoot()

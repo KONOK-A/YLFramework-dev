@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Collections;
 using System.IO;
+using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 using YLFramework.Audio;
+using YLFramework.Pooling;
 
 namespace YLFramework.Tests.Audio
 {
@@ -87,7 +91,7 @@ namespace YLFramework.Tests.Audio
         }
         private AudioClipAddress Address(string key) => new AudioClipAddress(_provider, key);
 
-        private AudioPlayRequest Waiting(AudioCategory category, AudioChannel channel = null)
+        private AudioPlayRequest Waiting(AudioCategory category, AudioChannel channel = null, Action<AudioClip, AudioHandle> started = null)
         {
             _backgroundPath = "Assets/Tests/YLFramework/Fixtures/Audio/ReentryData-" + Guid.NewGuid().ToString("N") + ".wav";
             const int Samples = 44100 * 120;
@@ -124,10 +128,83 @@ namespace YLFramework.Tests.Audio
 
             _provider = new Provider(clip);
             var request = channel != null ? channel.PlayAsync(Address("waiting")) : category == AudioCategory.Sound ?
-                AudioKit.PlaySoundAsync(Address("waiting")) : AudioKit.PlayMusicAsync(Address("waiting"));
+                AudioKit.PlaySoundAsync(Address("waiting"), onStarted: started) : AudioKit.PlayMusicAsync(Address("waiting"), onStarted: started);
             _provider.Complete("waiting");
             Assert.AreEqual(AudioPlayState.Ready, request.State, "Real background audio must remain in the data-wait phase for this synchronous reentry test.");
             return request;
+        }
+
+        [UnityTest]
+        public IEnumerator UpdateSnapshotSurvivesCancellationAndNewPendingFromStarted()
+            => UpdateSnapshotReentry(false, false);
+
+        [UnityTest]
+        public IEnumerator UpdateSnapshotSurvivesShutdownAndNewSessionFromStarted()
+            => UpdateSnapshotReentry(true, false);
+
+        [UnityTest]
+        public IEnumerator UpdateSnapshotReturnsItsBufferWhenStartedThrows()
+            => UpdateSnapshotReentry(false, true);
+
+        private IEnumerator UpdateSnapshotReentry(bool shutdown, bool fail)
+        {
+            AudioKit.ClipCacheCapacity = 0;
+            AudioPlayRequest peer = null;
+            AudioPlayRequest created = null;
+            Action update = null;
+            int starts = 0;
+            var first = Waiting(AudioCategory.Sound, started: (_, __) =>
+            {
+                starts++;
+                if (shutdown)
+                {
+                    AudioKit.Shutdown();
+                }
+                else
+                {
+                    peer.Cancel();
+                }
+                created = AudioKit.PlaySoundAsync(Address("new"));
+                update(); // reentrant Update must not clear or overwrite its outer snapshot.
+                if (fail)
+                {
+                    throw new InvalidOperationException("pending-update-start-failure");
+                }
+            });
+            peer = AudioKit.PlaySoundAsync(Address("peer"));
+            var manager = AudioManager.Instance;
+            update = (Action)Delegate.CreateDelegate(typeof(Action), manager,
+                typeof(AudioManager).GetMethod("Update", BindingFlags.NonPublic | BindingFlags.Instance));
+            var clip = AssetDatabase.LoadAssetAtPath<AudioClip>(_backgroundPath);
+            double timeout = EditorApplication.timeSinceStartup + 10;
+            while (clip.loadState != AudioDataLoadState.Loaded && EditorApplication.timeSinceStartup < timeout)
+            {
+                yield return null;
+            }
+            Assert.That(clip.loadState, Is.EqualTo(AudioDataLoadState.Loaded), "Use the real background load, not a forged request state.");
+            Assert.That(first.State, Is.EqualTo(AudioPlayState.Ready), "Editor does not automatically advance the MonoBehaviour Update.");
+            var buffer = ListPool<AudioPlayRequest>.Allocate();
+            buffer.RecycleToPool();
+            update();
+            Assert.That(starts, Is.EqualTo(1));
+            if (fail)
+            {
+                Assert.That(first.Error, Is.TypeOf<InvalidOperationException>());
+                Assert.That(first.Error.Message, Is.EqualTo("pending-update-start-failure"));
+            }
+            Assert.That(peer.EndReason, Is.EqualTo(shutdown ? AudioPlayEnd.Shutdown : AudioPlayEnd.Canceled));
+            Assert.That(created, Is.Not.Null);
+            Assert.That(created.State, Is.EqualTo(AudioPlayState.Loading));
+            var returned = ListPool<AudioPlayRequest>.Allocate();
+            Assert.That(returned, Is.SameAs(buffer), "Normal, exceptional and nested exits must return the original snapshot.");
+            Assert.That(returned, Is.Empty);
+            returned.RecycleToPool();
+            AudioKit.StopAllSound();
+            Assert.That(_provider.Owners[0].Releases, Is.EqualTo(1));
+            Assert.That(_provider.Complete("peer").IsReleased, Is.True);
+            Assert.That(_provider.Owners[1].Releases, Is.EqualTo(1));
+            Assert.That(_provider.Complete("new").IsReleased, Is.True);
+            Assert.That(_provider.Owners[2].Releases, Is.EqualTo(1));
         }
 
         [Test]

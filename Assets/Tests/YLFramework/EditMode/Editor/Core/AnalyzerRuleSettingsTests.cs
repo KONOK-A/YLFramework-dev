@@ -18,7 +18,7 @@ namespace YLFramework.Core.Editor.Tests
         private const BindingFlags Members = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
 
         [Test]
-        public void NativeProviderRegistersTheOwnedRouteAndTenSearchableRulesWithoutWriting()
+        public void NativeProviderRegistersTheOwnedRouteAndElevenSearchableRulesWithoutWriting()
         {
             var files = Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical("Assets"), "*.ruleset", SearchOption.AllDirectories).OrderBy(path => path).ToArray();
             var scenes = Enumerable.Range(0, SceneManager.sceneCount).Select(index => SceneManager.GetSceneAt(index).isDirty).ToArray();
@@ -28,9 +28,10 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(provider.settingsPath, Is.EqualTo("Project/YLFramework/Analyzers"));
             Assert.That(provider.scope, Is.EqualTo(SettingsScope.Project));
             Assert.That(provider.keywords, Does.Contain("YL0010"));
+            Assert.That(provider.keywords, Does.Contain("YL0011"));
             Assert.That(AnalyzerRuleCatalog.Rules.Select(rule => rule.Id), Is.EqualTo(new[]
             {
-                "YL0001", "YL0002", "YL0003", "YL0004", "YL0005", "YL0006", "YL0007", "YL0008", "YL0009", "YL0010"
+                "YL0001", "YL0002", "YL0003", "YL0004", "YL0005", "YL0006", "YL0007", "YL0008", "YL0009", "YL0010", "YL0011"
             }));
             var menus = TypeCache.GetMethodsWithAttribute<MenuItem>().SelectMany(method => method.GetCustomAttributes<MenuItem>())
                 .Where(menu => menu.menuItem == "YLFramework/Core/分析器规则" && !menu.validate).ToArray();

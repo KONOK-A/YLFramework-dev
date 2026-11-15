@@ -312,7 +312,9 @@ namespace YLFramework.Tests
         private static WeakReference LoseRental(ObjectPool<Item> pool)
         {
             // 不经反射/NUnit断言路径借用，避免框架保留最后一次调用的参数而污染弱引用验证。
+#pragma warning disable YL0011 // 故意丢失租约及对象，验证弱键跟踪不保活；不是业务用法。
             pool.Rent(out var item);
+#pragma warning restore YL0011
             return new WeakReference(item);
         }
 

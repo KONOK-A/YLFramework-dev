@@ -121,10 +121,10 @@ namespace YLFramework.Pooling.Tests
                 {
                     Assert.That((bool)json["calibration"]["performed"], Is.False);
                 }
-                Assert.That(report.workloadVersion, Is.EqualTo(3));
+                Assert.That(report.workloadVersion, Is.EqualTo(4));
                 Assert.That(report.leaseCasesSupported, Is.True);
-                Assert.That(report.measurements, Has.Length.EqualTo(72));
-                Assert.That(report.measurements.Select(value => value.caseId).Distinct().Count(), Is.EqualTo(72));
+                Assert.That(report.measurements, Has.Length.EqualTo(76));
+                Assert.That(report.measurements.Select(value => value.caseId).Distinct().Count(), Is.EqualTo(76));
                 foreach (var measurement in report.measurements)
                 {
                     bool cold = measurement.caseId.StartsWith("GameObject.prewarm.", StringComparison.Ordinal) ||
@@ -174,6 +174,11 @@ namespace YLFramework.Pooling.Tests
                     Assert.That(discarded["allocationEvents"].Values<long>(), Is.All.GreaterThan(0));
                     Assert.That((int)discarded["factoryCalls"], Is.EqualTo(8 + 31 * 8192));
                     Assert.That((int)discarded["discardCalls"], Is.EqualTo(8 + 31 * 8192));
+                    foreach (int count in new[] { 0, 1, 24, 128 })
+                    {
+                        var pending = json["measurements"].Single(value => (string)value["caseId"] == "Audio.Pending." + count);
+                        Assert.That(pending["allocationEvents"].Values<long>(), Is.All.EqualTo(0), "Calibrated actual manager updates must not allocate their warmed snapshot.");
+                    }
                 }
                 Assert.That(report.frameworkAssemblies.Any(value => value.Contains("Editor") || value.Contains("Tests")), Is.False,
                     "Editor/Test assemblies leaked into an ordinary Player.");

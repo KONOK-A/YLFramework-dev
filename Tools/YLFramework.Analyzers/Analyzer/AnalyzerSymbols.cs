@@ -14,6 +14,7 @@ namespace YLFramework.Analyzers
         internal readonly INamedTypeSymbol[] Markers;
         internal readonly Compilation Compilation;
         internal readonly INamedTypeSymbol ObjectPool;
+        internal readonly HashSet<IMethodSymbol> PoolRents = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
         internal readonly INamedTypeSymbol View;
         internal readonly INamedTypeSymbol Inject;
         internal readonly INamedTypeSymbol Module;
@@ -41,6 +42,26 @@ namespace YLFramework.Analyzers
                 a.AttributeClass?.ToDisplayString() == "System.AttributeUsageAttribute" && a.NamedArguments.Any(p => p.Key == "Inherited" && Equals(p.Value.Value, false)))).ToArray();
             _attributes = names.Select(_ => new ConcurrentDictionary<ISymbol, ImmutableArray<AttributeData>>(SymbolEqualityComparer.Default)).ToArray();
             ObjectPool = core.GetTypeByMetadataName("YLFramework.Pooling.ObjectPool`1");
+            var poolLease = core.GetTypeByMetadataName("YLFramework.Pooling.PoolLease`1");
+            if (poolLease != null)
+            {
+                foreach (var name in new[] { "ObjectPool`1", "SafeObjectPool`1", "ListPool`1", "DictionaryPool`2" })
+                {
+                    var pool = core.GetTypeByMetadataName("YLFramework.Pooling." + name);
+                    if (pool == null)
+                    {
+                        continue;
+                    }
+                    foreach (var method in pool.GetMembers("Rent").OfType<IMethodSymbol>())
+                    {
+                        if (method.ReturnType is INamedTypeSymbol result &&
+                            SymbolEqualityComparer.Default.Equals(result.OriginalDefinition, poolLease))
+                        {
+                            PoolRents.Add(method.OriginalDefinition);
+                        }
+                    }
+                }
+            }
             var args = core.GetTypeByMetadataName("YLFramework.Core.LoadViewArgs");
             var candidates = args?.GetMembers("_pool").OfType<IFieldSymbol>().ToArray();
             var field = candidates?.Length == 1 ? candidates[0] : null;

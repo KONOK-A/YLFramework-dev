@@ -928,8 +928,11 @@ namespace YLFramework.Audio
 
             if (_pending.Count > 0)
             {
-                foreach (var request in _pending.ToArray())
+                using var pendingRental = ListPool<AudioPlayRequest>.Rent(out var snapshot, _pending.Count);
+                snapshot.AddRange(_pending);
+                for (int index = 0, count = snapshot.Count; index < count; index++)
                 {
+                    var request = snapshot[index];
                     try
                     {
                         request.Tick();

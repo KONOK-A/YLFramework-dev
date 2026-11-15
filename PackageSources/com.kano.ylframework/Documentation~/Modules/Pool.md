@@ -90,6 +90,7 @@ using (var rental = pool.Rent(out var items))
 - 工厂返回 null 时输出 null 和默认租约，它可安全结束，不表示取得了有效对象。代次耗尽不回绕，会隔离该对象并报错。
 - 租约是 readonly struct，不逐次创建租约类实例；转存为 `IDisposable` 会装箱，闭包/异步捕获有各自成本，实际分配以对应环境测量为准。
 - 租约不阻止原始引用逃逸或结束后继续写入，也不提供线程安全，不替代 Action/Audio/Resource 的领域句柄。
+- `YL0011` 对真实四种框架池的Rent直接弃值发出Warning，包括表达式语句与实际`_ =` discard。合法using、命名保存、返回或明确交接不报；它不证明所有路径都已释放，也不做通用逃逸分析。见[诊断边界](Attributes.md#yl0011)。
 
 ## 生命周期与回收约束
 

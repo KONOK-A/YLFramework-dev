@@ -32,7 +32,9 @@ namespace YLFramework.Editor.Core.Analyzers
             new AnalyzerRuleInfo("YL0009", "View 加载入口不能加载 Panel", "YLFramework.Usage",
                 "LoadView/LoadViewAsync 的泛型类型确定为 Panel 时，改用 LoadPanel/LoadPanelAsync；parent 与 root 不等价。"),
             new AnalyzerRuleInfo("YL0010", "音频请求不是协程等待指令", "YLFramework.Audio",
-                "非泛型 IEnumerator 协程不要直接 yield AudioPlayRequest；用 WaitUntil 显式等开始或结束，自定义调度器可局部抑制。")
+                "非泛型 IEnumerator 协程不要直接 yield AudioPlayRequest；用 WaitUntil 显式等开始或结束，自定义调度器可局部抑制。"),
+            new AnalyzerRuleInfo("YL0011", "对象池租约返回值被丢弃", "YLFramework.Pooling",
+                "真实框架池的 Rent 租约不能直接弃值；用 using 或显式保存并在结束时 Dispose/Discard，不做跨方法所有权分析。")
         });
     }
 

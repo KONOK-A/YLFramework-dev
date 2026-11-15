@@ -71,6 +71,8 @@ AudioKit.PlayMusic(musicClip, volume: 0.5f);
 
 此设计不承诺整个 Audio 零 GC：配置实例、初始化、Source 创建、集合增长和闭包仍可能分配。冷路径、预热后稳态和目标 Player 性能须分别测量。
 
+等待命名请求的更新使用帧内独立集合租约快照：回调取消旧请求、新增请求、递归更新或Shutdown不覆盖外层缓冲，退出时清引用归还。正常容量内预热后不会为每次pending更新创建数组，但第一次借用、增长或超过集合保留阈值仍可能分配。这是消除持续等待分配的取舍，不保证比数组遍历更快，也不改变Provider/请求资源责任；批量接纳/清理和公开`GetPlayingSounds()`的数组是其他路径。
+
 ### JSON 配置
 
 Unity 2022.3 的 `JsonUtility.FromJson<AudioSoundOptions>` 对缺字段使用 `default(T)`，不执行构造函数或字段初始化器。例如缺失 Pitch 会得到非法 0。部分 JSON 应覆盖已创建的有效默认实例：

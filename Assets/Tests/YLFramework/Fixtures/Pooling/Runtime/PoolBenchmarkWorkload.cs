@@ -7,6 +7,7 @@ using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.Scripting;
 using YLFramework.Buff;
+using YLFramework.Audio;
 using YLFramework.Skill;
 using Object = UnityEngine.Object;
 
@@ -299,6 +300,116 @@ namespace YLFramework.Pooling.Acceptance
                 Object.Destroy(parent);
             }
             yield return null;
+            yield return null;
+            var audio = MeasureAudioPending(results);
+            try
+            {
+                while (audio.MoveNext())
+                {
+                    yield return audio.Current;
+                }
+            }
+            finally { (audio as IDisposable)?.Dispose(); }
+        }
+
+        private sealed class PendingOwner : IDisposable
+        {
+            internal int Releases;
+            public void Dispose() => Releases++;
+        }
+
+        private sealed class PendingProvider : IAudioClipProvider
+        {
+            internal int Loads;
+            private Action<AudioClipLease, Exception> _completion;
+            public bool CanCache => true;
+            public AudioClipLease Load(string key) => throw new InvalidOperationException("This workload uses actual asynchronous waiting.");
+            public void LoadAsync(string key, Action<AudioClipLease, Exception> completed, Action<float> progress)
+            {
+                Loads++;
+                _completion = completed;
+                progress?.Invoke(.4f);
+            }
+            internal PendingOwner Complete(AudioClip clip)
+            {
+                var owner = new PendingOwner();
+                var completion = _completion;
+                _completion = null;
+                completion(new AudioClipLease(clip, owner), null);
+                return owner;
+            }
+        }
+
+        private static IEnumerator MeasureAudioPending(List<Measurement> results)
+        {
+            AudioKit.Shutdown();
+            AudioKit.Settings.IsSoundOn.SetValueWithoutCallback(true);
+            AudioKit.PlaySoundMode = AudioKit.PlaySoundModes.EveryOne;
+            AudioKit.SoundConcurrency = new AudioSoundConcurrency { Limit = 0 };
+            AudioKit.ClipCacheCapacity = 0;
+            var channel = AudioKit.RegisterChannel("Pooling.Pending", AudioCategory.Sound, AudioChannelMode.Overlap);
+            var clip = AudioClip.Create("pooling-pending-provider", 256, 1, 44100, false);
+            try
+            {
+                // 诊断只在计时外反射，不扩大Audio内部可见性或在采样中调用MethodInfo.Invoke。
+                var type = typeof(AudioKit).Assembly.GetType("YLFramework.Audio.AudioManager", true);
+                var managers = Object.FindObjectsOfType(type);
+                Require(managers.Length == 1, "Use the real, unique owned Audio host.");
+                var update = (Action)Delegate.CreateDelegate(typeof(Action), managers[0],
+                    type.GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic));
+                foreach (int count in new[] { 0, 1, 24, 128 })
+                {
+                    var provider = new PendingProvider();
+                    var address = new AudioClipAddress(provider, "pooling-pending");
+                    var requests = new AudioPlayRequest[count];
+                    var measured = new Measurement("Audio.Pending." + count, 64, 1, count);
+                    Func<long> work = () => { update(); return count; };
+                    try
+                    {
+                        for (int index = 0; index < count; index++)
+                        {
+                            requests[index] = AudioKit.PlaySoundAsync(address);
+                        }
+                        yield return null;
+                        yield return null;
+                        Require(provider.Loads == (count == 0 ? 0 : 1), "Each request is real; only its shared asynchronous provider completion is deferred.");
+                        foreach (var request in requests)
+                        {
+                            Require(request.State == AudioPlayState.Loading && !request.IsAssetReady && !request.IsDone, "Do not sample an empty/completed workload.");
+                        }
+                        for (int warm = 0; warm < 8; warm++)
+                        {
+                            update();
+                        }
+                        for (int sample = 0; sample < measured.ticksBefore.Length; sample++)
+                        {
+                            measured.Sample(sample, work);
+                        }
+                        foreach (var request in requests)
+                        {
+                            Require(request.State == AudioPlayState.Loading && !request.IsDone, "Pending working set changed during sampling.");
+                        }
+                        Require(AudioKit.SoundCount == 0, "Waiting requests must not consume active playback voices.");
+                        measured.Finish();
+                        results.Add(measured);
+                    }
+                    finally { foreach (var request in requests) { request?.Cancel(); } }
+                    foreach (var request in requests)
+                    {
+                        Require(request.EndReason == AudioPlayEnd.Canceled, "Each waiting request must terminate.");
+                    }
+                    if (count > 0)
+                    {
+                        Require(provider.Complete(clip).Releases == 1, "Late backend responsibility must be released exactly once.");
+                    }
+                }
+            }
+            finally
+            {
+                channel.Dispose();
+                AudioKit.Shutdown();
+                Object.Destroy(clip);
+            }
             yield return null;
         }
 
