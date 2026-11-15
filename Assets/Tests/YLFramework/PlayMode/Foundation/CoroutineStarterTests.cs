@@ -2,6 +2,8 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -370,8 +372,49 @@ namespace YLFramework.Foundation.Tests
             allowProducerCompletion = true;
             yield return null;
             yield return null;
-            Assert.That(operation.Error, Is.Null);
+            Assert.That(operation.Error, Is.EqualTo("request abort!"));
             Assert.That(completionCount, Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator AwaitingOneOperationResumesMultipleConsumersOnUnityThread()
+        {
+            var operation = new Probe();
+            _foreignObject = new GameObject("AsyncTaskFixture");
+            var thread = Thread.CurrentThread.ManagedThreadId;
+            var first = AwaitOnUnityThread(operation, _foreignObject, thread);
+            var second = AwaitOnUnityThread(operation, _foreignObject, thread);
+            Assert.That(first.IsCompleted, Is.False);
+            Assert.That(second.IsCompleted, Is.False);
+            operation.Finish();
+            var deadline = Time.realtimeSinceStartupAsDouble + 5;
+            while ((!first.IsCompleted || !second.IsCompleted) && Time.realtimeSinceStartupAsDouble < deadline)
+            {
+                yield return null;
+            }
+            Assert.That(first.IsCompleted && second.IsCompleted, Is.True);
+            Assert.That(first.GetAwaiter().GetResult(), Is.SameAs(operation));
+            Assert.That(second.GetAwaiter().GetResult(), Is.SameAs(operation));
+            Assert.That(FindHosts(), Is.Empty, "Task waiting must not create a coroutine producer.");
+        }
+
+        [Test]
+        public void AwaitingCompletedOperationMayContinueSynchronously()
+        {
+            var operation = new Probe();
+            operation.Finish();
+            _foreignObject = new GameObject("AsyncTaskFixture");
+            var waiter = AwaitOnUnityThread(operation, _foreignObject, Thread.CurrentThread.ManagedThreadId);
+            Assert.That(waiter.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            Assert.That(waiter.GetAwaiter().GetResult(), Is.SameAs(operation));
+        }
+
+        private static async Task<Probe> AwaitOnUnityThread(Probe operation, GameObject target, int thread)
+        {
+            var result = await operation.AsTask();
+            Assert.That(Thread.CurrentThread.ManagedThreadId, Is.EqualTo(thread));
+            Assert.That(target.name, Is.EqualTo("AsyncTaskFixture"));
+            return result;
         }
 
         private Coroutine StartOwned(IEnumerator enumerator)

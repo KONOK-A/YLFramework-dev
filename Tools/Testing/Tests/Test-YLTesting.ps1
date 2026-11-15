@@ -186,6 +186,12 @@ try {
             $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
             $core = @($configuration.modules | Where-Object name -CEQ 'Core')[0]
             Assert-That ('Assets/Tests/YLFramework/PlayMode/Systems/Http' -cin $core.playTests) 'The changed Async HTTP consumers must be compiled and run by Core, not left outside every Daily selection.'
+            $http = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/PlayMode/Systems/Http/YLFramework.Http.Tests.PlayMode.asmdef')
+            Assert-That ($http.name -cin $core.assemblies) 'Copying HTTP sources is insufficient: Core must select their actual PlayMode assembly for discovery and execution.'
+            Assert-That (($http.references -join ',') -ceq 'YLFramework.Runtime,UnityEngine.TestRunner' -and
+                -not $http.autoReferenced -and ($http.defineConstraints -join ',') -ceq 'UNITY_INCLUDE_TESTS') 'The isolated HTTP tests must not acquire optional products or enter ordinary Players.'
+            Assert-That ('Assets/Tests/YLFramework/EditMode/Systems/Http/HttpSessionTests.cs' -cin $core.editTests -and
+                'YL.Special.CoreSession' -cin $core.excludedCategories -and $core.specialCategory -ceq 'YL.Special.CoreSession') 'HTTP real session discovery requires its original source in Core and the explicit Daily-excluded two-Play category.'
         }
         Test-Case 'Core real UI acceptance has a separately selected two-Play native session and original scene inputs' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))

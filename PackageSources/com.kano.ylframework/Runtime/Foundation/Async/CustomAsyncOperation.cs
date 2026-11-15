@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Runtime.ExceptionServices;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace YLFramework.Async
@@ -12,42 +15,32 @@ namespace YLFramework.Async
     /// </remarks>
     public class CustomAsyncOperation<T> : CustomYieldInstruction where T : CustomAsyncOperation<T>
     {
-        // 常规完成链：Complete(error) 写结果 -> 无参 Complete 收束进度并去重 -> IsCompleted 的 setter 发通知。
-
         private Action<T> _completed;
-        private bool _isCompleted = false;
+        private bool _isCompleted;
+        private bool _completionFinished;
+        private float _progress;
+        private TaskCompletionSource<T> _completionSource;
         private string _error = string.Empty;
         private const string CheckingError = "正在检测中...";
 
         /// <summary>请求是否已经结束；成功、失败或基类 Abort 都会结束等待。</summary>
         public bool IsDone => IsCompleted;
 
-        /// <summary>供派生类访问的结束标记，赋为 true 时同步发出完成通知。</summary>
-        /// <remarks>
-        /// 每次直接赋为 true 都会依次调用完成订阅和 OnCompleted，不会自行去重。
-        /// 通常应调用 Complete，由该入口避免重复完成通知；回调抛异常时，后续回调和钩子不会继续执行。
-        /// </remarks>
-        protected bool IsCompleted
-        {
-            get => _isCompleted;
-            set
-            {
-                // 先提交结束状态，回调里再次 Complete 才会命中重复检查，不会递归重发通知。
-                _isCompleted = value;
-                if (_isCompleted)
-                {
-                    // 按自类型约定，将当前请求作为 T 回传给订阅者。
-                    _completed?.Invoke(this as T);
-                    OnCompleted();
-                }
-            }
-        }
+        /// <summary>供派生类读取的单向结束标记；只能通过完成入口提交。</summary>
+        protected bool IsCompleted => _isCompleted;
 
         /// <summary>由派生类报告的进度；通常按 0 到 1 表达，但本属性不限制取值范围。</summary>
-        /// <remarks>通过本类的完成入口结束请求时会设为 1；不能仅凭进度判断请求是否成功。</remarks>
+        /// <remarks>终态固定为 1，之后的进度写入无效；不能仅凭进度判断请求是否成功。</remarks>
         public float Progress
         {
-            get; protected set;
+            get => _progress;
+            protected set
+            {
+                if (!IsDone)
+                {
+                    _progress = value;
+                }
+            }
         }
 
         /// <summary>请求结束后的错误信息；未结束时固定返回“正在检测中...”。</summary>
@@ -63,73 +56,123 @@ namespace YLFramework.Async
 
                 return _error;
             }
-            private set => _error = value;
         }
 
         /// <summary>供 Unity 的 yield return 检查是否继续等待；只等待结束，不自动启动请求或抛出其错误。</summary>
         public override bool keepWaiting => !IsDone;
 
+        /// <summary>按需取得并缓存同一请求的 Task；不启动工作，不根据业务结果制造 Faulted/Canceled。</summary>
+        /// <remarks>
+        /// 由 owner 串行取得；可供多个消费者 await。完成通知及必要钩子收束后返回请求自身，
+        /// 不受普通订阅移除、静默完成或通知异常影响，不自动取消生产者或切换线程。
+        /// </remarks>
+        public Task<T> AsTask()
+        {
+            _completionSource ??= new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (_completionFinished)
+            {
+                _completionSource.TrySetResult(this as T);
+            }
+            return _completionSource.Task;
+        }
+
         /// <summary>请求首次通过完成入口结束时的扩展钩子；常规完成在通知订阅后调用，静默完成直接调用。</summary>
-        /// <remarks>前序订阅者抛异常会阻止此钩子执行，因此不能把它当作一定执行的 finally。</remarks>
+        /// <remarks>前序订阅者抛异常仍会执行本钩子；它不替代派生请求对实际生产任务的清理。</remarks>
         protected virtual void OnCompleted()
         {
         }
 
         /// <summary>保存结果信息并结束请求；首次结束时同步通知订阅，再调用 OnCompleted。</summary>
         /// <param name="error">原样保存的错误信息；省略时写入 null。</param>
-        /// <remarks>重复调用仍会更新 Error 并将进度设为 1，但不重发通知或再次执行完成钩子。</remarks>
-        protected void Complete(string error = null)
-        {
-            // 通知同步执行，先存结果才能让回调读到本次错误，而不是旧值。
-            Error = error;
-            Complete();
-        }
-
-        /// <summary>将进度收束到 1，并仅在尚未结束时进入同步通知链。</summary>
-        private void Complete()
-        {
-            Progress = 1;
-            if (IsCompleted)
-            {
-                return;
-            }
-
-            IsCompleted = true;
-        }
+        /// <remarks>仅首次提交生效；之后完成或取消均不改写结果、进度和钩子次数。</remarks>
+        protected void Complete(string error = null) => Complete(error, true, false);
 
         /// <summary>保存结果并静默结束，跳过完成订阅，但仍调用 OnCompleted。</summary>
         /// <param name="error">原样保存的错误信息；省略时写入 null。</param>
-        /// <remarks>不会清空订阅；之后通过 AddCompleteEvent 注册的迟到订阅仍会立即执行。重复完成只更新结果和进度。</remarks>
-        protected void CompleteWithoutNotify(string error = null)
-        {
-            Error = error;
-            CompleteWithoutNotify();
-        }
+        /// <remarks>断开已保存订阅；之后注册的迟到订阅仍立即执行，重复完成无副作用。</remarks>
+        protected void CompleteWithoutNotify(string error = null) => Complete(error, false, false);
 
-        /// <summary>直接设置结束字段，绕过属性中的事件通知，再执行一次完成钩子。</summary>
-        private void CompleteWithoutNotify()
+        private void Complete(string error, bool notify, bool aborted)
         {
-            Progress = 1;
             if (IsCompleted)
             {
                 return;
             }
 
-            // 直接写字段而非属性，跳过订阅通知，但仍执行派生类的完成钩子。
+            _error = error;
+            _progress = 1;
             _isCompleted = true;
-            OnCompleted();
+            var callbacks = _completed;
+            _completed = null;
+            List<Exception> failures = null;
+            try
+            {
+                if (notify)
+                {
+                    callbacks?.Invoke(this as T);
+                }
+            }
+            catch (Exception exception)
+            {
+                failures = new List<Exception> { exception };
+            }
+            finally
+            {
+                try
+                {
+                    OnCompleted();
+                }
+                catch (Exception exception)
+                {
+                    (failures ??= new List<Exception>()).Add(exception);
+                }
+                finally
+                {
+                    try
+                    {
+                        if (aborted)
+                        {
+                            try
+                            {
+                                OnAbort();
+                            }
+                            catch (Exception exception)
+                            {
+                                (failures ??= new List<Exception>()).Add(exception);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        // IsDone 已提交，但通知内的重入 AsTask 仍须等全部钩子收束。
+                        _completionFinished = true;
+                        _completionSource?.TrySetResult(this as T);
+                    }
+                }
+            }
+
+            if (failures?.Count == 1)
+            {
+                ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            }
+            if (failures != null)
+            {
+                throw new AggregateException(failures);
+            }
         }
 
         /// <summary>注册完成回调；若请求已经结束，在本次注册调用中立即同步执行该回调。</summary>
         /// <param name="action">接收当前请求的回调，允许为 null；重复注册会分别保留并通知。</param>
-        /// <remarks>回调不会自动解绑，且立即执行时的异常会直接传给注册者；按需保存委托并在所属生命周期结束时移除。</remarks>
+        /// <remarks>完成时自动断开保存的订阅；迟到回调不再保存，异常直接传给注册者。</remarks>
         public void AddCompleteEvent(Action<T> action)
         {
-            _completed += action;
-            // 只补发本次 action，不调用整条 _completed，以免给先前订阅者重发。
             if (IsDone)
             {
                 action?.Invoke(this as T);
+            }
+            else
+            {
+                _completed += action;
             }
         }
 
@@ -148,15 +191,11 @@ namespace YLFramework.Async
         /// <summary>以取消错误结束等待，先执行完成链，再调用 OnAbort。</summary>
         /// <remarks>
         /// 基类本身不会停止实际生产任务，派生类需实现取消逻辑。
-        /// 即使请求已结束，也会改写 Error 并再次调用 OnAbort；完成链抛异常时则不会进入 OnAbort。
+        /// 仅首次取消生效；完成链抛异常仍执行一次 OnAbort，终态后调用无副作用。
         /// </remarks>
-        public virtual void Abort()
-        {
-            Complete("request abort!");
-            OnAbort();
-        }
+        public virtual void Abort() => Complete("request abort!", true, true);
 
-        /// <summary>供派生类取消实际工作的钩子；应考虑重复 Abort，不能假定此时生产任务已经停止。</summary>
+        /// <summary>首次基类取消的钩子，完成通知后执行一次；不能假定此时生产任务已经停止。</summary>
         protected virtual void OnAbort()
         {
         }

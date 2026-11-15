@@ -1,12 +1,10 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading;
 using UnityEngine;
 using UnityEngine.Networking;
 using YLFramework.Singletons;
-using CoroutineStarter = YLFramework.Async.CoroutineStarter;
 
 namespace YLFramework.Http
 {
@@ -21,12 +19,12 @@ namespace YLFramework.Http
         Failed,
         /// <summary>由调用方取消，仅停止本请求拥有的传输。</summary>
         Canceled,
-        /// <summary>执行会话不可用或无法取得协程宿主，请求不再继续。</summary>
+        /// <summary>执行会话不可用，请求不再继续。</summary>
         Invalidated
     }
 
-    /// <summary>主线程 HTTP 请求，独占原生传输；在接受线程上终态后 Abort 无副作用，协程等待及完成订阅沿用 Foundation。</summary>
-    /// <remarks>完成订阅执行前先释放传输及接管的 Handler；IsDone 只表示结束，成功与否应检查 Status。</remarks>
+    /// <summary>主线程 HTTP 请求，独占原生传输；在接受线程上终态后 Abort 无副作用，等待与完成订阅沿用 Foundation。</summary>
+    /// <remarks>完成订阅及 Task 可观察完成前先释放传输及接管的 Handler；IsDone 只表示结束，成功与否应检查 Status。</remarks>
     public sealed class SendWebRequest : YLFramework.Async.CustomAsyncOperation<SendWebRequest>
     {
         /// <summary>当前业务状态；先提交终态，再执行后置观察、资源释放和基类完成通知。</summary>
@@ -59,7 +57,7 @@ namespace YLFramework.Http
         {
             get; private set;
         }
-        /// <summary>脱离原生请求的只读响应头快照；未取得响应头时为 null。</summary>
+        /// <summary>脱离原生请求、按 OrdinalIgnoreCase 查询的只读响应头快照；未取得响应头时为 null。</summary>
         public IReadOnlyDictionary<string, string> ResponseHeaders
         {
             get; private set;
@@ -72,12 +70,10 @@ namespace YLFramework.Http
 
         private UnityWebRequest _transport;
         private UnityWebRequestAsyncOperation _nativeOperation;
-        private Coroutine _coroutine;
         private readonly HashSet<IDisposable> _handlers = new();
         private readonly object _session = SingletonSessionState.ExecutionSession;
         private readonly int _threadId = Thread.CurrentThread.ManagedThreadId;
         private readonly double _startedAt = Time.realtimeSinceStartupAsDouble;
-        private bool _isTerminal;
 
         /// <summary>捕获接受线程与执行会话，并登记在途身份，便于退出时统一收尾。</summary>
         internal SendWebRequest() => HttpManager.Register(this);
@@ -85,7 +81,7 @@ namespace YLFramework.Http
         /// <summary>接管待释放的 Handler；若请求已经结束，立即释放传入对象并拒绝继续配置。</summary>
         internal T Own<T>(T handler) where T : IDisposable
         {
-            if (_isTerminal)
+            if (Status != HttpRequestStatus.Pending)
             {
                 handler.Dispose();
                 throw new InvalidOperationException("HTTP request has already ended.");
@@ -97,65 +93,50 @@ namespace YLFramework.Http
         /// <summary>接管原生传输及其当前 Handler；请求已经结束时释放传入传输并拒绝接管。</summary>
         internal void TakeOwnership(UnityWebRequest request)
         {
-            if (_isTerminal)
+            if (Status != HttpRequestStatus.Pending)
             {
                 request?.Dispose();
                 throw new InvalidOperationException("HTTP request has already ended.");
             }
             _transport = request ?? throw new ArgumentNullException(nameof(request));
-            CaptureHandlers();
+            CaptureHandlers(request);
         }
 
         /// <summary>记住当前附着的 Handler，使配置替换后的旧对象仍能在收尾时释放。</summary>
-        private void CaptureHandlers()
+        private void CaptureHandlers(UnityWebRequest request)
         {
-            if (_transport.downloadHandler != null)
+            if (request.downloadHandler != null)
             {
-                _handlers.Add(_transport.downloadHandler);
+                _handlers.Add(request.downloadHandler);
             }
 
-            if (_transport.uploadHandler != null)
+            if (request.uploadHandler != null)
             {
-                _handlers.Add(_transport.uploadHandler);
+                _handlers.Add(request.uploadHandler);
             }
 
-            if (_transport.certificateHandler != null)
+            if (request.certificateHandler != null)
             {
-                _handlers.Add(_transport.certificateHandler);
+                _handlers.Add(request.certificateHandler);
             }
         }
 
         /// <summary>本请求是否仍属于可接受工作的当前执行会话。</summary>
         private bool IsCurrent => ReferenceEquals(_session, SingletonSessionState.ExecutionSession) && HttpManager.CanRun;
 
-        /// <summary>在当前会话启动发送协程；会话或宿主不可用时转入失效终态。</summary>
+        /// <summary>在当前会话同步配置并发送，仅由原生 completed 驱动完成。</summary>
         internal void Start()
         {
+            if (Status != HttpRequestStatus.Pending)
+            {
+                return;
+            }
+
             if (!IsCurrent)
             {
                 Invalidate();
                 return;
             }
-            var handle = CoroutineStarter.Start(Run());
-            // 同步首步可取消/退出/完成；不能把返回的旧句柄重新挂到已收尾请求。
-            if (_isTerminal)
-            {
-                CoroutineStarter.Stop(handle);
-            }
-            else if (handle == null)
-            {
-                Invalidate();
-            }
-            else
-            {
-                _coroutine = handle;
-            }
-        }
-
-        /// <summary>顺序执行发送前配置并发起原生传输，将配置与发送异常收束为请求失败。</summary>
-        private IEnumerator Run()
-        {
-            Exception failure = null;
             try
             {
                 var before = HttpManager.Before;
@@ -163,7 +144,7 @@ namespace YLFramework.Http
                 {
                     foreach (Action<UnityWebRequest> callback in before.GetInvocationList())
                     {
-                        if (_isTerminal || !IsCurrent)
+                        if (Status != HttpRequestStatus.Pending || !IsCurrent)
                         {
                             break;
                         }
@@ -174,48 +155,39 @@ namespace YLFramework.Http
                         }
                         finally
                         {
-                            if (!_isTerminal)
+                            if (Status == HttpRequestStatus.Pending)
                             {
-                                CaptureHandlers();
+                                CaptureHandlers(_transport);
                             }
                         }
                     }
                 }
 
-                if (!_isTerminal && IsCurrent)
+                if (Status != HttpRequestStatus.Pending)
                 {
-                    _nativeOperation = _transport.SendWebRequest();
-                    // 原生完成独立于协程宿主；宿主停止等待不能遗失 HTTP 的资源收尾。
-                    _nativeOperation.completed += OnNativeCompleted;
+                    return;
                 }
+
+                if (!IsCurrent)
+                {
+                    Invalidate();
+                    return;
+                }
+
+                _nativeOperation = _transport.SendWebRequest();
+                // 所有权、登记及字段均已就绪；+= 可能同步收尾，此后不能再写回请求字段。
+                _nativeOperation.completed += OnNativeCompleted;
             }
             catch (Exception exception)
             {
-                failure = exception;
+                Fail(exception);
             }
-            if (failure != null)
-            {
-                Fail(failure);
-            }
-
-            if (_isTerminal)
-            {
-                yield break;
-            }
-
-            if (!IsCurrent)
-            {
-                Invalidate();
-                yield break;
-            }
-            yield return _nativeOperation;
-            OnNativeCompleted(_nativeOperation);
         }
 
         /// <summary>读取原生结果到局部快照，确认未被重入取消后再一次提交响应与终态。</summary>
         private void OnNativeCompleted(AsyncOperation operation)
         {
-            if (_isTerminal)
+            if (Status != HttpRequestStatus.Pending)
             {
                 return;
             }
@@ -231,6 +203,8 @@ namespace YLFramework.Http
                 var result = request.result;
                 var code = request.responseCode;
                 var responseHeaders = request.GetResponseHeaders();
+                var headers = responseHeaders == null ? null : new ReadOnlyDictionary<string, string>(
+                    new Dictionary<string, string>(responseHeaders, StringComparer.OrdinalIgnoreCase));
                 var nativeError = request.error;
                 var handler = request.downloadHandler;
                 string text = null;
@@ -239,7 +213,7 @@ namespace YLFramework.Http
                 {
                     // 自定义 Handler 的虚方法可同步取消/退出，不能边读取边写入可观察结果。
                     text = handler.text;
-                    if (_isTerminal)
+                    if (Status != HttpRequestStatus.Pending)
                     {
                         return;
                     }
@@ -250,7 +224,7 @@ namespace YLFramework.Http
                         return;
                     }
                     data = handler.data;
-                    if (_isTerminal)
+                    if (Status != HttpRequestStatus.Pending)
                     {
                         return;
                     }
@@ -267,7 +241,7 @@ namespace YLFramework.Http
                 }
                 NativeResult = result;
                 ResponseCode = code;
-                ResponseHeaders = responseHeaders == null ? null : new ReadOnlyDictionary<string, string>(responseHeaders);
+                ResponseHeaders = headers;
                 Text = text;
                 Data = data;
                 Finish(result == UnityWebRequest.Result.Success ? HttpRequestStatus.Succeeded : HttpRequestStatus.Failed,
@@ -282,7 +256,7 @@ namespace YLFramework.Http
         /// <summary>保存原始异常并结束请求；异常自身无法格式化时仍保留可用错误描述。</summary>
         internal void Fail(Exception exception)
         {
-            if (_isTerminal)
+            if (Status != HttpRequestStatus.Pending)
             {
                 return;
             }
@@ -317,26 +291,37 @@ namespace YLFramework.Http
         /// <summary>仅首次提交终态并撤销在途身份，按需借读观察后释放原生资源，最后通知基类完成。</summary>
         private void Finish(HttpRequestStatus status, string error, Exception exception, bool observe)
         {
-            if (_isTerminal)
+            if (Status != HttpRequestStatus.Pending)
             {
                 return;
             }
 
-            _isTerminal = true;
             Status = status;
             Exception = exception;
             ElapsedSeconds = (float)(Time.realtimeSinceStartupAsDouble - _startedAt);
-            HttpManager.Unregister(this);
-            if (_nativeOperation != null)
-            {
-                _nativeOperation.completed -= OnNativeCompleted;
-            }
-
-            var handle = _coroutine;
-            _coroutine = null;
-            CoroutineStarter.Stop(handle);
             try
             {
+                try
+                {
+                    HttpManager.Unregister(this);
+                }
+                catch (Exception cleanupError)
+                {
+                    Debug.LogException(cleanupError);
+                }
+
+                try
+                {
+                    if (_nativeOperation != null)
+                    {
+                        _nativeOperation.completed -= OnNativeCompleted;
+                    }
+                }
+                catch (Exception cleanupError)
+                {
+                    Debug.LogException(cleanupError);
+                }
+
                 if (observe)
                 {
                     var after = HttpManager.After;
@@ -354,7 +339,14 @@ namespace YLFramework.Http
                             }
                             finally
                             {
-                                CaptureHandlers();
+                                try
+                                {
+                                    CaptureHandlers(_transport);
+                                }
+                                catch (Exception cleanupError)
+                                {
+                                    Debug.LogException(cleanupError);
+                                }
                             }
                         }
                     }
@@ -362,38 +354,9 @@ namespace YLFramework.Http
             }
             finally
             {
-                ReleaseTransport();
-                // 基类按注册顺序同步通知；异常只报告，不反写 HTTP 终态。
                 try
                 {
-                    Complete(error);
-                }
-                catch (Exception notificationError)
-                {
-                    Debug.LogException(notificationError);
-                }
-            }
-        }
-
-        /// <summary>停止未完成传输并释放请求及所有接管过的 Handler，逐项报告释放异常。</summary>
-        private void ReleaseTransport()
-        {
-            if (_transport != null)
-            {
-                CaptureHandlers();
-            }
-
-            var request = _transport;
-            _transport = null;
-            _nativeOperation = null;
-            if (request != null)
-            {
-                try
-                {
-                    if (!request.isDone)
-                    {
-                        request.Abort();
-                    }
+                    ReleaseTransport();
                 }
                 catch (Exception cleanupError)
                 {
@@ -401,32 +364,97 @@ namespace YLFramework.Http
                 }
                 finally
                 {
-                    // 显式释放所有接管过的 Handler，包含前置配置替换的旧对象；忽略外部修改的 Dispose 标志。
-                    request.disposeDownloadHandlerOnDispose = false;
-                    request.disposeUploadHandlerOnDispose = false;
-                    request.disposeCertificateHandlerOnDispose = false;
+                    // 基类按注册顺序同步通知；清理/通知异常只报告，不反写 HTTP 终态。
                     try
                     {
-                        request.Dispose();
+                        Complete(error);
+                    }
+                    catch (Exception notificationError)
+                    {
+                        Debug.LogException(notificationError);
+                    }
+                }
+            }
+        }
+
+        /// <summary>停止未完成传输并释放请求及所有接管过的 Handler，逐项报告释放异常。</summary>
+        private void ReleaseTransport()
+        {
+            var request = _transport;
+            _transport = null;
+            _nativeOperation = null;
+            try
+            {
+                if (request != null)
+                {
+                    try
+                    {
+                        CaptureHandlers(request);
                     }
                     catch (Exception cleanupError)
                     {
                         Debug.LogException(cleanupError);
                     }
+
+                    try
+                    {
+                        if (!request.isDone)
+                        {
+                            request.Abort();
+                        }
+                    }
+                    catch (Exception cleanupError)
+                    {
+                        Debug.LogException(cleanupError);
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            // 显式释放所有接管过的 Handler，包含被替换的旧对象；忽略外部修改的 Dispose 标志。
+                            request.disposeDownloadHandlerOnDispose = false;
+                            request.disposeUploadHandlerOnDispose = false;
+                            request.disposeCertificateHandlerOnDispose = false;
+                        }
+                        catch (Exception cleanupError)
+                        {
+                            Debug.LogException(cleanupError);
+                        }
+                        finally
+                        {
+                            try
+                            {
+                                request.Dispose();
+                            }
+                            catch (Exception cleanupError)
+                            {
+                                Debug.LogException(cleanupError);
+                            }
+                        }
+                    }
                 }
             }
-            foreach (var handler in _handlers)
+            finally
             {
                 try
                 {
-                    handler.Dispose();
+                    foreach (var handler in _handlers)
+                    {
+                        try
+                        {
+                            handler.Dispose();
+                        }
+                        catch (Exception cleanupError)
+                        {
+                            Debug.LogException(cleanupError);
+                        }
+                    }
                 }
-                catch (Exception cleanupError)
+                finally
                 {
-                    Debug.LogException(cleanupError);
+                    _handlers.Clear();
                 }
             }
-            _handlers.Clear();
         }
     }
 }

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -83,7 +84,12 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         {
             Initialize();
             var first = Loader.LoadAsync(Address);
+            Assert.That(first.IsDone, Is.False, "This regression needs a real pending resource load.");
+            var waiter = first.AsTask();
+            Assert.That(waiter.IsCompleted, Is.False);
             yield return first;
+            Assert.That(waiter.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            Assert.That(waiter.Result, Is.SameAs(first));
             Assert.That(first.Exception, Is.Null, first.Error);
             Assert.That(first.Result.IsSimulation, Is.True);
             Assert.That(first.Result.Assemblies.Values.Single(), Is.SameAs(typeof(HybridCLRLoaderTests).Assembly));

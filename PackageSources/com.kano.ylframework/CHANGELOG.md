@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Async 请求采用单次终态：重复 Complete/Abort 不再改写首次 Error/Progress 或重跑 hook；protected IsCompleted 改为只读，外部派生类须经 Complete 提交，领域结果仍需由生产者自行防重。
+- CustomAsyncOperation 新增惰性缓存 AsTask，多个消费者等待同一请求；失败/取消仍读取请求结果。完成订阅自动断开，静默完成、回调/hook 异常或清空普通订阅均不会丢失 Task 完成信号；普通通知保持 fail-fast，必要 hook 继续收束，多处异常保留为 AggregateException。
+- HTTP 移除原生 completed 与协程恢复的双驱动，不再创建或依赖协程宿主；保留 Pre/Post、独占 Handler 所有权、会话取消及释放后完成顺序，响应头改为独立且大小写不敏感的只读快照。
+- HTTP 原生回归纳入 Core 的精确测试程序集选择，新增禁 Domain Reload 的真实两 Play 失效、Task 收束和事件隔离验证；不增加产品程序集或网络平台能力。
+
 - 对象池公开合同收敛：ObjectPool/Safe/集合的MaxPoolSize统一为默认20、-1不限、0禁缓存、其他负数非法；0仍可借出并在归还时清理，预热不创建。旧0/其他负数不限调用需迁-1，内部Action已同步。
 - SafeObjectPool封闭为sealed、私有无参构造及私有转发实现，保留工厂配置、IOfPool和原owner/会话责任；旧派生扩展改用工厂/IOfPool或组合显式ObjectPool，不保留兼容继承壳，默认FIFO与显式LIFO不变。
 

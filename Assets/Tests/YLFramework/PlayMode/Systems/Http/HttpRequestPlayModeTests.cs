@@ -29,12 +29,15 @@ namespace YLFramework.Tests.Http
         private readonly List<SendWebRequest> _ownedRequests = new List<SendWebRequest>();
         private readonly List<Action<UnityWebRequest>> _preSubscriptions = new List<Action<UnityWebRequest>>();
         private readonly List<Action<UnityWebRequest, float>> _postSubscriptions = new List<Action<UnityWebRequest, float>>();
+        private CoroutineStarter[] _baselineHosts;
         private LoopbackServer _server;
         private CultureInfo _previousCulture;
         private CultureInfo _previousUICulture;
         private float _previousTimeScale;
         private bool _isIsolated;
-        private bool _restoreSession;
+        private bool _restoreExecutionGate;
+        private bool _previousExecutionStopping;
+        private bool _previousHttpEnding;
 
         private static Type SessionType => typeof(CoroutineStarter).Assembly
             .GetType("YLFramework.Singletons.SingletonSessionState", true);
@@ -43,8 +46,8 @@ namespace YLFramework.Tests.Http
         public void SetUp()
         {
             _isIsolated = false;
-            _restoreSession = false;
-            Assert.That(FindHosts(), Is.Empty, "Fixture must not own an existing Foundation host.");
+            _restoreExecutionGate = false;
+            _baselineHosts = FindHosts();
             Assert.That(SessionType.GetProperty("CanRunExecution", PrivateStatic).GetValue(null), Is.True,
                 "Fixture must not reopen a pre-existing closed execution gate.");
             Assert.That(PendingRequests(), Is.Empty, "Fixture must not interrupt another HTTP owner.");
@@ -111,28 +114,69 @@ namespace YLFramework.Tests.Http
                 finally
                 {
                     _server = null;
-                    if (_restoreSession)
+                    if (_restoreExecutionGate)
                     {
-                        // Reset 清空 HTTP 钩子；保存其他订阅者，不将夹具的恢复变成订阅清理。
-                        var pre = (Action<UnityWebRequest>)typeof(HttpManager)
-                            .GetField("PreWebRequest", PrivateStatic).GetValue(null);
-                        var post = (Action<UnityWebRequest, float>)typeof(HttpManager)
-                            .GetField("PostWebRequest", PrivateStatic).GetValue(null);
+                        // 全局 ResetForNewSession 会销毁外部宿主并重置其他模块；这里只还原本夹具关闭的门禁。
                         try
                         {
-                            // 仅恢复本夹具关闭的 gate，不是实际退出/再次进入 Play 的证据。
-                            SessionType.GetMethod("ResetForNewSession", PrivateStatic).Invoke(null, null);
+                            typeof(HttpManager).GetField("_isEnding", PrivateStatic)
+                                .SetValue(null, _previousHttpEnding);
                         }
                         finally
                         {
-                            HttpManager.PreWebRequest += pre;
-                            HttpManager.PostWebRequest += post;
-                            _restoreSession = false;
+                            SessionType.GetField("_isExecutionStopping", PrivateStatic)
+                                .SetValue(null, _previousExecutionStopping);
+                            _restoreExecutionGate = false;
                         }
                     }
                 }
             }
             yield return null;
+            Assert.That(FindHosts(), Is.EquivalentTo(_baselineHosts), "Fixture must preserve external coroutine hosts.");
+        }
+
+        [UnityTest]
+        public IEnumerator HttpCompletesWithoutCreatingCoroutineHost()
+        {
+            NativeEvidence evidence = null;
+            Pre(native => evidence = new NativeEvidence(native));
+            var request = Start(() => HttpManager.Get(_server.Url("/echo"), null, null));
+            Assert.That(FindHosts(), Is.EquivalentTo(_baselineHosts),
+                "HTTP must not change coroutine hosts when sending.");
+            yield return WaitFor(request);
+            AssertSucceeded(request);
+            evidence.AssertReleased();
+            Assert.That(FindHosts(), Is.EquivalentTo(_baselineHosts), "HTTP completion must not change coroutine hosts.");
+        }
+
+        [UnityTest]
+        public IEnumerator ForeignPreCreatedHostIsNotAdoptedByHttpFixture()
+        {
+            CoroutineStarter foreign = null;
+            Action<UnityWebRequest> callback = _ =>
+            {
+                foreign = new GameObject("ForeignHttpObserverHost").AddComponent<CoroutineStarter>();
+                foreign.StartCoroutine(KeepHostAlive());
+            };
+            HttpManager.PreWebRequest += callback;
+            try
+            {
+                var request = Start(() => HttpManager.Get(_server.Url("/echo"), null, null));
+                Assert.That(foreign, Is.Not.Null);
+                Assert.That(_ownedHosts, Has.No.Member(foreign),
+                    "A host created by another observer is not owned by the HTTP fixture.");
+                yield return WaitFor(request);
+                AssertSucceeded(request);
+                Assert.That(foreign, Is.Not.Null);
+            }
+            finally
+            {
+                HttpManager.PreWebRequest -= callback;
+                if (foreign)
+                {
+                    Object.DestroyImmediate(foreign.gameObject);
+                }
+            }
         }
 
         [UnityTest]
@@ -248,11 +292,88 @@ namespace YLFramework.Tests.Http
             Assert.That(request.Data, Is.Not.SameAs(handler.Bytes));
         }
 
+        [UnityTest]
+        public IEnumerator CustomHandlerGetterFailureCannotPublishPartialSnapshot()
+        {
+            for (var index = 0; index < 2; index++)
+            {
+                var failure = new InvalidOperationException("http fixture snapshot failure");
+                var handler = new SnapshotHandler();
+                Action fail = () => throw failure;
+                if (index == 0)
+                {
+                    handler.ReadText = fail;
+                }
+                else
+                {
+                    handler.ReadData = fail;
+                }
+
+                NativeEvidence evidence = null;
+                Action<UnityWebRequest> configure = native =>
+                {
+                    native.downloadHandler = handler;
+                    evidence = new NativeEvidence(native);
+                };
+                Pre(configure);
+                var request = Start(() => HttpManager.Get(_server.Url("/echo"), null, null));
+                yield return WaitFor(request);
+                Assert.That(request.Status, Is.EqualTo(HttpRequestStatus.Failed));
+                Assert.That(request.Exception, Is.SameAs(failure));
+                Assert.That(request.ResponseCode, Is.Zero);
+                Assert.That(request.Text, Is.Null);
+                Assert.That(request.Data, Is.Null);
+                Assert.That(request.ResponseHeaders, Is.Null);
+                evidence.AssertReleased();
+                HttpManager.PreWebRequest -= configure;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator CustomHandlerGetterExecutionEndCannotPublishSnapshotAfterInvalidation()
+        {
+            NativeEvidence evidence = null;
+            var handler = new SnapshotHandler
+            {
+                ReadText = () =>
+                {
+                    CloseExecution();
+                    InvokeExecutionEnded();
+                }
+            };
+            Pre(native =>
+            {
+                native.downloadHandler = handler;
+                evidence = new NativeEvidence(native);
+            });
+            var request = Start(() => HttpManager.Get(_server.Url("/echo"), null, null));
+            var completions = 0;
+            request.AddCompleteEvent(_ =>
+            {
+                completions++;
+                evidence.AssertReleased();
+                Assert.That(request.ResponseCode, Is.Zero);
+                Assert.That(request.Text, Is.Null);
+                Assert.That(request.Data, Is.Null);
+                Assert.That(request.ResponseHeaders, Is.Null);
+            });
+            yield return WaitFor(request);
+            InvokeLateCompletion(request);
+            Assert.That(request.Status, Is.EqualTo(HttpRequestStatus.Invalidated));
+            Assert.That(request.ResponseCode, Is.Zero);
+            Assert.That(request.Text, Is.Null);
+            Assert.That(request.Data, Is.Null);
+            Assert.That(request.ResponseHeaders, Is.Null);
+            Assert.That(completions, Is.EqualTo(1));
+            evidence.AssertReleased();
+        }
+
         private sealed class SnapshotHandler : DownloadHandlerScript
         {
             public Action ReadText;
             public Action ReadData;
             public bool ClearOnDispose;
+            public bool ThrowOnDispose;
             public readonly byte[] Bytes = { 10, 20, 30 };
             protected override string GetText()
             {
@@ -272,6 +393,11 @@ namespace YLFramework.Tests.Http
                 }
 
                 base.Dispose();
+                if (ThrowOnDispose)
+                {
+                    ThrowOnDispose = false;
+                    throw new InvalidOperationException("http fixture dispose failure");
+                }
             }
         }
 
@@ -279,7 +405,10 @@ namespace YLFramework.Tests.Http
         public IEnumerator FormAndJsonFactoriesSendCorrectMethodsBodiesContentTypesAndHeaders()
         {
             var form = Start(() => HttpManager.PostForm(_server.Url("/echo"),
-                new Dictionary<string, string> { { "key &=", "a +&=" }, { "empty", "" } }, Headers()));
+                new Dictionary<string, string>
+                {
+                    { "key &=", "a +&=" }, { "empty", "" }, { "nil", null }, { "unicode", "\u96ea" }
+                }, Headers()));
             yield return WaitFor(form);
             AssertSucceeded(form);
             var echo = Echo(form);
@@ -287,9 +416,11 @@ namespace YLFramework.Tests.Http
             Assert.That(echo[2], Does.StartWith("application/x-www-form-urlencoded"));
             Assert.That(echo[3], Is.EqualTo("fixture-header"));
             var fields = ParseForm(echo[4]);
-            Assert.That(fields.Count, Is.EqualTo(2));
+            Assert.That(fields.Count, Is.EqualTo(4));
             Assert.That(fields["key &="], Is.EqualTo("a +&="));
             Assert.That(fields["empty"], Is.Empty);
+            Assert.That(fields["nil"], Is.Empty);
+            Assert.That(fields["unicode"], Is.EqualTo("\u96ea"));
 
             var body = new Dictionary<string, object> { { "number", 12.5 }, { "text", "a +&=雪" } };
             var factories = new Func<SendWebRequest>[]
@@ -324,14 +455,37 @@ namespace YLFramework.Tests.Http
         }
 
         [UnityTest]
+        public IEnumerator NullJsonDictionariesRemainLiteralNullBodies()
+        {
+            var factories = new Func<SendWebRequest>[]
+            {
+                () => HttpManager.PostBody(_server.Url("/echo"), (Dictionary<string, object>)null, null),
+                () => HttpManager.Put(_server.Url("/echo"), null, null),
+                () => HttpManager.Delete(_server.Url("/echo"), null, null)
+            };
+            var methods = new[] { "POST", "PUT", "DELETE" };
+            for (var index = 0; index < factories.Length; index++)
+            {
+                var request = Start(factories[index]);
+                yield return WaitFor(request);
+                var echo = Echo(request);
+                Assert.That(echo[0], Is.EqualTo(methods[index]));
+                Assert.That(echo[2], Does.StartWith("application/json"));
+                Assert.That(echo[4], Is.EqualTo("null"));
+            }
+        }
+
+        [UnityTest]
         public IEnumerator SuccessCommitsSnapshotBeforePostAndReleasesNativeBeforeCompletionAndLateNotification()
         {
             NativeEvidence evidence = null;
             SendWebRequest request = null;
+            Task<SendWebRequest> completion = null;
             var calls = new List<string>();
             Pre(native =>
             {
                 Assert.That(native.timeout, Is.EqualTo(5));
+                native.certificateHandler = new FixtureCertificateHandler();
                 evidence = new NativeEvidence(native);
                 evidence.AssertLive();
             });
@@ -341,14 +495,31 @@ namespace YLFramework.Tests.Http
                 Assert.That(request.Status, Is.EqualTo(HttpRequestStatus.Succeeded));
                 Assert.That(request.ResponseCode, Is.EqualTo(200));
                 Assert.That(request.Text, Is.EqualTo(native.downloadHandler.text));
+                Assert.That(request.IsDone, Is.False, "Post borrows native resources before base completion.");
+                Assert.That(completion.IsCompleted, Is.False, "Task must not complete during Post.");
                 Assert.That(seconds, Is.EqualTo(request.ElapsedSeconds));
                 Assert.That(seconds, Is.GreaterThanOrEqualTo(0));
                 evidence.AssertLive();
             });
-            request = Start(() => HttpManager.Get(_server.Url("/echo"), null, Headers()));
+            request = Start(() => HttpManager.PostBody(_server.Url("/echo"), "{}", Headers()));
+            completion = request.AsTask();
+            Assert.That(request.AsTask(), Is.SameAs(completion));
+            var waiter = ObserveTask();
+            async Task ObserveTask()
+            {
+                var result = await completion;
+                evidence.AssertReleased();
+                Assert.That(result, Is.SameAs(request));
+                AssertSucceeded(result);
+                Assert.That(result.ResponseHeaders["X-Fixture"], Is.EqualTo("loopback"));
+                Assert.That(result.Data, Is.EqualTo(Encoding.UTF8.GetBytes(result.Text)));
+                calls.Add("task");
+            }
+
             Action<SendWebRequest> first = _ =>
             {
                 evidence.AssertReleased();
+                Assert.That(completion.IsCompleted, Is.False, "Task signals after ordinary completion callbacks.");
                 calls.Add("first");
             };
             request.AddCompleteEvent(first);
@@ -359,6 +530,9 @@ namespace YLFramework.Tests.Http
                 calls.Add("registered");
             });
             yield return WaitFor(request);
+            yield return WaitUntil(() => waiter.IsCompleted, 5);
+            Assert.That(waiter.Status, Is.EqualTo(TaskStatus.RanToCompletion), waiter.Exception?.ToString());
+            Assert.That(completion.Status, Is.EqualTo(TaskStatus.RanToCompletion));
             request.RemoveCompleteEvent(first);
             AssertSucceeded(request);
             Assert.That(request.ResponseHeaders["X-Fixture"], Is.EqualTo("loopback"));
@@ -368,7 +542,7 @@ namespace YLFramework.Tests.Http
                 evidence.AssertReleased();
                 calls.Add("late");
             });
-            Assert.That(calls, Is.EqualTo(new[] { "post", "first", "registered", "late" }));
+            Assert.That(calls, Is.EqualTo(new[] { "post", "first", "registered", "task", "late" }));
             var text = request.Text;
             var data = (byte[])request.Data.Clone();
             request.Abort();
@@ -377,23 +551,116 @@ namespace YLFramework.Tests.Http
             Assert.That(request.Text, Is.EqualTo(text));
             Assert.That(request.Data, Is.EqualTo(data));
             Assert.That(request.ResponseHeaders["X-Fixture"], Is.EqualTo("loopback"));
-            Assert.That(calls.Count, Is.EqualTo(4));
+            Assert.That(calls.Count, Is.EqualTo(5));
         }
 
         [UnityTest]
-        public IEnumerator DestroyedCoroutineHostCannotOrphanNativeCompletionOrCreateReplacementHost()
+        public IEnumerator DestroyedIndependentCoroutineHostCannotOrphanHttpOrCreateReplacementHost()
         {
+            var host = CreateIndependentHost();
             NativeEvidence evidence = null;
             Pre(native => evidence = new NativeEvidence(native));
             var request = Start(() => HttpManager.PostBody(_server.Url("/echo"), "{}", null));
             Assert.That(request.IsDone, Is.False);
-            var host = FindHosts()[0];
             Object.DestroyImmediate(host.gameObject);
-            Assert.That(FindHosts(), Is.Empty);
+            Assert.That(FindHosts(), Is.EquivalentTo(_baselineHosts));
             yield return WaitFor(request);
             AssertSucceeded(request);
             evidence.AssertReleased();
-            Assert.That(FindHosts(), Is.Empty, "Native completion must not create a coroutine host.");
+            Assert.That(FindHosts(), Is.EquivalentTo(_baselineHosts), "Native completion must not change other hosts.");
+        }
+
+        [UnityTest]
+        public IEnumerator ResponseHeadersUseOrdinalIgnoreCaseAndAreReadOnlySnapshots()
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("tr-TR");
+            CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("tr-TR");
+            var request = Start(() => HttpManager.Get(_server.Url("/echo"), null, null));
+            yield return WaitFor(request);
+            AssertSucceeded(request);
+            Assert.That(request.ResponseHeaders["x-fixture"], Is.EqualTo("loopback"));
+            Assert.That(request.ResponseHeaders["X-FIXTURE"], Is.EqualTo("loopback"));
+            Assert.That(request.ResponseHeaders.ContainsKey("x-FiXtUrE"), Is.True);
+            Assert.That(request.ResponseHeaders.TryGetValue("X-fixture", out var value), Is.True);
+            Assert.That(value, Is.EqualTo("loopback"));
+            var mutable = request.ResponseHeaders as IDictionary<string, string>;
+            Assert.That(mutable, Is.Not.Null);
+            Assert.That(mutable.IsReadOnly, Is.True);
+            Assert.Throws<NotSupportedException>(() => mutable["X-Fixture"] = "changed");
+            Assert.Throws<NotSupportedException>(() => mutable.Add("X-New", "changed"));
+            Assert.Throws<NotSupportedException>(() => mutable.Remove("X-Fixture"));
+            Assert.Throws<NotSupportedException>(() => mutable.Clear());
+            Assert.That(request.ResponseHeaders["x-fixture"], Is.EqualTo("loopback"));
+        }
+
+        [UnityTest]
+        public IEnumerator NoContent204CompletesWithEmptySnapshotAndReleasedNative()
+        {
+            NativeEvidence evidence = null;
+            var posts = 0;
+            Pre(native => evidence = new NativeEvidence(native));
+            Post((native, seconds) =>
+            {
+                posts++;
+                evidence.AssertLive();
+                Assert.That(native.responseCode, Is.EqualTo(204));
+            });
+            var request = Start(() => HttpManager.Get(_server.Url("/no-content"), null, null));
+            yield return WaitFor(request);
+            Assert.That(request.Status, Is.EqualTo(HttpRequestStatus.Succeeded), request.Error);
+            Assert.That(request.NativeResult, Is.EqualTo(UnityWebRequest.Result.Success));
+            Assert.That(request.ResponseCode, Is.EqualTo(204));
+            Assert.That(request.Error, Is.Null.Or.Empty);
+            Assert.That(request.Text, Is.Null.Or.Empty);
+            Assert.That(request.Data, Is.Null.Or.Empty);
+            Assert.That(request.ResponseHeaders["X-Fixture"], Is.EqualTo("loopback"));
+            Assert.That(posts, Is.EqualTo(1));
+            evidence.AssertReleased();
+        }
+
+        [UnityTest]
+        public IEnumerator NativeLateCompletedSubscriptionRunsSynchronouslyWhileTransportIsLive()
+        {
+            NativeEvidence evidence;
+            using (var native = UnityWebRequest.Get(_server.Url("/echo")))
+            {
+                evidence = new NativeEvidence(native);
+                var operation = native.SendWebRequest();
+                var firstCalls = 0;
+                Action<AsyncOperation> first = _ => firstCalls++;
+                operation.completed += first;
+                try
+                {
+                    yield return WaitUntil(() => firstCalls == 1, 5);
+                    Assert.That(native.result, Is.EqualTo(UnityWebRequest.Result.Success), native.error);
+                    var returned = false;
+                    var lateCalls = 0;
+                    Action<AsyncOperation> late = value =>
+                    {
+                        Assert.That(returned, Is.False, "A late native subscription invokes inline.");
+                        Assert.That(value, Is.SameAs(operation));
+                        evidence.AssertLive();
+                        lateCalls++;
+                    };
+                    try
+                    {
+                        operation.completed += late;
+                        returned = true;
+                        Assert.That(lateCalls, Is.EqualTo(1));
+                        yield return null;
+                        Assert.That(lateCalls, Is.EqualTo(1));
+                    }
+                    finally
+                    {
+                        operation.completed -= late;
+                    }
+                }
+                finally
+                {
+                    operation.completed -= first;
+                }
+            }
+            evidence.AssertReleased();
         }
 
         [UnityTest]
@@ -402,7 +669,10 @@ namespace YLFramework.Tests.Http
             NativeEvidence evidence = null;
             Pre(native => evidence = new NativeEvidence(native));
             var request = Start(() => HttpManager.Get(_server.Url("/error"), null, null));
+            var completion = request.AsTask();
             yield return WaitFor(request);
+            Assert.That(completion.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            Assert.That(completion.GetAwaiter().GetResult(), Is.SameAs(request));
             Assert.That(request.Status, Is.EqualTo(HttpRequestStatus.Failed));
             Assert.That(request.Error, Is.Not.Null.And.Not.Empty);
             Assert.That(request.ResponseCode, Is.EqualTo(503));
@@ -440,6 +710,7 @@ namespace YLFramework.Tests.Http
             var evidence = new List<NativeEvidence>();
             Pre(native => evidence.Add(new NativeEvidence(native)));
             var canceled = Start(() => HttpManager.Get(_server.Url("/slow"), null, null));
+            var completion = canceled.AsTask();
             yield return WaitUntil(() => _server.RequestCount == 1, 5);
             var survivor = Start(() => HttpManager.Get(_server.Url("/echo"), null, null));
             var completions = 0;
@@ -451,6 +722,9 @@ namespace YLFramework.Tests.Http
             Assert.That(canceled.Status, Is.EqualTo(HttpRequestStatus.Pending));
             Assert.That(survivor.Status, Is.EqualTo(HttpRequestStatus.Pending));
             canceled.Abort();
+            Assert.That(completion.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            Assert.That(completion.GetAwaiter().GetResult(), Is.SameAs(canceled));
+            evidence[0].AssertReleased();
             var error = canceled.Error;
             var text = canceled.Text;
             var data = canceled.Data;
@@ -523,7 +797,7 @@ namespace YLFramework.Tests.Http
             Assert.That(request.Status, Is.EqualTo(HttpRequestStatus.Invalidated));
             Assert.That(request.Error, Is.Not.Null.And.Not.Empty);
             Assert.That(preCalled, Is.False);
-            Assert.That(FindHosts(), Is.Empty);
+            Assert.That(FindHosts(), Is.EquivalentTo(_baselineHosts));
             Assert.That(PendingRequests(), Is.Empty);
             evidence.AssertReleased();
             yield return null;
@@ -539,13 +813,7 @@ namespace YLFramework.Tests.Http
             Pre(native =>
             {
                 evidence = new NativeEvidence(native);
-                var hosts = FindHosts();
-                Assert.That(hosts.Length, Is.EqualTo(1));
-                if (!_ownedHosts.Contains(hosts[0]))
-                {
-                    _ownedHosts.Add(hosts[0]);
-                }
-
+                Assert.That(FindHosts(), Is.EquivalentTo(_baselineHosts), "HTTP must not change hosts before Pre.");
                 CloseExecution();
                 InvokeExecutionEnded();
                 var rejectedNative = UnityWebRequest.Get(_server.Url("/echo"));
@@ -565,36 +833,29 @@ namespace YLFramework.Tests.Http
         }
 
         [UnityTest]
-        public IEnumerator PreDeactivatingOwnedHostRejectsSynchronousStartAndReleasesNative()
+        public IEnumerator PreDeactivatingIndependentHostDoesNotRejectHttpOrCreateReplacementHost()
         {
-            NativeEvidence evidence = null;
+            var host = CreateIndependentHost();
+            var hostsBeforeHttp = FindHosts();
+            var evidence = new List<NativeEvidence>();
             Pre(native =>
             {
-                evidence = new NativeEvidence(native);
-                var hosts = FindHosts();
-                Assert.That(hosts.Length, Is.EqualTo(1));
-                // 此宿主由本次 Start 创建；在同步首步立即记账，才能安全失活。
-                if (!_ownedHosts.Contains(hosts[0]))
-                {
-                    _ownedHosts.Add(hosts[0]);
-                }
-
-                hosts[0].gameObject.SetActive(false);
+                evidence.Add(new NativeEvidence(native));
+                host.gameObject.SetActive(false);
             });
-            var request = Start(() => HttpManager.Get(_server.Url("/slow"), null, null));
-            Assert.That(request.IsDone, Is.True);
-            Assert.That(request.Status, Is.EqualTo(HttpRequestStatus.Invalidated));
-            Assert.That(request.Error, Is.Not.Null.And.Not.Empty);
-            evidence.AssertReleased();
-            Assert.That(PendingRequests(), Is.Empty);
+            var request = Start(() => HttpManager.Get(_server.Url("/echo"), null, null));
+            yield return WaitFor(request);
+            AssertSucceeded(request);
+            evidence[0].AssertReleased();
             var native = UnityWebRequest.Get(_server.Url("/echo"));
-            var rejectedEvidence = new NativeEvidence(native);
-            var rejected = Start(() => SendOwnedNative(native));
-            Assert.That(rejected.IsDone, Is.True);
-            Assert.That(rejected.Status, Is.EqualTo(HttpRequestStatus.Invalidated));
-            rejectedEvidence.AssertReleased();
-            yield return null;
-            Assert.That(FindHosts().Length, Is.EqualTo(1), "Inactive owned host must not be replaced.");
+            var independent = Start(() => SendOwnedNative(native));
+            yield return WaitFor(independent);
+            AssertSucceeded(independent);
+            evidence[1].AssertReleased();
+            Assert.That(_server.RequestCount, Is.EqualTo(2));
+            Assert.That(host.gameObject.activeInHierarchy, Is.False);
+            Assert.That(FindHosts(), Is.EquivalentTo(hostsBeforeHttp),
+                "HTTP must preserve the inactive owned host and external hosts.");
         }
 
         [UnityTest]
@@ -662,12 +923,45 @@ namespace YLFramework.Tests.Http
         }
 
         [UnityTest]
+        public IEnumerator HandlerDisposeFailureStillReleasesOtherOwnedResourcesAndCompletesTask()
+        {
+            NativeEvidence original = null;
+            NativeEvidence replacement = null;
+            Pre(native =>
+            {
+                original = new NativeEvidence(native);
+                native.downloadHandler = new SnapshotHandler { ThrowOnDispose = true };
+                native.certificateHandler = new FixtureCertificateHandler();
+                replacement = new NativeEvidence(native);
+            });
+            LogAssert.Expect(LogType.Exception, new Regex("InvalidOperationException: http fixture dispose failure"));
+            var request = Start(() => HttpManager.PostBody(_server.Url("/echo"), "{}", null));
+            var completion = request.AsTask();
+            var notified = false;
+            request.AddCompleteEvent(_ =>
+            {
+                original.AssertReleased();
+                replacement.AssertReleased();
+                notified = true;
+            });
+            yield return WaitFor(request);
+            AssertSucceeded(request);
+            Assert.That(request.Exception, Is.Null);
+            Assert.That(request.Text, Is.EqualTo("custom snapshot"));
+            Assert.That(notified, Is.True);
+            Assert.That(completion.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            original.AssertReleased();
+            replacement.AssertReleased();
+        }
+
+        [UnityTest]
         public IEnumerator CompletionExceptionKeepsRegistrationOrderAndInterruptsLaterCallbacksButNotCleanup()
         {
             NativeEvidence evidence = null;
             Pre(native => evidence = new NativeEvidence(native));
             var calls = new List<string>();
             var request = Start(() => HttpManager.Get(_server.Url("/echo"), null, null));
+            var completion = request.AsTask();
             Action<SendWebRequest> first = _ =>
             {
                 evidence.AssertReleased();
@@ -686,6 +980,8 @@ namespace YLFramework.Tests.Http
             request.RemoveCompleteEvent(first);
             AssertSucceeded(request);
             Assert.That(request.Exception, Is.Null);
+            Assert.That(completion.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            Assert.That(completion.GetAwaiter().GetResult(), Is.SameAs(request));
             evidence.AssertReleased();
             Assert.That(calls, Is.EqualTo(new[] { "first", "throw" }));
             request.AddCompleteEvent(_ => calls.Add("late"));
@@ -759,18 +1055,21 @@ namespace YLFramework.Tests.Http
         [UnityTest]
         public IEnumerator ExecutionEndInvalidatesInFlightRequestsAndLateCallbacksCannotChangeTheirSnapshots()
         {
+            // 不把同源连接是否并行发送作为取消合同的前置；两条真实传输各自使用独立端口。
+            using var secondServer = new LoopbackServer();
             var evidence = new List<NativeEvidence>();
             Pre(native => evidence.Add(new NativeEvidence(native)));
             var first = Start(() => HttpManager.Get(_server.Url("/slow"), null, null));
-            var second = Start(() => HttpManager.PostBody(_server.Url("/slow"), "{}", null));
+            var second = Start(() => HttpManager.PostBody(secondServer.Url("/slow"), "{}", null));
             var deadline = Time.realtimeSinceStartup + 5;
-            while (_server.RequestCount != 2 && Time.realtimeSinceStartup < deadline)
+            while ((_server.RequestCount != 1 || secondServer.RequestCount != 1) && Time.realtimeSinceStartup < deadline)
             {
                 yield return null;
             }
             _server.AssertHealthy();
-            Assert.That(_server.RequestCount, Is.EqualTo(2),
-                $"Both owned slow requests must reach the server before closing execution; first={first.Status}/{first.ResponseCode}/{first.Error}, second={second.Status}/{second.ResponseCode}/{second.Error}.");
+            secondServer.AssertHealthy();
+            Assert.That(new[] { _server.RequestCount, secondServer.RequestCount }, Is.EqualTo(new[] { 1, 1 }),
+                $"Both owned slow requests must reach their servers before closing execution; first={first.Status}/{first.ResponseCode}/{first.Error}, second={second.Status}/{second.ResponseCode}/{second.Error}; first: {_server.Activity}; second: {secondServer.Activity}.");
             var completed = 0;
             first.AddCompleteEvent(_ =>
             {
@@ -808,27 +1107,24 @@ namespace YLFramework.Tests.Http
 
         private SendWebRequest Start(Func<SendWebRequest> factory)
         {
-            var before = FindHosts();
-            foreach (var host in before)
-            {
-                Assert.That(_ownedHosts.Contains(host), Is.True, "Do not adopt a foreign host.");
-            }
+            var request = factory();
+            _ownedRequests.Add(request);
+            return request;
+        }
 
-            try
+        private CoroutineStarter CreateIndependentHost()
+        {
+            var host = new GameObject("YLHttpFixture.IndependentCoroutineHost").AddComponent<CoroutineStarter>();
+            _ownedHosts.Add(host);
+            Assert.That(host.StartCoroutine(KeepHostAlive()), Is.Not.Null);
+            return host;
+        }
+
+        private static IEnumerator KeepHostAlive()
+        {
+            while (true)
             {
-                var request = factory();
-                _ownedRequests.Add(request);
-                return request;
-            }
-            finally
-            {
-                foreach (var host in FindHosts())
-                {
-                    if (Array.IndexOf(before, host) < 0 && !_ownedHosts.Contains(host))
-                    {
-                        _ownedHosts.Add(host);
-                    }
-                }
+                yield return null;
             }
         }
 
@@ -866,7 +1162,13 @@ namespace YLFramework.Tests.Http
 
         private void CloseExecution()
         {
-            _restoreSession = true;
+            if (!_restoreExecutionGate)
+            {
+                _previousExecutionStopping = (bool)SessionType.GetField("_isExecutionStopping", PrivateStatic)
+                    .GetValue(null);
+                _previousHttpEnding = (bool)typeof(HttpManager).GetField("_isEnding", PrivateStatic).GetValue(null);
+                _restoreExecutionGate = true;
+            }
             SessionType.GetMethod("StopExecution", PrivateStatic).Invoke(null, null);
         }
 
@@ -1001,12 +1303,22 @@ namespace YLFramework.Tests.Http
             private readonly List<TcpClient> _clients = new List<TcpClient>();
             private readonly List<Task> _workers = new List<Task>();
             private readonly List<Exception> _failures = new List<Exception>();
+            private readonly List<string> _activity = new List<string>();
             private readonly Task _acceptTask;
             private readonly int _port;
             private int _requestCount;
             private bool _isDisposed;
 
             public int RequestCount => Volatile.Read(ref _requestCount);
+
+            public string Activity
+            {
+                get
+                {
+                    lock (_sync)
+                        return string.Join(" | ", _activity);
+                }
+            }
 
             public LoopbackServer()
             {
@@ -1040,6 +1352,7 @@ namespace YLFramework.Tests.Http
                                 break;
                             }
                             _clients.Add(client);
+                            _activity.Add("accepted");
                             _workers.Add(Task.Run(() => Serve(client)));
                         }
                     }
@@ -1090,6 +1403,8 @@ namespace YLFramework.Tests.Http
                         {
                             throw new InvalidDataException("Malformed request line.");
                         }
+                        lock (_sync)
+                            _activity.Add(first[0] + " headers");
 
                         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                         for (var i = 1; i < lines.Length && lines[i].Length != 0; i++)
@@ -1107,6 +1422,8 @@ namespace YLFramework.Tests.Http
                         {
                             var interim = Encoding.ASCII.GetBytes("HTTP/1.1 100 Continue\r\n\r\n");
                             await stream.WriteAsync(interim, 0, interim.Length, _cancellation.Token).ConfigureAwait(false);
+                            lock (_sync)
+                                _activity.Add(first[0] + " continue sent");
                         }
                         var length = headers.TryGetValue("Content-Length", out var contentLength)
                             ? int.Parse(contentLength, CultureInfo.InvariantCulture) : 0;
@@ -1133,18 +1450,22 @@ namespace YLFramework.Tests.Http
                             offset += read;
                         }
                         Interlocked.Increment(ref _requestCount);
+                        lock (_sync)
+                            _activity.Add(first[0] + " body received");
                         if (first[1].StartsWith("/slow", StringComparison.Ordinal))
                         {
                             await Task.Delay(15000, _cancellation.Token).ConfigureAwait(false);
                         }
 
                         var error = first[1].StartsWith("/error", StringComparison.Ordinal);
+                        var noContent = first[1].StartsWith("/no-content", StringComparison.Ordinal);
                         headers.TryGetValue("Content-Type", out var contentType);
                         headers.TryGetValue("X-Test", out var testHeader);
                         var text = error ? "fixture protocol failure" : first[0] + "\n" + first[1] + "\n" +
                             (contentType ?? "") + "\n" + (testHeader ?? "") + "\n" + Encoding.UTF8.GetString(body);
-                        var responseBody = Encoding.UTF8.GetBytes(text);
-                        var responseHeader = Encoding.ASCII.GetBytes("HTTP/1.1 " + (error ? "503 Service Unavailable" : "200 OK") +
+                        var responseBody = noContent ? Array.Empty<byte>() : Encoding.UTF8.GetBytes(text);
+                        var status = error ? "503 Service Unavailable" : noContent ? "204 No Content" : "200 OK";
+                        var responseHeader = Encoding.ASCII.GetBytes("HTTP/1.1 " + status +
                             "\r\nContent-Type: text/plain; charset=utf-8\r\nX-Fixture: loopback\r\nContent-Length: " +
                             responseBody.Length.ToString(CultureInfo.InvariantCulture) + "\r\nConnection: close\r\n\r\n");
                         await stream.WriteAsync(responseHeader, 0, responseHeader.Length, _cancellation.Token).ConfigureAwait(false);
@@ -1152,7 +1473,7 @@ namespace YLFramework.Tests.Http
                     }
                 }
                 // 客户端取消/超时会关闭连接；仅网络断开是允许的，解析错误仍报告。
-                catch (IOException exception) when (!(exception is InvalidDataException)) { }
+                catch (IOException) { }
                 catch (SocketException) { }
                 catch (ObjectDisposedException) when (_cancellation.IsCancellationRequested) { }
                 catch (OperationCanceledException) when (_cancellation.IsCancellationRequested) { }
