@@ -30,6 +30,7 @@ namespace YLFramework.Core
             CorePrefabLease prefabLease = null;
             CoreInstanceLease instanceLease = null;
             bool transaction = false;
+            module?.BeginObjectTransaction();
             try
             {
                 EnsureOwner(module);
@@ -123,15 +124,24 @@ namespace YLFramework.Core
             }
             finally
             {
-                prefabLease?.Dispose();
-                if (transaction)
+                try
                 {
-                    module.ViewTransactions--;
+                    prefabLease?.Dispose();
                 }
-
-                if (args != null)
+                finally
                 {
-                    args.Release();
+                    try
+                    {
+                        args?.Release();
+                    }
+                    finally
+                    {
+                        if (transaction)
+                        {
+                            module.EndViewTransaction();
+                        }
+                        module?.EndObjectTransaction();
+                    }
                 }
             }
         }
@@ -274,49 +284,57 @@ namespace YLFramework.Core
             }
 
             LoadViewRequest<T> request;
+            module?.BeginObjectTransaction();
             try
             {
-                EnsureOwner(module);
-                if (string.IsNullOrWhiteSpace(assetName))
+                try
                 {
-                    throw new ArgumentException("View asset name is required.", nameof(assetName));
-                }
-
-                if (!ReferenceEquals(parent, null) && !parent)
-                {
-                    throw new ArgumentException("View parent has been destroyed.", nameof(parent));
-                }
-
-                FindBackendRoot(module, parent);
-                request = new LoadViewRequest<T>(module, assetName, parent, args, directPrefab);
-            }
-            catch (Exception error)
-            {
-                if (args != null)
-                {
-                    try
+                    EnsureOwner(module);
+                    if (string.IsNullOrWhiteSpace(assetName))
                     {
-                        args.Release();
+                        throw new ArgumentException("View asset name is required.", nameof(assetName));
                     }
-                    catch (Exception cleanupError)
+
+                    if (!ReferenceEquals(parent, null) && !parent)
                     {
-                        StartUpModuleRequest.AttachCleanupError(error, cleanupError);
+                        throw new ArgumentException("View parent has been destroyed.", nameof(parent));
+                    }
+
+                    FindBackendRoot(module, parent);
+                    request = new LoadViewRequest<T>(module, assetName, parent, args, directPrefab);
+                }
+                catch (Exception error)
+                {
+                    if (args != null)
+                    {
+                        try
+                        {
+                            args.Release();
+                        }
+                        catch (Exception cleanupError)
+                        {
+                            StartUpModuleRequest.AttachCleanupError(error, cleanupError);
+                        }
+                    }
+                    throw;
+                }
+                try
+                {
+                    if (CoroutineStarter.Start(request.Run()) == null && !request.IsDone)
+                    {
+                        request.FailToStart(new InvalidOperationException("View loading requires an active coroutine host."));
                     }
                 }
-                throw;
-            }
-            try
-            {
-                if (CoroutineStarter.Start(request.Run()) == null && !request.IsDone)
+                catch (Exception error)
                 {
-                    request.FailToStart(new InvalidOperationException("View loading requires an active coroutine host."));
+                    request.FailToStart(error);
                 }
+                return request;
             }
-            catch (Exception error)
+            finally
             {
-                request.FailToStart(error);
+                module?.EndObjectTransaction();
             }
-            return request;
         }
 
         /// <summary>在异步等待结束后同步取得及初始化实例，跨业务回调复检请求有效性，失败丢弃本次实例。</summary>
@@ -378,7 +396,7 @@ namespace YLFramework.Core
             }
             finally
             {
-                module.ViewTransactions--;
+                module.EndViewTransaction();
             }
         }
 
@@ -390,6 +408,7 @@ namespace YLFramework.Core
                 loadViewArgs.Claim();
             }
 
+            module?.BeginObjectTransaction();
             try
             {
                 if (!view)
@@ -406,9 +425,13 @@ namespace YLFramework.Core
             }
             finally
             {
-                if (loadViewArgs != null)
+                try
                 {
-                    loadViewArgs.Release();
+                    loadViewArgs?.Release();
+                }
+                finally
+                {
+                    module?.EndObjectTransaction();
                 }
             }
         }
@@ -548,14 +571,19 @@ namespace YLFramework.Core
                     completedPanel.DefersEvents = false;
                     completedPanel.InitialOpen = null;
                 }
-                if (transaction)
+                try
                 {
-                    module.ViewTransactions--;
+                    if (defaultArgs)
+                    {
+                        args.Release();
+                    }
                 }
-
-                if (defaultArgs)
+                finally
                 {
-                    args.Release();
+                    if (transaction)
+                    {
+                        module.EndViewTransaction();
+                    }
                 }
             }
         }
@@ -577,15 +605,20 @@ namespace YLFramework.Core
                 args.Claim();
             }
 
+            module?.BeginObjectTransaction();
             try
             {
                 InitializeHierarchy(module, new List<View> { view }, null, null, args);
             }
             finally
             {
-                if (args != null)
+                try
                 {
-                    args.Release();
+                    args?.Release();
+                }
+                finally
+                {
+                    module?.EndObjectTransaction();
                 }
             }
         }
@@ -776,7 +809,7 @@ namespace YLFramework.Core
                         view.IsAttaching = false;
                     }
 
-                    module.ViewTransactions--;
+                    module.EndViewTransaction();
                 }
             }
         }

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -829,6 +830,8 @@ namespace YLFramework.Core.Tests
             var canceled = _module.LoadViewAsync<YLCoreSmokeView>(nameof(YLCoreSmokeView), parent, loadViewArgs: canceledArgs);
             Assert.That(first.Status, Is.EqualTo(LoadViewStatus.Pending));
             Assert.That(canceled.Status, Is.EqualTo(LoadViewStatus.Pending));
+            var canceledTask = canceled.AsTask();
+            Assert.That(canceledTask.IsCompleted, Is.False);
             Assert.That(PendingViewCount(), Is.EqualTo(2));
             Assert.That(FixtureInstanceCount(prefab), Is.Zero);
             Assert.Throws<InvalidOperationException>(() => canceledArgs.GetObject("retained"));
@@ -841,6 +844,8 @@ namespace YLFramework.Core.Tests
             foundation.Abort();
             canceled.Abort();
             AssertTerminal(canceled, LoadViewStatus.Canceled);
+            Assert.That(canceledTask.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            Assert.That(canceledTask.Result, Is.SameAs(canceled));
             Assert.That(canceled.Exception, Is.TypeOf<OperationCanceledException>());
             Assert.That(canceledCallbacks, Is.EqualTo(1));
             Assert.That(PendingViewCount(), Is.EqualTo(1));
@@ -2082,6 +2087,8 @@ namespace YLFramework.Core.Tests
             args.SetObject("retained", _module);
             var waiting = _module.LoadPanelAsync<YLCoreSmokePanel>(nameof(YLCoreSmokePanel), loadViewArgs: args, root: root);
             Assert.That(waiting.Status, Is.EqualTo(LoadViewStatus.Pending));
+            var waitingTask = waiting.AsTask();
+            Assert.That(waitingTask.IsCompleted, Is.False);
             Assert.Throws<InvalidOperationException>(() => _module.LoadPanelAsync<YLCoreSmokePanel>(nameof(YLCoreSmokePanel),
                 loadViewArgs: args, root: root));
             Assert.Throws<InvalidOperationException>(() => args.GetObject("retained"));
@@ -2092,6 +2099,8 @@ namespace YLFramework.Core.Tests
             foundation.Abort();
             waiting.Abort();
             AssertTerminal(waiting, LoadViewStatus.Canceled);
+            Assert.That(waitingTask.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            Assert.That(waitingTask.Result, Is.SameAs(waiting));
             Assert.That(waiting.Exception, Is.TypeOf<OperationCanceledException>());
             Assert.That(waitingCallbacks, Is.EqualTo(1));
             AssertReleasedArgs(args);

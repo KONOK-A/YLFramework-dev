@@ -55,6 +55,7 @@ namespace YLFramework.Core
         }
 
         private Module _owner;
+        private Module _completionTransactionOwner;
         private object _lifecycle;
         private string _assetName;
         private List<string> _projects;
@@ -273,32 +274,47 @@ namespace YLFramework.Core
             }
 
             _isTerminal = true;
+            var transactionOwner = _completionTransactionOwner;
+            _completionTransactionOwner = null;
+            if (transactionOwner == null)
+            {
+                // 等待期 Abort/失败同样可能在 Dispose 回调里使启动失效。
+                transactionOwner = _owner;
+                transactionOwner?.BeginObjectTransaction();
+            }
             try
             {
-                ReleaseInputs();
-            }
-            catch (Exception cleanupError)
-            {
-                if (failure != null)
+                try
                 {
-                    StartUpModuleRequest.AttachCleanupError(failure, cleanupError);
+                    ReleaseInputs();
                 }
-                else
+                catch (Exception cleanupError)
                 {
-                    failure = cleanupError;
-                    status = LoadViewStatus.Failed;
+                    if (failure != null)
+                    {
+                        StartUpModuleRequest.AttachCleanupError(failure, cleanupError);
+                    }
+                    else
+                    {
+                        failure = cleanupError;
+                        status = LoadViewStatus.Failed;
+                    }
+                }
+                View = result;
+                Exception = failure;
+                Status = status;
+                try
+                {
+                    Complete(failure?.ToString());
+                }
+                catch (Exception notificationError)
+                {
+                    Debug.LogException(notificationError);
                 }
             }
-            View = result;
-            Exception = failure;
-            Status = status;
-            try
+            finally
             {
-                Complete(failure?.ToString());
-            }
-            catch (Exception notificationError)
-            {
-                Debug.LogException(notificationError);
+                transactionOwner?.EndObjectTransaction();
             }
         }
 
@@ -427,6 +443,9 @@ namespace YLFramework.Core
             }
 
             ValidateWaiting();
+            // 同步初始化返回后输入仍由请求持有，保护持续到 Finish 归还参数与来源租约。
+            _completionTransactionOwner = _owner;
+            _completionTransactionOwner.BeginObjectTransaction();
             var result = ViewManager.CompleteAsync<T>(_owner, prefab, _assetName, _parent, _targetScene, _args, ValidateWaiting, _prefabLease);
             // 初始化已结束再提交；完成通知可以关闭或开启下一笔会话。
             _isExecuting = false;

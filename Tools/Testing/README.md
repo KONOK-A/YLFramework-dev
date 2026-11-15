@@ -65,7 +65,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | 模块 | 层级 | 主要范围 |
 | --- | --- | --- |
 | Foundation | Daily / Special | 基础机制、序列化、Logging 原生生命周期与会话 |
-| Core | Daily / Special | MVC / UI / 资源合同；Special 为真实输入与连续 Play 会话 |
+| Core | Daily / Special | MVC / UI / 资源合同与 HTTP 原生请求；Special 为真实输入及 UI / HTTP 连续 Play 会话 |
 | Domain | Quick / Special | Gameplay / RedDots / Logging 逻辑及组合退出会话 |
 | Gameplay | Daily / Special | 最小主包+Gameplay，四领域行为、作者工具与 Player |
 | Equipment | Special | 独立 Equipment 退出钩子与连续 Play |

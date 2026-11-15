@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -193,6 +194,7 @@ namespace YLFramework.Core.Tests
         {
             var module = new YLCoreStartupProbeModule();
             StartUpModuleRequest reentrant = null;
+            Task<StartUpModuleRequest> waiter = null;
             var constructions = YLCoreStartupProbeModule.ConstructionCount;
             module.StartAction = () =>
             {
@@ -202,6 +204,8 @@ namespace YLFramework.Core.Tests
                 Assert.That(_currentModule.GetValue(_manager), Is.SameAs(module));
                 reentrant = ModuleManager.StartUpModule(module);
                 Assert.That(reentrant.IsDone, Is.False);
+                waiter = reentrant.AsTask();
+                Assert.That(waiter.IsCompleted, Is.False);
                 Assert.That(ModuleManager.StartUpModule<YLCoreStartupProbeModule>(), Is.SameAs(reentrant));
                 Assert.That(ModuleManager.StartUpModule(typeof(YLCoreStartupProbeModule)), Is.SameAs(reentrant));
                 Assert.That(ModuleManager.StartUpModule(module.ModuleName), Is.SameAs(reentrant));
@@ -210,11 +214,17 @@ namespace YLFramework.Core.Tests
                 YLFramework.Async.CustomAsyncOperation<StartUpModuleRequest> operation = reentrant;
                 Assert.Throws<NotSupportedException>(() => operation.Abort());
                 Assert.That(operation.IsDone, Is.False);
+                Assert.That(waiter.IsCompleted, Is.False, "Rejected Abort must not complete the Task waiter.");
             };
             var first = StartOwned(module);
             Assert.That(first, Is.SameAs(reentrant));
             Assert.That(first.IsDone, Is.True, "No-yield startup completes synchronously.");
             Assert.That(first.Error, Is.Null.Or.Empty);
+            Assert.That(waiter.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            Assert.That(waiter.Result, Is.SameAs(first));
+            Assert.That(first.AsTask(), Is.SameAs(waiter));
+            Assert.That(first.Module, Is.SameAs(module));
+            Assert.That(module.State, Is.EqualTo(ModuleState.Running));
             Assert.That(module.StartCount, Is.EqualTo(1));
             Assert.That(YLCoreStartupProbeModule.ConstructionCount, Is.EqualTo(constructions));
             module.StartAction = null;

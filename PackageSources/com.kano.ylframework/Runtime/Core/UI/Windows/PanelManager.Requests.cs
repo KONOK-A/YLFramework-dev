@@ -325,21 +325,30 @@ namespace YLFramework.Core
                     yield break;
                 }
 
-                if (failure == null)
+                var owner = Owner;
+                owner?.BeginObjectTransaction();
+                try
                 {
-                    try
+                    if (failure == null)
                     {
-                        Instance.Execute(this);
+                        try
+                        {
+                            Instance.Execute(this);
+                        }
+                        catch (Exception error)
+                        {
+                            failure = error;
+                        }
                     }
-                    catch (Exception error)
+                    if (!IsTerminal && !_isInvalidating)
                     {
-                        failure = error;
+                        Finish(null, null, failure ?? new InvalidOperationException("Panel 生产未产生终态。"),
+                        StillValid() ? LoadViewStatus.Failed : LoadViewStatus.Invalidated);
                     }
                 }
-                if (!IsTerminal && !_isInvalidating)
+                finally
                 {
-                    Finish(null, null, failure ?? new InvalidOperationException("Panel 生产未产生终态。"),
-                    StillValid() ? LoadViewStatus.Failed : LoadViewStatus.Invalidated);
+                    owner?.EndObjectTransaction();
                 }
             }
             /// <summary>仅将当前依赖校验转换为布尔值，供异常收尾区分 Failed 与 Invalidated。</summary>
@@ -460,34 +469,43 @@ namespace YLFramework.Core
                     }
                 }
                 IsTerminal = true;
+                var transactionOwner = Owner;
+                transactionOwner?.BeginObjectTransaction();
                 try
                 {
-                    ReleaseInputs();
+                    try
+                    {
+                        ReleaseInputs();
+                    }
+                    catch (Exception cleanup)
+                    {
+                        if (failure == null)
+                        {
+                            failure = cleanup;
+                            result = null;
+                            status = LoadViewStatus.Failed;
+                        }
+                        else
+                        {
+                            StartUpModuleRequest.AttachCleanupError(failure, cleanup);
+                        }
+                    }
+                    Result = result;
+                    DeliveredSession = result ? session : null;
+                    Failure = failure;
+                    var notify = Completed;
+                    Completed = null;
+                    ProgressChanged = null;
+                    Owner = null;
+                    _lifecycle = null;
+                    Prefab = null;
+                    _closedScopes.Clear();
+                    notify?.Invoke(result, failure, status);
                 }
-                catch (Exception cleanup)
+                finally
                 {
-                    if (failure == null)
-                    {
-                        failure = cleanup;
-                        result = null;
-                        status = LoadViewStatus.Failed;
-                    }
-                    else
-                    {
-                        StartUpModuleRequest.AttachCleanupError(failure, cleanup);
-                    }
+                    transactionOwner?.EndObjectTransaction();
                 }
-                Result = result;
-                DeliveredSession = result ? session : null;
-                Failure = failure;
-                var notify = Completed;
-                Completed = null;
-                ProgressChanged = null;
-                Owner = null;
-                _lifecycle = null;
-                Prefab = null;
-                _closedScopes.Clear();
-                notify?.Invoke(result, failure, status);
             }
         }
 
@@ -716,7 +734,7 @@ namespace YLFramework.Core
                         }
                         finally
                         {
-                            winner.Owner.ViewTransactions--;
+                            winner.Owner.EndViewTransaction();
                         }
                     }
                     foreach (var operation in valid)

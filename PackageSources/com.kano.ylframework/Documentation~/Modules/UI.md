@@ -34,6 +34,10 @@ var owner = (MenuModule)request.Module;
 
 - Model 管理业务状态，Controller 组织行为，View 负责表现。通过所属 Module 创建和查询，不把一个 Module 的对象交给另一 Module 结束。
 - `StartUpModule` 对运行中的同一实例不重复启动，启动请求不支持 `Abort`；Starting 期间不允许 Close 或 Shutdown。
+- 启动请求捕获原 manager 和执行会话。退出 Play/应用、会话重置或实际协程宿主 GameObject 失活/销毁时，以 `InvalidOperationException` 登记失效，不覆盖已经发生的原始失败；沿原启动失败管线执行 `OnClose`、退出所属 MVC 对象、注销并进入 Closed，普通完成通知和 `AsTask()` 完成前已释放当前资源请求消费者。业务回调仍在栈内时先登记失效，返回后才回滚，不在 `OnStart` 内重入关闭。
+- 旧请求首次异常与终态保持稳定，清理错误附在 `Exception.Data["YLFramework.Core.CleanupException"]`；旧 provider 迟到结果不能重启旧工作或写入新 manager。构造异常仍同步抛出，启动过程异常通过请求交付；失败不承诺撤销场景切换或外部业务副作用。
+- 外部 MVC 构造、初始化或退出中发生启动失效时，同样等最外层真实事务、异常回滚及输入归还结束后，再同步关闭所属模块；完成通知不会早于对象退出、注销和消费者释放，不依赖下一帧续接。
+- 宿主失活后不会自动替换，也不恢复旧协程；手动重新激活后需重新发起启动。宿主销毁后，后续显式启动会创建新宿主；已 Closed 的干净模块实例可以复用。仅禁用 CoroutineStarter 组件不算停产，即使先禁用该组件，后续 GameObject 失活仍会被独立内部监听收束。这只处理在途启动，不代替应用显式关闭已 Running 模块，也不把 Close/Shutdown 扩展成启动取消接口。
 - 普通模块由 `Close()` / `CloseModule<T>()` 结束；基础模块由应用的 `ModuleManager.Shutdown()` 统一关闭。关闭先结束业务钩子，再清理所属对象与在途工作，错误在注销后汇总报告。
 - View 子类使用 `OnViewEnabled`、`OnViewDisabled`、`OnClosed` 接入生命周期，不声明竞争框架消息的 `OnEnable/OnDisable/OnDestroy`；使用诊断见 [Attributes](Attributes.md#core-使用诊断)。
 

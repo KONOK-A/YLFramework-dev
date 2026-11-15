@@ -10,9 +10,11 @@ namespace YLFramework.Core
         /// <summary>同步解析并提交打开请求，交付前复核原会话及资源；无论成败都释放本请求输入。</summary>
         internal static T Load<T>(Module owner, string name, GameObject prefab, LoadViewArgs args, UIRootContext root, PanelOverrides overrides) where T : Panel
         {
-            var operation = Accept(owner, name, prefab, args, root, overrides, typeof(T), false);
+            PanelOperation operation = null;
+            owner?.BeginObjectTransaction();
             try
             {
+                operation = Accept(owner, name, prefab, args, root, overrides, typeof(T), false);
                 operation.ResolveSync();
                 Instance.Execute(operation);
                 if (operation.Failure != null)
@@ -30,27 +32,42 @@ namespace YLFramework.Core
             }
             finally
             {
-                operation.ReleaseInputs();
+                try
+                {
+                    operation?.ReleaseInputs();
+                }
+                finally
+                {
+                    owner?.EndObjectTransaction();
+                }
             }
         }
 
         /// <summary>接受独立异步消费者并启动协程；启动失败也通过该消费者的终态交付。</summary>
         internal static LoadPanelRequest<T> Start<T>(Module owner, string name, GameObject prefab, LoadViewArgs args, UIRootContext root, PanelOverrides overrides) where T : Panel
         {
-            var operation = Accept(owner, name, prefab, args, root, overrides, typeof(T), true);
-            var request = new LoadPanelRequest<T>(operation);
+            owner?.BeginObjectTransaction();
             try
             {
-                if (CoroutineStarter.Start(operation.Run()) == null)
+                var operation = Accept(owner, name, prefab, args, root, overrides, typeof(T), true);
+                var request = new LoadPanelRequest<T>(operation);
+                try
                 {
-                    operation.Finish(null, null, new InvalidOperationException("Panel 加载需要有效协程宿主。"), LoadViewStatus.Failed);
+                    if (CoroutineStarter.Start(operation.Run()) == null)
+                    {
+                        operation.Finish(null, null, new InvalidOperationException("Panel 加载需要有效协程宿主。"), LoadViewStatus.Failed);
+                    }
                 }
+                catch (Exception error)
+                {
+                    operation.Finish(null, null, error, LoadViewStatus.Failed);
+                }
+                return request;
             }
-            catch (Exception error)
+            finally
             {
-                operation.Finish(null, null, error, LoadViewStatus.Failed);
+                owner?.EndObjectTransaction();
             }
-            return request;
         }
 
         /// <summary>接管参数、校验打开入口，并固定本次请求的 owner 代次、根与规则快照。</summary>
@@ -95,7 +112,7 @@ namespace YLFramework.Core
                 }
                 finally
                 {
-                    owner.ViewTransactions--;
+                    owner.EndViewTransaction();
                 }
             }
             catch (Exception error)

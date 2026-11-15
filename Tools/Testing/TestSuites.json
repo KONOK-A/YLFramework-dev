@@ -319,6 +319,7 @@
         "YLFramework.Core.Tests.EditMode",
         "YLFramework.Core.Editor.Tests",
         "YLFramework.Core.Tests.PlayMode",
+        "YLFramework.Http.Tests.PlayMode",
         "YLFramework.Tests.EditMode"
       ],
       "nativeLayout": "Framework",
@@ -353,7 +354,8 @@
       "editTests": [
         "Assets/Tests/YLFramework/EditMode/Core",
         "Assets/Tests/YLFramework/EditMode/Editor/Core",
-        "Assets/Tests/YLFramework/EditMode/Systems/Http/HttpRequestTests.cs"
+        "Assets/Tests/YLFramework/EditMode/Systems/Http/HttpRequestTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Http/HttpSessionTests.cs"
       ],
       "playTests": [
         "Assets/Tests/YLFramework/PlayMode/Core",

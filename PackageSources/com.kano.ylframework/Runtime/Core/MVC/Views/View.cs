@@ -157,7 +157,7 @@ namespace YLFramework.Core
                 IsUnbinding = false;
                 if (owner != null)
                 {
-                    owner.ViewTransactions--;
+                    owner.EndViewTransaction();
                 }
             }
         }

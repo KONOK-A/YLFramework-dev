@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using CoroutineStarter = YLFramework.Async.CoroutineStarter;
 
 namespace YLFramework.Core
 {
@@ -24,10 +25,20 @@ namespace YLFramework.Core
 
 
     /// <summary>
-    /// ModuleManager创建的非池化启动请求；不支持Abort取消启动协程。
+    /// ModuleManager创建的非池化启动请求；会话或宿主失效时内部回滚，不支持Abort用户取消。
     /// </summary>
     public sealed class StartUpModuleRequest : YLFramework.Async.CustomAsyncOperation<StartUpModuleRequest>
     {
+        private ModuleManager _owner;
+        private IEnumerator _routine;
+        private Coroutine _coroutine;
+        private bool _isExecuting;
+        private bool _isFinishing;
+        /// <summary>本次生产者的实际宿主身份；完成后释放引用，不跟随静态新宿主。</summary>
+        internal CoroutineStarter Host
+        {
+            get; private set;
+        }
 
         /// <summary>当前资源处理阶段；业务 OnStart 仍在场景阶段之后执行。</summary>
         public StartingModuleSteps Step
@@ -59,9 +70,10 @@ namespace YLFramework.Core
             get;
         }
 
-        /// <summary>记录模块初态及旧默认上下文，供启动失败时恢复，不在构造时启动或注册模块。</summary>
-        internal StartUpModuleRequest(Module module, Module previousCurrentModule = null)
+        /// <summary>绑定原 manager、模块初态及旧上下文，供失败回滚；不在构造时启动或注册模块。</summary>
+        internal StartUpModuleRequest(ModuleManager owner, Module module, Module previousCurrentModule = null)
         {
+            _owner = owner;
             Module = module;
             InitialState = module.State;
             PreviousCurrentModule = previousCurrentModule;
@@ -78,75 +90,194 @@ namespace YLFramework.Core
         /// <summary>先提交模块生命周期与回滚结果，再完成请求；完成回调异常只记日志，不改写结果。</summary>
         internal void Finish(Exception error = null)
         {
-            if (IsDone)
+            if (IsDone || _isFinishing)
             {
                 return;
             }
-            // 先提交生命周期与移除进行中记录，通知异常不能反过来改写启动结果。
-            Exception = error;
-            ModuleManager.CompleteStartup(this, error);
-            string message = error?.ToString();
-            if (error?.Data["YLFramework.Core.CleanupException"] is Exception cleanupError)
-            {
-                message += "\nStartup cleanup errors: " + cleanupError;
-            }
-
+            _isFinishing = true;
+            RecordFailure(error);
             try
             {
-                Complete(message);
+                var coroutine = _coroutine;
+                _coroutine = null;
+                try
+                {
+                    CoroutineStarter.Stop(coroutine);
+                }
+                catch (Exception stopError)
+                {
+                    RecordFailure(stopError);
+                }
+                ReleaseRoutine();
+                try
+                {
+                    _owner?.CompleteStartup(this, Exception);
+                }
+                catch (Exception cleanupError)
+                {
+                    RecordFailure(cleanupError);
+                }
             }
-            catch (Exception notificationError)
+            finally
             {
-                Debug.LogException(notificationError);
+                if (ReferenceEquals(Module.PendingStartup, this))
+                {
+                    Module.PendingStartup = null;
+                }
+                // 完成请求不应把整个旧 manager 或执行句柄留给后续 Task 等待者。
+                _owner = null;
+                Host = null;
+                PreviousCurrentModule = null;
+                string message = null;
+                try
+                {
+                    message = Exception?.ToString();
+                    if (Exception?.Data["YLFramework.Core.CleanupException"] is Exception cleanupError)
+                    {
+                        message += "\nStartup cleanup errors: " + cleanupError;
+                    }
+                }
+                catch (Exception formattingError)
+                {
+                    message = $"Module startup failed ({Exception.GetType().FullName}).";
+                    RecordFailure(formattingError);
+                    Debug.LogException(formattingError);
+                }
+                finally
+                {
+                    try
+                    {
+                        Complete(message);
+                    }
+                    catch (Exception notificationError)
+                    {
+                        Debug.LogException(notificationError);
+                    }
+                }
+            }
+        }
+
+        /// <summary>原会话失效时只登记失败；启动或所属 MVC 事务仍在栈内时由其真实出口续接回滚。</summary>
+        internal void Invalidate(Exception error)
+        {
+            if (IsDone || _isFinishing)
+            {
+                return;
+            }
+            RecordFailure(error);
+            TryFinishInvalidated();
+        }
+
+        internal void TryFinishInvalidated()
+        {
+            if (!IsDone && !_isFinishing && !_isExecuting && Exception != null && !Module.HasObjectTransactions)
+            {
+                Finish();
+            }
+        }
+
+        internal void AttachCoroutine(Coroutine coroutine)
+        {
+            if (IsDone || _isFinishing)
+            {
+                CoroutineStarter.Stop(coroutine);
+            }
+            else
+            {
+                _coroutine = coroutine;
+            }
+        }
+
+        private void RecordFailure(Exception error)
+        {
+            if (error == null || ReferenceEquals(Exception, error))
+            {
+                return;
+            }
+            if (Exception == null)
+            {
+                Exception = error;
+            }
+            else
+            {
+                try
+                {
+                    AttachCleanupError(Exception, error);
+                }
+                catch (Exception attachmentError)
+                {
+                    Debug.LogException(new AggregateException("Startup cleanup errors could not be attached.", error, attachmentError));
+                }
+            }
+        }
+
+        private void ReleaseRoutine()
+        {
+            var routine = _routine;
+            _routine = null;
+            try
+            {
+                (routine as IDisposable)?.Dispose();
+            }
+            catch (Exception cleanupError)
+            {
+                RecordFailure(cleanupError);
+            }
+        }
+
+        private void EnsureActive()
+        {
+            if (Exception != null)
+            {
+                throw Exception;
+            }
+            if (IsDone || _isFinishing)
+            {
+                throw new InvalidOperationException("Module startup has already ended.");
             }
         }
 
         /// <summary>逐步推进启动迭代器，收集原始失败和迭代器释放错误后统一结束请求。</summary>
         internal IEnumerator StartUp()
         {
-            var routine = RunStartup();
-            Exception failure = null;
+            if (IsDone || _isFinishing)
+            {
+                yield break;
+            }
+            Host = CoroutineStarter.CurrentHost;
+            _routine = RunStartup();
             try
             {
-                while (true)
+                while (!IsDone && !_isFinishing && Exception == null)
                 {
-                    bool hasNext;
+                    bool hasNext = false;
+                    _isExecuting = true;
                     try
                     {
-                        hasNext = ModuleManager.MoveStartup(Module, routine);
+                        hasNext = _owner.MoveStartup(Module, _routine);
                     }
                     catch (Exception error)
                     {
-                        failure = error;
-                        break;
+                        RecordFailure(error);
                     }
-                    if (!hasNext)
+                    finally
+                    {
+                        _isExecuting = false;
+                    }
+                    if (!hasNext || IsDone || _isFinishing || Exception != null)
                     {
                         break;
                     }
 
-                    yield return routine.Current;
+                    yield return _routine.Current;
                 }
             }
             finally
             {
-                try
-                {
-                    (routine as IDisposable)?.Dispose();
-                }
-                catch (Exception cleanupError)
-                {
-                    if (failure == null)
-                    {
-                        failure = cleanupError;
-                    }
-                    else
-                    {
-                        AttachCleanupError(failure, cleanupError);
-                    }
-                }
+                ReleaseRoutine();
             }
-            Finish(failure);
+            _coroutine = null; // 正常展开的驱动即将退出，不在自身调用栈再次 StopCoroutine。
+            Finish();
         }
 
         /// <summary>把后续清理错误附到原始异常的数据中，不替换最初的失败原因。</summary>
@@ -161,9 +292,11 @@ namespace YLFramework.Core
         /// <summary>使用入口捕获的资源项目依次读取配表、加载默认场景并调用业务启动钩子。</summary>
         private IEnumerator RunStartup()
         {
+            EnsureActive();
             var module = Module;
             Progress = 0;
             string projectName = module.ProjectName;
+            EnsureActive();
             var provider = CoreResourceAccess.Provider;
             if (string.IsNullOrWhiteSpace(projectName))
             {
@@ -173,6 +306,7 @@ namespace YLFramework.Core
             Step = StartingModuleSteps.PreloadConfigTables;
 
             var tables = module.PreloadConfigTables;
+            EnsureActive();
             if (tables != null && tables.Count != 0)
             {
                 float allCount = tables.Count;
@@ -199,22 +333,27 @@ namespace YLFramework.Core
                             throw new InvalidOperationException($"Config table request is null: {projectName}/{assetName}");
                         }
 
+                        EnsureActive();
                         yield return request;
+                        EnsureActive();
                         if (request.Status != CoreResourceStatus.Succeeded)
                         {
                             throw new InvalidOperationException($"Config table load failed: {projectName}/{assetName}", request.Error);
                         }
 
                         json = request.TakeResult();
+                        EnsureActive();
                         if (string.IsNullOrWhiteSpace(json))
                         {
                             throw new InvalidOperationException($"Config table asset or JSON text is empty: {projectName}/{assetName}");
                         }
                     }
 
+                    EnsureActive();
                     // 文本请求已释放；之后的 JSON 构造及 Model 初始化不再占用本次文本请求。
                     var models = JsonConvert.DeserializeObject(json, table.Value,
                         new JsonSerializerSettings { CheckAdditionalContent = true }) as Model[];
+                    EnsureActive();
                     if (models == null)
                     {
                         throw new InvalidOperationException($"Config table JSON must contain a Model array: {projectName}/{assetName}");
@@ -223,6 +362,7 @@ namespace YLFramework.Core
                     foreach (var model in models)
                     {
                         module.AddModel(model);
+                        EnsureActive();
                     }
 
                     currentCount++;
@@ -234,6 +374,7 @@ namespace YLFramework.Core
             Step = StartingModuleSteps.LoadScene;
 
             string sceneName = module.DefaultStartUpScene;
+            EnsureActive();
             if (!string.IsNullOrEmpty(sceneName))
             {
                 using var operation = CoreResourceAccess.RequireProvider(provider).LoadSceneAsync(projectName, sceneName, LoadSceneMode.Single);
@@ -241,10 +382,12 @@ namespace YLFramework.Core
                 {
                     throw new InvalidOperationException($"Default scene request is null: {projectName}/{sceneName}");
                 }
+                EnsureActive();
 
                 while (operation.Status == CoreResourceStatus.Pending)
                 {
                     yield return null;
+                    EnsureActive();
                     Progress = 0.5f + operation.Progress * 0.5f;
                 }
                 if (operation.Status != CoreResourceStatus.Succeeded)
@@ -253,6 +396,7 @@ namespace YLFramework.Core
                 }
 
                 var loadedScene = operation.TakeResult().Scene;
+                EnsureActive();
                 if (!loadedScene.IsValid() || !loadedScene.isLoaded)
                 {
                     throw new InvalidOperationException($"Default scene result is not loaded: {projectName}/{sceneName}");
@@ -260,9 +404,12 @@ namespace YLFramework.Core
 
                 // 纳管真实加载结果的场景实例；模块关闭只结束这些表现会话，不负责卸载场景。
                 module.AttachViews(loadedScene);
+                EnsureActive();
             }
 
+            EnsureActive(); // 场景 using 的 Dispose 也是外部回调边界，不能跨过已登记的失效。
             module.OnStart();
+            EnsureActive();
         }
 
 

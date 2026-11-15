@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Runtime.CompilerServices;
 using UnityEngine;
@@ -18,6 +19,10 @@ namespace YLFramework.Async
         private static ConditionalWeakTable<Coroutine, CoroutineStarter> _owners = new();
         private object _session;
         private bool _isReleased;
+
+        /// <summary>仅供内部生产者绑定实际 owner；读取不创建或替换宿主。</summary>
+        internal static CoroutineStarter CurrentHost => _instance;
+        internal static event Action<CoroutineStarter> HostUnavailable;
 
         /// <summary>登记新 Play 会话的协程宿主及句柄归属清理。</summary>
         static CoroutineStarter() => SingletonSessionState.RegisterSessionReset(ResetSession);
@@ -115,6 +120,9 @@ namespace YLFramework.Async
                 obj.SetActive(false);
                 host = obj.AddComponent<CoroutineStarter>();
                 host._session = SingletonSessionState.ExecutionSession;
+                var lifetime = obj.AddComponent<CoroutineHostLifetime>();
+                lifetime.Owner = host;
+                lifetime.hideFlags = HideFlags.HideInInspector;
                 DontDestroyOnLoad(obj);
                 _instance = host;
                 obj.SetActive(true);
@@ -144,15 +152,55 @@ namespace YLFramework.Async
                 return;
             }
 
+            bool wasCurrent = ReferenceEquals(_instance, this);
             _isReleased = true;
-            if (ReferenceEquals(_instance, this))
+            if (wasCurrent)
             {
                 _instance = null;
                 _owners = new ConditionalWeakTable<Coroutine, CoroutineStarter>();
             }
-            if (this)
+            try
             {
-                StopAllCoroutines();
+                if (this)
+                {
+                    StopAllCoroutines();
+                }
+            }
+            finally
+            {
+                if (wasCurrent)
+                {
+                    NotifyUnavailable();
+                }
+            }
+        }
+
+        private void NotifyUnavailable()
+        {
+            var observers = HostUnavailable;
+            if (observers == null)
+            {
+                return;
+            }
+            foreach (Action<CoroutineStarter> observer in observers.GetInvocationList())
+            {
+                try
+                {
+                    observer(this);
+                }
+                catch (Exception error)
+                {
+                    Debug.LogException(error);
+                }
+            }
+        }
+
+        /// <summary>由独立监听转发对象失活，不能依赖可能已禁用的本组件再次收到 OnDisable。</summary>
+        internal void HostDeactivated()
+        {
+            if (IsCurrent && !gameObject.activeInHierarchy)
+            {
+                NotifyUnavailable();
             }
         }
 

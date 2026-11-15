@@ -52,6 +52,8 @@ namespace YLFramework.Core
         // 不依赖资源名的完整归属索引，包含显式挂载的场景 View。
         internal Dictionary<int, View> OwnedViews = new Dictionary<int, View>();
         internal int ViewTransactions;
+        internal StartUpModuleRequest PendingStartup;
+        private int _objectTransactions;
         // 每次模块注册都换新，防止旧请求在同一模块实例重启后提交结果。
         internal object ViewLifecycle;
         internal readonly HashSet<IPendingViewRequest> PendingViews = new HashSet<IPendingViewRequest>();
@@ -80,6 +82,9 @@ namespace YLFramework.Core
         /// 由ModuleManager维护的生命周期状态；注册可见不代表已经Running。
         /// </summary>
         public ModuleState State { get; internal set; } = ModuleState.Created;
+
+        // 启动回滚的外层保护可延续到输入归还，不替代公开 Close 的原有事务检查。
+        internal bool HasObjectTransactions => _objectTransactions != 0 || ViewTransactions != 0;
 
         /// <summary>
         /// YL Resource ProjectId，与Module类型身份分离；默认类型短名，必须对应显式挂载的新YL项目。
@@ -115,7 +120,7 @@ namespace YLFramework.Core
         #region 方法
 
         /// <summary>
-        /// 配表和默认场景处理后执行的业务启动钩子；正常返回后才进入 Running。
+        /// 配表和默认场景处理后执行的业务启动钩子；正常返回且原执行仍有效后才进入 Running。
         /// </summary>
         public abstract void OnStart();
 
@@ -128,6 +133,22 @@ namespace YLFramework.Core
 
         /// <summary>由统一关闭管线调用业务关闭钩子，不在此清理对象索引。</summary>
         internal void Exit() => OnClose();
+
+        /// <summary>覆盖对象构造、初始化、输入归还及嵌套回滚，不能只根据单个对象的临时标记判断栈已展开。</summary>
+        internal void BeginObjectTransaction() => _objectTransactions++;
+
+        internal void EndObjectTransaction()
+        {
+            _objectTransactions--;
+            PendingStartup?.TryFinishInvalidated();
+        }
+
+        /// <summary>结束一层 View 事务；外层输入责任和嵌套事务均释放后才续接原启动。</summary>
+        internal void EndViewTransaction()
+        {
+            ViewTransactions--;
+            PendingStartup?.TryFinishInvalidated();
+        }
 
         /// <summary>拒绝向已进入关闭流程或已关闭的模块添加业务对象。</summary>
         internal void EnsureCanAddObjects()

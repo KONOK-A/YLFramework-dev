@@ -2,6 +2,8 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -150,6 +152,102 @@ namespace YLFramework.Core.Tests
                 other.Close();
             }
             yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator ReentrantStartupFinishDuringRollbackPreservesFirstFailureAndClosesOnce()
+        {
+            var failed = new YLCoreShutdownProbeModule<YLCoreProbeModel>();
+            var original = new InvalidOperationException("first startup failure");
+            var late = new InvalidOperationException("reentrant cleanup failure");
+            StartUpModuleRequest pending = null;
+            Task<StartUpModuleRequest> task = null;
+            int callbacks = 0;
+            bool reentered = false;
+            try
+            {
+                failed.StartAction = () =>
+                {
+                    pending = ModuleManager.StartUpModule(failed);
+                    task = pending.AsTask();
+                    pending.AddCompleteEvent(_ => callbacks++);
+                    throw original;
+                };
+                failed.CloseAction = () =>
+                {
+                    if (!reentered)
+                    {
+                        reentered = true;
+                        typeof(StartUpModuleRequest).GetMethod("Finish", BindingFlags.Instance | BindingFlags.NonPublic)
+                            .Invoke(pending, new object[] { late });
+                    }
+                };
+                var result = ModuleManager.StartUpModule(failed);
+                Assert.That(result.IsDone, Is.True);
+                Assert.That(result.Exception, Is.SameAs(original));
+                Assert.That(result.Error, Does.Contain(original.Message));
+                Assert.That(result.Error, Does.Not.Contain(late.Message));
+                Assert.That(failed.CloseCount, Is.EqualTo(1));
+                Assert.That(callbacks, Is.EqualTo(1));
+                Assert.That(task.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+                Assert.That(task.GetAwaiter().GetResult(), Is.SameAs(result));
+                AssertStartupDetached(failed);
+            }
+            finally
+            {
+                failed.StartAction = null;
+                failed.CloseAction = null;
+                try
+                {
+                    failed.Close();
+                }
+                finally
+                {
+                    _classPool.Restore(new Module[] { failed });
+                }
+            }
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator StartupDiagnosticFormattingCannotReplaceTheOriginalErrorOrStrandTask()
+        {
+            var formattingError = new InvalidOperationException("startup diagnostic formatting failed");
+            var original = new StartupFormattingException(formattingError);
+            var failed = new YLCoreShutdownProbeModule<YLCoreProbeModel> { ProjectGetterError = original };
+            try
+            {
+                LogAssert.Expect(LogType.Exception, new Regex("InvalidOperationException: startup diagnostic formatting failed"));
+                var result = ModuleManager.StartUpModule(failed);
+                var task = result.AsTask();
+                Assert.That(result.IsDone, Is.True);
+                Assert.That(ReferenceEquals(result.Exception, original), Is.True, "Formatting cannot replace the startup error.");
+                Assert.That(result.Error, Does.Contain(nameof(StartupFormattingException)));
+                Assert.That(original.Data["YLFramework.Core.CleanupException"], Is.SameAs(formattingError));
+                Assert.That(task.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+                Assert.That(task.GetAwaiter().GetResult(), Is.SameAs(result));
+                Assert.That(failed.CloseCount, Is.EqualTo(1));
+                AssertStartupDetached(failed);
+            }
+            finally
+            {
+                try
+                {
+                    failed.Close();
+                }
+                finally
+                {
+                    _classPool.Restore(new Module[] { failed });
+                }
+            }
+            yield return null;
+        }
+
+        private sealed class StartupFormattingException : Exception
+        {
+            private readonly Exception _formattingError;
+            internal StartupFormattingException(Exception formattingError) => _formattingError = formattingError;
+            public override string ToString() => throw _formattingError;
         }
 
         [UnityTest]
