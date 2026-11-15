@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Action 新增 `StartHandle` / `StartHandleCurrentScene` / `StartHandleGlobal`，复用现有 ActionHandle 与执行租约，匿名安全控制不再要求名字；原 Start 和命名 API、有效输入的时钟/首步/重复语义保留。
+- Action 必需委托、非有限时长、无效启动宿主和非法更新模式明确早失败，Repeat 小于 -1 不再无声挂起。原先用非法值永久阻塞的用法改用 Condition(() => false)；不改变有限零/负时长及空 Parallel 的既有时序。
+- 内置组合拒绝自身、重复对象、已释放父/子和已调度根子项；配置失败或父 Append 拒绝时清理本次新建责任并保留原始异常。重复逻辑应分别构造子动作，非全局动作图所有权检查，无类型或序列化迁移。
+- Fade 的非正时长路径不再先除零或写中间 NaN；正式资源已通过当前 Unity/D3D12/1920×1080 Game View 的背景、全屏遮罩与退场像素验收，运行时根缩放正常，保留资产/GUID，不据序列化零缩放改写布局。画面验收独立为显式人工用例，专用入口只保存 XML/截图、不退出 Editor；自动 Action 专项保持 batchmode。
+- Timing 保留到期内核、精确 run/Scope/复用槽与组件 fail-fast；补组件非法 delay 后恢复、跨模块关闭隔离、匿名句柄与 TimerWait 的真实两 Play 回归。Foundation / Tools 新增 Timing 精选指南和完整组件示例，不新增统一调度、等待或生命周期系统。
+
 - 修复 SerializedDictionary 多对象 Inspector 漏掉非首目标独有结构变化的问题：逐目标原生观察、明确附着/分离所有权，结构重建后绑定新字段，不丢弃或自动应用调用者待编辑数据。
 - 补充规则文件在 Windows 共享读锁下的原子替换与失败保全回归，并为继承编辑的 IOException 保留阶段、HResult 和路径诊断；不以重试或降级覆盖掩盖尚未确诊的历史持锁者。
 

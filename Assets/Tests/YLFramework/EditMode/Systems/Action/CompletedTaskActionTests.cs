@@ -67,6 +67,16 @@ namespace YLFramework.Tests.Actions
         }
 
         [Test]
+        public void NullTaskResultIsDiagnosedAndCancelledInsteadOfCompleting()
+        {
+            LogAssert.Expect(LogType.Exception, new Regex("InvalidOperationException: The task factory returned null"));
+            var action = Own(Kit.Task(() => null));
+            Assert.That(action.Execute(0), Is.False);
+            Assert.That(action.IsDeinitialized, Is.True);
+            Assert.That(action.Status, Is.Not.EqualTo(ActionStatus.Finished));
+        }
+
+        [Test]
         public void ResetReevaluatesTheTaskFactoryAndExplicitAllocateRemainsAvailable()
         {
             var getters = 0;

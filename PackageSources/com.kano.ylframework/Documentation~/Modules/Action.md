@@ -2,7 +2,7 @@
 
 > [文档首页](../README.md) · [安装](../Installation.md) · [架构总览](../Architecture.md) · [音频](Audio.md) · [公共计时](Timing.md)
 
-本页导航：[最小用法](#最小用法) · [核心概念](#核心概念) · [运行流程](#运行流程) · [命名执行](#命名执行) · [扩展方式](#扩展方式) · [DOTween 适配](#dotween-适配) · [生命周期与资源](#生命周期与资源) · [屏幕过渡](#屏幕过渡)
+本页导航：[最小用法](#最小用法) · [核心概念](#核心概念) · [运行流程](#运行流程) · [安全匿名启动](#安全匿名启动) · [命名执行](#命名执行) · [扩展方式](#扩展方式) · [DOTween 适配](#dotween-适配) · [生命周期与资源](#生命周期与资源) · [屏幕过渡](#屏幕过渡)
 
 ## 模块定位
 
@@ -12,6 +12,13 @@ ActionKit 是 Unity 动作编排模块：把回调、等待、条件、插值等
 - 运行时位于 `Runtime/Systems/Action/`，namespace 为 `YLFramework.Actions`，入口为 `ActionKit`，属于 `YLFramework.Runtime`。
 - 不负责业务资源管线、依赖注入或统一对象生命周期；状态机使用独立的 [FSM 模块](FSM.md)。动作统一使用 `IAction` 契约。
 - API 浏览：`YLFramework/Action/帮助`，由 [Help 核心](Help.md) 承载。
+
+| 需求 | 选择 | 默认时间与边界 |
+| --- | --- | --- |
+| 逐帧插值、条件、顺序/并行流程 | ActionKit | 默认 Scaled，首次只执行 OnStart，保留各节点推进语义 |
+| 秒/渲染帧到期、周期回调、冻结剩余时间 | [Timing](Timing.md) | 默认 Unscaled，登记不 inline，在后续合法帧派发 |
+
+两者不共用句柄或范围，不把 Action.Delay 改成 Timer 包装，不用一方的 Shutdown 清理另一方。
 
 ## 最小用法
 
@@ -30,14 +37,14 @@ public sealed class ActionExample : MonoBehaviour
         _run = ActionKit.Sequence()
             .Delay(1f)
             .Callback(() => Debug.Log("动作序列结束"))
-            .StartNamed(this, "opening");
+            .StartHandle(this);
     }
 
     private void OnDisable() => _run.Cancel();
 }
 ```
 
-示例主动选择组件停用即取消。普通 `Start(owner)` 只绑定 owner 所在 GameObject 的执行器，单独禁用组件不会自动停止动作；需要跨场景工作时显式选择全局范围并自行清理。
+示例主动选择组件停用即取消。`StartHandle(owner)` 和普通 `Start(owner)` 都绑定 owner 所在 GameObject 的执行器，单独禁用组件不会自动停止动作；需要跨场景工作时显式选择全局范围并自行清理。
 
 ## 目录与依赖
 
@@ -66,10 +73,10 @@ DOTween 适配使用 `YLFramework.Integrations.DOTween`，消费方 asmdef 显�
 - `ActionKit`（partial class）：静态工厂入口 + 7 个全局消息事件（`OnUpdate` / `OnFixedUpdate` / `OnLateUpdate` / `OnGUI` / `OnApplicationQuit` / `OnApplicationPause` / `OnApplicationFocus`）。
 - `IAction` / `AbstractAction<T>`：`ActionStatus` 状态机与 `OnStart` / `OnExecute` / `OnFinish` / `OnDeinit` 契约；自定义动作继承 `AbstractAction<T>`。
 - `IActionController` / `ActionController`：匿名 `Start` 返回的池化控制器，含 `UpdateMode` 与 `IgnoreTimeScale` 扩展；取消即 `Deinit()`，回收后不可继续操作原始引用。
-- `ActionHandle`：命名根执行返回的只读值类型安全句柄，每次操作验证动作标识、控制器代次和名字登记；失效后不影响后来同名或池复用的任务。
+- `ActionHandle`：匿名安全启动或命名根执行返回的只读值类型句柄，每次操作验证动作标识、控制器代次、任务身份及可选名字代次；失效后不影响后来同名或池复用的任务。
 - 执行器：`IActionExecutor` 契约 + internal `MonoUpdateActionExecutor`（每个宿主 GameObject 一个实例，由 Unity Update 驱动）。
 - 组合节点：`Sequence`、`Parallel`、`Repeat`、`Condition`、`ConditionSequence`、`Lerp`、`Delay`、`DelayFrame`、`Callback`、`Coroutine`、`Task`、`Custom<TData>`。
-- 启动范围：`Start(owner)` / `StartCurrentScene()` / `StartGlobal()`，以及 `Pause` / `Resume`；扩展所在实际类型为 `IActionExtensions`。
+- 启动范围：`StartHandle(owner)` / `StartHandleCurrentScene()` / `StartHandleGlobal()`；原 Start 系列仍返回短期控制器。扩展所在实际类型为 `IActionExtensions`。
 - 事件与注销：7 个全局消息返回 `YLFramework.Events` 的 `EasyEvent` / `EasyEvent<bool>`；订阅、注销句柄与生命周期触发器统一使用 [Events 模块](Events.md)。
 - ScreenTransition：`ActionKit.ScreenTransition.FadeIn` / `FadeOut` + internal 共享画布 `ScreenTransitionCanvas`；`FadeInOut(onInFinish)` 返回普通 `ISequence`，不创建隐藏全局序列。
 
@@ -88,7 +95,7 @@ DOTween 适配使用 `YLFramework.Integrations.DOTween`，消费方 asmdef 显�
 
 ```text
 创建：ActionKit.Sequence()/Delay(seconds, callback) → Xxx.Allocate() → ActionPool<T>.Allocate()（取得 ActionId，未启动）
-启动：action.Start(owner) → ActionKit.Initialize() → ActionController.Allocate() → owner.ExecuteByUpdate(...) → Step → OnStart
+启动：action.StartHandle(owner) / Start(owner) → ActionKit.Initialize() → ActionController.Allocate() → 执行器登记 → Step → OnStart
 推进：Unity Update → MonoUpdateActionExecutor.Tick(Time.deltaTime, Time.unscaledDeltaTime) → IAction.Execute(dt) → OnExecute(dt)
 完成：Execute 检测到 Finished → OnFinish 并返回 true → 执行器调用外部 onFinish 回调 → Deinit → ActionQueue
       → ActionRecycleDriver.Update → Drain → ActionPool<T>.Recycle
@@ -106,9 +113,31 @@ DOTween 适配使用 `YLFramework.Integrations.DOTween`，消费方 asmdef 显�
 ### 常用节点语义
 
 - `Sequence` 按加入顺序推进，即时完成的子动作可在同次推进中连续执行；`Parallel` 在同次推进中依次更新子动作，并非多线程并行，空 Parallel 不自动完成。
-- `Repeat(repeatCount)` 的正数为总轮数，-1 和 0 表示无限重复，其他负数不会推进也不自动完成；不要把它与 Timer 的 count 合同混用。
+- `Repeat(repeatCount)` 的正数为总轮数，-1 和 0 表示无限重复，小于 -1 时立即抛 `ArgumentOutOfRangeException`；不要把它与 Timer 的 count 合同混用。
 - `DelayFrame` / `NextFrame` 读取 Unity `Time.frameCount`，不按 `Execute` 次数计帧；非正帧数在启动后的首次执行完成，不转换为秒数。
 - `Lerp` 按执行器选择的 dt 推进，启动和后续更新回调均可交付插值结果。`Finish()` 只标记状态，手动驱动者仍负责通知时序和 Deinit。
+
+### 参数与组合边界
+
+- 必需的 Condition、Task/Coroutine、动态 Delay 工厂和组合/Custom 配置委托不能为 null；在分配前抛 `ArgumentNullException`。原本可选的成功通知及 null Callback 空操作不变。
+- Delay、Lerp、Fade 时长及动态 Delay 每次启动的工厂结果必须有限，NaN/正负 Infinity 抛 `ArgumentOutOfRangeException`。有限的零和负时长保留各节点原完成时点，不照搬 Timer 的负值拒绝规则。
+- 内置组合的 Append 拒绝 null、自身、已 Deinit 的父/子、已在执行器中运行的根子项及同组重复对象；拒绝前不接管新子项。配置扩展在失败或父 Append 拒绝时清理本次新建责任，保留原始异常，清理异常附加在 `Exception.Data["ActionKit.CleanupException"]`。
+- 守卫不是完整动作图所有权系统：不要跨组合共享子项、构造间接循环或在池复用后继续操作原始引用。重复逻辑应分别构造子动作，或用合法 Repeat，不重复 Append 同一池对象。
+- 若旧代码用 Repeat(-2) 或非有限秒数永久阻塞，应改用明确的 `ActionKit.Condition(() => false)` 并由所有者取消。空 Parallel 的不自动完成行为本轮保留。
+
+## 安全匿名启动
+
+| 入口 | 所有权范围 |
+| --- | --- |
+| `StartHandle(owner, Action onFinish = null)` | owner 所在 GameObject |
+| `StartHandleCurrentScene(Action onFinish = null)` | 现有当前场景宿主；切换 activeScene 不迁移它 |
+| `StartHandleGlobal(Action onFinish = null)` | 跨场景全局宿主 |
+
+三个入口返回现有 `ActionHandle`，不创建伪名字或名字索引，只接受可选无参正常完成通知。同步完成时返回已失效句柄，不提供永久保存的完成结果；取消不通知成功。原 Start 系列与控制器回调重载仍保留，无需批量迁移已有有效用法。
+
+句柄的 `IsActive` / `Pause` / `Resume` / `Cancel` / `SetUpdateMode` 每次复核原租约。完成、取消、异常、宿主销毁或 Shutdown 后失效，池复用不使其重新有效；失效操作返回 false，不建立宿主。活跃执行只接受 ScaledDeltaTime / UnscaledDeltaTime，非法模式抛 `ArgumentOutOfRangeException` 且不改原模式；失效句柄先返回 false。无效动作或 null/已销毁 owner 在接管前拒绝；场景/全局宿主不可用时抛 `InvalidOperationException`，不返回假运行任务。
+
+需要按名字查找、替换或由其他拥有者定位根执行时，再使用命名入口；安全控制本身不要求起名字。
 
 ## 命名执行
 
@@ -137,7 +166,7 @@ ActionKit.Delay(2f, null).ReplaceNamed(this, "opening");
 - 启动：`StartNamed(owner, flag)`、`StartNamedCurrentScene(flag)`、`StartNamedGlobal(flag)`；每种都有 `Action<IActionController>` 或无参数 `Action` 正常完成通知重载。
 - 替换：`ReplaceNamed(owner, flag)`、`ReplaceNamedCurrentScene(flag)`、`ReplaceNamedGlobal(flag)`。先验证新动作和参数，再取消旧同名任务；新启动或旧清理失败不会复活旧任务。清理重入新建同名任务时，外层替换会拒绝覆盖新登记。不能用仍被执行器持有的同一动作实例替换自己。
 - 查询与控制：`ActionKit.TryGetNamed(owner, flag, out handle)`、`ContainsNamed`、`CancelNamed`、`PauseNamed`、`ResumeNamed`；场景和全局版本分别加 `CurrentScene`、`Global` 后缀且不接收 owner。只读现有宿主缓存和执行器，不创建对象或初始化模块。合法名字不存在或已失效时返回 `false`。
-- 名字采用 `StringComparer.Ordinal`，区分大小写，所有命名入口拒绝 null/空白名字。默认有效重名抛出 `InvalidOperationException`，不消费新动作，也不扰动旧任务。匿名 `Start` 不创建名字字典或命名包装对象。
+- 名字采用 `StringComparer.Ordinal`，区分大小写，所有命名入口拒绝 null/空白名字。默认有效重名抛出 `InvalidOperationException`，不消费新动作，也不扰动旧任务。匿名 `Start` / `StartHandle` 不创建名字字典或命名包装对象。
 - 作用域为组件所属 GameObject，而非单个组件；其他对象、场景/全局执行器及 Timer 可以使用相同名字，索引彼此独立。沿用现有场景宿主行为，不因 activeScene 切换自动取消或新建作用域。
 - 首次同步推进前登记；同步完成不留名。根完成通知中可以用新动作启动同名执行，旧收尾不删新登记；子节点回调和 Repeat 每轮回调仍属于活跃根执行，不提前释放名字。
 - `ActionHandle.IsActive`、`Pause()`、`Resume()`、`Cancel()`、`SetUpdateMode(mode)` 每次核验原租约。默认值、正常完成、取消、异常、宿主销毁、Shutdown 后返回 `false`，控制器/动作池复用不使旧句柄重新有效；ActionId 为 0 也可有效。活跃动作 Reset 仅重置进度，不改变句柄租约。
@@ -147,7 +176,7 @@ ActionKit.Delay(2f, null).ReplaceNamed(this, "opening");
 
 ```csharp
 private ActionHandle _background;
-private void Start() => _background = ActionKit.Delay(10f, null).StartNamedGlobal("background");
+private void Start() => _background = ActionKit.Delay(10f, null).StartHandleGlobal();
 private void OnDisable() => _background.Cancel();
 ```
 
@@ -159,6 +188,7 @@ private void OnDisable() => _background.Cancel();
 - 订阅生命周期：使用 `YLFramework.Events.UnregisterExtension` 与 `RegisterListExtension` 绑定注销句柄；`ActionKit.Shutdown` 只清空模块自有事件，不处置用户触发器或句柄。
 - `Task` 仅观察外部任务，暂停/取消动作不会暂停、取消或 Dispose 该 Task；任务自身取消或失败会清理动作而非正常完成，失败会记录异常。应在 Unity 主线程启动，以便异步续体回到 Unity 同步上下文。
 - `Coroutine` 在 Action 全局宿主启动自己的协程；取消或 Reset 会停止该协程，暂停动作不会暂停它。包装已有枚举器的 `ToAction()` 不会在 Reset 时使枚举器回到起点。
+- Task/Coroutine 工厂返回 null 会产生明确的 `InvalidOperationException` 诊断并结束本方动作。Task 观察路径的运行时失败按既有规则记录异常并取消，不保证从 Start 同步抛出，也不取消外部生产者。
 
 ### 等待 Observable 首值
 
@@ -235,7 +265,9 @@ ActionKit.Sequence().Append(ActionKit.ScreenTransition.FadeIn().Duration(0.3f))
     .Append(ActionKit.ScreenTransition.FadeOut().Duration(0.3f)).Start(this);
 ```
 
-所有过渡共享一个 Image，重叠执行会相互覆盖；取消不会复原显示状态。Fade 的 `Reset` 保留本轮配置用于重复执行，回收后恢复黑色、透明度 0 到 0、一秒时长和零进度，归还后的引用不能再操作。当前 Prefab 的布局包含零缩放且没有 GraphicRaycaster，不能仅凭动作完成就认定遮罩可见或能够阻挡输入；应用需确认实际 Canvas 布局与交互效果。
+所有过渡共享一个 Image，重叠执行会相互覆盖；取消不会复原显示状态。有限 duration <= 0 在启动后的首次执行完成，不进行零除或向 Image 写 NaN；正时长推进顺序不变。Fade 的 `Reset` 保留本轮配置用于重复执行，回收后恢复黑色、透明度 0 到 0、一秒时长和零进度，归还后的引用不能再操作。
+
+正式 Prefab 使用 ScreenSpaceOverlay，运行时会驱动根 RectTransform；不能仅凭序列化零缩放断言不可见，也不能仅凭 alpha 或动作完成宣称覆盖正确。当前开发版本已在 Unity 6000.3.27f1、Direct3D12、1920×1080 的真实 Game View 中验证背景校准、全屏黑色遮罩及退场恢复，运行时根缩放为 `(1,1,1)`，因此不改资源布局或 GUID。此结果不代替其他分辨率、管线或 Player 验收。资源没有 GraphicRaycaster，不承诺阻挡输入；可见性和交互须分别验证。维护仓库的显式人工视觉入口与结果合同见 `Tools/Testing/README.md`，不混入 Daily/Special 自动通过数量。
 
 ## 编辑器帮助
 

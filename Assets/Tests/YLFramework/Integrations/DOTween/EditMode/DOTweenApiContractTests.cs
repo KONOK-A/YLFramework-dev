@@ -9,6 +9,48 @@ namespace YLFramework.Tests.Actions.DOTween
 {
     public class DOTweenApiContractTests
     {
+        public sealed class RejectingSequence : AbstractAction<RejectingSequence>, ISequence
+        {
+            internal IAction Child;
+            internal Exception Failure;
+            public ISequence Append(IAction action)
+            {
+                Child = action;
+                throw Failure;
+            }
+            protected override void OnDeinit()
+            {
+                Child = null;
+                Failure = null;
+            }
+        }
+
+        [Test]
+        public void RejectedAppendReleasesTheNewAdapterWithoutInvokingItsTweenFactory()
+        {
+            Assert.That(ActionQueue.PendingCount, Is.Zero);
+            var parent = RejectingSequence.Allocate();
+            var original = new InvalidOperationException("adapter append rejected");
+            parent.Failure = original;
+            var invoked = false;
+            try
+            {
+                var error = Assert.Throws<InvalidOperationException>(() => parent.DOTween(() => { invoked = true; return null; }));
+                Assert.That(error, Is.SameAs(original));
+                Assert.That(parent.Child, Is.Not.Null);
+                Assert.That(parent.Child.IsDeinitialized, Is.True);
+                Assert.That(invoked, Is.False);
+                Assert.That(parent.IsDeinitialized, Is.False);
+            }
+            finally
+            {
+                if (parent.Child != null && !parent.Child.IsDeinitialized)
+                    parent.Child.Deinit();
+                parent.Deinit();
+                ActionQueue.Drain();
+            }
+        }
+
         [Test]
         public void OriginalPublicShapeAndPrivateConstructorArePreserved()
         {

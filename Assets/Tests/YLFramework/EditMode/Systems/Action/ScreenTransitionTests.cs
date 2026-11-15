@@ -108,6 +108,40 @@ namespace YLFramework.Tests.Actions
         }
 
         [Test]
+        public void ZeroDurationWithZeroDeltaNeverWritesNonFiniteAlpha()
+        {
+            var observed = new List<float>();
+            UnityEngine.Events.UnityAction capture = () => observed.Add(_canvas.colorImage.color.a);
+            _canvas.colorImage.RegisterDirtyVerticesCallback(capture);
+            try
+            {
+                var fade = Own(Kit.ScreenTransition.FadeIn().Duration(0));
+                Assert.That(fade.Execute(0), Is.False);
+                Assert.That(fade.Execute(0), Is.True);
+                Assert.That(observed, Is.Not.Empty);
+                foreach (var alpha in observed)
+                    Assert.That(float.IsNaN(alpha) || float.IsInfinity(alpha), Is.False);
+                Assert.That(_canvas.colorImage.color.a, Is.EqualTo(1));
+            }
+            finally
+            {
+                _canvas.colorImage.UnregisterDirtyVerticesCallback(capture);
+            }
+        }
+
+        [TestCase(float.NaN)]
+        [TestCase(float.PositiveInfinity)]
+        [TestCase(float.NegativeInfinity)]
+        public void NonFiniteFadeDurationDoesNotChangeTheValidConfiguration(float value)
+        {
+            var fade = Own(Kit.ScreenTransition.FadeIn().Duration(1));
+            Assert.Throws<System.ArgumentOutOfRangeException>(() => fade.Duration(value));
+            fade.Execute(0);
+            Assert.That(fade.Execute(0.5f), Is.False);
+            Assert.That(_canvas.colorImage.color.a, Is.EqualTo(0.5f));
+        }
+
+        [Test]
         public void ResetRestartsElapsedTimeWithoutChangingTheFluentSettings()
         {
             var fade = Own(Kit.ScreenTransition.FadeIn().Duration(2));

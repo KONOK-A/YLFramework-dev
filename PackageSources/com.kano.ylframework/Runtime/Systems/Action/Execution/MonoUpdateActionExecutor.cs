@@ -170,6 +170,17 @@ namespace YLFramework.Actions
             }
 
             ValidateAction(action);
+            return StartStandard(action, flag, onFinish);
+        }
+
+        internal ActionHandle StartAnonymous(IAction action, Action<IActionController> onFinish)
+        {
+            ValidateAction(action);
+            return StartStandard(action, null, onFinish);
+        }
+
+        private ActionHandle StartStandard(IAction action, string flag, Action<IActionController> onFinish)
+        {
             var controller = (ActionController)ActionController.Allocate();
             var generation = controller.Generation;
             controller.Action = action;
@@ -177,7 +188,7 @@ namespace YLFramework.Actions
             controller.UpdateMode = ActionUpdateModes.ScaledDeltaTime;
             try
             {
-                return Execute(controller, onFinish, flag);
+                return Execute(controller, onFinish, flag, true);
             }
             catch
             {
@@ -212,12 +223,12 @@ namespace YLFramework.Actions
             return false;
         }
 
-        // 句柄操作共用的租约复核：名字代次、任务身份、动作标识与控制器代次全部匹配且都在效时才为 true；
+        // 句柄操作共用的租约复核：任务身份、动作标识、控制器代次及可选名字代次全部匹配才有效；
         // 只要动作已 Finished、已清理或控制器被复用，就删除名字登记并返回 false。
-        internal bool IsNamedLeaseActive(ActionTask task, ulong token, IAction action, ulong actionId,
+        internal bool IsLeaseActive(ActionTask task, ulong token, IAction action, ulong actionId,
             ActionController controller, uint generation)
         {
-            if (_isStopping || ActionKit.IsShuttingDown || task == null || token == 0 ||
+            if (_isStopping || ActionKit.IsShuttingDown || task == null ||
                 task.NameToken != token || task.IsDone || !ReferenceEquals(task.Action, action) ||
                 task.ActionId != actionId || !ReferenceEquals(task.Controller, controller) ||
                 task.ControllerGeneration != generation)
@@ -235,9 +246,9 @@ namespace YLFramework.Actions
             return false;
         }
 
-        // 取消命名任务：先移出名字索引并标记 Done，再在受控执行作用域内清理动作，
+        // 取消任务：先移出可选名字索引并标记 Done，再在受控执行作用域内清理动作，
         // 栈退出时统一回收任务、控制器与动作对象。
-        internal void CancelNamed(ActionTask task)
+        internal void Cancel(ActionTask task)
         {
             task.IsDone = true;
             RemoveName(task);
@@ -290,7 +301,7 @@ namespace YLFramework.Actions
         }
 
         // 调度入口：校验动作所有权与重复调度，登记任务（可选命名），随后以 dt=0 做首次同步推进（触发 OnStart，可立即完成）。
-        private ActionHandle Execute(IActionController controller, Action<IActionController> onFinish, string flag)
+        private ActionHandle Execute(IActionController controller, Action<IActionController> onFinish, string flag, bool createHandle = false)
         {
             if (_isStopping || ActionKit.IsShuttingDown)
             {
@@ -306,6 +317,8 @@ namespace YLFramework.Actions
             {
                 throw new InvalidOperationException("Allocate a new action before scheduling a deinitialized action.");
             }
+
+            ActionKit.ValidateUpdateMode(controller.UpdateMode);
 
             if (_owners.TryGetValue(controller.Action, out var registered) && registered.ActionId == controller.ActionId)
             {
@@ -344,8 +357,9 @@ namespace YLFramework.Actions
                 }
 
                 _namedTasks.Add(flag, task);
-                handle = new ActionHandle(this, task);
             }
+            if (createHandle)
+                handle = new ActionHandle(this, task);
             _executionDepth++;
             EnterExecutionScope();
             Exception executionError = null;
@@ -430,6 +444,11 @@ namespace YLFramework.Actions
                     else if (mode == ActionUpdateModes.UnscaledDeltaTime)
                     {
                         Step(task, unscaledDeltaTime);
+                    }
+                    else
+                    {
+                        task.IsDone = true;
+                        ActionKit.ValidateUpdateMode(mode);
                     }
                 }
             }

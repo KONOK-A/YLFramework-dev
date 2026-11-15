@@ -42,6 +42,10 @@ namespace YLFramework.Actions
         /// <returns>尚未判断条件的分支动作；配置回调不在分配时执行。</returns>
         public static ConditionSequence Allocate(Func<bool> condition, Action<ISequence> sequenceSetting)
         {
+            if (condition == null)
+                throw new ArgumentNullException(nameof(condition));
+            if (sequenceSetting == null)
+                throw new ArgumentNullException(nameof(sequenceSetting));
             var whenAction = _pool.Allocate();
             whenAction._condition = condition;
             whenAction._sequenceSetting = sequenceSetting;
@@ -217,7 +221,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence ConditionSequence(this ISequence self, Func<bool> condition, Action<ISequence> sequenceSetting)
         {
-            return self.Append(global::YLFramework.Actions.ConditionSequence.Allocate(condition, sequenceSetting));
+            return ActionLease.AppendOwned(self, global::YLFramework.Actions.ConditionSequence.Allocate(condition, sequenceSetting));
         }
     }
 }

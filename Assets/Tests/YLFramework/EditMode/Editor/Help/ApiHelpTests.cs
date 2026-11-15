@@ -66,10 +66,10 @@ namespace YLFramework.Tests.Actions
             Assert.That(index.All(entry => entry.Type.IsVisible), Is.True);
             Assert.That(index.All(entry => entry.Type.Assembly == typeof(ActionKit).Assembly ||
                 entry.Type.Assembly.GetName().Name == "YLFramework.Actions.DOTween"), Is.True);
-            Assert.That(core.Sum(type => ActionKitApiHelpContent.GetDeclaredApi(type).Count()), Is.EqualTo(297));
+            Assert.That(core.Sum(type => ActionKitApiHelpContent.GetDeclaredApi(type).Count()), Is.EqualTo(300));
             var providerCount = ActionKitApiHelpContent.ApiAssemblies().Count() - 1;
             Assert.That(index.Length, Is.EqualTo(43 + 2 * providerCount));
-            Assert.That(index.Sum(entry => entry.Members.Length), Is.EqualTo(297 + 12 * providerCount));
+            Assert.That(index.Sum(entry => entry.Members.Length), Is.EqualTo(300 + 12 * providerCount));
             Assert.That(typeof(ActionKit).Assembly.GetName().Name, Is.EqualTo("YLFramework.Runtime"));
             Assert.That(index.All(entry => entry.Type.Namespace == "YLFramework.Actions" ||
                 entry.Type.Namespace.StartsWith("YLFramework.Actions.", StringComparison.Ordinal) ||
@@ -175,6 +175,22 @@ namespace YLFramework.Tests.Actions
             Assert.That(entry.Members.Count(member => member.Name == "StartCurrentScene"), Is.EqualTo(2));
             StringAssert.Contains("this IAction self, UnityEngine.MonoBehaviour monoBehaviour, Action<IActionController> onFinish = null", entry.Signatures);
             StringAssert.Contains("Action onFinish", entry.Signatures);
+        }
+
+        [Test]
+        public void AnonymousHandleApisAndTheDefaultExampleUseTheExistingSafeLease()
+        {
+            var entry = ActionKitApiHelpContent.BuildIndex().Single(type => type.Type == typeof(IActionExtensions));
+            foreach (var name in new[] { "StartHandle", "StartHandleCurrentScene", "StartHandleGlobal" })
+            {
+                var method = entry.Members.OfType<MethodInfo>().Single(member => member.Name == name);
+                Assert.That(method.ReturnType, Is.EqualTo(typeof(ActionHandle)));
+                Assert.That(method.GetParameters().Last().ParameterType, Is.EqualTo(typeof(Action)));
+                Assert.That(method.GetParameters().Last().DefaultValue, Is.Null);
+                StringAssert.Contains(name, Topic("control").SearchText);
+            }
+            StringAssert.Contains(".StartHandle(this)", ActionKitApiHelpContent.GettingStartedSource);
+            StringAssert.Contains("OnDisable()", ActionKitApiHelpContent.GettingStartedSource);
         }
 
         [Test]
@@ -536,8 +552,9 @@ namespace YLFramework.Tests.Actions
             StringAssert.DoesNotContain("using Kit =", source);
             StringAssert.Contains("ActionKit.Sequence()", source);
             StringAssert.Contains("public class ActionKitQuickStart : MonoBehaviour", source);
-            StringAssert.Contains("private void Start()", source);
-            StringAssert.Contains(".Start(this)", source);
+            StringAssert.Contains("private void OnEnable()", source);
+            StringAssert.Contains(".StartHandle(this)", source);
+            StringAssert.Contains("private void OnDisable() => _run.Cancel()", source);
             StringAssert.DoesNotContain("ActionKit.Initialize", source);
             StringAssert.DoesNotContain("UniRx", source);
             StringAssert.DoesNotContain("IObservable", source);
@@ -1111,8 +1128,13 @@ namespace YLFramework.Tests.Actions
                     "}\n} }\n");
                 var quickStart = Path.Combine(folder, "ActionKitQuickStart.cs");
                 File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(quickStart), ActionKitApiHelpContent.GettingStartedSource);
+                var timingSource = Path.Combine(folder, "TimingScopeExample.cs");
+                var timing = HelpRegistry.GetModules().Single(module => module.Id == "foundation-tools").Create()
+                    .Guides.Single(page => page.Id == "timing");
+                File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(timingSource),
+                    timing.Blocks.Single(block => block.Kind == HelpBlockKind.Code).Content);
                 var output = Path.Combine(folder, "ActionKit.CoreHelpExamples.dll");
-                var builder = new AssemblyBuilder(output, new[] { source, quickStart })
+                var builder = new AssemblyBuilder(output, new[] { source, quickStart, timingSource })
                 {
                     referencesOptions = ReferencesOptions.UseEngineModules
                 };

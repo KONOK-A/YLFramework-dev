@@ -68,6 +68,8 @@ namespace YLFramework.Actions
         /// <param name="coroutineGetter">每次启动时取得枚举器的函数。</param>
         public static CoroutineAction Allocate(Func<IEnumerator> coroutineGetter)
         {
+            if (coroutineGetter == null)
+                throw new ArgumentNullException(nameof(coroutineGetter));
             var coroutineAction = _pool.Allocate();
             coroutineAction._coroutineGetter = coroutineGetter;
             return coroutineAction;
@@ -165,6 +167,8 @@ namespace YLFramework.Actions
                     return;
                 }
 
+                if (routine == null)
+                    throw new InvalidOperationException("The coroutine factory returned null.");
                 var coroutine = host.StartActionCoroutine(routine, completion.Finish);
                 if (completion.Target != null)
                 {
@@ -209,7 +213,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Coroutine(this ISequence self, Func<IEnumerator> coroutineGetter)
         {
-            return self.Append(CoroutineAction.Allocate(coroutineGetter));
+            return ActionLease.AppendOwned(self, CoroutineAction.Allocate(coroutineGetter));
         }
 
         /// <summary>

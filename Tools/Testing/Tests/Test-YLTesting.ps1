@@ -117,6 +117,22 @@ function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minut
 
 try {
     if ($Group -in @('All', 'Workspace')) {
+        Test-Case 'Action automatic session gates never open an interactive visual window' {
+            . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $module = @($configuration.modules | Where-Object name -CEQ 'Action')[0]
+            Assert-That (($module.suites -join ',') -ceq 'Daily,Special') 'Action needs its original Daily and a selectable Special.'
+            Assert-That ($module.specialBackend -ceq 'SessionNative' -and $module.specialCategory -ceq 'YL.Special.ActionTimingSession' -and
+                ($module.specialModes -join ',') -ceq 'EditMode') 'Special must select its actual session fixture.'
+            Assert-That ($module.prepareSessionScene -and $module.prepareSceneTemplates -and $module.disableDomainReload -and
+                $module.graphics) 'Real session checks need the owned saved graphics-capable host.'
+            Assert-That ('interactiveDesktop' -cnotin $module.Keys) 'Automated Action checks must never open a window or depend on desktop focus.'
+            Assert-That ('YL.Special.ActionTimingSession' -cin $module.excludedCategories -and
+                'YL.Manual.ActionVisual' -cin $module.excludedCategories -and
+                ($module.editTests -join ',') -ceq 'Assets/Tests/YLFramework/EditMode/Systems/Action' -and
+                ($module.playTests -join ',') -ceq 'Assets/Tests/YLFramework/PlayMode/Systems/Action') 'Daily must retain its original leaves but exclude Special.'
+        }
         Test-Case 'Pooling Player selects the real split-metric cost fixture without leaking probes into products' {
             . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))

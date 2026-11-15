@@ -36,6 +36,28 @@ namespace YLFramework.Editor.Help
                         "Singleton、Pool、Events、Binding、IOC、Timing、AssemblyTool 的完整契约见 Documentation~/Modules 下对应说明；" +
                         "这里仅展示精选 API，不扫描整个工程或执行成员。"),
                     Document("基础模块导航", "README.md")),
+                Guide("timing", "Timing：到期调度与所有权", "等待秒数或渲染帧、周期回调及精确取消使用 Timing；插值和逐帧组合仍使用 Action。",
+                    new[] { typeof(Timing.Timer), typeof(Timing.TimerScheduler), typeof(Timing.TimerHandle), typeof(Timing.TimerScope),
+                        typeof(Timing.ReusableTimer), typeof(Timing.TimerHandleGroup), typeof(Timing.TimerWait), typeof(Timing.TimerObject) },
+                    HelpBlock.Paragraph("时间与结果", "默认 Unscaled，显式 Scaled 才受 timeScale 影响；登记不 inline，零等待也只在后续合法渲染帧派发。" +
+                        "Completed、Cancelled、Faulted、Invalidated 是不同终态；TimerWait 只观察，不拥有 Timer，等待结束不代表正常计时完成或业务成功。" +
+                        "Timer 与 Action 不共享句柄、名字索引或 Shutdown 责任，也不统一双方的首步和重复次数语义。"),
+                    HelpBlock.Paragraph("按所有者清理", "普通组件在 OnEnable 新建 TimerScope，OnDisable Dispose 本方范围；下一次启用新建范围。" +
+                        "ReusableTimer 适合显式复用单个计时槽，活跃 run 必须先 Cancel 才能重启；TimerHandleGroup 收集并取消已交付的精确句柄，不改 Scope 归属。" +
+                        "TimerObject 的 delay 必须有限且非负，非法值保留 fail-fast，不钳制或静默跳过；更正字段并重新启用可开始新一轮。" +
+                        "所有操作要求 Unity 主线程，不调用全局 Timer.Shutdown 代替组件退出，不让旧会话范围收养新 Play 会话。"),
+                    HelpBlock.Code("完整组件示例", "保存为 TimingScopeExample.cs。启用时登记计时并观察其终态；停用先停止本方观察，再取消本方范围，重新启用可重新运行。",
+                        "using System.Collections;\nusing UnityEngine;\nusing YLFramework.Timing;\n\n" +
+                        "public sealed class TimingScopeExample : MonoBehaviour\n{\n" +
+                        "    private TimerScope _scope;\n    private Coroutine _observer;\n\n" +
+                        "    private void OnEnable()\n    {\n        _scope = new TimerScope();\n" +
+                        "        var run = _scope.Delay(1, () => Debug.Log(\"计时正常完成\"));\n" +
+                        "        _observer = StartCoroutine(Observe(run));\n    }\n\n" +
+                        "    private IEnumerator Observe(TimerHandle run)\n    {\n        TimerWait wait = run.WaitForTermination();\n" +
+                        "        yield return wait;\n        Debug.Log(wait.Status);\n    }\n\n" +
+                        "    private void OnDisable()\n    {\n        if (_observer != null) StopCoroutine(_observer);\n" +
+                        "        _observer = null;\n        _scope?.Dispose();\n        _scope = null;\n    }\n}"),
+                    Document("Timing 完整合同", "Modules/Timing.md")),
                 Guide("tools", "Tools 与 Editor 工具", "按需选用数据与 UI 便利工具，不增加统一工具宿主或配置中心。",
                     new[] { typeof(global::YLFramework.Utilities.StringTools), typeof(FSM.Fsm<>), typeof(Grids.NormalGrid<>),
                         typeof(global::YLFramework.UI.ColorSelector), typeof(global::YLFramework.UI.ColorSelectorWindow) },

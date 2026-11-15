@@ -157,6 +157,22 @@ namespace YLFramework.Tests.Actions
             onFinish();
         }
 
+        [UnityTest]
+        public IEnumerator NullCoroutineResultIsDiagnosedAndCancelledWithoutSuccess()
+        {
+            var root = new GameObject("ActionKit.NullCoroutine");
+            _roots.Add(root);
+            var owner = root.AddComponent<MonoUpdateActionExecutor>();
+            var action = Own(Kit.Coroutine(() => null));
+            var completed = 0;
+            var error = Assert.Throws<InvalidOperationException>(() => action.Start(owner, () => completed++));
+            StringAssert.Contains("coroutine factory returned null", error.Message);
+            Assert.That(action.IsDeinitialized, Is.True);
+            Assert.That(owner.ScheduledCount, Is.Zero);
+            Assert.That(completed, Is.Zero);
+            yield return null;
+        }
+
         private static IEnumerator Gate(Func<bool> ready, Action onFinish)
         {
             while (!ready())

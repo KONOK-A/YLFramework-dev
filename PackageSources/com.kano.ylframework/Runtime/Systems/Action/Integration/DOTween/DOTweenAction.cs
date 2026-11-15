@@ -560,7 +560,7 @@ namespace YLFramework.Integrations.DOTween
                 throw new ArgumentNullException(nameof(self));
             }
 
-            return self.Append(DOTweenAction.Allocate(tweenGetter));
+            return ActionLease.AppendOwned(self, DOTweenAction.Allocate(tweenGetter));
         }
     }
 }

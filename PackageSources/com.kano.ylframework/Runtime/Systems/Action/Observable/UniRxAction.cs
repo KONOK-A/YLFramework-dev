@@ -363,7 +363,7 @@ namespace YLFramework.Actions
                 throw new ArgumentNullException(nameof(self));
             }
 
-            return self.Append(UniRxAction<T>.Allocate(observableGetter));
+            return ActionLease.AppendOwned(self, UniRxAction<T>.Allocate(observableGetter));
         }
     }
 }

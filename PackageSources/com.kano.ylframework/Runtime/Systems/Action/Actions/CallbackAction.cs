@@ -98,7 +98,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Callback(this ISequence self, Action callback)
         {
-            return self.Append(global::YLFramework.Actions.CallbackAction.Allocate(callback));
+            return ActionLease.AppendOwned(self, global::YLFramework.Actions.CallbackAction.Allocate(callback));
         }
     }
 }

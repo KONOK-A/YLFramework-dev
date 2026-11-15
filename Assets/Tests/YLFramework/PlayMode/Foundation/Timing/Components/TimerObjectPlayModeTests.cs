@@ -127,6 +127,30 @@ namespace YLFramework.Core.Tests
             Assert.That(condition(), Is.True, "Real Unity frames did not complete the expected operation before the deadline.");
         }
 
+        [UnityTest]
+        public IEnumerator InvalidDelayEnableFailsWithoutCallbacksAndCanRecover()
+        {
+            foreach (var delay in new[] { -1f, float.NaN, float.PositiveInfinity, float.NegativeInfinity })
+            {
+                var probe = Create(delay);
+                var completed = 0;
+                var aborted = 0;
+                probe.onCompleted.AddListener(() => completed++);
+                probe.onAborted.AddListener(() => aborted++);
+                LogAssert.Expect(LogType.Exception, new Regex("ArgumentOutOfRangeException"));
+                Activate(probe);
+                Assert.That(Current(probe).IsActive, Is.False);
+                Assert.That(completed + aborted, Is.Zero);
+                probe.gameObject.SetActive(false);
+                probe.delay = 0;
+                Activate(probe);
+                yield return Until(() => completed == 1);
+                Assert.That(aborted, Is.Zero);
+                Assert.That(Current(probe).Status, Is.EqualTo(TimerState.Completed));
+                probe.gameObject.SetActive(false);
+            }
+        }
+
         [Test]
         public void CoreIdentityAndSerializedEventLayoutRemainValid()
         {

@@ -16,7 +16,7 @@ namespace YLFramework.Editor.Actions
         {
             new Topic("overview", "从一个动作序列开始", "入门与生命周期",
                 "把回调和等待按顺序组合，再绑定到场景对象执行。",
-                "ActionKit.Sequence() 创建序列，Callback 添加要执行的代码，Delay 添加以秒为单位的等待，Start(this) 开始执行。" +
+                 "ActionKit.Sequence() 创建序列，Callback 添加要执行的代码，Delay 添加以秒为单位的等待，StartHandle(this) 开始执行并返回安全句柄。" +
                 "Start 会自动初始化模块，不必为每个使用动作的组件先调用 Initialize。\n" +
                 "示例先输出开始消息，等待动作完成后再输出结束消息。序列由对象上的执行器推进，对象销毁时取消未完成动作。",
                 "等待随执行器的时间步长推进，不保证恰好在某个真实时间点结束。不要在每个使用者的 OnDisable 中调用 Shutdown，" +
@@ -26,10 +26,10 @@ namespace YLFramework.Editor.Actions
                 "将完整脚本保存为 ActionKitQuickStart.cs，挂到场景中已激活的 GameObject 上，保持组件启用后进入播放模式。" +
                 "控制台应先出现“动作开始”，随后经过等待出现“等待结束”；不承诺精确一秒的日志时间差。",
                 "using UnityEngine;\nusing YLFramework.Actions;\n\n" +
-                "public class ActionKitQuickStart : MonoBehaviour\n{\n    private void Start()\n    {\n" +
-                "        ActionKit.Sequence()\n            .Callback(() => Debug.Log(\"动作开始\"))\n" +
+                 "public class ActionKitQuickStart : MonoBehaviour\n{\n    private ActionHandle _run;\n\n    private void OnEnable()\n    {\n" +
+                 "        _run = ActionKit.Sequence()\n            .Callback(() => Debug.Log(\"动作开始\"))\n" +
                 "            .Delay(1f)\n            .Callback(() => Debug.Log(\"等待结束\"))\n" +
-                "            .Start(this);\n    }\n}",
+                 "            .StartHandle(this);\n    }\n\n    private void OnDisable() => _run.Cancel();\n}",
                 "ActionKit", "ISequence", "IActionExtensions")
             {
                 FeaturedTypeNames = new[] { "ActionKit", "ISequence", "IActionExtensions" }
@@ -59,7 +59,8 @@ namespace YLFramework.Editor.Actions
                 "序列也接受 Func<float>，在这次等待开始时计算一次时长，不会每次更新重新计算。\n" +
                 "等待动作先判断已累计时间是否达到时长，再累加本次 dt。正常执行默认使用受时间缩放影响的步长，" +
                 "控制器的 IgnoreTimeScale 可改用未缩放步长。完成后由执行器释放动作；取消不会调用成功完成回调。",
-                "不能用参数秒数保证精确的真实时间完成点。控制器暂停时不推进等待，但时间缩放和对象停用也会影响自动更新。",
+                 "不能用参数秒数保证精确的真实时间完成点。时长和动态工厂的每次返回值必须有限；NaN/正负 Infinity 及时报错。" +
+                 "有限的零和负值保留原完成时点。暂停不推进等待，但时间缩放和对象停用也会影响自动更新。",
                 MethodContext + "\n调用 DelayedCallback(owner) 后会启动两个独立等待；第二个序列只等待，不输出日志。",
                 "public static void DelayedCallback(MonoBehaviour owner)\n{\n" +
                 "    ActionKit.Delay(1f, () => Debug.Log(\"时间等待结束\")).Start(owner);\n" +
@@ -107,7 +108,8 @@ namespace YLFramework.Editor.Actions
                 "ISequence.Append 接受子动作并返回当前序列，便于继续添加。现代序列可以在同一次推进中经过多个立即完成的回调，" +
                 "启动后续动作时使用 Execute(0)，不会把已经使用的整段 dt 再交给下一个动作。\n" +
                 "子动作取消会取消父序列及其余子动作，不触发成功完成回调。序列结束或取消时负责释放自己的子动作。",
-                "不要把同一活动动作同时交给多个执行者。",
+                 "Append 拒绝 null、自身、已释放父/子、已在执行器运行的根子项及同组重复实例；配置回调失败会清理本次新建责任并保留原始异常。" +
+                 "这不是通用动作图登记：不要跨组合共享子动作、构造间接循环或在池复用后继续使用原始引用。",
                 MethodContext + "\nComposition(owner) 先等待并行组的两项都结束，再执行嵌套序列和最外层完成回调。",
                 "public static void Composition(MonoBehaviour owner)\n{\n" +
                 "    ActionKit.Sequence().Parallel(p => p.Delay(1f).Delay(2f))\n" +
@@ -138,7 +140,7 @@ namespace YLFramework.Editor.Actions
                 "ActionKit.Repeat(repeatCount) 的默认值为 -1。现代 Repeat 中，-1 和 0 都表示无限重复，1 表示执行一次，" +
                 "正整数 n 表示执行 n 次。每次内部序列完成后会重置，下一次执行推进下一轮。\n" +
                 "暂停通过父动作的执行门控制；内部动作取消时，整个重复动作取消。IRepeat 不提供当前迭代次数。",
-                "其他负数目前不会正常推进，避免传入 -1 以外的负值。无限重复需要由拥有者明确取消。",
+                 "小于 -1 时抛 ArgumentOutOfRangeException，不再静默挂起。无限重复需要由拥有者明确取消；刻意永久等待可用 Condition(() => false)。",
                 MethodContext + "\nRepeatedCallbacks(owner) 每轮先等待再输出一次消息，总共五轮，然后执行成功完成回调。",
                 "public static void RepeatedCallbacks(MonoBehaviour owner)\n{\n" +
                 "    ActionKit.Repeat(5).Delay(0.2f).Callback(() => Debug.Log(\"完成一轮\"))\n" +
@@ -284,7 +286,9 @@ namespace YLFramework.Editor.Actions
                 "StartCurrentScene 使用场景共享宿主，在宿主所属场景卸载时取消，不是每次活动场景切换都取消。" +
                 "StartGlobal 使用跨场景的模块宿主。\n" +
                 "Start 返回控制器；Pause 停止动作推进，Resume 恢复，IgnoreTimeScale 改用未缩放 dt，" +
-                "Deinit 取消当前动作且不调用成功完成回调。\n" +
+                 "Deinit 取消当前动作且不调用成功完成回调。\n" +
+                 "StartHandle(owner)、StartHandleCurrentScene()、StartHandleGlobal() 返回同一个 ActionHandle 安全句柄，不需要伪名字。" +
+                 "仅接受可选无参数完成回调；同步完成时返回已失效句柄，不创建名字字典或名字代次。\n" +
                 "StartNamed(owner, flag)、StartNamedCurrentScene(flag)、StartNamedGlobal(flag) 返回 ActionHandle，命名的是根执行而非子节点。" +
                 "同作用域名字采用 ordinal、区分大小写，拒绝空白和有效重名；重名拒绝不消费新动作。" +
                 "ReplaceNamed 及对应 CurrentScene/Global 入口先验证，再取消旧任务并启动新任务；失败不恢复旧任务，也不通知旧任务成功。\n" +
@@ -296,11 +300,14 @@ namespace YLFramework.Editor.Actions
                 "IgnoreTimeScale 不改变 Task、协程或 DOTween 自己的时钟。Recycle、Reset 和修改 ActionId 属于基础设施操作，" +
                 "不是日常取消方式。\n" +
                 "ActionHandle 的 IsActive/Pause/Resume/Cancel/SetUpdateMode 每次验证原执行租约，默认值和已结束句柄返回 false；" +
-                "ActionId=0 也可有效，运行中 Reset 不换租约。Start 返回的原始 IActionController 仍不是安全长期句柄。" +
+                 "ActionId=0 也可有效，运行中 Reset 不换租约。Start 返回的原始 IActionController 仍不是安全长期句柄。" +
+                 "活跃执行的非法 UpdateMode 抛 ArgumentOutOfRangeException，失效句柄先返回 false。" +
                 "对象作用域是 GameObject，不是单独组件；不同对象、场景/全局执行器及 Timer 的名字索引互不共享。",
                 MethodContext + "\n示例用较长等待确保获取控制器后仍有活动动作，立即演示暂停、恢复和取消；" +
                 "因此该等待的完成日志不应出现。另两项日志来自独立的场景和全局动作。",
-                "public static void ControlledAction(MonoBehaviour owner)\n{\n" +
+                 "public static void ControlledAction(MonoBehaviour owner)\n{\n" +
+                 "    var anonymous = ActionKit.Delay(10f, null).StartHandle(owner);\n" +
+                 "    anonymous.SetUpdateMode(ActionUpdateModes.UnscaledDeltaTime);\n    anonymous.Pause();\n    anonymous.Resume();\n    anonymous.Cancel();\n" +
                 "    var controller = ActionKit.Delay(10f, () => Debug.Log(\"等待正常结束\")).Start(owner).IgnoreTimeScale();\n" +
                 "    controller.Pause();\n    controller.Resume();\n" +
                 "    controller.Deinit(); // 只取消这个仍在运行的动作。\n" +
@@ -379,8 +386,8 @@ namespace YLFramework.Editor.Actions
                 "Duration 设置秒数，Color 设置颜色，FromAlpha 与 ToAlpha 设置透明度起止值。" +
                 "独立淡入和淡出动作可通过 Append 放入同一序列，由父序列统一等待和取消。",
                 "主包已包含正式遮罩 Prefab，加载路径为 " +
-                "ActionKit/ScreenTransitionCanvas。当前资源根节点缩放为 0，且没有 GraphicRaycaster；" +
-                "实际显示及输入遮挡效果需要检查，不能仅凭动作完成判断可见。\n" +
+                 "ActionKit/ScreenTransitionCanvas。ScreenSpaceOverlay 会驱动运行时根变换，不能仅凭序列化零缩放断言不可见；" +
+                 "覆盖应以 Game View 实际画面验证，而不是 alpha 或动作完成。资源没有 GraphicRaycaster，不保证阻挡输入。\n" +
                 "FadeInOut(onInFinish) 返回普通 ISequence，由父序列统一等待、暂停和取消，不隐式创建全局宿主；" +
                 "中段回调同步执行，异常由所选执行器按普通序列处理。需要自定义时序时显式组合独立 FadeIn 与 FadeOut。\n" +
                 "所有过渡共享同一个 Image，重叠执行会相互覆盖；取消不会恢复透明度。Fade 回收会恢复颜色、透明度、时长与进度的默认值，" +

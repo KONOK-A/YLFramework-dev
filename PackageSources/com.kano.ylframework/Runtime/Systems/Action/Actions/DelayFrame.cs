@@ -106,7 +106,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence DelayFrame(this ISequence self, int frameCount)
         {
-            return self.Append(global::YLFramework.Actions.DelayFrame.Allocate(frameCount));
+            return ActionLease.AppendOwned(self, global::YLFramework.Actions.DelayFrame.Allocate(frameCount));
         }
 
         /// <summary>
@@ -116,7 +116,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence NextFrame(this ISequence self)
         {
-            return self.Append(global::YLFramework.Actions.DelayFrame.Allocate(1));
+            return ActionLease.AppendOwned(self, global::YLFramework.Actions.DelayFrame.Allocate(1));
         }
     }
 }
