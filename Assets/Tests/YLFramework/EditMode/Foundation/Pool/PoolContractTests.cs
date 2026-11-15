@@ -52,6 +52,30 @@ namespace YLFramework.Tests
         }
 
         [Test]
+        public void SafeIsASealedCompositionEntryWithoutProtectedOrOverridableHooks()
+        {
+            var type = typeof(SafeObjectPool<SafeItem>);
+            Assert.That(type.IsSealed, Is.True);
+            var constructors = type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.That(constructors, Has.Length.EqualTo(1));
+            Assert.That(constructors[0].IsPrivate, Is.True);
+            Assert.That(constructors[0].GetParameters(), Is.Empty);
+            var factory = type.GetField("_objectFactory", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(factory.IsPrivate, Is.True);
+            foreach (var name in new[] { "Create", "PrepareRaw", "OnAllocate", "Reset", "OnDiscard" })
+            {
+                var method = type.GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(method.IsPrivate, Is.True, name);
+                Assert.That(method.IsVirtual, Is.False, name);
+            }
+            foreach (var name in new[] { "Allocate", "Recycle", "Clear", "Dispose" })
+            {
+                var method = type.GetMethod(name, BindingFlags.Instance | BindingFlags.Public);
+                Assert.That(!method.IsVirtual || method.IsFinal, Is.True, name);
+            }
+        }
+
+        [Test]
         public void ExplicitFactoriesPreservePrivateConstructionAndDefaultsWithoutReflectiveReset()
         {
             var factory = new NonPublicObjectFactory<PrivateItem>();
@@ -190,7 +214,7 @@ namespace YLFramework.Tests
         public void ExplicitUnboundedFifoResetsDuringPrewarmOnlyOnce()
         {
             var resets = 0;
-            using var pool = new ObjectPool<object>(() => new object(), reset: item => resets++, maxPoolSize: 0);
+            using var pool = new ObjectPool<object>(() => new object(), reset: item => resets++, maxPoolSize: -1);
             pool.Prewarm(25);
             Assert.That(pool.CurStoreCount, Is.EqualTo(25));
             Assert.That(resets, Is.EqualTo(25));
@@ -204,6 +228,27 @@ namespace YLFramework.Tests
             Assert.That(resets, Is.EqualTo(27));
             Assert.That(pool.Recycle(null), Is.False);
             Assert.That(resets, Is.EqualTo(27));
+        }
+
+        [Test]
+        public void SafeZeroInitDisablesIdleCacheButKeepsDomainBorrowHooks()
+        {
+            int created = 0;
+            _safe.SetFactoryMethod(() => { created++; return new SafeItem(); });
+            _safe.Init(0, 25);
+            Assert.That(created, Is.Zero);
+            Assert.That(_safe.CurStoreCount, Is.Zero);
+            var rental = _safe.Rent(out var item);
+            Assert.That(item.IsRecycled, Is.False);
+            rental.Dispose();
+            Assert.That(item.IsRecycled, Is.True);
+            Assert.That(item.Hooks, Is.EqualTo(1));
+            Assert.That(_safe.CurStoreCount, Is.Zero);
+            _safe.Init(-1, 25);
+            Assert.That(_safe.CurStoreCount, Is.EqualTo(25));
+            Assert.Throws<ArgumentOutOfRangeException>(() => _safe.Init(-2, 0));
+            Assert.That(_safe.MaxPoolSize, Is.EqualTo(-1));
+            Assert.That(_safe.CurStoreCount, Is.EqualTo(25));
         }
 
         [Test]

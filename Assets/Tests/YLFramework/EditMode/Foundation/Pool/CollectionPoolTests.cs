@@ -171,6 +171,65 @@ namespace YLFramework.Tests
         }
 
         [Test]
+        public void QuantityZeroDisablesEvenEmptyCollectionsAndDoesNotChangeCapacityPolicy()
+        {
+            ListPool<Item>.MaxRetainedCapacity = 0;
+            DictionaryPool<string, Item>.MaxRetainedCapacity = 0;
+            ListPool<Item>.MaxPoolSize = 0;
+            DictionaryPool<string, Item>.MaxPoolSize = 0;
+            var list = ListPool<Item>.Allocate(0);
+            var dictionary = DictionaryPool<string, Item>.Allocate(0);
+            list.RecycleToPool();
+            dictionary.RecycleToPool();
+            var nextList = ListPool<Item>.Rent(out var emptyList, 0);
+            var nextDictionary = DictionaryPool<string, Item>.Rent(out var emptyDictionary, 0);
+            Assert.That(emptyList, Is.Not.SameAs(list));
+            Assert.That(emptyDictionary, Is.Not.SameAs(dictionary));
+            nextList.Dispose();
+            nextDictionary.Dispose();
+            Assert.Throws<ArgumentOutOfRangeException>(() => ListPool<Item>.MaxPoolSize = -2);
+            Assert.Throws<ArgumentOutOfRangeException>(() => DictionaryPool<string, Item>.MaxPoolSize = -2);
+            Assert.That(ListPool<Item>.MaxPoolSize, Is.Zero);
+            Assert.That(DictionaryPool<string, Item>.MaxPoolSize, Is.Zero);
+            Assert.That(ListPool<Item>.MaxRetainedCapacity, Is.Zero);
+            Assert.That(DictionaryPool<string, Item>.MaxRetainedCapacity, Is.Zero);
+        }
+
+        [Test]
+        public void MinusOneQuantityRemainsUnlimitedWithoutWeakeningRetention()
+        {
+            ListPool<Item>.MaxPoolSize = -1;
+            DictionaryPool<string, Item>.MaxPoolSize = -1;
+            var lists = new List<Item>[32];
+            var dictionaries = new Dictionary<string, Item>[32];
+            for (int index = 0; index < lists.Length; index++)
+            {
+                lists[index] = ListPool<Item>.Allocate();
+                dictionaries[index] = DictionaryPool<string, Item>.Allocate();
+            }
+            for (int index = 0; index < lists.Length; index++)
+            {
+                lists[index].RecycleToPool();
+                dictionaries[index].RecycleToPool();
+            }
+            for (int index = lists.Length - 1; index >= 0; index--)
+            {
+                Assert.That(ListPool<Item>.Allocate(), Is.SameAs(lists[index]));
+                Assert.That(DictionaryPool<string, Item>.Allocate(), Is.SameAs(dictionaries[index]));
+            }
+            foreach (var list in lists)
+            {
+                list.RecycleToPool();
+            }
+            foreach (var dictionary in dictionaries)
+            {
+                dictionary.RecycleToPool();
+            }
+            Assert.That(ListPool<Item>.MaxRetainedCapacity, Is.EqualTo(4096));
+            Assert.That(DictionaryPool<string, Item>.MaxRetainedCapacity, Is.EqualTo(8192));
+        }
+
+        [Test]
         public void DefaultsUseActualCapacityAndKeepAStableFourThousandEntryDictionary()
         {
             Assert.That(Retention(typeof(ListPool<Item>)).GetValue(null), Is.EqualTo(4096));

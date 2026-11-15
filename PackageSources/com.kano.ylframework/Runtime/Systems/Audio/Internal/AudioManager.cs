@@ -608,7 +608,7 @@ namespace YLFramework.Audio
             {
                 _pool.Clear();
             }
-            // 公共池的非正容量表示不限；Audio 的 0 由 Clear/Discard 明确禁缓存。
+            // Audio的零容量仍由领域Clear/Discard落实；内部池下限保持1，不改变接纳策略。
             _pool.MaxPoolSize = Math.Max(1, capacity);
         }
         /// <summary>准备指定目标数量的独立闲置音源，返回本次实际增加的缓存数。</summary>

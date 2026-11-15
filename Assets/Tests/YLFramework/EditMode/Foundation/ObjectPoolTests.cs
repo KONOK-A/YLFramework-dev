@@ -726,9 +726,8 @@ namespace YLFramework.Foundation.Tests
             Assert.That(created, Is.EqualTo(3));
         }
 
-        [TestCase(0)]
         [TestCase(-1)]
-        public void NonPositiveCapacityIsUnboundedAndDoesNotLimitLeasedObjects(int capacity)
+        public void MinusOneCapacityIsUnboundedAndDoesNotLimitLeasedObjects(int capacity)
         {
             using var pool = new ObjectPool<object>(() => new object(), maxPoolSize: capacity);
             Assert.That(pool.Prewarm(25, PoolPrewarmMode.Raw), Is.EqualTo(25));
@@ -745,6 +744,150 @@ namespace YLFramework.Foundation.Tests
             }
 
             Assert.That(pool.CurStoreCount, Is.EqualTo(30));
+        }
+
+        [TestCase(PoolCacheOrder.Fifo)]
+        [TestCase(PoolCacheOrder.Lifo)]
+        public void ZeroCapacityCreatesWithoutQuotaButNeverCachesOrPrewarms(PoolCacheOrder order)
+        {
+            int created = 0;
+            int resets = 0;
+            int discarded = 0;
+            using var pool = new ObjectPool<object>(() => { created++; return new object(); },
+                reset: _ => resets++, onDiscard: _ => discarded++, maxPoolSize: 0, cacheOrder: order);
+            Assert.That(pool.Prewarm(25, PoolPrewarmMode.Raw), Is.Zero);
+            Assert.That(pool.Prewarm(25, PoolPrewarmMode.Recycle), Is.Zero);
+            Assert.That(created, Is.Zero, "A target-idle prewarm must not create merely to discard when caching is disabled.");
+            var raw = pool.Allocate();
+            var lease = pool.Rent(out var scoped);
+            Assert.That(pool.TryAllocate(out var third), Is.True);
+            Assert.That(created, Is.EqualTo(3));
+            Assert.That(raw, Is.Not.SameAs(scoped));
+            Assert.That(pool.Recycle(raw), Is.False);
+            lease.Dispose();
+            pool.Discard(third);
+            lease.Discard();
+            Assert.That(pool.Recycle(raw), Is.False);
+            Assert.That(resets, Is.EqualTo(3));
+            Assert.That(discarded, Is.EqualTo(3));
+            Assert.That(pool.CurStoreCount, Is.Zero);
+            pool.MaxPoolSize = -1;
+            Assert.That(pool.Prewarm(25, PoolPrewarmMode.Raw), Is.EqualTo(25));
+            Assert.That(pool.CurStoreCount, Is.EqualTo(25));
+        }
+
+        [TestCase(-2)]
+        [TestCase(int.MinValue)]
+        public void InvalidCapacityIsRejectedBeforeConstructorOrSetterSideEffects(int capacity)
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() => new ObjectPool<object>(() => new object(), maxPoolSize: capacity));
+            int discarded = 0;
+            using var pool = new ObjectPool<object>(() => new object(), onDiscard: _ => discarded++);
+            pool.Prewarm(2, PoolPrewarmMode.Raw);
+            Assert.Throws<ArgumentOutOfRangeException>(() => pool.MaxPoolSize = capacity);
+            Assert.That(pool.MaxPoolSize, Is.EqualTo(20));
+            Assert.That(pool.CurStoreCount, Is.EqualTo(2));
+            Assert.That(discarded, Is.Zero);
+        }
+
+        [TestCase(PoolCacheOrder.Fifo)]
+        [TestCase(PoolCacheOrder.Lifo)]
+        public void ChangingCapacityToZeroRetiresIdleOnlyAndLateBorrowStillCleans(PoolCacheOrder order)
+        {
+            int resets = 0;
+            int discarded = 0;
+            using var pool = new ObjectPool<object>(() => new object(), reset: _ => resets++, onDiscard: _ => discarded++, cacheOrder: order);
+            pool.Prewarm(4);
+            var raw = pool.Allocate();
+            var scoped = pool.Rent(out _);
+            pool.MaxPoolSize = 0;
+            Assert.That(pool.CurStoreCount, Is.Zero);
+            Assert.That(resets, Is.EqualTo(4), "Shrinking only retires idle entries; borrowed and already-reset objects are not reset again.");
+            Assert.That(discarded, Is.EqualTo(2));
+            Assert.That(pool.Recycle(raw), Is.False);
+            scoped.Dispose();
+            Assert.That(resets, Is.EqualTo(6));
+            Assert.That(discarded, Is.EqualTo(4));
+            Assert.That(pool.CurStoreCount, Is.Zero);
+        }
+
+        [Test]
+        public void ZeroCapacityShrinkAttemptsAllCleanupAndReentryCannotRefillIt()
+        {
+            ObjectPool<object> pool = null;
+            object late = null;
+            var failures = new List<Exception>();
+            int resets = 0;
+            int discarded = 0;
+            pool = new ObjectPool<object>(() => new object(), reset: _ => resets++, onDiscard: value =>
+            {
+                discarded++;
+                if (ReferenceEquals(value, late))
+                {
+                    return;
+                }
+                Assert.That(pool.CurStoreCount, Is.Zero);
+                Assert.That(pool.Recycle(late), Is.False);
+                var error = new InvalidOperationException("zero-shrink-" + failures.Count);
+                failures.Add(error);
+                throw error;
+            });
+            using (pool)
+            {
+                pool.Prewarm(2, PoolPrewarmMode.Raw);
+                late = pool.Allocate();
+                var idle = pool.Allocate();
+                pool.Recycle(idle);
+                // Keep two actual idle identities while late remains borrowed.
+                pool.Prewarm(2, PoolPrewarmMode.Raw);
+                var error = Assert.Throws<AggregateException>(() => pool.MaxPoolSize = 0);
+                Assert.That(error.InnerExceptions, Is.EqualTo(failures));
+                Assert.That(failures.Count, Is.EqualTo(2));
+                Assert.That(discarded, Is.EqualTo(3));
+                Assert.That(resets, Is.EqualTo(2));
+                Assert.That(pool.MaxPoolSize, Is.Zero);
+                Assert.That(pool.CurStoreCount, Is.Zero);
+                Assert.That(pool.Recycle(late), Is.False);
+            }
+        }
+
+        [TestCase(PoolPrewarmMode.Raw)]
+        [TestCase(PoolPrewarmMode.Recycle)]
+        public void PrewarmRechecksCachingDisabledDuringCreation(PoolPrewarmMode mode)
+        {
+            ObjectPool<object> pool = null;
+            int created = 0;
+            int resets = 0;
+            int discarded = 0;
+            pool = new ObjectPool<object>(() => { created++; pool.MaxPoolSize = 0; return new object(); },
+                reset: _ => resets++, onDiscard: _ => discarded++);
+            using (pool)
+            {
+                Assert.That(pool.Prewarm(1, mode), Is.Zero);
+                Assert.That(created, Is.EqualTo(1));
+                Assert.That(resets, Is.EqualTo(mode == PoolPrewarmMode.Raw ? 0 : 1));
+                Assert.That(discarded, Is.EqualTo(1));
+                Assert.That(pool.CurStoreCount, Is.Zero);
+                Assert.That(pool.Prewarm(1, mode), Is.Zero);
+                Assert.That(created, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void ResetMayDisableCachingBeforeTheReturningObjectIsPublished()
+        {
+            ObjectPool<object> pool = null;
+            int resets = 0;
+            int discarded = 0;
+            pool = new ObjectPool<object>(() => new object(), reset: _ => { resets++; pool.MaxPoolSize = 0; }, onDiscard: _ => discarded++);
+            using (pool)
+            {
+                var rental = pool.Rent(out _);
+                rental.Dispose();
+                Assert.That(resets, Is.EqualTo(1));
+                Assert.That(discarded, Is.EqualTo(1));
+                Assert.That(pool.CurStoreCount, Is.Zero);
+            }
         }
 
         [TestCase(PoolPrewarmMode.Raw)]

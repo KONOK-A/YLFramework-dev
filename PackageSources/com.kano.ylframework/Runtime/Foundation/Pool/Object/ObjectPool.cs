@@ -50,7 +50,7 @@ namespace YLFramework.Pooling
         /// <param name="onAllocate">冷、热取得时的准备回调，可为 null。</param>
         /// <param name="reset">结束借用时的状态清理回调，可为 null；满池或关闭后归还仍会执行。</param>
         /// <param name="onDiscard">对象永久退出本池时的清理回调，可为 null；池不自动调用对象的 Dispose。</param>
-        /// <param name="maxPoolSize">空闲缓存上限，默认 20，非正值不限。</param>
+        /// <param name="maxPoolSize">空闲缓存上限，默认20；-1不限，0禁缓存，其他负值非法。</param>
         /// <param name="cacheOrder">空闲对象的分配顺序，只支持 FIFO 或 LIFO。</param>
         public ObjectPool(Func<T> factory, Action<T> onAllocate = null, Action<T> reset = null,
             Action<T> onDiscard = null, int maxPoolSize = 20, PoolCacheOrder cacheOrder = PoolCacheOrder.Fifo)
@@ -64,6 +64,10 @@ namespace YLFramework.Pooling
             if (cacheOrder != PoolCacheOrder.Fifo && cacheOrder != PoolCacheOrder.Lifo)
             {
                 throw new ArgumentOutOfRangeException(nameof(cacheOrder));
+            }
+            if (maxPoolSize < -1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(maxPoolSize));
             }
 
             _factory = new CustomObjectFactory<T>(factory);
@@ -86,7 +90,7 @@ namespace YLFramework.Pooling
         public int CurStoreCount => _stack == null ? _queue.Count : _stack.Count;
 
         /// <summary>
-        /// 空闲容量上限，非正值不限；缩容按分配顺序摘除对象，不重复 Reset，
+        /// 空闲容量上限，-1不限、0禁缓存，其他负值非法；缩容按分配顺序摘除对象，不重复Reset，
         /// 逐项尝试永久清理后汇总异常。不是活动对象配额。
         /// </summary>
         public int MaxPoolSize
@@ -94,8 +98,12 @@ namespace YLFramework.Pooling
             get => _maxPoolSize;
             set
             {
+                if (value < -1)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
                 _maxPoolSize = value;
-                if (value > 0 && CurStoreCount > value)
+                if (value >= 0 && CurStoreCount > value)
                 {
                     RetireCached(CurStoreCount - value);
                 }
@@ -295,7 +303,7 @@ namespace YLFramework.Pooling
         }
 
         private bool CanCache(Entry entry, int target) => !_isDisposed && entry.Session == _session &&
-            CurStoreCount < target && (_maxPoolSize <= 0 || CurStoreCount < _maxPoolSize);
+            CurStoreCount < target && (_maxPoolSize == -1 || CurStoreCount < _maxPoolSize);
 
         /// <summary>先永久隔离失败对象再尝试附属资源清理；清理也失败时合并原始异常。</summary>
         private void RetireFailed(T item, Entry entry, Exception error)
@@ -317,7 +325,7 @@ namespace YLFramework.Pooling
         public int Prewarm(int count) => Prewarm(count, PoolPrewarmMode.Recycle);
 
         /// <summary>
-        /// 最多创建目标缺口次数，受正容量裁剪；null 不缓存、不无限重试。
+        /// 最多创建目标缺口次数，受非负容量裁剪；0禁缓存时不创建，null不缓存、不无限重试。
         /// Raw 不调用取得/Reset，但仍登记身份；失败前已缓存的对象保留。
         /// </summary>
         /// <param name="count">期望的空闲总数，不是本次创建数量；非正数不补齐。</param>
@@ -334,7 +342,7 @@ namespace YLFramework.Pooling
                 throw new ArgumentOutOfRangeException(nameof(mode));
             }
 
-            if (_maxPoolSize > 0)
+            if (_maxPoolSize >= 0)
             {
                 count = Math.Min(count, _maxPoolSize);
             }
