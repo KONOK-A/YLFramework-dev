@@ -37,6 +37,12 @@ namespace YLFramework.Editor.Foundation
             // 重新按路径取得当前属性，只有行数或编辑资格变化才重建控件，避免普通值变化打断编辑。
             void Refresh()
             {
+                // 单目标观察可能先于合并对象更新；不能覆盖调用方尚未 Apply 的编辑。
+                if (!serialized.hasModifiedProperties)
+                {
+                    serialized.UpdateIfRequiredOrScript();
+                }
+
                 var current = serialized.FindProperty(path);
                 if (current == null)
                 {
@@ -51,8 +57,14 @@ namespace YLFramework.Editor.Foundation
                     return;
                 }
 
+                var rebind = previousSize >= 0;
                 previousSize = size;
                 previousEditable = editable;
+                if (rebind)
+                {
+                    fields.Unbind();
+                }
+
                 fields.Clear();
                 if (!serialized.isEditingMultipleObjects)
                 {
@@ -77,11 +89,69 @@ namespace YLFramework.Editor.Foundation
                     fields.Add(foldout);
                 }
                 // 初次由 Inspector 绑定；结构变化后新增的控件也使用相同的原生绑定。
-                fields.Bind(serialized);
+                if (rebind)
+                {
+                    fields.Bind(serialized);
+                }
             }
 
             Refresh();
-            root.TrackSerializedObjectValue(serialized, _ => Refresh());
+            if (!serialized.isEditingMultipleObjects)
+            {
+                root.TrackSerializedObjectValue(serialized, _ => Refresh());
+            }
+            else
+            {
+                // 合并对象可能看不到非首目标的独有结构变化，每个目标使用独立原生上下文。
+                foreach (var target in serialized.targetObjects)
+                {
+                    var tracker = new VisualElement();
+                    SerializedObject tracked = null;
+                    root.Add(tracker);
+
+                    void ReleaseTracker()
+                    {
+                        var owned = tracked;
+                        tracked = null;
+                        try
+                        {
+                            tracker.Unbind();
+                        }
+                        finally
+                        {
+                            owned?.Dispose();
+                        }
+                    }
+
+                    tracker.RegisterCallback<AttachToPanelEvent>(evt =>
+                    {
+                        if (evt.target != tracker)
+                        {
+                            return;
+                        }
+
+                        try
+                        {
+                            tracked = new SerializedObject(target);
+                            tracker.TrackSerializedObjectValue(tracked, _ => Refresh());
+                            // 重新附着时也刷新分离期间发生的变化。
+                            Refresh();
+                        }
+                        catch
+                        {
+                            ReleaseTracker();
+                            throw;
+                        }
+                    });
+                    tracker.RegisterCallback<DetachFromPanelEvent>(evt =>
+                    {
+                        if (evt.target == tracker)
+                        {
+                            ReleaseTracker();
+                        }
+                    });
+                }
+            }
             return root;
         }
 

@@ -60,6 +60,7 @@ Unity 保存 `datas` 列表，每行使用 `Key` / `Value` 字段；列表是事
 - 原生 Drawer 展示条目、有效数量与重复行号，单对象支持增删、重排、字段编辑、Undo/Redo 和 Prefab override/apply/revert。
 - 多对象按目标分别诊断，保留 mixed-value 字段编辑；禁止整组列表增删和重排。列表长度不同或字段缺失时，整组字段编辑也被禁用，应单独选择目标修复。
 - 多对象在相同位置修改 Value 不会将首个目标的 Key 复制到其他目标。
+- UI Toolkit 按每个目标观察结构变化，不依赖合并数组的最小长度变化。自有观察对象只在 UI 附着期间存在，分离时先解绑再释放，重新附着会重建观察；不释放调用方借用的 SerializedObject，也不替调用方应用待修改数据。
 - 同时提供 UI Toolkit `PropertyField`/binding 与 IMGUI 实现，无需第三方 Inspector；第三方接管 Editor 后是否调用原生 Drawer，取决于该 Editor。
 - Key/Value 必须满足 Unity 字段序列化规则。Drawer 不提供任意复杂泛型键、嵌套容器、多态、alias 或固定缓冲的自定义 serializer，Unity inline 序列化也不保证任意 null 行保真。
 - 无法通过 `SerializedProperty.boxedValue` 可靠诊断的键会明确提示。Unity 对象键的 None/Missing 无法可靠区分 CLR null 与 fake-null，Inspector 标为待确认，不用 `ToString` 猜测重复或虚报精确有效数。

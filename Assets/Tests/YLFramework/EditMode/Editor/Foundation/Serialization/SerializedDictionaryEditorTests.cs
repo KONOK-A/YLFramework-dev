@@ -17,7 +17,7 @@ namespace YLFramework.Tests
 {
     public class SerializedDictionaryEditorTests
     {
-        private static IEnumerator WaitForBinding(Func<bool> ready, string message)
+        private static IEnumerator WaitForBinding(Func<bool> ready, string message, Func<string> diagnostic = null)
         {
             // Unity 2022.3 的绑定按时间间隔轮询，固定帧数不能代表绑定或结构刷新完成。
             var deadline = EditorApplication.timeSinceStartup + 3;
@@ -26,7 +26,8 @@ namespace YLFramework.Tests
                 yield return null;
             }
 
-            Assert.That(ready(), Is.True, message);
+            var completed = ready();
+            Assert.That(completed, Is.True, message + (!completed && diagnostic != null ? " " + diagnostic() : string.Empty));
         }
 
         internal static PropertyDrawer GetDrawer(SerializedProperty property)
@@ -421,6 +422,16 @@ namespace YLFramework.Tests
                 property.isExpanded = true;
                 property.FindPropertyRelative("datas").GetArrayElementAtIndex(0).isExpanded = true;
                 var ui = GetDrawer(property).CreatePropertyGUI(property);
+                int notifications = 0;
+                ui.TrackSerializedObjectValue(serialized, _ => notifications++);
+                string DescribeBinding()
+                {
+                    using var first = new SerializedObject(a);
+                    using var second = new SerializedObject(b);
+                    return $"callbacks={notifications}, panel={ui.panel != null}, merged={serialized.FindProperty("Direct.datas").arraySize}, " +
+                        $"targets={first.FindProperty("Direct.datas").arraySize}/{second.FindProperty("Direct.datas").arraySize}, " +
+                        $"enabled={ui.Q<Foldout>().enabledSelf}, help={ui.Q<HelpBox>().text}";
+                }
                 ui.Bind(serialized);
                 window.rootVisualElement.Add(ui);
                 window.Show();
@@ -429,26 +440,129 @@ namespace YLFramework.Tests
                     "多选 Value 控件未在时限内完成混合值绑定。");
                 var value = ui.Query<IntegerField>().ToList().Single(f => f.bindingPath == "Direct.datas.Array.data[0].Value");
                 Assert.That(value.showMixedValue, Is.True);
+                var beforeValue = notifications;
                 value.value = 9;
-                yield return null;
+                yield return WaitForBinding(() => notifications > beforeValue && !value.showMixedValue &&
+                    serialized.FindProperty("Direct.datas.Array.data[0].Value").intValue == 9,
+                    "Value 已写入后，根对象变更通知未在时限内消费。", DescribeBinding);
                 Assert.That(a.Direct["a"], Is.EqualTo(9));
                 Assert.That(b.Direct["b"], Is.EqualTo(9));
                 Assert.That(a.Direct.ContainsKey("b"), Is.False);
                 Assert.That(b.Direct.ContainsKey("a"), Is.False);
+                var beforeStructure = notifications;
                 using (var second = new SerializedObject(b))
                 {
                     var rows = second.FindProperty("Direct.datas");
                     rows.arraySize++;
                     rows.GetArrayElementAtIndex(1).FindPropertyRelative("Key").stringValue = "extra";
-                    second.ApplyModifiedProperties();
+                    Assert.That(second.ApplyModifiedProperties(), Is.True);
+                }
+                using (var first = new SerializedObject(a))
+                using (var second = new SerializedObject(b))
+                {
+                    Assert.That(first.FindProperty("Direct.datas").arraySize, Is.EqualTo(1));
+                    Assert.That(second.FindProperty("Direct.datas").arraySize, Is.EqualTo(2));
                 }
                 serialized.Update();
                 yield return WaitForBinding(() => !ui.Q<Foldout>().enabledSelf && ui.Q<HelpBox>().text.Contains("禁止批量编辑"),
-                    "目标结构不一致后，原生变更监听未在时限内禁用多选结构编辑。");
+                    "目标结构不一致后，原生变更监听未在时限内禁用多选结构编辑。" + $" beforeStructure={beforeStructure};", DescribeBinding);
                 Assert.That(ui.Q<Foldout>().enabledSelf, Is.False);
                 Assert.That(ui.Q<HelpBox>().text, Does.Contain("禁止批量编辑"));
                 Assert.That(a.Direct.Count, Is.EqualTo(1));
                 Assert.That(b.Direct.Count, Is.EqualTo(2));
+            }
+            finally
+            {
+                window.Release();
+                serialized.Dispose();
+                Undo.ClearUndo(a);
+                Undo.ClearUndo(b);
+                Object.DestroyImmediate(a);
+                Object.DestroyImmediate(b);
+            }
+        }
+
+        [Test]
+        public void CreatingToolkitUiDoesNotDiscardOrApplyBorrowedPendingEdits()
+        {
+            var asset = ScriptableObject.CreateInstance<SerializedDictionaryTestAsset>();
+            var serialized = new SerializedObject(asset);
+            VisualElement ui = null;
+            try
+            {
+                asset.Direct.Add("a", 1);
+                serialized.Update();
+                var value = serialized.FindProperty("Direct.datas.Array.data[0].Value");
+                value.intValue = 7;
+                Assert.That(serialized.hasModifiedProperties, Is.True);
+                var property = serialized.FindProperty("Direct");
+                ui = GetDrawer(property).CreatePropertyGUI(property);
+                Assert.That(serialized.hasModifiedProperties, Is.True);
+                Assert.That(value.intValue, Is.EqualTo(7));
+                Assert.That(asset.Direct["a"], Is.EqualTo(1), "The drawer cannot apply borrowed edits.");
+                Assert.That(serialized.ApplyModifiedProperties(), Is.True);
+                Assert.That(asset.Direct["a"], Is.EqualTo(7));
+            }
+            finally
+            {
+                ui?.Unbind();
+                serialized.Dispose();
+                Undo.ClearUndo(asset);
+                Object.DestroyImmediate(asset);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ToolkitMultiObjectObservationReattachesWithoutOwningTheBorrowedObject()
+        {
+            var a = ScriptableObject.CreateInstance<SerializedDictionaryTestAsset>();
+            var b = ScriptableObject.CreateInstance<SerializedDictionaryTestAsset>();
+            var window = ScriptableObject.CreateInstance<DictionaryInspectorTestWindow>();
+            var serialized = new SerializedObject(new Object[] { a, b });
+            try
+            {
+                a.Direct.Add("a", 1);
+                b.Direct.Add("b", 2);
+                serialized.Update();
+                var property = serialized.FindProperty("Direct");
+                property.isExpanded = true;
+                property.FindPropertyRelative("datas").GetArrayElementAtIndex(0).isExpanded = true;
+                var ui = GetDrawer(property).CreatePropertyGUI(property);
+                ui.Bind(serialized);
+                window.rootVisualElement.Add(ui);
+                window.Show();
+                yield return WaitForBinding(() => ui.Query<IntegerField>().ToList()
+                    .Any(field => field.bindingPath == "Direct.datas.Array.data[0].Value" && field.showMixedValue),
+                    "Initial multi-object fields did not bind.");
+                ui.RemoveFromHierarchy();
+                Assert.That(ui.panel, Is.Null);
+                var value = serialized.FindProperty("Direct.datas.Array.data[0].Value");
+                value.intValue = 11;
+                Assert.That(serialized.ApplyModifiedProperties(), Is.True, "Detaching must not dispose the borrowed object.");
+                using (var second = new SerializedObject(b))
+                {
+                    var rows = second.FindProperty("Direct.datas");
+                    rows.arraySize++;
+                    rows.GetArrayElementAtIndex(1).FindPropertyRelative("Key").stringValue = "extra";
+                    Assert.That(second.ApplyModifiedProperties(), Is.True);
+                }
+                window.rootVisualElement.Add(ui);
+                yield return WaitForBinding(() => !ui.Q<Foldout>().enabledSelf && ui.Q<HelpBox>().text.Contains("禁止批量编辑"),
+                    "Reattaching did not rebuild per-target observation after a detached structure change.");
+                Assert.That(a.Direct["a"], Is.EqualTo(11));
+                Assert.That(b.Direct["b"], Is.EqualTo(11));
+                Assert.That(a.Direct.Count, Is.EqualTo(1));
+                Assert.That(b.Direct.Count, Is.EqualTo(2));
+                using (var second = new SerializedObject(b))
+                {
+                    second.FindProperty("Direct.datas").arraySize = 1;
+                    Assert.That(second.ApplyModifiedProperties(), Is.True);
+                }
+                yield return WaitForBinding(() => ui.Q<Foldout>().enabledSelf && ui.Query<IntegerField>().ToList()
+                    .Any(field => field.bindingPath == "Direct.datas.Array.data[0].Value" && !field.showMixedValue && field.value == 11),
+                    "A target change after reattachment did not notify the rebuilt observer.");
+                Assert.That(a.Direct.Count, Is.EqualTo(1));
+                Assert.That(b.Direct.Count, Is.EqualTo(1));
             }
             finally
             {

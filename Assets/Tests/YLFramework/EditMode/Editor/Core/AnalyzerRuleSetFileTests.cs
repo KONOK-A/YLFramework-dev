@@ -114,11 +114,103 @@ namespace YLFramework.Core.Editor.Tests
         [Test]
         public void InheritRemovesLocalOverrideButExplicitWarningDoesNot()
         {
+            var phase = "write fixture";
+            try
+            {
+                WriteLeaf("<Rule Id='YL0001' Action='Error'/>");
+                phase = "apply explicit Warning";
+                Apply(Preview(Change("YL0001", "Warning")));
+                phase = "read explicit Warning";
+                Assert.That(XDocument.Load(_target).Descendants("Rule").Single().Attribute("Action").Value, Is.EqualTo("Warning"));
+                phase = "apply Inherit";
+                Apply(Preview(Change("YL0001", null)));
+                phase = "read Inherit";
+                Assert.That(XDocument.Load(_target).Descendants("Rule"), Is.Empty);
+            }
+            catch (IOException error)
+            {
+                TestContext.WriteLine("Ruleset IO phase={0}; HResult=0x{1:X8}; low16={2}; target={3}; stagedDirectory={4}\n{5}",
+                    phase, error.HResult, error.HResult & 0xffff, _target,
+                    Path.Combine(_root, "Temp", "YLFramework.Analyzers", "RuleSets"), error);
+                throw;
+            }
+        }
+
+        [Test]
+        public void WindowsReaderWithoutDeleteSharingPreservesFilesOnRejectedApply()
+        {
+            if (Environment.OSVersion.Platform != PlatformID.Win32NT)
+            {
+                Assert.Ignore("Requires Windows file sharing and replacement semantics.");
+            }
             WriteLeaf("<Rule Id='YL0001' Action='Error'/>");
-            Apply(Preview(Change("YL0001", "Warning")));
-            Assert.That(XDocument.Load(_target).Descendants("Rule").Single().Attribute("Action").Value, Is.EqualTo("Warning"));
-            Apply(Preview(Change("YL0001", null)));
-            Assert.That(XDocument.Load(_target).Descendants("Rule"), Is.Empty);
+            var target = global::YLFramework.Testing.PackageTestPaths.Physical(_target);
+            var meta = target + ".meta";
+            File.WriteAllText(meta, "guid: unchanged");
+            var original = File.ReadAllBytes(target);
+            var originalMeta = File.ReadAllBytes(meta);
+            object preview;
+            string stagedDirectory;
+            using (var reader = File.Open(target, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                preview = Preview(Change("YL0001", "Warning"));
+                Assert.That(Value<string>(preview, "BlockedReason"), Is.Null);
+                Assert.That(Value<bool>(preview, "CanApply"), Is.True);
+                Assert.That(Value<string>(preview, "TargetPath"), Is.EqualTo(_target));
+                stagedDirectory = Path.Combine(Value<string>(preview, "ProjectRoot"), "Temp", "YLFramework.Analyzers", "RuleSets");
+                // This owned lock characterizes Windows sharing, not the historical failure's owner.
+                var error = Assert.Throws<IOException>(() => Apply(preview));
+                TestContext.WriteLine("Controlled target reader: HResult=0x{0:X8}; low16={1}; target={2}; stagedDirectory={3}\n{4}",
+                    error.HResult, error.HResult & 0xffff, target, stagedDirectory, error);
+                Assert.That(error.HResult & 0xffff, Is.EqualTo(32));
+                Assert.That(Directory.Exists(stagedDirectory), Is.True, "Apply must pass the initial snapshot check and create staging.");
+                Assert.That(Directory.GetFileSystemEntries(stagedDirectory), Is.Empty);
+                Assert.That(File.ReadAllBytes(target), Is.EqualTo(original));
+                Assert.That(File.ReadAllBytes(meta), Is.EqualTo(originalMeta));
+            }
+            Apply(preview);
+            Assert.That(File.ReadAllBytes(target), Is.EqualTo(Value<byte[]>(preview, "ProposedBytes")));
+            Assert.That(XDocument.Load(target).Descendants("Rule").Select(rule =>
+                (string)rule.Attribute("Id") + ":" + (string)rule.Attribute("Action")), Is.EqualTo(new[] { "YL0001:Warning" }));
+            Assert.That(File.ReadAllBytes(meta), Is.EqualTo(originalMeta));
+            Assert.That(Directory.GetFileSystemEntries(stagedDirectory), Is.Empty);
+        }
+
+        [Test]
+        public void WindowsReaderWithDeleteSharingKeepsOriginalBytesAfterApply()
+        {
+            if (Environment.OSVersion.Platform != PlatformID.Win32NT)
+            {
+                Assert.Ignore("Requires Windows file sharing and replacement semantics.");
+            }
+            WriteLeaf("<Rule Id='YL0001' Action='Error'/>");
+            var target = global::YLFramework.Testing.PackageTestPaths.Physical(_target);
+            var meta = target + ".meta";
+            File.WriteAllText(meta, "guid: unchanged");
+            var original = File.ReadAllBytes(target);
+            var originalMeta = File.ReadAllBytes(meta);
+            using (var reader = File.Open(target, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
+            {
+                var preview = Preview(Change("YL0001", "Warning"));
+                Assert.That(Value<string>(preview, "BlockedReason"), Is.Null);
+                Assert.That(Value<bool>(preview, "CanApply"), Is.True);
+                Assert.That(Value<string>(preview, "TargetPath"), Is.EqualTo(_target));
+                Apply(preview);
+                // Do not read before Apply: buffered old bytes must not mask an in-place overwrite.
+                using (var retained = new MemoryStream())
+                {
+                    reader.CopyTo(retained);
+                    Assert.That(retained.ToArray(), Is.EqualTo(original));
+                }
+                var committed = File.ReadAllBytes(target);
+                Assert.That(committed, Is.EqualTo(Value<byte[]>(preview, "ProposedBytes")));
+                Assert.That(committed, Is.Not.EqualTo(original));
+                Assert.That(XDocument.Load(target).Descendants("Rule").Select(rule =>
+                    (string)rule.Attribute("Id") + ":" + (string)rule.Attribute("Action")), Is.EqualTo(new[] { "YL0001:Warning" }));
+                Assert.That(File.ReadAllBytes(meta), Is.EqualTo(originalMeta));
+                var stagedDirectory = Path.Combine(Value<string>(preview, "ProjectRoot"), "Temp", "YLFramework.Analyzers", "RuleSets");
+                Assert.That(Directory.GetFileSystemEntries(stagedDirectory), Is.Empty);
+            }
         }
 
         [Test]
