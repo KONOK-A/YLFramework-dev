@@ -181,7 +181,17 @@ namespace YLFramework.Core
         }
 
         internal static void RemoveView(Module module, View view, object session, bool destroyed = false)
-            => RemoveViewCore(module, view, session, destroyed, false, false);
+        {
+            module?.BeginObjectTransaction();
+            try
+            {
+                RemoveViewCore(module, view, session, destroyed, false, false);
+            }
+            finally
+            {
+                module?.EndObjectTransaction();
+            }
+        }
 
         /// <summary>按精确会话清理视图；实例移除事件在解绑前通知，全局移除事件与关闭钩子在撤销索引后通知，清理错误逐项汇总。</summary>
         private static void RemoveViewCore(Module module, View view, object session, bool destroyed, bool preserveInstance, bool rollback)
@@ -367,7 +377,7 @@ namespace YLFramework.Core
                 errors.Add(error);
             }
             view.IsRemoving = false;
-            module.ViewTransactions--;
+            module.EndViewTransaction();
             if (notify)
             {
                 try

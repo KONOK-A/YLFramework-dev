@@ -47,6 +47,7 @@ namespace YLFramework.Core
 
             module.Controllers.Add(type, controller);
             controller.Module = module;
+            module.BeginObjectTransaction();
             controller.IsInitializing = true;
             try
             {
@@ -65,6 +66,10 @@ namespace YLFramework.Core
                     StartUpModuleRequest.AttachCleanupError(initializationError, cleanupError);
                 }
                 throw;
+            }
+            finally
+            {
+                module.EndObjectTransaction();
             }
         }
 
@@ -106,6 +111,7 @@ namespace YLFramework.Core
         /// <summary>在归属仍有效时调用退出钩子，并在 finally 中解除匹配索引及对象归属。</summary>
         private static void ExitController(Module module, Controller controller)
         {
+            module.BeginObjectTransaction();
             controller.IsExiting = true;
             try
             {
@@ -121,6 +127,7 @@ namespace YLFramework.Core
 
                 controller.Module = null;
                 controller.IsExiting = false;
+                module.EndObjectTransaction();
             }
         }
 
@@ -190,17 +197,25 @@ namespace YLFramework.Core
             }
 
             Controller controller;
+            module.BeginObjectTransaction();
             try
             {
-                controller = (Controller)Activator.CreateInstance(controllerType);
+                try
+                {
+                    controller = (Controller)Activator.CreateInstance(controllerType);
+                }
+                finally
+                {
+                    module.CreatingControllers.Remove(controllerType);
+                }
+                AddController(module, controller);
+
+                return controller;
             }
             finally
             {
-                module.CreatingControllers.Remove(controllerType);
+                module.EndObjectTransaction();
             }
-            AddController(module, controller);
-
-            return controller;
         }
 
 

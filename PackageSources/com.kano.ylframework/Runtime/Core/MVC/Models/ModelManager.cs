@@ -73,6 +73,7 @@ namespace YLFramework.Core
             models.Add(id, model);
             model.Module = module;
             model.Registration = new object();
+            module.BeginObjectTransaction();
             model.IsInitializing = true;
             try
             {
@@ -92,6 +93,10 @@ namespace YLFramework.Core
                 }
                 model.Id = originalId;
                 throw;
+            }
+            finally
+            {
+                module.EndObjectTransaction();
             }
         }
 
@@ -130,6 +135,7 @@ namespace YLFramework.Core
         /// <summary>在旧归属仍有效时调用退出钩子，并在 finally 中清除匹配索引与注册身份。</summary>
         private static void ExitModel(Module module, Model model)
         {
+            module.BeginObjectTransaction();
             model.IsExiting = true;
             try
             {
@@ -150,6 +156,7 @@ namespace YLFramework.Core
                 model.Module = null;
                 model.Registration = null;
                 model.IsExiting = false;
+                module.EndObjectTransaction();
             }
         }
 
@@ -312,16 +319,24 @@ namespace YLFramework.Core
                 throw new InvalidOperationException("Recursive Model construction is not allowed.");
             }
 
+            module.BeginObjectTransaction();
             try
             {
-                model = (Model)Activator.CreateInstance(modelType);
+                try
+                {
+                    model = (Model)Activator.CreateInstance(modelType);
+                }
+                finally
+                {
+                    module.CreatingModels.Remove(modelType);
+                }
+                AddModel(module, model);
+                return model;
             }
             finally
             {
-                module.CreatingModels.Remove(modelType);
+                module.EndObjectTransaction();
             }
-            AddModel(module, model);
-            return model;
         }
 
         /// <summary>以泛型具体类型加载本模块的唯一数据实例，不向其他模块回退。</summary>

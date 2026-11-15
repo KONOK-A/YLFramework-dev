@@ -6,6 +6,7 @@ using UnityEditor;
 #endif
 using UnityEngine;
 using YLFramework.Foundation;
+using YLFramework.Singletons;
 using CoroutineStarter = YLFramework.Async.CoroutineStarter;
 
 namespace YLFramework.Core
@@ -20,6 +21,18 @@ namespace YLFramework.Core
 
         private static ModuleManager _instance;
 
+        /// <summary>统一登记会话收束，不让监听安装依赖某次 Instance 的惰性创建。</summary>
+        static ModuleManager()
+        {
+            SingletonSessionState.RegisterSessionReset(ResetSession);
+            Application.quitting += OnExecutionEnded;
+            CoroutineStarter.HostUnavailable += OnStartupHostUnavailable;
+#if UNITY_EDITOR
+            EditorApplication.playModeStateChanged -= EditorApplicationPlayModeStateChanged;
+            EditorApplication.playModeStateChanged += EditorApplicationPlayModeStateChanged;
+#endif
+        }
+
         internal static ModuleManager Instance
         {
             get
@@ -28,10 +41,6 @@ namespace YLFramework.Core
                 if (_instance == null)
                 {
                     _instance = new ModuleManager();
-#if UNITY_EDITOR
-                    EditorApplication.playModeStateChanged -= EditorApplicationPlayModeStateChanged;
-                    EditorApplication.playModeStateChanged += EditorApplicationPlayModeStateChanged;
-#endif
                 }
 #pragma warning restore IDE0074 // 使用复合分配
 
@@ -42,20 +51,74 @@ namespace YLFramework.Core
 
 #if UNITY_EDITOR
 
-        /// <summary>在进入或结束运行前丢弃管理器引用，避免禁用 Domain Reload 时沿用旧注册表。</summary>
+        /// <summary>先结算旧启动，再丢弃管理器；退出 Play 时不依赖协程 finally。</summary>
         private static void EditorApplicationPlayModeStateChanged(PlayModeStateChange obj)
         {
             switch (obj)
             {
                 case PlayModeStateChange.ExitingEditMode:
-                    _instance = null;
+                    ResetSession();
+                    break;
+                case PlayModeStateChange.ExitingPlayMode:
+                    OnExecutionEnded();
                     break;
                 case PlayModeStateChange.EnteredEditMode:
-                    _instance = null;
+                    ResetSession();
                     break;
             }
         }
 #endif
+
+        private static void OnExecutionEnded() => _instance?.EndExecution();
+
+        private static void OnStartupHostUnavailable(CoroutineStarter host)
+        {
+            var owner = _instance;
+            if (owner == null)
+            {
+                return;
+            }
+            if (!SingletonSessionState.CanRunExecution ||
+                !ReferenceEquals(owner._executionSession, SingletonSessionState.ExecutionSession))
+            {
+                owner.EndExecution();
+                return;
+            }
+            foreach (var request in new List<StartUpModuleRequest>(owner._startingModules.Values))
+            {
+                if (ReferenceEquals(request.Host, host))
+                {
+                    request.Invalidate(new InvalidOperationException("Module startup coroutine host is unavailable."));
+                }
+            }
+        }
+
+        /// <summary>直接使用旧引用收束，清理过程不为自身创建新的 manager。</summary>
+        private static void ResetSession()
+        {
+            var previous = _instance;
+            previous?.EndExecution();
+            if (ReferenceEquals(_instance, previous))
+            {
+                _instance = null;
+            }
+        }
+
+        /// <summary>关闭新启动入口并失败收束在途请求，不扩大为关闭全部 Running 模块。</summary>
+        private void EndExecution()
+        {
+            if (_isSessionEnded)
+            {
+                return;
+            }
+            _isSessionEnded = true;
+            var pending = new List<StartUpModuleRequest>(_startingModules.Values);
+            for (int i = pending.Count - 1; i >= 0; i--)
+            {
+                pending[i].Invalidate(new InvalidOperationException("Module startup execution session has ended."));
+            }
+            _startupContext = null;
+        }
 
 
         /// <summary>为内部注册表建立只读实时视图，不复制模块或转移其生命周期责任。</summary>
@@ -78,6 +141,8 @@ namespace YLFramework.Core
         private readonly HashSet<Type> _creatingModules = new HashSet<Type>();
         private readonly List<Module> _registrationOrder = new List<Module>();
         private bool _isShuttingDown;
+        private bool _isSessionEnded;
+        private readonly object _executionSession = SingletonSessionState.ExecutionSession;
 
         private Module _currentModule;
         private Module _startupContext;
@@ -131,6 +196,10 @@ namespace YLFramework.Core
             if (Instance._isShuttingDown)
             {
                 throw new InvalidOperationException("Cannot register a Module during Shutdown.");
+            }
+            if (Instance._isSessionEnded)
+            {
+                throw new InvalidOperationException("Cannot register a Module after its execution session ended.");
             }
 
             if (Instance._modules.TryGetValue(module.ModuleName, out var registered))
@@ -216,7 +285,7 @@ namespace YLFramework.Core
 
         internal static void CloseModule(Module module)
         {
-            CloseModule(module, false);
+            Instance.CloseModule(module, false);
         }
 
         /// <summary>在关闭发生任何状态变更前，拒绝启动中模块及未结束的对象事务。</summary>
@@ -263,9 +332,9 @@ namespace YLFramework.Core
         }
 
         /// <summary>先使在途请求失效，再退出业务对象并注销模块；完成逻辑收尾后统一报告清理错误。</summary>
-        private static void CloseModule(Module module, bool allowBaseModule, List<IPendingViewRequest> deferredNotifications = null)
+        private void CloseModule(Module module, bool allowBaseModule, List<IPendingViewRequest> deferredNotifications = null)
         {
-            if (!ReferenceEquals(GetModule(module.ModuleName), module))
+            if (!_modules.TryGetValue(module.ModuleName, out var registered) || !ReferenceEquals(registered, module))
             {
                 return;
             }
@@ -275,7 +344,7 @@ namespace YLFramework.Core
                 return;
             }
 
-            if (!allowBaseModule && Instance._isShuttingDown)
+            if (!allowBaseModule && _isShuttingDown)
             {
                 throw new InvalidOperationException("Cannot close another Module during Shutdown.");
             }
@@ -349,17 +418,17 @@ namespace YLFramework.Core
                 }
             }
 
-            Instance._modules.Remove(module.ModuleName);
-            Instance._baseModules.Remove(module.ModuleName);
-            Instance._registrationOrder.RemoveAll(item => ReferenceEquals(item, module));
-            if (ReferenceEquals(module, CurrentModule))
+            _modules.Remove(module.ModuleName);
+            _baseModules.Remove(module.ModuleName);
+            _registrationOrder.RemoveAll(item => ReferenceEquals(item, module));
+            if (ReferenceEquals(module, _currentModule))
             {
-                CurrentModule = null;
+                _currentModule = null;
             }
 
-            if (ReferenceEquals(module, Instance._startupContext))
+            if (ReferenceEquals(module, _startupContext))
             {
-                Instance._startupContext = null;
+                _startupContext = null;
             }
 
             module.Controllers.Clear();
@@ -438,7 +507,7 @@ namespace YLFramework.Core
                 {
                     try
                     {
-                        CloseModule(module, true);
+                        Instance.CloseModule(module, true);
                     }
                     catch (Exception error)
                     {
@@ -536,18 +605,27 @@ namespace YLFramework.Core
                 throw new ArgumentNullException(nameof(module));
             }
 
-            if (Instance._isShuttingDown)
+            return Instance.StartModule(module);
+        }
+
+        private StartUpModuleRequest StartModule(Module module)
+        {
+            if (_isShuttingDown)
             {
                 throw new InvalidOperationException("Cannot start a Module during Shutdown.");
             }
+            if (_isSessionEnded || !ReferenceEquals(_executionSession, SingletonSessionState.ExecutionSession))
+            {
+                throw new InvalidOperationException("Cannot start a Module after its execution session ended.");
+            }
 
             var type = module.GetType();
-            if (Instance._creatingModules.Contains(type))
+            if (_creatingModules.Contains(type))
             {
                 throw new InvalidOperationException($"Module construction is in progress: {module.ModuleName}");
             }
 
-            var registered = GetModule(module.ModuleName);
+            _modules.TryGetValue(module.ModuleName, out var registered);
             if (registered != null && !ReferenceEquals(registered, module))
             {
                 throw new InvalidOperationException($"Module already registered: {module.ModuleName}");
@@ -560,12 +638,12 @@ namespace YLFramework.Core
 
             if (module.State == ModuleState.Starting)
             {
-                return Instance._startingModules[type];
+                return _startingModules[type];
             }
 
             if (module.State == ModuleState.Running)
             {
-                var completed = new StartUpModuleRequest(module);
+                var completed = new StartUpModuleRequest(this, module);
                 completed.Finish();
                 return completed;
             }
@@ -580,15 +658,17 @@ namespace YLFramework.Core
             }
             // 启动失败可能立即回滚，须在建立请求前排除尚未结束的对象事务。
             ValidateObjectTransactions(module);
-            var request = new StartUpModuleRequest(module, CurrentModule);
+            var request = new StartUpModuleRequest(this, module, _currentModule);
             // 发布记录后才执行注册、协程和任何业务回调，支持无yield的同步完成与重入。
             module.State = ModuleState.Starting;
-            Instance._startingModules.Add(type, request);
+            _startingModules.Add(type, request);
+            module.PendingStartup = request;
             try
             {
                 AddModule(module);
-                CurrentModule = module;
+                _currentModule = module;
                 var coroutine = CoroutineStarter.Start(request.StartUp());
+                request.AttachCoroutine(coroutine);
                 if (coroutine == null && !request.IsDone)
                 {
                     request.Finish(new InvalidOperationException("Module startup requires an active coroutine host."));
@@ -609,24 +689,24 @@ namespace YLFramework.Core
         }
 
         /// <summary>提交启动状态或复用关闭管线回滚，并在释放旧启动记录后派发延迟的 View 失效通知。</summary>
-        internal static void CompleteStartup(StartUpModuleRequest request, Exception error)
+        internal void CompleteStartup(StartUpModuleRequest request, Exception error)
         {
             var module = request.Module;
-            if (!Instance._startingModules.TryGetValue(module.GetType(), out var pending) || !ReferenceEquals(pending, request))
+            if (!_startingModules.TryGetValue(module.GetType(), out var pending) || !ReferenceEquals(pending, request))
             {
                 return;
             }
 
-            bool restoreCurrent = ReferenceEquals(CurrentModule, module);
+            bool restoreCurrent = ReferenceEquals(_currentModule, module);
             var deferredNotifications = new List<IPendingViewRequest>();
             try
             {
                 if (error == null)
                 {
                     module.State = ModuleState.Running;
-                    CurrentModule = module;
+                    _currentModule = module;
                 }
-                else if (ReferenceEquals(GetModule(module.ModuleName), module))
+                else if (_modules.TryGetValue(module.ModuleName, out var registered) && ReferenceEquals(registered, module))
                 {
                     // 启动调用栈已展开；只绕过 Starting 和基础模块禁令，仍使用统一关闭管线。
                     module.State = ModuleState.StartFailed;
@@ -646,10 +726,14 @@ namespace YLFramework.Core
             }
             finally
             {
-                Instance._startingModules.Remove(module.GetType());
-                if (error != null && restoreCurrent && (CurrentModule == null || ReferenceEquals(CurrentModule, module)))
+                _startingModules.Remove(module.GetType());
+                if (ReferenceEquals(module.PendingStartup, request))
                 {
-                    CurrentModule = IsCurrentCandidate(request.PreviousCurrentModule) ? request.PreviousCurrentModule : null;
+                    module.PendingStartup = null;
+                }
+                if (error != null && restoreCurrent && (_currentModule == null || ReferenceEquals(_currentModule, module)))
+                {
+                    _currentModule = IsCurrentCandidate(request.PreviousCurrentModule) ? request.PreviousCurrentModule : null;
                 }
 
                 request.PreviousCurrentModule = null;
@@ -669,24 +753,29 @@ namespace YLFramework.Core
         }
 
         /// <summary>仅在推进启动迭代器的调用栈内设置默认模块上下文，离开后恢复仍有效的旧上下文。</summary>
-        internal static bool MoveStartup(Module module, System.Collections.IEnumerator routine)
+        internal bool MoveStartup(Module module, System.Collections.IEnumerator routine)
         {
-            var previous = Instance._startupContext;
-            Instance._startupContext = module;
+            if (_isSessionEnded || !ReferenceEquals(_instance, this) ||
+                !ReferenceEquals(_executionSession, SingletonSessionState.ExecutionSession) || !SingletonSessionState.CanRunExecution)
+            {
+                throw new InvalidOperationException("Module startup execution session has ended.");
+            }
+            var previous = _startupContext;
+            _startupContext = module;
             try
             {
                 return routine.MoveNext();
             }
             finally
             {
-                Instance._startupContext = IsCurrentCandidate(previous) ? previous : null;
+                _startupContext = !_isSessionEnded && IsCurrentCandidate(previous) ? previous : null;
             }
         }
 
         /// <summary>检查实例仍是当前注册的 Starting 或 Running 模块，供默认上下文选择使用。</summary>
-        private static bool IsCurrentCandidate(Module module)
+        private bool IsCurrentCandidate(Module module)
         {
-            return module != null && ReferenceEquals(GetModule(module.ModuleName), module) &&
+            return module != null && _modules.TryGetValue(module.ModuleName, out var registered) && ReferenceEquals(registered, module) &&
                 (module.State == ModuleState.Starting || module.State == ModuleState.Running);
         }
 
@@ -697,9 +786,14 @@ namespace YLFramework.Core
         /// <returns>该实例对应的启动请求。</returns>
         public static StartUpModuleRequest StartUpModule(Type moduleType)
         {
-            if (Instance._isShuttingDown)
+            var owner = Instance;
+            if (owner._isShuttingDown)
             {
                 throw new InvalidOperationException("Cannot start a Module during Shutdown.");
+            }
+            if (owner._isSessionEnded)
+            {
+                throw new InvalidOperationException("Cannot start a Module after its execution session ended.");
             }
 
             if (moduleType == null)
@@ -722,7 +816,7 @@ namespace YLFramework.Core
 
                 return StartUpModule(registered);
             }
-            if (!Instance._creatingModules.Add(moduleType))
+            if (!owner._creatingModules.Add(moduleType))
             {
                 throw new InvalidOperationException($"Module construction is in progress: {moduleType.FullName}");
             }
@@ -734,9 +828,9 @@ namespace YLFramework.Core
             }
             finally
             {
-                Instance._creatingModules.Remove(moduleType);
+                owner._creatingModules.Remove(moduleType);
             }
-            return StartUpModule(module);
+            return owner.StartModule(module);
         }
 
         /// <summary>
@@ -768,19 +862,19 @@ namespace YLFramework.Core
         /// <returns>可用模块；没有候选时为 null，不创建模块。</returns>
         internal static Module GetCurrentModule()
         {
-            if (IsCurrentCandidate(Instance._startupContext))
+            if (Instance.IsCurrentCandidate(Instance._startupContext))
             {
                 return Instance._startupContext;
             }
 
-            if (IsCurrentCandidate(CurrentModule))
+            if (Instance.IsCurrentCandidate(CurrentModule))
             {
                 return CurrentModule;
             }
 
             foreach (var item in AllModules.Values)
             {
-                if (IsCurrentCandidate(item) && !AllBaseModules.ContainsKey(item.ModuleName))
+                if (Instance.IsCurrentCandidate(item) && !AllBaseModules.ContainsKey(item.ModuleName))
                 {
                     return item;
                 }
@@ -788,7 +882,7 @@ namespace YLFramework.Core
 
             foreach (var item in AllBaseModules.Values)
             {
-                if (IsCurrentCandidate(item))
+                if (Instance.IsCurrentCandidate(item))
                 {
                     return item;
                 }

@@ -155,4 +155,6 @@ else
 - 普通通知、`OnCompleted` 和首次基类取消的 `OnAbort` 收束后，Task 以请求本身结束。通知中的重入 AsTask、回调抛错、静默完成或 `RemoveAllCompleteEvent` 都不会让 Task 丢失完成信号。
 - 业务失败、取消或失效不会自动让桥 Task 变成 Faulted/Canceled；检查派生请求的 Status、Exception、Error 等结果。取消仍由请求 owner 的 Abort 等入口负责，不增加 CancellationToken 的含混映射。
 - 桥使用 `RunContinuationsAsynchronously`，但已完成 Task 的 await 仍可能同步继续。未完成等待遵守正常 Task/UnitySynchronizationContext 调度，不承诺每次延后一帧；不得用 `.Wait()` 或 `.Result` 阻塞 Unity 主线程。
-- 等待不取得或释放业务资源，也不保证生产者在停止后一定提交终态。自定义请求和启动请求的 owner 若只停止生产协程而不交付结果，Task 可能一直 Pending；尤其不要跨 Play 保留未结束的 StartUpModuleRequest 等待。HTTP 有自己的会话失效收束，不受这个启动生产者限制。
+- 等待不取得或释放业务资源，通用基类也不保证任意生产者停止后一定提交终态。自定义请求若只停协程而不交付结果，Task 仍可能一直 Pending。
+- Core 的 `StartUpModuleRequest` 绑定接受时的 manager 与执行会话；退出、会话重置、实际宿主 GameObject 失活/销毁时，会内部失败收束、回滚模块并归还本次资源请求消费者，之后结束协程/Task 等待。正在执行的业务回调会先返回，再进行回滚。详见 [Module 与 MVC](UI.md#module-与-mvc)。这不是新增的用户取消能力，`Abort` 仍明确拒绝。
+- 仅将宿主组件的 `enabled` 设为 false 不停止协程；GameObject 失活不会自动恢复旧工作，显式重新激活后需重新发起启动。绕过请求 owner 任意调用原生 StopCoroutine/StopAllCoroutines 仍不等于受支持的请求取消，不能依赖其执行 finally。HTTP 使用独立的原生完成与会话收束，不依赖此宿主。
