@@ -158,7 +158,7 @@ namespace YLFramework.Audio
         /// <param name="onStarted">首次启动后的实际 Clip 和原句柄。</param>
         public static ISequence PlaySound(this ISequence self, AudioClip clip, AudioOutputRoute outputRoute = default,
             Action<AudioClip, AudioHandle> onStarted = null) =>
-            self.Append(PlaySoundAction.Allocate(clip, outputRoute: outputRoute, onStarted: onStarted));
+            ActionLease.AppendOwned(self, PlaySoundAction.Allocate(clip, outputRoute: outputRoute, onStarted: onStarted));
         /// <summary>向序列追加采用完整请求配置的音效动作，包含按 Clip 位置计算的自动淡变。</summary>
         /// <param name="self">接收音效动作的序列。</param>
         /// <param name="clip">由调用方保活至播放结束的 Clip。</param>
@@ -166,6 +166,6 @@ namespace YLFramework.Audio
         /// <param name="onStarted">首次启动后的实际 Clip 和原句柄。</param>
         public static ISequence PlaySoundWithOptions(this ISequence self, AudioClip clip, AudioSoundOptions options,
             Action<AudioClip, AudioHandle> onStarted = null) =>
-            self.Append(PlaySoundAction.AllocateWithOptions(clip, options, onStarted: onStarted));
+            ActionLease.AppendOwned(self, PlaySoundAction.AllocateWithOptions(clip, options, onStarted: onStarted));
     }
 }

@@ -56,8 +56,14 @@ namespace YLFramework.Actions
         /// <inheritdoc />
         public ActionUpdateModes UpdateMode
         {
-            get; set;
+            get => _updateMode;
+            set
+            {
+                ActionKit.ValidateUpdateMode(value);
+                _updateMode = value;
+            }
         }
+        private ActionUpdateModes _updateMode;
         private bool _isRecycled;
         // 每次从池分配时递增：同一控制器对象被复用时，旧租约里的代次不再匹配。
         internal uint Generation

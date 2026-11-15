@@ -26,6 +26,8 @@ namespace YLFramework.Actions
         /// <param name="onCondition">条件满足后、标记完成前执行的可选回调。</param>
         public static ConditionAction Allocate(Func<bool> condition, Action onCondition = null)
         {
+            if (condition == null)
+                throw new ArgumentNullException(nameof(condition));
             var conditionAction = _pool.Allocate();
             conditionAction.ActionId = ActionKit.IdGenerator++;
             conditionAction.IsDeinitialized = false;
@@ -114,7 +116,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Condition(this ISequence self, Func<bool> condition)
         {
-            return self.Append(global::YLFramework.Actions.ConditionAction.Allocate(condition));
+            return ActionLease.AppendOwned(self, global::YLFramework.Actions.ConditionAction.Allocate(condition));
         }
     }
 }

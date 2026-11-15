@@ -13,6 +13,7 @@ namespace YLFramework.Actions
         /// </summary>
         /// <param name="action">由组合管理生命周期的子动作。</param>
         /// <returns>当前组合，可继续追加动作。</returns>
+        /// <remarks>内置组合拒绝 null、自身、已释放父/子、已调度根子项及同组重复对象；不建立跨组合共享或间接循环的全局登记。</remarks>
         ISequence Append(IAction action);
     }
 
@@ -170,6 +171,7 @@ namespace YLFramework.Actions
         /// <inheritdoc />
         public ISequence Append(IAction action)
         {
+            ActionLease.ValidateAppend(this, action, _actions);
             _actions.Add(new ActionLease(action));
             return this;
         }
@@ -322,9 +324,19 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Sequence(this ISequence self, Action<ISequence> sequenceSetting)
         {
+            if (sequenceSetting == null)
+                throw new ArgumentNullException(nameof(sequenceSetting));
             var sequence = global::YLFramework.Actions.Sequence.Allocate();
-            sequenceSetting(sequence);
-            return self.Append(sequence);
+            try
+            {
+                sequenceSetting(sequence);
+                return self.Append(sequence);
+            }
+            catch (Exception original)
+            {
+                ActionKit.CleanupFailedConfiguration(sequence, original);
+                throw;
+            }
         }
     }
 }

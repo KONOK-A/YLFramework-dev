@@ -84,7 +84,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | DataAssets | Daily / Special | 最小主包+DataAssets 的作者、请求、租约、会话和 Player |
 | Localization | Daily / Special | 回退、显示、图片租约、作者、会话与 Player |
 | Excel / ExcelGameplay | Daily | 实际 XLSX、预览与提交；后者显式组合 Gameplay |
-| Action | Daily | Action / Observable 的取消、池化、宿主与场景生命周期 |
+| Action | Daily / Special | Action / Observable 的取消、池化、宿主与场景生命周期；Special 为 batchmode 的真实两次 Play 与 Timing 隔离 |
 | DOTween | Daily | 完整批准 SDK、条件程序集、行为与同宿主 Help XML |
 | HybridCLR | Daily | SDK 前置下的 Editor/PlayMode 与显式样例，不代表 native 安装或热更 Player |
 | Help | Daily | 真实元数据/XML、窗口、搜索、注册及只读边界 |
@@ -99,6 +99,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 ### 专项条件
 
 - `Special/CoreClipboard` 需要系统剪贴板与交互 Editor，Daily 明确排除其类别；NativeInput 要真实桌面、`isBatchMode=false` 与独立交互宿主，串行执行以避免争抢焦点。
+- `Special/Action` 不开启交互桌面、不抢焦点；正常完成后只退出工具自有的后台 Editor。`ActionVisualTests` 属于 `YL.Manual.ActionVisual` 且标记 Explicit，不在 Daily/Special 自动选集中。原生画面使用下述独立非退出入口，不能改回自动桌面门禁或以模拟点击绕过前置。
 - `AudioSession` 只证明会话，`AudioNative` 才包含真实输出/DSP；设备条件不足应报告未执行，不改测量断言或系统音量。
 - Resource/Audio 的原生 Bundle 与 Player 流程受 Windows Mono 路径预算限制，使用足够短的独立工作根，不能通过路径别名、少复制输入或删产物来规避。
 - ResourceUpdates 的 TLS 夹具需要在实际运行进程环境中提供 `YL_RESOURCE_TEST_PFX` 和 `YL_RESOURCE_TEST_PASSWORD`，不要记录值或修改系统信任；缺少前置直接失败。
@@ -109,6 +110,25 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 - 当前Pooling工作负载版本4为76病例，在原72固定输入后追加 `Audio.Pending.0/1/24/128`：真实公开异步请求持续Loading，同址共享一次provider，采样外绑定实际宿主Update；每批64次更新。Audio病例中的 `medianNanosecondsPerPair` 是通用报告字段，此处pairsPerIteration=1，单位为ns/Update；不是声部吞吐或真实帧FPS。取消和late lease释放在采样外断言，不将同帧接纳/List.Remove成本混入等待快照。
 
 需要额外参数和特殊上下文时读取对应模块声明，不把上述条件当作 Skip 白名单。
+
+### Action 原生画面
+
+先在未打开的工具自有宿主中运行 `Special/Action`，准备正式输入、当前测试程序集与 `Assets/YLTestingProfile/Empty.unity`。随后显式打开该宿主，使用只写结果、不调用 Exit/Quit 的入口；不使用 `-batchmode`、`-quit`、`-runTests` 或 `-executeMethod YLTestEntry.Execute`：
+
+```powershell
+$hostProject = '<已准备的工具自有 Special/Action 宿主>'
+$run = [guid]::NewGuid().ToString('N')
+& $unity -projectPath $hostProject -ylTestInteractive `
+    -executeMethod YLFramework.Tests.Actions.ActionVisualTests.RunManualAcceptance `
+    -ylActionVisualRun $run `
+    -logFile (Join-Path $hostProject "Logs/ActionVisual-$run-editor.log")
+```
+
+入口要求合法的 Host owner、唯一运行标识和无脏场景；在 UTF 的 RunStarted 边界只识别未修改的原生默认场景或声明的空场景，不保存、覆盖或丢弃未知场景。它只运行该 Explicit 用例，结束后释放自己的回调/更新泵并保持 Editor 打开。关闭窗口由操作者控制；重新准备同一宿主前必须先正常关闭，避免与自动 CLI 争用工程。
+
+用例从 Game View 自身的 `m_RenderTexture` 原生读取，不把其他活动帧缓冲或只正确的 alpha 当作覆盖证据。先校准品红相机背景，再验证黑色遮罩覆盖中心与四角、退场后恢复背景。它只临时调整本方运行应用的后台运行标记并恢复，不改系统焦点设置、音量或产品资源。`WaitForEndOfFrame` 在 batchmode 不运行，Scene View 也可能令它暂停，不通过加超时掩盖缺失的渲染帧。
+
+证据位于该宿主 `Logs/ActionVisual-<run>.xml` 及同前缀的 `-background.png`、`-opaque.png`、`-revealed.png`。仅 XML 的目标叶子真实 Passed、零失败/跳过且三个画面采样符合预期时才报告视觉通过，文件存在本身不是成功。当前已验证 Unity 6000.3.27f1 / Direct3D12 / 1920×1080；不据此宣称其他分辨率、管线、图形 API 或 Player 通过。
 
 ## 隔离与资产
 

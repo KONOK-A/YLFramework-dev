@@ -396,7 +396,7 @@ namespace YLFramework.Editor.Audio
                     "插值和组合使用 Action，音频播放进度直接读 AudioHandle.Time/Duration/Progress。TimerScope、ActionHandle 和 AudioHandle " +
                     "分别管理自己的任务或请求，不共享生命周期索引。Audio 的完成检测使用宿主 Update，不以 clip.length 计时。"),
                 HelpBlock.Paragraph("清理", "所有者在选定的 OnDisable/OnDestroy/场景边界取消自有 TimerHandle 或关闭 TimerScope，并清理播放句柄和订阅；不要用 Timer.Shutdown 代替普通组件退出。" +
-                    "通用注销与生命周期工具使用 YLFramework.Events，不再提供 Audio 专属包装。完整 Timer API 见 Documentation~/Modules/Timing.md。")),
+                     "通用注销与生命周期工具使用 YLFramework.Events，不再提供 Audio 专属包装。完整 Timer API 与组件示例见 Foundation / Tools 的 timing 指南及 Documentation~/Modules/Timing.md。")),
             Guide("diagnostics", "诊断与平台入口", "被动读取 Sound 统计与实际 Clip 预算，唯一写操作为显式统计清零，不创建音频宿主。",
                 new[] { typeof(AudioKitDiagnostics), typeof(AudioKitDebugWindow), typeof(AudioKit), typeof(AudioSoundStats) },
                 HelpBlock.Paragraph("打开方式", "YLFramework/Audio/Debug 打开独立 Editor 窗口，复用 Runtime 诊断绘制器；运行 GUI 入口仅存在于 Editor/Development Build。" +

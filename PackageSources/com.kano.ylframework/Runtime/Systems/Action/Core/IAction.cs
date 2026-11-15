@@ -95,6 +95,36 @@ namespace YLFramework.Actions
         }
 
         internal bool Matches => Action.ActionId == _actionId;
+
+        // 构建扩展在成功转移前仍拥有新子项；直接 Append 调用方的子项不走这条失败收尾。
+        internal static ISequence AppendOwned(ISequence parent, IAction child)
+        {
+            try
+            {
+                if (parent == null)
+                    throw new System.ArgumentNullException(nameof(parent));
+                return parent.Append(child);
+            }
+            catch (System.Exception original)
+            {
+                ActionKit.CleanupFailedConfiguration(child, original);
+                throw;
+            }
+        }
+
+        internal static void ValidateAppend(IAction parent, IAction action, System.Collections.Generic.List<ActionLease> children)
+        {
+            if (parent.IsDeinitialized)
+                throw new System.InvalidOperationException("Cannot append to a deinitialized action.");
+            if (ReferenceEquals(parent, action))
+                throw new System.InvalidOperationException("An action cannot contain itself.");
+            MonoUpdateActionExecutor.ValidateAction(action);
+            foreach (var child in children)
+            {
+                if (ReferenceEquals(child.Action, action))
+                    throw new System.InvalidOperationException("The same child instance cannot be appended twice.");
+            }
+        }
     }
 
     /// <summary>

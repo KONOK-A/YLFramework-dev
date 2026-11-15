@@ -220,7 +220,15 @@ namespace YLFramework.Actions
         public static ISequence Custom(this ISequence self, Action<ICustomApi<object>> onCustomSetting)
         {
             var custom = ActionKit.Custom(onCustomSetting);
-            return self.Append(custom);
+            try
+            {
+                return self.Append(custom);
+            }
+            catch (Exception original)
+            {
+                ActionKit.CleanupFailedConfiguration(custom, original);
+                throw;
+            }
         }
 
         /// <summary>
@@ -233,7 +241,15 @@ namespace YLFramework.Actions
         public static ISequence Custom<TData>(this ISequence self, Action<ICustomApi<TData>> onCustomSetting)
         {
             var custom = ActionKit.Custom(onCustomSetting);
-            return self.Append(custom);
+            try
+            {
+                return self.Append(custom);
+            }
+            catch (Exception original)
+            {
+                ActionKit.CleanupFailedConfiguration(custom, original);
+                throw;
+            }
         }
     }
 }

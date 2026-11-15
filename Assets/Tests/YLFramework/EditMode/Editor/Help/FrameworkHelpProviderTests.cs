@@ -137,6 +137,27 @@ namespace YLFramework.Tests.Help
             }
         }
 
+        [Test]
+        public void TimingGuideOffersExistingOwnershipApisAndACompletePassiveExample()
+        {
+            var before = ReadOnlyState();
+            var module = Registration("foundation-tools").Create();
+            var guide = module.Guides.SingleOrDefault(page => page.Id == "timing");
+            Assert.That(guide, Is.Not.Null);
+            CollectionAssert.AreEquivalent(new[] { typeof(YLFramework.Timing.Timer), typeof(YLFramework.Timing.TimerScheduler),
+                typeof(YLFramework.Timing.TimerHandle), typeof(YLFramework.Timing.TimerScope), typeof(YLFramework.Timing.ReusableTimer),
+                typeof(YLFramework.Timing.TimerHandleGroup), typeof(YLFramework.Timing.TimerWait), typeof(YLFramework.Timing.TimerObject) },
+                guide.FeaturedTypes);
+            foreach (var term in new[] { "Unscaled", "Action", "OnDisable", "Completed", "Cancelled", "Faulted", "Invalidated", "fail-fast" })
+                StringAssert.Contains(term, guide.SearchText);
+            var source = guide.Blocks.Single(block => block.Kind == HelpBlockKind.Code).Content;
+            foreach (var term in new[] { "class TimingScopeExample : MonoBehaviour", "OnEnable", "OnDisable", "new TimerScope()", ".Dispose()" })
+                StringAssert.Contains(term, source);
+            Assert.That(guide.Blocks.Any(block => block.Kind == HelpBlockKind.Link && block.Url.EndsWith("/Modules/Timing.md")), Is.True);
+            HelpApiIndex.Build(module);
+            Assert.That(ReadOnlyState(), Is.EqualTo(before));
+        }
+
         [UnityTest]
         public IEnumerator RealWindowReadsBothProvidersAndRefreshesDuplicateRegistrationWithoutSideEffects()
         {

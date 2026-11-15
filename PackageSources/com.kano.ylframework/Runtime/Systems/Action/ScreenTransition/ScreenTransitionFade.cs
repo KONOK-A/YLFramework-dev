@@ -37,9 +37,10 @@ namespace YLFramework.Actions
             return this;
         }
 
-        /// <summary>设置过渡时长（秒），并返回当前动作。</summary>
+        /// <summary>设置有限的过渡秒数；非正值在启动后的首次执行结束，非有限值抛 ArgumentOutOfRangeException。</summary>
         public ScreenTransitionFade Duration(float duration)
         {
+            ActionKit.ValidateDuration(duration, nameof(duration));
             _duration = duration;
             return this;
         }
@@ -56,6 +57,11 @@ namespace YLFramework.Actions
         /// <param name="dt">本次执行的时间增量，单位为秒。</param>
         public override void OnExecute(float dt)
         {
+            if (_duration <= 0)
+            {
+                this.Finish();
+                return;
+            }
             _currentSeconds += dt;
             var alpha = Mathf.Lerp(_fromAlpha, _toAlpha, _currentSeconds / _duration);
             SetAlpha(alpha);

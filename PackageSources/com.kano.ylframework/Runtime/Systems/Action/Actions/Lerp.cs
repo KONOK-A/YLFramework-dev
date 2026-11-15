@@ -39,6 +39,7 @@ namespace YLFramework.Actions
         /// <returns>尚未启动的插值动作，时间源由执行器选择。</returns>
         public static Lerp Allocate(float a, float b, float duration, Action<float> onLerp = null, Action onLerpFinish = null)
         {
+            ActionKit.ValidateDuration(duration, nameof(duration));
             var retNode = _pool.Allocate();
             retNode.ActionId = ActionKit.IdGenerator++;
             retNode.IsDeinitialized = false;
@@ -89,6 +90,7 @@ namespace YLFramework.Actions
         /// <summary>清零累计时间并输出起点，不在启动阶段输出终点。</summary>
         public void OnStart()
         {
+            ActionKit.ValidateDuration(Duration, nameof(Duration));
             _currentTime = 0.0f;
             OnLerp?.Invoke(Mathf.Lerp(A, B, 0));
         }
@@ -97,6 +99,7 @@ namespace YLFramework.Actions
         /// <param name="dt">本次累计的时间增量，单位为秒。</param>
         public void OnExecute(float dt)
         {
+            ActionKit.ValidateDuration(Duration, nameof(Duration));
             _currentTime += dt;
             if (_currentTime < Duration)
             {
@@ -139,7 +142,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Lerp(this ISequence self, float a, float b, float duration, Action<float> onLerp = null, Action onLerpFinish = null)
         {
-            return self.Append(global::YLFramework.Actions.Lerp.Allocate(a, b, duration, onLerp, onLerpFinish));
+            return ActionLease.AppendOwned(self, global::YLFramework.Actions.Lerp.Allocate(a, b, duration, onLerp, onLerpFinish));
         }
 
         /// <summary>
@@ -152,7 +155,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Lerp01(this ISequence self, float duration, Action<float> onLerp = null, Action onLerpFinish = null)
         {
-            return self.Append(global::YLFramework.Actions.Lerp.Allocate(0, 1, duration, onLerp, onLerpFinish));
+            return ActionLease.AppendOwned(self, global::YLFramework.Actions.Lerp.Allocate(0, 1, duration, onLerp, onLerpFinish));
         }
     }
 }

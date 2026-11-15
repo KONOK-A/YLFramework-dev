@@ -53,10 +53,12 @@ namespace YLFramework.Actions
         /// <summary>
         /// 分配并初始化重复动作。
         /// </summary>
-        /// <param name="repeatCount">总轮数；-1 或 0 无限重复，其他负数不执行且不自动完成。</param>
+        /// <param name="repeatCount">总轮数；-1 或 0 无限重复，小于 -1 时抛 ArgumentOutOfRangeException。</param>
         /// <returns>尚未启动的重复组合，子动作可通过 Append 添加。</returns>
         public static Repeat Allocate(int repeatCount = -1)
         {
+            if (repeatCount < -1)
+                throw new ArgumentOutOfRangeException(nameof(repeatCount));
             var repeat = _pool.Allocate();
             repeat._repeatCount = repeatCount;
             return repeat;
@@ -176,6 +178,10 @@ namespace YLFramework.Actions
         /// <inheritdoc />
         public ISequence Append(IAction action)
         {
+            if (IsDeinitialized)
+                throw new InvalidOperationException("Cannot append to a deinitialized action.");
+            if (ReferenceEquals(action, this))
+                throw new InvalidOperationException("An action cannot contain itself.");
             _sequence.Append(action);
             return this;
         }
@@ -230,23 +236,43 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Repeat(this ISequence self, Action<IRepeat> repeatSetting)
         {
+            if (repeatSetting == null)
+                throw new ArgumentNullException(nameof(repeatSetting));
             var repeat = global::YLFramework.Actions.Repeat.Allocate();
-            repeatSetting(repeat);
-            return self.Append(repeat);
+            try
+            {
+                repeatSetting(repeat);
+                return self.Append(repeat);
+            }
+            catch (Exception original)
+            {
+                ActionKit.CleanupFailedConfiguration(repeat, original);
+                throw;
+            }
         }
 
         /// <summary>
         /// 立即配置并追加按指定总轮数重复的子序列。
         /// </summary>
         /// <param name="self">要追加重复子序列的父组合。</param>
-        /// <param name="repeatCount">总轮数；-1 或 0 无限重复，其他负数不执行且不自动完成。</param>
+        /// <param name="repeatCount">总轮数；-1 或 0 无限重复，小于 -1 时抛 ArgumentOutOfRangeException。</param>
         /// <param name="repeatSetting">追加前立即执行的重复子序列配置回调。</param>
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Repeat(this ISequence self, int repeatCount, Action<IRepeat> repeatSetting)
         {
+            if (repeatSetting == null)
+                throw new ArgumentNullException(nameof(repeatSetting));
             var repeat = global::YLFramework.Actions.Repeat.Allocate(repeatCount);
-            repeatSetting(repeat);
-            return self.Append(repeat);
+            try
+            {
+                repeatSetting(repeat);
+                return self.Append(repeat);
+            }
+            catch (Exception original)
+            {
+                ActionKit.CleanupFailedConfiguration(repeat, original);
+                throw;
+            }
         }
     }
 }

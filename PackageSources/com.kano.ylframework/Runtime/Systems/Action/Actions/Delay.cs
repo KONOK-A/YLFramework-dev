@@ -37,6 +37,7 @@ namespace YLFramework.Actions
         /// <param name="onDelayFinish">检测到等待结束时调用的可选回调。</param>
         public static Delay Allocate(float delayTime, System.Action onDelayFinish = null)
         {
+            ActionKit.ValidateDuration(delayTime, nameof(delayTime));
             var retNode = _pool.Allocate();
             retNode.ActionId = ActionKit.IdGenerator++;
             retNode.IsDeinitialized = false;
@@ -49,10 +50,12 @@ namespace YLFramework.Actions
         }
 
         /// <summary>分配动态时长的等待动作，时长在每次启动时求值。</summary>
-        /// <param name="delayTimeFactory">可选时长工厂；为 null 时沿用对象中已有的 DelayTime。</param>
+        /// <param name="delayTimeFactory">每次启动求值的非空工厂；返回值必须为有限秒数。</param>
         /// <param name="onDelayFinish">检测到等待结束时调用的可选回调。</param>
         public static Delay Allocate(Func<float> delayTimeFactory, System.Action onDelayFinish = null)
         {
+            if (delayTimeFactory == null)
+                throw new ArgumentNullException(nameof(delayTimeFactory));
             var retNode = _pool.Allocate();
             retNode.ActionId = ActionKit.IdGenerator++;
             retNode.IsDeinitialized = false;
@@ -79,7 +82,9 @@ namespace YLFramework.Actions
         {
             if (DelayTimeFactory != null)
             {
-                DelayTime = DelayTimeFactory();
+                var duration = DelayTimeFactory();
+                ActionKit.ValidateDuration(duration, nameof(DelayTimeFactory));
+                DelayTime = duration;
             }
         }
 
@@ -149,7 +154,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Delay(this ISequence self, float seconds, Action onDelayFinish = null)
         {
-            return self.Append(global::YLFramework.Actions.Delay.Allocate(seconds, onDelayFinish));
+            return ActionLease.AppendOwned(self, global::YLFramework.Actions.Delay.Allocate(seconds, onDelayFinish));
         }
 
         /// <summary>
@@ -161,7 +166,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Delay(this ISequence self, Func<float> delayTimeFactory, Action onDelayFinish = null)
         {
-            return self.Append(global::YLFramework.Actions.Delay.Allocate(delayTimeFactory, onDelayFinish));
+            return ActionLease.AppendOwned(self, global::YLFramework.Actions.Delay.Allocate(delayTimeFactory, onDelayFinish));
         }
     }
 }

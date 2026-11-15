@@ -10,6 +10,14 @@
 
 逐帧进度、插值、条件和动作树仍交给 ActionKit。Timer 不改写 Action 的首步、Delay、Sequence、Repeat 或执行所有权，也不接管 Audio 播放链。
 
+| 需求 | 选择 |
+| --- | --- |
+| 到期回调、周期投递、冻结剩余秒/帧 | Timer / TimerHandle，默认 Unscaled |
+| 一个组件或表现会话拥有多个计时 | TimerScope，所有者退出时 Dispose，重新启用新建 |
+| 显式复用一个计时槽 | ReusableTimer；旧代次不能操作新 run |
+| 收集已有精确句柄或只观察终态 | TimerHandleGroup / TimerWait；等待结束不等于成功 |
+| 插值、条件、逐帧顺序/并行流程 | [Action](Action.md)，默认 Scaled，不强行统一两套时序 |
+
 ## 位置与接入
 
 - 运行时：[`Runtime/Foundation/Timing/`](../../Runtime/Foundation/Timing/)，归属 `YLFramework.Runtime`，namespace 为 `YLFramework.Timing`。
@@ -115,9 +123,36 @@ bool bound = run.BindTo(gameObject); // GO 停用即取消。
 - paused run 仍受生命周期约束。从未 active 的对象销毁可能没有 OnDestroy，由默认 Update/手动 Advance 存活兜底结束。绑定不把停用解释为暂停，也不把单个组件禁用当成 GO 停用。
 - 生命周期取消通知中不要嵌套对正在 SetActive 的同一个 GO 再调用 SetActive，Unity 会拒绝重入激活。可在后续帧重新启用、重绑其他对象，或按组件自己的启停边界重启。
 - TimerObject 每次启用启动复用槽，读取本轮 delay/ignoreTimeScale，自身组件禁用也精确取消。`onCompleted` 只通知正常到期，`onAborted` 只通知取消或 owner 失效；成功 callback 自停用和 Faulted 不触发中断，取消只通知一次，回调内合法重启不会被旧收尾取消。修改字段不影响已登记的本轮。
+- TimerObject.delay 必须有限且非负；-1、NaN、正负 Infinity 在启用时保留 fail-fast，不钳制、不静默忽略。Unity 生命周期入口按原异常/日志边界报告，失败不会通知两个业务事件；更正字段并重新启用可正常开始新一轮。
 - 无 owner 的默认任务跨场景；模块/View/Panel 不自动接管外部任务。普通所有者用自有 handle、Scope 或 Group 清理，不调用全局 Shutdown 代替局部结束。
 - View 的临时停用不等于 Close。若选择表现会话所有权，可在 OnLoaded 创建自有 TimerScope、在 OnRemove Dispose，下一次加载新建 Scope；只有明确选择 GO 停用取消时才 BindTo。不要让旧会话 Scope 或复用槽控制新 Play 会话。
 - Timer.Shutdown、driver 失效、session reset 只结束 Timer owner 的旧责任，不清公共 Update/Events/Action/CoroutineStarter，不自动续跑旧任务。
+
+普通组件可显式选择“停用即结束本轮”的所有权，不需要全局 Shutdown：
+
+```csharp
+using UnityEngine;
+using YLFramework.Timing;
+
+public sealed class ScopedTimerExample : MonoBehaviour
+{
+    private TimerScope _scope;
+
+    private void OnEnable()
+    {
+        _scope = new TimerScope();
+        _scope.Delay(1, () => Debug.Log("计时正常完成"));
+    }
+
+    private void OnDisable()
+    {
+        _scope?.Dispose();
+        _scope = null;
+    }
+}
+```
+
+若另开协程观察 TimerWait，观察者负责停止自己的协程，Timer 的所有者仍负责 Cancel/Dispose；不要以停止等待代替结束生产责任。需要 GO 停用时继续计时的组件不要照搬此 OnDisable 策略，应明确选择销毁或其他业务退出边界。
 
 ## 终态等待
 
@@ -132,7 +167,7 @@ else { /* 用 wait.Status 区分 Cancelled / Faulted / Invalidated */ }
 
 需要观察原生 Coroutine 而非 Timer 时，使用 [Async 的 CoroutineObservation](Async.md#观察边界)。其 Dispose 只停止观察 wrapper，不停止生产者；原生等待结束也不等于业务成功。
 
-编辑器 Timing 指南由 Audio 提供方的 `timer` 页承载，入口见 [音频诊断与帮助](Audio/Advanced.md#诊断与帮助)。
+编辑器入口为 `YLFramework/Toolkit/帮助` 的 Foundation / Tools → Timing，含精选 API 与可编译的完整组件/观察者示例。Audio 的 `timer` 页保留归属与导航，不复制计时手册；见 [音频诊断与帮助](Audio/Advanced.md#诊断与帮助)。读取帮助不会创建 Timer / Action 宿主。
 
 ## 公开类型
 

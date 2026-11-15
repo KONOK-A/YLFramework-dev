@@ -1102,6 +1102,12 @@
     },
     {
       "name": "Action",
+      "prepareSessionScene": true,
+      "prepareSceneTemplates": true,
+      "disableDomainReload": true,
+      "specialBackend": "SessionNative",
+      "specialModes": ["EditMode"],
+      "specialCategory": "YL.Special.ActionTimingSession",
       "category": "",
       "assemblies": [
         "YLFramework.Tests.EditMode",
@@ -1110,10 +1116,11 @@
       "nativeLayout": "Framework",
       "graphics": true,
       "sortingLayer": "",
-      "excludedCategories": [],
-      "description": "Actual Action/Observable execution, cancellation, disposal, pooled reuse, scene shutdown and screen transition lifecycle.",
+      "excludedCategories": ["YL.Special.ActionTimingSession", "YL.Manual.ActionVisual"],
+      "description": "Daily Action/Observable execution and lifecycle; batch Special owns real two-Play Action/Timing isolation. Explicit manual overlay pixels never enter automatic selections.",
       "suites": [
-        "Daily"
+        "Daily",
+        "Special"
       ],
       "runtimeSources": [
         "PackageSources/com.kano.ylframework/Runtime"

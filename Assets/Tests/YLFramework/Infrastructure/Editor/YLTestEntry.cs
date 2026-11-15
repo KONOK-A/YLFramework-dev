@@ -186,6 +186,12 @@ namespace YLFramework.Testing.Editor
             if (_request.prepareSceneTemplates && !File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/SceneTemplateSettings.json")))
             {
                 var active = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+                if (_request.interactiveDesktop && _request.prepareSessionScene && IsUntouchedDefaultScene(active))
+                {
+                    // 新交互宿主会自动打开 Unity 默认场景；只替换精确识别且未修改的工具自有引导场景。
+                    active = UnityEditor.SceneManagement.EditorSceneManager.NewScene(UnityEditor.SceneManagement.NewSceneSetup.EmptyScene,
+                        UnityEditor.SceneManagement.NewSceneMode.Single);
+                }
                 if (UnityEngine.SceneManagement.SceneManager.sceneCount != 1 || active.isDirty ||
                     !string.IsNullOrEmpty(active.path) || active.rootCount != 0)
                 {
@@ -408,6 +414,18 @@ namespace YLFramework.Testing.Editor
             }));
         }
 
+        private static bool IsUntouchedDefaultScene(UnityEngine.SceneManagement.Scene active)
+        {
+            if (UnityEngine.SceneManagement.SceneManager.sceneCount != 1 || active.isDirty || !string.IsNullOrEmpty(active.path))
+                return false;
+            var roots = active.GetRootGameObjects();
+            var allowed = new[] { typeof(Transform), typeof(Camera), typeof(AudioListener), typeof(Light) };
+            return roots.Length == 2 && roots.All(root => root.transform.childCount == 0 &&
+                root.GetComponents<Component>().All(component => component && allowed.Contains(component.GetType()))) &&
+                roots.Count(root => root.name == "Main Camera" && root.GetComponent<Camera>() && root.GetComponent<AudioListener>()) == 1 &&
+                roots.Count(root => root.name == "Directional Light" && root.GetComponent<Light>()) == 1;
+        }
+
         private static void PrepareSessionRun()
         {
             if (!_request.prepareSessionScene)
@@ -419,12 +437,7 @@ namespace YLFramework.Testing.Editor
             var active = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             if (UnityEngine.SceneManagement.SceneManager.sceneCount == 1 && string.IsNullOrEmpty(active.path))
             {
-                var roots = active.GetRootGameObjects();
-                var allowed = new[] { typeof(Transform), typeof(Camera), typeof(AudioListener), typeof(Light) };
-                if (active.isDirty || roots.Length != 2 || roots.Any(root => root.transform.childCount != 0 ||
-                    root.GetComponents<Component>().Any(component => !component || !allowed.Contains(component.GetType()))) ||
-                    roots.Count(root => root.name == "Main Camera" && root.GetComponent<Camera>() && root.GetComponent<AudioListener>()) != 1 ||
-                    roots.Count(root => root.name == "Directional Light" && root.GetComponent<Light>()) != 1)
+                if (!IsUntouchedDefaultScene(active))
                 {
                     throw new InvalidOperationException("Only UTF's untouched default bootstrap scene can be replaced.");
                 }

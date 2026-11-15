@@ -19,6 +19,31 @@ namespace YLFramework.Actions
         /// <summary>动作分配标识的计数器；保留此公开字段，调用方不应主动重置。</summary>
         public static ulong IdGenerator = 0;
 
+        internal static void ValidateDuration(float value, string parameter)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value))
+                throw new ArgumentOutOfRangeException(parameter, value, "Action duration must be finite.");
+        }
+
+        internal static void ValidateUpdateMode(ActionUpdateModes mode)
+        {
+            if (mode != ActionUpdateModes.ScaledDeltaTime && mode != ActionUpdateModes.UnscaledDeltaTime)
+                throw new ArgumentOutOfRangeException(nameof(IActionController.UpdateMode), mode, "Unsupported action update mode.");
+        }
+
+        internal static void CleanupFailedConfiguration(IAction action, Exception original)
+        {
+            try
+            {
+                action.Deinit();
+            }
+            catch (Exception cleanup)
+            {
+                original.Data["ActionKit.CleanupException"] = original.Data["ActionKit.CleanupException"] is Exception previous
+                    ? new AggregateException(previous, cleanup) : cleanup;
+            }
+        }
+
         /// <summary>创建等待指定秒数后调用回调的动作。</summary>
         /// <param name="seconds">等待时长，使用执行器传入的时间增量累计。</param>
         /// <param name="callback">等待结束时调用的回调，取消时不调用。</param>
@@ -78,7 +103,7 @@ namespace YLFramework.Actions
         }
 
         /// <summary>创建重复执行子序列的组合。</summary>
-        /// <param name="repeatCount">正数表示总轮数，-1 和 0 表示无限重复；其他负数不推进且不自动完成。</param>
+        /// <param name="repeatCount">正数表示总轮数，-1 和 0 表示无限重复；小于 -1 时抛 ArgumentOutOfRangeException。</param>
         /// <returns>可添加子动作的重复组合。</returns>
         public static IRepeat Repeat(int repeatCount = -1)
         {
@@ -97,9 +122,19 @@ namespace YLFramework.Actions
         /// <returns>配置完成、尚未启动的动作。</returns>
         public static IAction Custom(Action<ICustomApi<object>> customSetting)
         {
+            if (customSetting == null)
+                throw new ArgumentNullException(nameof(customSetting));
             var custom = global::YLFramework.Actions.Custom.Allocate();
-            customSetting(custom);
-            return custom;
+            try
+            {
+                customSetting(custom);
+                return custom;
+            }
+            catch (Exception original)
+            {
+                CleanupFailedConfiguration(custom, original);
+                throw;
+            }
         }
 
         /// <summary>创建携带指定类型数据的自定义动作，并立即配置生命周期回调。</summary>
@@ -108,9 +143,19 @@ namespace YLFramework.Actions
         /// <returns>配置完成、尚未启动的动作。</returns>
         public static IAction Custom<TData>(Action<ICustomApi<TData>> customSetting)
         {
+            if (customSetting == null)
+                throw new ArgumentNullException(nameof(customSetting));
             var custom = global::YLFramework.Actions.Custom<TData>.Allocate();
-            customSetting(custom);
-            return custom;
+            try
+            {
+                customSetting(custom);
+                return custom;
+            }
+            catch (Exception original)
+            {
+                CleanupFailedConfiguration(custom, original);
+                throw;
+            }
         }
 
         /// <summary>创建等待协程结束的动作；协程由模块全局宿主运行。</summary>

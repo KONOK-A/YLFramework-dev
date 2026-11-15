@@ -123,6 +123,7 @@ namespace YLFramework.Actions
         /// <inheritdoc />
         public ISequence Append(IAction action)
         {
+            ActionLease.ValidateAppend(this, action, _actions);
             _actions.Add(new ActionLease(action));
             return this;
         }
@@ -252,9 +253,19 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Parallel(this ISequence self, Action<ISequence> parallelSetting)
         {
+            if (parallelSetting == null)
+                throw new ArgumentNullException(nameof(parallelSetting));
             var parallel = global::YLFramework.Actions.Parallel.Allocate();
-            parallelSetting(parallel);
-            return self.Append(parallel);
+            try
+            {
+                parallelSetting(parallel);
+                return self.Append(parallel);
+            }
+            catch (Exception original)
+            {
+                ActionKit.CleanupFailedConfiguration(parallel, original);
+                throw;
+            }
         }
     }
 }

@@ -169,11 +169,11 @@ namespace YLFramework.Tests.Actions
             var sibling = Own(new ProbeAction());
             var callbacks = 0;
             var callback = Own(CallbackAction.Allocate(() => callbacks++));
-            cancelled.Deinit();
             var parent = CreateComposite(kind);
             parent.Append(cancelFirst ? cancelled : sibling);
             parent.Append(cancelFirst ? sibling : cancelled);
             parent.Append(callback);
+            cancelled.Deinit();
 
             Assert.That(parent.Execute(1f), Is.False);
             Assert.That(parent.IsDeinitialized, Is.True);
@@ -325,7 +325,8 @@ namespace YLFramework.Tests.Actions
             var originalId = parent.ActionId;
             parent.Execute(0);
             parent.Execute(0);
-            parent.Append(first).Append(parent);
+            Assert.Throws<InvalidOperationException>(() => parent.Append(first));
+            Assert.Throws<InvalidOperationException>(() => parent.Append(parent));
 
             var exception = Assert.Throws<AggregateException>(() => parent.Deinit());
             CollectionAssert.AreEqual(new Exception[] { firstFailure, lastFailure }, exception.Flatten().InnerExceptions);

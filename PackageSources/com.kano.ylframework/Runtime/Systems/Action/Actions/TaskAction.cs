@@ -34,6 +34,8 @@ namespace YLFramework.Actions
         /// <returns>尚未启动且尚未调用任务工厂的动作。</returns>
         public static TaskAction Allocate(Func<Task> taskGetter)
         {
+            if (taskGetter == null)
+                throw new ArgumentNullException(nameof(taskGetter));
             var coroutineAction = _pool.Allocate();
             coroutineAction.ActionId = ActionKit.IdGenerator++;
             coroutineAction.IsDeinitialized = false;
@@ -120,7 +122,7 @@ namespace YLFramework.Actions
             Task task = null;
             try
             {
-                task = taskGetter();
+                task = taskGetter() ?? throw new InvalidOperationException("The task factory returned null.");
                 taskGetter = null;
                 await task;
             }
@@ -175,7 +177,7 @@ namespace YLFramework.Actions
         /// <returns>父组合，可继续追加动作。</returns>
         public static ISequence Task(this ISequence self, Func<Task> taskGetter)
         {
-            return self.Append(TaskAction.Allocate(taskGetter));
+            return ActionLease.AppendOwned(self, TaskAction.Allocate(taskGetter));
         }
 
         /// <summary>

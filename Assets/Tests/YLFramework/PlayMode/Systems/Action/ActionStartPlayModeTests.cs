@@ -59,6 +59,38 @@ namespace YLFramework.Tests.Actions
             return controller;
         }
 
+        [UnityTest]
+        public IEnumerator AnonymousHandlesRespectObjectSceneAndGlobalLifetimes()
+        {
+            var scene = SceneManager.CreateScene("ActionKit.AnonymousScopes");
+            _scenes.Add(scene);
+            SceneManager.SetActiveScene(scene);
+            SceneManager.MoveGameObjectToScene(_caller.gameObject, scene);
+            var ticks = 0;
+            var local = Own(Kit.Custom(api => api.OnExecute(_ => ticks++))).StartHandle(_caller);
+            var scoped = Own(Kit.Condition(() => false)).StartHandleCurrentScene();
+            var global = Own(Kit.Condition(() => false)).StartHandleGlobal();
+            _caller.enabled = false;
+            yield return null;
+            yield return null;
+            Assert.That(ticks, Is.GreaterThan(0));
+            _caller.gameObject.SetActive(false);
+            var paused = ticks;
+            yield return null;
+            yield return null;
+            Assert.That(ticks, Is.EqualTo(paused));
+            Assert.That(local.IsActive && scoped.IsActive && global.IsActive, Is.True);
+            Object.Destroy(_caller.gameObject);
+            yield return null;
+            Assert.That(local.IsActive, Is.False);
+            var unload = SceneManager.UnloadSceneAsync(scene);
+            _unloads.Add(unload);
+            yield return unload;
+            Assert.That(scoped.IsActive, Is.False);
+            Assert.That(global.IsActive, Is.True);
+            Assert.That(global.Cancel(), Is.True);
+        }
+
         [UnityTearDown]
         public IEnumerator TearDown()
         {

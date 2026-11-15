@@ -620,7 +620,6 @@ namespace YLFramework.Tests.Actions
 
         [TestCase(-1, 4)]
         [TestCase(0, 4)]
-        [TestCase(-2, 0)]
         public void RepeatBoundaryBehaviorRemainsCharacterized(int count, int expectedCalls)
         {
             var calls = 0;
