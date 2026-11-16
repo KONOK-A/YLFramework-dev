@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.Localization.TMP",
+    "rootNamespace": "YLFramework.Localization",
+    "references": ["YLFramework.Localization", "Unity.Localization", "Unity.TextMeshPro"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [{ "name": "com.unity.textmeshpro", "expression": "1.0.0", "define": "YL_LOCALIZATION_TMP" }],
+    "noEngineReferences": false
+}

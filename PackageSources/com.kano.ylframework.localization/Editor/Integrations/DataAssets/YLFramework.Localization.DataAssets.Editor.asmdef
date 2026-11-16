@@ -1,0 +1,11 @@
+{
+  "name": "YLFramework.Localization.DataAssets.Editor",
+  "rootNamespace": "YLFramework.Editor.Localization.DataAssets",
+  "references": ["YLFramework.Runtime", "YLFramework.DataAssets", "YLFramework.DataAssets.Editor", "YLFramework.Localization", "YLFramework.Localization.Editor"],
+  "includePlatforms": ["Editor"],
+  "overrideReferences": true,
+  "precompiledReferences": [],
+  "defineConstraints": ["YL_DATA_ASSETS_PACKAGE"],
+  "versionDefines": [{"name":"com.kano.ylframework.data-assets","expression":"0.0.0","define":"YL_DATA_ASSETS_PACKAGE"}],
+  "autoReferenced": true
+}

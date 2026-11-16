@@ -2,21 +2,22 @@ using System;
 using System.Collections;
 using System.IO;
 using UnityEngine;
+using UnityEngine.Localization;
+using UnityEngine.Localization.Settings;
+using UnityEngine.ResourceManagement.AsyncOperations;
+using YLFramework.Binding;
 using YLFramework.Localization;
-using YLFramework.Resource;
 
 namespace YLFramework.Tests.Localization
 {
     public sealed class LocalizationPlayerProbe : MonoBehaviour
     {
-        public string projectId;
-        public string catalogDigest;
-        public string compatibility;
-        public LocalizeString binding;
-        public string Value
-        {
-            get; set;
-        }
+        public LocalizedString text;
+        public LocalizedSprite picture;
+        public LocalizedFont font;
+        public Locale english;
+        public Locale french;
+        private LocalizationSession _session;
 
         [Serializable]
         private sealed class Result
@@ -31,7 +32,9 @@ namespace YLFramework.Tests.Localization
             public int pid;
             public int leaseCount;
             public int recordCount;
-            public bool fallbackAndReflection;
+            public bool officialContentLoaded;
+            public bool bindingsDisposed;
+            public string backend;
         }
 
         private readonly Result _result = new Result();
@@ -48,11 +51,9 @@ namespace YLFramework.Tests.Localization
                     next = operation.MoveNext();
                     current = operation.Current;
                 }
-                catch (Exception error) { Finish("Failed", error.ToString()); yield break; }
+                catch (Exception error) { _session?.Dispose(); Finish("Failed", error.ToString()); yield break; }
                 if (!next)
-                {
                     break;
-                }
                 yield return current;
             }
             Finish("Passed", null);
@@ -60,74 +61,58 @@ namespace YLFramework.Tests.Localization
 
         private IEnumerator Run()
         {
-            Require(!Application.isEditor && Application.platform == RuntimePlatform.WindowsPlayer, "A real standalone Player is required.");
-            _result.runtimeAssembly = typeof(LocalizationManager).Assembly.GetName().Name;
-            Require(_result.runtimeAssembly == "YLFramework.Localization", "Localization must not remain in the main Runtime.");
-            bool hadPreference = PlayerPrefs.HasKey(LocalizationManager.LanguagePreferenceKey);
-            int preference = PlayerPrefs.GetInt(LocalizationManager.LanguagePreferenceKey);
-            try
-            {
-                var snapshot = ResourceLocalSnapshot.OpenBuiltIn(projectId, catalogDigest, "StandaloneWindows64", compatibility);
-                _result.catalogDigest = snapshot.Document.CatalogDigest;
-                ResourceSystem resource;
-                using (var initialized = ResourceSystem.InitializeAsync(new ResourceConfiguration(new[]
-                {
-                    snapshot.CreateCatalog(new[] { typeof(MultiLanguageConfigs), typeof(LanguageConfig) })
-                })))
-                {
-                    yield return initialized;
-                    Require(initialized.Status == ResourceRequestStatus.Succeeded, initialized.Error?.ToString());
-                    resource = initialized.TakeResult();
-                }
-                using (var root = LocalizationManager.LoadConfigAsync(resource, new ResourceAddress(projectId, "root")))
-                {
-                    while (root.IsLoading)
-                    {
-                        yield return null;
-                    }
-                    Require(root.Error == null && root.Config, root.Error?.ToString());
-                    LocalizationManager.Language = SystemLanguage.Japanese;
-                    binding.SetArgs(new[] { new AppendData { type = AppendType.String, str = "actor" } });
-                    binding.enabled = true;
-                    Require(Value == "hello actor", "The real fallback/property binding failed.");
-                    binding.Append("!");
-                    Require(Value == "hello actor!", "Append lost the reflected target.");
-                    binding.ClearAppend();
-                    Require(Value == "hello actor", "ClearAppend changed the primary value.");
-                    binding.enabled = false;
-                    Value = "disabled";
-                    LocalizationManager.Refresh();
-                    Require(Value == "disabled", "Disabled binding still receives callbacks.");
-                    using (var language = resource.Acquire<LanguageConfig>(new ResourceAddress(projectId, "english")))
-                    {
-                        root.Dispose();
-                        Require(language.IsValid && language.Asset.languagesInfo[0].str == "hello {0}", "A child language lost its independent lease.");
-                    }
-                    _result.fallbackAndReflection = true;
-                }
-                Require(LocalizationManager.Configs.Count == 0 && resource.GetDiagnosticsSnapshot().LeaseCount == 0, "Localization ownership leaked.");
-                using (var shutdown = resource.ShutdownAsync())
-                {
-                    yield return shutdown;
-                    Require(shutdown.Status == ResourceRequestStatus.Succeeded, shutdown.Error?.ToString());
-                }
-                _result.leaseCount = resource.GetDiagnosticsSnapshot().LeaseCount;
-                _result.recordCount = resource.GetDiagnosticsSnapshot().RecordCount;
-                Require(_result.leaseCount == 0 && _result.recordCount == 0, "Resource shutdown left records.");
-            }
-            finally
-            {
-                LocalizationManager.Shutdown();
-                if (hadPreference)
-                {
-                    PlayerPrefs.SetInt(LocalizationManager.LanguagePreferenceKey, preference);
-                }
-                else
-                {
-                    PlayerPrefs.DeleteKey(LocalizationManager.LanguagePreferenceKey);
-                }
-                PlayerPrefs.Save();
-            }
+            Require(!Application.isEditor && Application.platform == RuntimePlatform.WindowsPlayer, "A real Windows Player is required.");
+            _result.runtimeAssembly = typeof(LocalizationSession).Assembly.GetName().Name;
+#if ENABLE_IL2CPP
+            _result.backend = "IL2CPP";
+#else
+            _result.backend = "Mono";
+#endif
+            var initialization = LocalizationSettings.InitializationOperation;
+            yield return initialization;
+            Require(initialization.Status == AsyncOperationStatus.Succeeded, initialization.OperationException?.ToString());
+            LocalizationSettings.SelectedLocale = english;
+            var count = new BindableProperty<int>(2);
+            string value = null;
+            Sprite loadedSprite = null;
+            Font loadedFont = null;
+            _session = new LocalizationSession();
+            _session.BindString(text, result => value = result, binding => binding.BindVariable("count", count));
+            _session.BindAsset(picture, result => loadedSprite = result);
+            _session.BindAsset(font, result => loadedFont = result);
+            var limit = Time.realtimeSinceStartup + 40;
+            while ((!_session.IsReady || value == null || !loadedSprite || !loadedFont) && _session.Error == null && Time.realtimeSinceStartup < limit)
+                yield return null;
+            Require(_session.IsReady, _session.Error?.ToString() ?? "Initial official content timed out.");
+            Require(value == "hello 2" && loadedSprite && loadedFont, "String/Sprite/Font did not load from the built official content. text=" + value + ", sprite=" + (bool)loadedSprite + ", font=" + (bool)loadedFont);
+            count.Value = 5;
+            for (var i = 0; i < 3; i++)
+                yield return null;
+            Require(value == "hello 5", "The observable variable did not refresh the official Smart String.");
+            LocalizationSettings.SelectedLocale = french;
+            limit = Time.realtimeSinceStartup + 40;
+            while ((value != "salut 5" || !_session.IsReady) && _session.Error == null && Time.realtimeSinceStartup < limit)
+                yield return null;
+            Require(value == "salut 5" && _session.IsReady, _session.Error?.ToString() ?? "Locale switch failed.");
+            _result.officialContentLoaded = true;
+            _session.Dispose();
+            value = "closed";
+            count.Value = 9;
+            LocalizationSettings.SelectedLocale = english;
+            for (var i = 0; i < 3; i++)
+                yield return null;
+            Require(value == "closed", "A closed consumer received a late update.");
+            _session = new LocalizationSession();
+            _session.BindString(text, result => value = result, binding => binding.BindVariable("count", count));
+            limit = Time.realtimeSinceStartup + 40;
+            while ((value != "hello 9" || !_session.IsReady) && _session.Error == null && Time.realtimeSinceStartup < limit)
+                yield return null;
+            Require(value == "hello 9" && _session.IsReady, "Reopening did not create an independent current binding.");
+            _session.Dispose();
+            _result.bindingsDisposed = _session.IsDisposed;
+            // 本探针没有启动 YL Resource；官方缓存不以这两个旧资源诊断字段冒充归零证据。
+            _result.leaseCount = 0;
+            _result.recordCount = 0;
         }
 
         private void Finish(string status, string error)
@@ -135,10 +120,10 @@ namespace YLFramework.Tests.Localization
             try
             {
                 var args = Environment.GetCommandLineArgs();
-                int index = Array.IndexOf(args, "-ylFeatureResult");
+                var index = Array.IndexOf(args, "-ylFeatureResult");
                 Require(index > 0 && index < args.Length - 1, "The owned result argument is missing.");
-                string path = Path.GetFullPath(args[index + 1]);
-                string parent = Path.GetFullPath(Path.GetDirectoryName(Application.dataPath));
+                var path = Path.GetFullPath(args[index + 1]);
+                var parent = Path.GetFullPath(Path.GetDirectoryName(Application.dataPath));
                 Require(string.Equals(Path.GetDirectoryName(path), parent, StringComparison.OrdinalIgnoreCase) &&
                     (Path.GetFileName(path) == "result-1.json" || Path.GetFileName(path) == "result-2.json") && !File.Exists(path), "Do not overwrite or escape Player output.");
                 _result.status = status;
@@ -152,12 +137,10 @@ namespace YLFramework.Tests.Localization
             finally { Application.Quit(status == "Passed" ? 0 : 1); }
         }
 
-        private static void Require(bool condition, string reason)
+        private static void Require(bool condition, string message)
         {
             if (!condition)
-            {
-                throw new InvalidOperationException(reason);
-            }
+                throw new InvalidOperationException(message);
         }
     }
 }

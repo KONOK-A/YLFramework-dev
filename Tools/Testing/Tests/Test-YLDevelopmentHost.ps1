@@ -79,7 +79,7 @@ function Get-YLDevelopmentHostBoundary([string] $Repository) {
 }
 
 if ($MyInvocation.InvocationName -eq '.') { return }
-if (-not $IsWindows -or $PSVersionTable.PSVersion.Major -ne 7 -or $PSVersionTable.PSVersion.Minor -ne 6) { throw 'Windows PowerShell Core 7.6 is required.' }
+if (-not $IsWindows -or $PSVersionTable.PSVersion -lt [version]'7.6.0') { throw 'Windows PowerShell Core 7.6+ is required.' }
 $repository = Get-YLTestPath ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..')))
 $Unity = Get-YLTestPath -Path $Unity -ReadOnly
 $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String

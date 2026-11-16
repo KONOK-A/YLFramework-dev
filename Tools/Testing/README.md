@@ -14,6 +14,15 @@
 
 先执行与改动最相关的检查，再按影响扩大范围。包构建、LocalTarball/Registry 验证和发行准备集中见[打包工具说明](../Packaging/README.md)，这里维护测试执行与结果约定。
 
+安装入口还会独立编译 Windows x64 Player 脚本，记录产物哈希及实际 AssemblyRef，并递归审计实际引用到的预编译 DLL。缺失或同名异内容的依赖、Tests/Acceptance、MCP、Editor 与测试依赖均拒绝；不能借用同名 Editor IL 证明 Player 安全。Unity 安装目录内的编译引用是有路径、身份与哈希记录的平台边界，回执标记 `UnityPlatformReference`、`referencesInspected=false`，不伪装成已检查且为空的引用表。此脚本编译不代表 Player 构建或运行通过。
+
+Unity 提供给编译器的候选引用可能同时出现在 `assemblyReferences` 和 `compiledAssemblyReferences`，不等于 asmdef 明确声明或实际 IL 使用了测试依赖。产品及已批准 SDK 的声明检查覆盖 `references`、`precompiledReferences` 和解析后的 GUID 引用；显式测试依赖不因“当前未使用”而豁免。上游分类单独写入 `upstreamInfrastructure`：
+
+- 官方 `com.unity.test-framework` 的非 auto-referenced `UnityEngine.TestRunner` 只有在受信来源、源码归属正确，且实际 Player 脚本/预编译依赖闭包未消费它时，才可记为 `UnconsumedOfficialTestInfrastructure`。
+- HybridCLR 仍只接受现有批准的 9.0.3 来源、提交或 Registry 合同；`HybridCLR.Editor`/`HybridCLR.Runtime` 的候选测试引用须无显式声明且有分侧实际 IL 证据，才记为 `ApprovedSdkUnusedCompilerTestReferences`。Editor 证据必须对应本轮 `Library/ScriptAssemblies` 的真实文件，Player 使用独立脚本产物，未知第三方不享受此分类。
+
+上述分类不允许本方 Tests/Acceptance、MCP 或产品实际测试依赖进入消费者，不代表 Native/热更新 Player 或全部第三方 SDK 矩阵通过。
+
 ### 模块结项必需项
 
 框架模块开发和功能改动必须包含当前使用的受支持 Unity/实际目标平台的 **IL2CPP Player 构建及实际运行验收**。Editor、Mono Player 或 NoUnity CI 均不能替代；只构建成功、只声明后端或只生成报告也不算完成。缺少工具链、构建失败、Player 未运行或未普通退出时，IL2CPP 验收仍为未完成，不能宣布模块已全部结项。
@@ -22,7 +31,7 @@
 
 ## 前置
 
-- Windows 与 PowerShell `7.6.x`，使用 `pwsh -NoLogo -NoProfile -NonInteractive -File`。
+- Windows 与 PowerShell Core `7.6+`，使用 `pwsh -NoLogo -NoProfile -NonInteractive -File`。这是运行下限，不按小版本阻止自动更新；报告和发行回执仍记录实际完整 patch 版本，未实测的未来版本不因此自动视为已验收。
 - 原生测试显式提供实际 Editor `-Unity` 和独立工作根 `-WorkspaceRoot`；后者也可从当前进程的 `YL_TEST_WORKSPACE` 读取。
 - Editor 完整 ProductVersion 必须匹配 `TestSuites.json` 的 profile。当前标准定点为 `2022.3.62f3` 与 `6000.3.27f1`；地区版 profile 仅在明确选择时使用，不自动增加验证范围。
 - 普通离线编译使用锁定的 .NET SDK `9.0.312` 与 NUnit `3.14.0`；Save BCL 专项使用 SDK `10.0.102` / Runtime `10.0.2`，不自动下载、升级或替换工具链。

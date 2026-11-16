@@ -57,6 +57,16 @@ function Read-YLPackageCatalog {
             $versionDefines = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             foreach ($version in $assembly['versionDefines']) {
                 Assert-YLPackageFields $version @('name', 'expression', 'define')
+                $tmpCode = $package['id'] -ceq 'com.kano.ylframework.localization' -and
+                    $assembly['name'] -ceq 'YLFramework.Localization.TMP' -and
+                    $version['name'] -ceq 'com.unity.textmeshpro' -and $version['expression'] -ceq '1.0.0' -and
+                    $version['define'] -ceq 'YL_LOCALIZATION_TMP'
+                if ($tmpCode) {
+                    if ($defines.Contains($version['define']) -or -not $versionDefines.Add($version['define'])) {
+                        throw 'A native code condition cannot be used as a package catalog assembly gate.'
+                    }
+                    continue
+                }
                 if ($version['name'] -isnot [string] -or (-not $ids.Contains($version['name']) -and $version['name'] -cne 'com.code-philosophy.hybridclr') -or
                     $version['expression'] -isnot [string] -or $version['expression'] -cnotin @('0.0.0', '[9.0.3,9.0.4)') -or
                     $version['define'] -isnot [string] -or -not $defines.Contains($version['define']) -or -not $versionDefines.Add($version['define'])) {
@@ -287,6 +297,12 @@ function Assert-YLPackageDependencies {
     }
 }
 
+function Test-YLPackagePowerShellVersion([object] $Value) {
+    if ($Value -isnot [string] -or $Value -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { return $false }
+    $version = $null
+    return [version]::TryParse($Value, [ref]$version) -and $version -ge [version]'7.6.0' -and $version.ToString() -ceq $Value
+}
+
 function Read-YLRegistryRelease {
     param([string] $Path, [switch] $VerifyTarballs, [Collections.IDictionary] $Catalog = (Read-YLPackageCatalog),
         [string] $PackageRoot = ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../PackageSources'))))
@@ -296,7 +312,7 @@ function Read-YLRegistryRelease {
     if ($manifest['schemaVersion'] -isnot [long] -or $manifest['schemaVersion'] -ne 1 -or $manifest['sourceCommit'] -isnot [string] -or
         $manifest['sourceCommit'] -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid release manifest schema/source identity.' }
     $tools = $manifest['toolchain']; Assert-YLPackageFields $tools @('node', 'npm', 'powershell')
-    if ($tools['node'] -isnot [string] -or $tools['npm'] -isnot [string] -or $tools['node'] -cne '22.23.3' -or $tools['npm'] -cne '10.9.9' -or $tools['powershell'] -isnot [string] -or $tools['powershell'] -cnotmatch '^7\.6\.[0-9]+$') { throw 'Invalid release toolchain.' }
+    if ($tools['node'] -isnot [string] -or $tools['npm'] -isnot [string] -or $tools['node'] -cne '22.23.3' -or $tools['npm'] -cne '10.9.9' -or -not (Test-YLPackagePowerShellVersion $tools['powershell'])) { throw 'Invalid release toolchain.' }
     $producer = $manifest['producer']
     if ($producer -isnot [Collections.IDictionary] -or $producer['kind'] -isnot [string]) { throw 'Invalid release producer identity.' }
     if ($producer['kind'] -ceq 'Local') { Assert-YLPackageFields $producer @('kind') }
@@ -531,7 +547,8 @@ function Assert-YLRegistryResolvedGraph {
                 if ($observed -cnotmatch '^\d+\.\d+\.\d+$' -or $dependency.Value -cnotmatch '^\d+\.\d+\.\d+$') { throw 'Unsupported official package version constraint.' }
                 $resolved = [version]$observed; $minimum = [version]$dependency.Value
                 $ugui6 = $dependency.Key -ceq 'com.unity.ugui' -and $EditorVersion -ceq '6000.3.27f1' -and $observed -ceq '2.0.0' -and $dependency.Value -ceq '1.0.0'
-                if (-not $ugui6 -and ($resolved -lt $minimum -or $resolved.Major -ne $minimum.Major)) { throw 'Official resolved version violates the declaration/Editor baseline.' }
+                $addressables6 = $dependency.Key -ceq 'com.unity.addressables' -and $EditorVersion -ceq '6000.3.27f1' -and $observed -ceq '2.10.3' -and $dependency.Value -ceq '1.25.0'
+                if (-not $ugui6 -and -not $addressables6 -and ($resolved -lt $minimum -or $resolved.Major -ne $minimum.Major)) { throw 'Official resolved version violates the declaration/Editor baseline.' }
             } elseif ($observed -cne $dependency.Value) { throw 'Resolved package version violates its frozen dependency declaration.' }
             if (-not $depths.ContainsKey($dependency.Key) -or $depths[$dependency.Key] -gt $depths[$id] + 1) { $depths[$dependency.Key] = $depths[$id] + 1; $queue.Enqueue($dependency.Key) }
         }

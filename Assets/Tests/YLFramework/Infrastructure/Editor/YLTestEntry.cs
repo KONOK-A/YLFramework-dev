@@ -85,6 +85,10 @@ namespace YLFramework.Testing.Editor
                 {
                     symbol = "YL_TEST_HYBRIDCLR_SAMPLES";
                 }
+                else if (input.package == "com.kano.ylframework.localization" && input.name == "Basic UI")
+                {
+                    symbol = "YL_TEST_LOCALIZATION_SAMPLE";
+                }
                 else
                 {
                     throw new InvalidOperationException("Undeclared test sample input: " + input.package + "/" + input.name);
@@ -95,7 +99,8 @@ namespace YLFramework.Testing.Editor
                 {
                     throw new InvalidOperationException("The selected package does not expose its declared sample.");
                 }
-                if (!samples[0].isImported && !samples[0].Import())
+                // 这里是已核验的工具宿主；复用宿主也必须消费本轮包中的样例，不能沿用上次导入的代码。
+                if (!samples[0].Import(UnityEditor.PackageManager.UI.Sample.ImportOptions.OverridePreviousImports))
                 {
                     throw new InvalidOperationException("The selected sample was not imported.");
                 }

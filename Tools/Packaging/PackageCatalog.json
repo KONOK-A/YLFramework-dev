@@ -130,10 +130,16 @@
       "id": "com.kano.ylframework.localization",
       "assemblies": [
         { "name": "YLFramework.Localization", "path": "Runtime/YLFramework.Localization.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Localization.Sample", "path": "Samples~/BasicUI/Runtime/YLFramework.Localization.Sample.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Localization.Sample.Editor", "path": "Samples~/BasicUI/Editor/YLFramework.Localization.Sample.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Localization.DataSample", "path": "Samples~/DataAssetsExcel/Runtime/YLFramework.Localization.DataSample.asmdef", "player": true, "defineConstraints": ["YL_DATA_ASSETS_PACKAGE"], "versionDefines": [{"name":"com.kano.ylframework.data-assets","expression":"0.0.0","define":"YL_DATA_ASSETS_PACKAGE"}] },
+        { "name": "YLFramework.Localization.TMP", "path": "Runtime/Integrations/TMP/YLFramework.Localization.TMP.asmdef", "player": true, "defineConstraints": [], "versionDefines": [{ "name": "com.unity.textmeshpro", "expression": "1.0.0", "define": "YL_LOCALIZATION_TMP" }] },
+        { "name": "YLFramework.Localization.DataAssets.Editor", "path": "Editor/Integrations/DataAssets/YLFramework.Localization.DataAssets.Editor.asmdef", "player": false, "defineConstraints": ["YL_DATA_ASSETS_PACKAGE"], "versionDefines": [{ "name": "com.kano.ylframework.data-assets", "expression": "0.0.0", "define": "YL_DATA_ASSETS_PACKAGE" }] },
+        { "name": "YLFramework.Localization.Excel.Editor", "path": "Editor/Integrations/Excel/YLFramework.Localization.Excel.Editor.asmdef", "player": false, "defineConstraints": ["YL_DATA_ASSETS_PACKAGE", "YL_EXCEL_PACKAGE"], "versionDefines": [{ "name": "com.kano.ylframework.data-assets", "expression": "0.0.0", "define": "YL_DATA_ASSETS_PACKAGE" }, { "name": "com.kano.ylframework.excel", "expression": "0.0.0", "define": "YL_EXCEL_PACKAGE" }] },
         { "name": "YLFramework.Localization.Editor", "path": "Editor/YLFramework.Localization.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
       ],
-      "requiredFiles": ["Runtime/Systems/Localization/LocalizationManager.cs", "Runtime/Systems/Localization/LocalizeImage.cs", "Editor/Systems/Localization/LocalizationConfigsWindow.cs"],
-      "samples": []
+      "requiredFiles": ["Runtime/Systems/Localization/LocalizationSession.cs", "Runtime/Systems/Localization/LocalizationGroup.cs", "Runtime/Systems/Localization/LocalizeText.cs", "Runtime/Systems/Localization/LocalizeSprite.cs", "Editor/Systems/Localization/LocalizationReferenceAuthoring.cs", "Samples~/BasicUI/Editor/LocalizationSampleBuilder.cs"],
+      "samples": ["Samples~/BasicUI", "Samples~/DataAssetsExcel"]
     },
     {
       "id": "com.kano.ylframework.hybridclr",

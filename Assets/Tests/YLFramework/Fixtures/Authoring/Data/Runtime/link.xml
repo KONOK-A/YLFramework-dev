@@ -1,8 +1,0 @@
-<linker>
-  <assembly fullname="Assembly-CSharp">
-    <type fullname="YLFramework.Tests.DataBatch.DataPlayerProbe/Model" preserve="all" />
-    <type fullname="YLFramework.Tests.DataBatch.DataPlayerProbe/Report" preserve="all" />
-    <type fullname="YLFramework.Tests.DataBatch.DataPlayerFixture" preserve="all" />
-    <type fullname="YLFramework.Tests.DataBatch.DataPlayerTextSink" preserve="all" />
-  </assembly>
-</linker>

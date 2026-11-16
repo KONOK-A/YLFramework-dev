@@ -15,6 +15,7 @@ $cache = New-YLTestDirectory -Workspace $workspace -Kind Cache -Key Entry
 $leases = @($hostRecord, $result, $cache | ForEach-Object { Lock-YLTestDirectory -Workspace $workspace -Path $_.path })
 $checks = 0
 $passed = $false
+$sdkLoadContext = $null
 function Check([bool] $Condition, [string] $Reason) { if (-not $Condition) { throw $Reason }; $script:checks++ }
 function Save([string] $Path, [object] $Value) {
     $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Path))
@@ -29,6 +30,7 @@ function Call([string] $Name, [Newtonsoft.Json.Linq.JObject] $Request) {
 function Boundary([string] $Name, [object[]] $Values) {
     $method = [YLFramework.Testing.IntegrationEntry].GetMethod($Name, [Reflection.BindingFlags]'NonPublic,Static')
     if ($null -eq $method) { throw "Missing exercised integration boundary: $Name" }
+    while ($Values.Count -lt $method.GetParameters().Length -and $method.GetParameters()[$Values.Count].IsOptional) { $Values += $null }
     try { return ,$method.Invoke($null, $Values) } catch { throw $_.Exception.GetBaseException() }
 }
 function Reject([scriptblock] $Action, [string] $Reason) {
@@ -47,6 +49,11 @@ function FixtureGraph([string] $Side) {
         $assembly.sourceFiles = @($row.sources | ForEach-Object { "Packages/$($row.package)/$_" })
         $assembly
     }
+}
+function New-PlayerEvidence {
+    $evidence=[Collections.Generic.Dictionary[string,string[]]]::new([StringComparer]::Ordinal)
+    foreach($name in @('UnityEngine.CoreModule','netstandard','mscorlib','System.Private.CoreLib')){$evidence[$name]=@()}
+    return $evidence
 }
 try {
     # Exercise the real inline SDK gate without running Execute or changing production visibility.
@@ -305,6 +312,174 @@ namespace YLFramework.Testing
         $null = Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly)), [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)); $checks++
     }
     $entryAssembly.sourceFiles = @($entryRelative)
+    $officialRoot = Join-Path $hostRecord.path 'Library/PackageCache/com.unity.localization@fixture'
+    $officialSource = Join-Path $officialRoot 'Editor/OfficialEditor.cs'
+    $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($officialSource))
+    [IO.File]::WriteAllText($officialSource, '// fixture for the official SDK Editor assembly source ownership')
+    $officialPackage = [UnityEditor.PackageManager.PackageInfo]::new()
+    $officialPackage.name='com.unity.localization';$officialPackage.version='1.5.14'
+    $officialPackage.source=[UnityEditor.PackageManager.PackageSource]::Registry
+    $officialPackage.resolvedPath=$officialRoot
+    $officialPackage.registry=[UnityEditor.PackageManager.RegistryInfo]::new();$officialPackage.registry.url='https://packages.unity.com'
+    $officialAssembly = [UnityEditor.Compilation.Assembly]::new()
+    $officialAssembly.name='Unity.Localization.Editor'
+    $officialAssembly.sourceFiles=@('Packages/com.unity.localization/Editor/OfficialEditor.cs')
+    $officialAssembly.compiledAssemblyReferences=@('UnityEngine.TestRunner.dll','UnityEditor.TestRunner.dll','nunit.framework.dll')
+    try {
+        [UnityEditor.PackageManager.PackageInfo]::Registered = @($fileRegistered + $officialPackage)
+        $officialEditor = [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly,$officialAssembly))
+        $ordinaryPlayer = [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)
+        $null = Boundary ValidateGraph @((Request), $officialEditor, $ordinaryPlayer); $checks++
+        $exampleSource=Join-Path $officialRoot 'Tests/Editor/DocExample.cs'
+        $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($exampleSource))
+        [IO.File]::WriteAllText($exampleSource,'// actual upstream Editor test/example assembly is not an owned framework payload')
+        $originalName=$officialAssembly.name;$originalSources=$officialAssembly.sourceFiles
+        try {
+            $officialAssembly.name='Unity.Localization.DocExampleCode.Editor.Tests'
+            $officialAssembly.sourceFiles=@('Packages/com.unity.localization/Tests/Editor/DocExample.cs')
+            $null=Boundary ValidateGraph @((Request),$officialEditor,$ordinaryPlayer);$checks++
+        } finally {$officialAssembly.name=$originalName;$officialAssembly.sourceFiles=$originalSources}
+        $bridgePackage=[UnityEditor.PackageManager.PackageInfo]::new()
+        $bridgePackage.name='com.unity.addressables';$bridgePackage.version='2.10.3'
+        $bridgePackage.source=[UnityEditor.PackageManager.PackageSource]::Registry
+        $bridgePackage.registry=[UnityEditor.PackageManager.RegistryInfo]::new();$bridgePackage.registry.url='https://packages.unity.com'
+        $bridgePackage.resolvedPath=Join-Path $hostRecord.path 'Library/PackageCache/com.unity.addressables@fixture'
+        $bridge=Join-Path $bridgePackage.resolvedPath 'Runtime/Bridge.cs'
+        $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($bridge));[IO.File]::WriteAllText($bridge,'// upstream cross-package asmref bridge')
+        try {
+            [UnityEditor.PackageManager.PackageInfo]::Registered=@($fileRegistered+$officialPackage+$bridgePackage)
+            $officialAssembly.sourceFiles=@($originalSources+'Packages/com.unity.addressables/Runtime/Bridge.cs')
+            $null=Boundary ValidateGraph @((Request),$officialEditor,$ordinaryPlayer);$checks++
+            $bridgePackage.source=[UnityEditor.PackageManager.PackageSource]::Local
+            Reject {Boundary ValidateGraph @((Request),$officialEditor,$ordinaryPlayer)} 'Every source in an upstream asmref bridge needs official provenance'
+        } finally {
+            $officialAssembly.sourceFiles=$originalSources
+            [UnityEditor.PackageManager.PackageInfo]::Registered=@($fileRegistered+$officialPackage)
+        }
+        $runtimeOfficialSource=Join-Path $officialRoot 'Runtime/OfficialRuntime.cs';$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($runtimeOfficialSource));[IO.File]::WriteAllText($runtimeOfficialSource,'// NoUnity Runtime fixture, distinct from its loaded Editor IL')
+        $officialAssembly.name='Unity.Localization.Runtime';$officialAssembly.sourceFiles=@('Packages/com.unity.localization/Runtime/OfficialRuntime.cs')
+        $sdkLoaded=[Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly([Reflection.AssemblyName]::new($officialAssembly.name),[Reflection.Emit.AssemblyBuilderAccess]::Run)
+        $null=$sdkLoaded.DefineDynamicModule('CleanEditorSdk').DefineType('CleanEditorSdkType',[Reflection.TypeAttributes]::Public).CreateType()
+        Reject {Boundary ValidateGraph @((Request),$officialEditor,[UnityEditor.Compilation.Assembly[]]@($ordinaryPlayer+$officialAssembly))} 'Clean loaded Editor IL must not excuse Player test references'
+        $playerEvidence=New-PlayerEvidence
+        foreach($row in $ordinaryPlayer){$playerEvidence[$row.name]=@('UnityEngine.CoreModule')}
+        $playerEvidence[$officialAssembly.name]=@('UnityEngine.CoreModule')
+        $null=Boundary ValidateGraph @((Request),$officialEditor,[UnityEditor.Compilation.Assembly[]]@($ordinaryPlayer+$officialAssembly),$playerEvidence);$checks++
+        $playerEvidence[$officialAssembly.name]=@('nunit.framework')
+        Reject {Boundary ValidateGraph @((Request),$officialEditor,[UnityEditor.Compilation.Assembly[]]@($ordinaryPlayer+$officialAssembly),$playerEvidence)} 'Actual Player IL test dependencies remain forbidden'
+        $playerEvidence.Clear()
+        Reject {Boundary ValidateGraph @((Request),$officialEditor,[UnityEditor.Compilation.Assembly[]]@($ordinaryPlayer+$officialAssembly),$playerEvidence)} 'Player compilation evidence must include the exact assembly'
+        $officialAssembly.name=$originalName;$officialAssembly.sourceFiles=$originalSources
+        foreach ($fault in @('local-impersonation','untrusted-registry','assets-source','player','mcp-reference','product-reference')) {
+            $source=$officialAssembly.sourceFiles;$references=$officialAssembly.compiledAssemblyReferences
+            $kind=$officialPackage.source;$registry=$officialPackage.registry.url
+            $product=@($officialEditor | Where-Object name -CEQ 'YLFramework.Excel.Editor')[0]
+            $productReferences=$product.compiledAssemblyReferences
+            try {
+                switch ($fault) {
+                    'local-impersonation' {$officialPackage.source=[UnityEditor.PackageManager.PackageSource]::Local}
+                    'untrusted-registry' {$officialPackage.registry.url='https://unapproved.invalid'}
+                    'assets-source' {$officialAssembly.sourceFiles=@($entryRelative)}
+                    'mcp-reference' {$officialAssembly.compiledAssemblyReferences=@('ReflectorNet.dll')}
+                    'product-reference' {$product.compiledAssemblyReferences=@('nunit.framework.dll')}
+                }
+                [UnityEditor.Compilation.Assembly[]]$candidatePlayer=if($fault -ceq 'player'){@($ordinaryPlayer+$officialAssembly)}else{$ordinaryPlayer}
+                Reject {Boundary ValidateGraph @((Request),$officialEditor,$candidatePlayer)} "Official Editor provenance boundary $fault"
+            } finally {
+                $officialAssembly.sourceFiles=$source;$officialAssembly.compiledAssemblyReferences=$references
+                $officialPackage.source=$kind;$officialPackage.registry.url=$registry;$product.compiledAssemblyReferences=$productReferences
+            }
+        }
+    } finally {[UnityEditor.PackageManager.PackageInfo]::Registered=$fileRegistered}
+    $utf=[UnityEditor.PackageManager.PackageInfo]::new();$utf.name='com.unity.test-framework';$utf.version='1.1.33'
+    $utf.source=[UnityEditor.PackageManager.PackageSource]::Registry;$utf.registry=[UnityEditor.PackageManager.RegistryInfo]::new();$utf.registry.url='https://packages.unity.com'
+    $utf.resolvedPath=Join-Path $hostRecord.path 'Library/PackageCache/com.unity.test-framework@fixture'
+    $utfSource=Join-Path $utf.resolvedPath 'Runtime/Api.cs';$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($utfSource));[IO.File]::WriteAllText($utfSource,'// NoUnity upstream infrastructure fixture')
+    $utfDefinition=Join-Path $utf.resolvedPath 'Runtime/UnityEngine.TestRunner.asmdef'
+    Save $utfDefinition @{name='UnityEngine.TestRunner';autoReferenced=$false;overrideReferences=$true;precompiledReferences=@('nunit.framework.dll')}
+    $utfGuid='GUID:'+('e'*32);[UnityEditor.Compilation.CompilationPipeline]::DefinitionPaths[$utfGuid]=$utfDefinition
+    $utfAssembly=[UnityEditor.Compilation.Assembly]::new();$utfAssembly.name='UnityEngine.TestRunner';$utfAssembly.sourceFiles=@('Packages/com.unity.test-framework/Runtime/Api.cs');$utfAssembly.compiledAssemblyReferences=@('nunit.framework.dll')
+    $utfEditor=[UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor)+@($entryAssembly,$utfAssembly))
+    $utfPlayer=[UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Player)+@($utfAssembly))
+    $utfEvidence=New-PlayerEvidence
+    foreach($row in $utfPlayer){$utfEvidence[$row.name]=@('UnityEngine.CoreModule')}
+    $utfEvidence['UnityEngine.TestRunner']=@('netstandard','nunit.framework','UnityEngine.CoreModule')
+    try {
+        [UnityEditor.PackageManager.PackageInfo]::Registered=@($fileRegistered+$utf)
+        $classified=Boundary ValidateGraph @((Request),$utfEditor,$utfPlayer,$utfEvidence)
+        Check (@($classified | Where-Object {[string]$_['name'] -ceq 'UnityEngine.TestRunner' -and [string]$_['classification'] -ceq 'UnconsumedOfficialTestInfrastructure'}).Count -gt 0) 'Official runtime test infrastructure must be reported separately, not silently removed'
+        $testMetadata=[Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly([Reflection.AssemblyName]::new('UnityEngine.TestRunner'),[Reflection.Emit.AssemblyBuilderAccess]::Run)
+        $testApi=$testMetadata.DefineDynamicModule('UtfMetadata').DefineType('UtfExportedApi',[Reflection.TypeAttributes]::Public).CreateType()
+        $helperMetadata=[Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly([Reflection.AssemblyName]::new('IndirectRuntimeHelper'),[Reflection.Emit.AssemblyBuilderAccess]::Run)
+        $helperApi=$helperMetadata.DefineDynamicModule('HelperMetadata').DefineType('IndirectRuntimeApi',[Reflection.TypeAttributes]::Public)
+        $null=$helperApi.DefineField('Tests',$testApi,[Reflection.FieldAttributes]::Public);$null=$helperApi.CreateType()
+        $utfEvidence['IndirectRuntimeHelper']=@($helperMetadata.GetReferencedAssemblies() | ForEach-Object Name)
+        Check ($utfEvidence['IndirectRuntimeHelper'] -ccontains 'UnityEngine.TestRunner') 'The indirect regression must contain a real CLR AssemblyRef to test infrastructure.'
+        $consumer=@($utfPlayer | Where-Object {$_.name -cnotin @('YLFramework.Runtime','UnityEngine.TestRunner')})[0]
+        $utfEvidence[$consumer.name]=@('IndirectRuntimeHelper')
+        Reject {Boundary ValidateGraph @((Request),$utfEditor,$utfPlayer,$utfEvidence)} 'An actual indirect precompiled dependency must prevent an Unconsumed classification'
+        $utfEvidence['IndirectRuntimeHelper']=@('UnityEngine.CoreModule');$null=Boundary ValidateGraph @((Request),$utfEditor,$utfPlayer,$utfEvidence);$checks++
+        $null=$utfEvidence.Remove('IndirectRuntimeHelper')
+        Reject {Boundary ValidateGraph @((Request),$utfEditor,$utfPlayer,$utfEvidence)} 'A missing transitive Player artifact must fail closed'
+        $utfEvidence[$consumer.name]=@('UnityEngine.CoreModule')
+        foreach($fault in @('product-reference','untrusted-source','untrusted-registry','auto-referenced','borrowed-source','missing-player-evidence')) {
+            $proof=$utfEvidence
+            try {
+                switch($fault){
+                    product-reference {$utfEvidence[$utfPlayer[0].name]=@('UnityEngine.TestRunner')}
+                    untrusted-source {$utf.source=[UnityEditor.PackageManager.PackageSource]::Local}
+                    untrusted-registry {$utf.registry.url='https://untrusted.invalid'}
+                    auto-referenced {Save $utfDefinition @{name='UnityEngine.TestRunner';autoReferenced=$true}}
+                    borrowed-source {$utfAssembly.sourceFiles=@('Packages/com.unity.test-framework/../untrusted/Runtime/Api.cs')}
+                    missing-player-evidence {$proof=$null}
+                }
+                Reject {Boundary ValidateGraph @((Request),$utfEditor,$utfPlayer,$proof)} "Runtime infrastructure classification $fault"
+            } finally {
+                $utfEvidence[$utfPlayer[0].name]=@('UnityEngine.CoreModule');$utf.source=[UnityEditor.PackageManager.PackageSource]::Registry;$utf.registry.url='https://packages.unity.com'
+                $utfAssembly.sourceFiles=@('Packages/com.unity.test-framework/Runtime/Api.cs')
+                Save $utfDefinition @{name='UnityEngine.TestRunner';autoReferenced=$false;overrideReferences=$true;precompiledReferences=@('nunit.framework.dll')}
+            }
+        }
+    } finally {[UnityEditor.PackageManager.PackageInfo]::Registered=$fileRegistered}
+    # Unity 会向 Editor 编译器提供 UTF 引用；只有声明依赖或发出的 IL 真正引用它们才算产品污染。
+    $loadedName = [Reflection.AssemblyName]::new('Assembly-CSharp-Editor')
+    $loaded = [Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly($loadedName, [Reflection.Emit.AssemblyBuilderAccess]::Run)
+    $module = $loaded.DefineDynamicModule('FixtureEditor')
+    $null = $module.DefineType('FixtureEditorNoTestUse', [Reflection.TypeAttributes]::Public).CreateType()
+    $entryAssembly.compiledAssemblyReferences=@('UnityEngine.TestRunner.dll','UnityEditor.TestRunner.dll','nunit.framework.dll')
+    $entryAssembly.assemblyReferences=@($utfAssembly)
+    $null = Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor)+@($entryAssembly)),
+        [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player));$checks++
+    Reject {Boundary ValidateGraph @((Request),[UnityEditor.Compilation.Assembly[]]@(FixtureGraph Editor),
+        [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Player)+@($entryAssembly)))} 'Compiler-injected Editor references cannot enter the Player graph'
+    $entryAssembly.compiledAssemblyReferences=@()
+    $entryAssembly.assemblyReferences=@()
+    $ownEditorPlan=@(Get-YLPackageAssemblyPlan -Catalog $fixtureCatalog -Packages $valid.packages -Profile $valid.integration)
+    $foreignTests=[Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly([Reflection.AssemblyName]::new('Unity.Addressables.DocExampleCode.Editor.Tests'),[Reflection.Emit.AssemblyBuilderAccess]::Run)
+    $foreignType=$foreignTests.DefineDynamicModule('UpstreamTests').DefineType('UpstreamTestApi',[Reflection.TypeAttributes]::Public).CreateType()
+    $usingTests=[Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly([Reflection.AssemblyName]::new('YLFramework.Excel.Editor'),[Reflection.Emit.AssemblyBuilderAccess]::Run)
+    $usingType=$usingTests.DefineDynamicModule('OwnEditor').DefineType('OwnEditorUsingTests',[Reflection.TypeAttributes]::Public)
+    $null=$usingType.DefineField('Api',$foreignType,[Reflection.FieldAttributes]::Public);$null=$usingType.CreateType()
+    Check (@($usingTests.GetReferencedAssemblies() | Where-Object Name -CEQ 'Unity.Addressables.DocExampleCode.Editor.Tests').Count -eq 1) 'The regression must contain a real emitted upstream Tests dependency.'
+    $editorGraph=[UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor)+@($entryAssembly))
+    $own=@($editorGraph | Where-Object name -CEQ 'YLFramework.Excel.Editor')[0]
+    $own.compiledAssemblyReferences=@('nunit.framework.dll','Unity.Addressables.DocExampleCode.Editor.Tests.dll')
+    Reject {Boundary ValidateGraph @((Request),$editorGraph,[UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player))} 'A real product dependency on official upstream Tests is still forbidden'
+    $cleanOwn=[Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly([Reflection.AssemblyName]::new('YLFramework.DataAssets.Editor'),[Reflection.Emit.AssemblyBuilderAccess]::Run)
+    $null=$cleanOwn.DefineDynamicModule('OwnCleanEditor').DefineType('OwnCleanEditorType',[Reflection.TypeAttributes]::Public).CreateType()
+    $cleanPlan=@($ownEditorPlan | Where-Object name -CEQ 'YLFramework.DataAssets.Editor')[0]
+    $cleanPackage=@($fileRegistered | Where-Object name -CEQ $cleanPlan.package)[0]
+    $definitionPath=Join-Path $cleanPackage.resolvedPath $cleanPlan.path
+    $originalDefinition=[IO.File]::ReadAllBytes($definitionPath)
+    try {
+        $definition=[Text.Encoding]::UTF8.GetString($originalDefinition) | ConvertFrom-Json -AsHashtable
+        $definition.overrideReferences=$true;$definition.precompiledReferences=@('nunit.framework.dll');Save $definitionPath $definition
+        $editorGraph=[UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor)+@($entryAssembly))
+        @($editorGraph | Where-Object name -CEQ 'YLFramework.DataAssets.Editor')[0].compiledAssemblyReferences=@('nunit.framework.dll')
+        Reject {Boundary ValidateGraph @((Request),$editorGraph,[UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player))} 'Explicit NUnit DLL metadata is not a compiler-injected reference'
+        $definition.precompiledReferences=@();$definition.references=@($utfGuid);Save $definitionPath $definition
+        Reject {Boundary ValidateGraph @((Request),$editorGraph,[UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player))} 'An explicit test asmdef GUID is not a compiler-injected reference'
+    } finally {[IO.File]::WriteAllBytes($definitionPath,$originalDefinition)}
     $path = Join-Path $fileRegistered[0].resolvedPath 'package.json'; $json = [IO.File]::ReadAllText($path) | ConvertFrom-Json -AsHashtable; $json['_fingerprint'] = $sha; Save $path $json
     Reject { Call CapturePackages (Request) } 'File must not accept Git-only package-manager fingerprint normalization'
     [IO.Directory]::Delete((Join-Path $hostRecord.path 'PackageSources'), $true)
@@ -610,6 +785,66 @@ namespace YLFramework.Testing
         $row = Call CaptureRegistrySdk (Request)
         Check ([string]$row['source'] -ceq 'Registry' -and [string]$row['registryUrl'] -ceq 'https://package.openupm.com' -and
             [string]$row['repositoryRevision'] -ceq $sdkHash -and $row['revision'].Type -eq [Newtonsoft.Json.Linq.JTokenType]::Null -and -not [bool]$row['isDirectDependency']) 'HybridCLR Registry metadata was treated as actual Git checkout evidence.'
+        $sdkCode='public class ApprovedHybridEditorFixture {}'
+        $sdkSource=Join-Path $sdk.resolvedPath 'Editor/FixtureApi.cs';$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($sdkSource));[IO.File]::WriteAllText($sdkSource,$sdkCode)
+        $sdkDefinition=Join-Path $sdk.resolvedPath 'Editor/HybridCLR.Editor.asmdef';Save $sdkDefinition @{name='HybridCLR.Editor';references=@();precompiledReferences=@()}
+        if($null -eq $sdkLoadContext){$sdkLoadContext=[Runtime.Loader.AssemblyLoadContext]::new('ApprovedSdkEditorFixture',$true)}
+        foreach($sdkName in @('HybridCLR.Editor','HybridCLR.Runtime')){
+            $fixtureDll=Join-Path $hostRecord.path "Library/ScriptAssemblies/$sdkName.dll";$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($fixtureDll))
+            if(-not [IO.File]::Exists($fixtureDll)){
+                $syntax=[Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree]::ParseText($sdkCode)
+                $reference=[Microsoft.CodeAnalysis.MetadataReference]::CreateFromFile([object].Assembly.Location)
+                $options=[Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions]::new([Microsoft.CodeAnalysis.OutputKind]::DynamicallyLinkedLibrary)
+                $compiler=[Microsoft.CodeAnalysis.CSharp.CSharpCompilation]::Create($sdkName,[Microsoft.CodeAnalysis.SyntaxTree[]]@($syntax),[Microsoft.CodeAnalysis.MetadataReference[]]@($reference),$options)
+                $stream=[IO.File]::Create($fixtureDll);try{$emitted=$compiler.Emit($stream)}finally{$stream.Dispose()}
+                Check $emitted.Success ('The exact-name SDK fixture failed compilation: '+($emitted.Diagnostics -join '; '))
+            }
+            $loadedSdk=$sdkLoadContext.LoadFromAssemblyPath($fixtureDll)
+            Check ($loadedSdk.GetName().Name -ceq $sdkName -and $loadedSdk.GetReferencedAssemblies().Name -cnotcontains 'nunit.framework') 'The SDK regression must use real clean Editor IL with the exact assembly identity.'
+        }
+        $sdkDll=Join-Path $hostRecord.path 'Library/ScriptAssemblies/HybridCLR.Editor.dll'
+        $sdkGraph=[UnityEditor.Compilation.Assembly]::new();$sdkGraph.name='HybridCLR.Editor';$sdkGraph.sourceFiles=@('Packages/com.code-philosophy.hybridclr/Editor/FixtureApi.cs');$sdkGraph.compiledAssemblyReferences=@('nunit.framework.dll');$sdkGraph.outputPath=$sdkDll
+        $sdkEditor=[UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor)+@($entryAssembly,$sdkGraph));$sdkPlayer=[UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)
+        $classified=Boundary ValidateGraph @((Request),$sdkEditor,$sdkPlayer)
+        Check (@($classified | Where-Object {[string]$_['name'] -ceq 'HybridCLR.Editor' -and [string]$_['classification'] -ceq 'ApprovedSdkUnusedCompilerTestReferences'}).Count -eq 1) 'An approved SDK needs an explicit source/version/IL classification, not an unrestricted third-party exemption.'
+        $runtimeSource=Join-Path $sdk.resolvedPath 'Runtime/FixtureApi.cs';$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($runtimeSource));[IO.File]::WriteAllText($runtimeSource,$sdkCode)
+        $runtimeDefinition=Join-Path $sdk.resolvedPath 'Runtime/HybridCLR.Runtime.asmdef';Save $runtimeDefinition @{name='HybridCLR.Runtime';references=@();precompiledReferences=@()}
+        $runtimeEditor=[UnityEditor.Compilation.Assembly]::new();$runtimePlayer=[UnityEditor.Compilation.Assembly]::new()
+        foreach($graph in @($runtimeEditor,$runtimePlayer)){$graph.name='HybridCLR.Runtime';$graph.sourceFiles=@('Packages/com.code-philosophy.hybridclr/Runtime/FixtureApi.cs');$graph.compiledAssemblyReferences=@('nunit.framework.dll');$graph.outputPath=Join-Path $hostRecord.path 'Library/ScriptAssemblies/HybridCLR.Runtime.dll'}
+        $runtimeEditorGraph=[UnityEditor.Compilation.Assembly[]]@($sdkEditor+$runtimeEditor);$runtimePlayerGraph=[UnityEditor.Compilation.Assembly[]]@($sdkPlayer+$runtimePlayer)
+        $runtimeEvidence=New-PlayerEvidence
+        foreach($graph in $runtimePlayerGraph){$runtimeEvidence[$graph.name]=@('UnityEngine.CoreModule')}
+        $classified=Boundary ValidateGraph @((Request),$runtimeEditorGraph,$runtimePlayerGraph,$runtimeEvidence)
+        Check (@($classified | Where-Object {[string]$_['name'] -ceq 'HybridCLR.Runtime' -and [string]$_['side'] -ceq 'Player'}).Count -eq 1) 'The approved Runtime SDK needs distinct actual Player evidence.'
+        $runtimePlayer.compiledAssemblyReferences=@()
+        $classified=Boundary ValidateGraph @((Request),$runtimeEditorGraph,$runtimePlayerGraph,$runtimeEvidence)
+        Check (@($classified | Where-Object {[string]$_['name'] -ceq 'HybridCLR.Runtime' -and [string]$_['side'] -ceq 'Player'}).Count -eq 0) 'No restricted candidates means no compiler-test-reference classification.'
+        $runtimePlayer.compiledAssemblyReferences=@('nunit.framework.dll')
+        $runtimeEvidence['HybridCLR.Runtime']=@('nunit.framework')
+        Reject {Boundary ValidateGraph @((Request),$runtimeEditorGraph,$runtimePlayerGraph,$runtimeEvidence)} 'Clean SDK Editor IL must not hide a real Player NUnit dependency'
+        $runtimeEvidence['HybridCLR.Runtime']=@('UnityEngine.CoreModule')
+        $runtimePlayer.assemblyReferences=@($utfAssembly)
+        $null=Boundary ValidateGraph @((Request),$runtimeEditorGraph,$runtimePlayerGraph,$runtimeEvidence);$checks++
+        Save $runtimeDefinition @{name='HybridCLR.Runtime';references=@($utfGuid);precompiledReferences=@()}
+        Reject {Boundary ValidateGraph @((Request),$runtimeEditorGraph,$runtimePlayerGraph,$runtimeEvidence)} 'A declared test asmdef GUID is not compiler-injected, even when Player IL is clean'
+        Save $runtimeDefinition @{name='HybridCLR.Runtime';references=@();precompiledReferences=@()}
+        $runtimePlayer.assemblyReferences=@()
+        foreach($fault in @('unapproved-version','unapproved-registry','borrowed-source','loaded-output','explicit-test-reference','unexpected-assembly')){
+            try{
+                switch($fault){
+                    unapproved-version {$sdk.version='9.0.4'}
+                    unapproved-registry {$sdk.registry.url='https://untrusted.invalid'}
+                    borrowed-source {$sdkGraph.sourceFiles=@($entryRelative)}
+                    loaded-output {$sdkGraph.outputPath=Join-Path $hostRecord.path 'Library/ScriptAssemblies/Other.dll'}
+                    explicit-test-reference {Save $sdkDefinition @{name='HybridCLR.Editor';references=@('nunit.framework');precompiledReferences=@()}}
+                    unexpected-assembly {$sdkGraph.name='UnknownSdk.Editor'}
+                }
+                Reject {Boundary ValidateGraph @((Request),$sdkEditor,$sdkPlayer)} "SDK classification $fault"
+            }finally{
+                $sdk.version='9.0.3';$sdk.registry.url='https://package.openupm.com';$sdkGraph.name='HybridCLR.Editor';$sdkGraph.outputPath=$sdkDll
+                $sdkGraph.sourceFiles=@('Packages/com.code-philosophy.hybridclr/Editor/FixtureApi.cs');Save $sdkDefinition @{name='HybridCLR.Editor';references=@();precompiledReferences=@()}
+            }
+        }
         $baselineLock = [IO.File]::ReadAllText($lockPath)
         foreach ($fault in @('sdk-source', 'sdk-version', 'sdk-url', 'sdk-id', 'sdk-direct', 'sdk-lock-source', 'sdk-lock-url', 'sdk-lock-version', 'sdk-lock-depth', 'sdk-lock-deps', 'sdk-manifest-direct', 'sdk-request-revision')) {
             $r = Request
@@ -763,6 +998,10 @@ namespace YLFramework.Testing
     "PASS: $checks IntegrationEntry NoUnity typed ownership/API/lock/content/graph/SDK guards. NOT Unity compilation or Registry acceptance."
     $passed = $true
 } finally {
+    if($null -ne $sdkLoadContext){
+        $loadedSdk=$null;$sdkLoadContext.Unload();$sdkLoadContext=$null
+        [GC]::Collect();[GC]::WaitForPendingFinalizers();[GC]::Collect();[GC]::WaitForPendingFinalizers()
+    }
     foreach ($lease in $leases) { $lease.Dispose() }
     if ($passed -and [IO.Directory]::Exists($sandbox)) { $null = @(Get-YLTestTreeFiles $sandbox); [IO.Directory]::Delete($sandbox, $true) }
     elseif ([IO.Directory]::Exists($sandbox)) { "Artifacts retained: $sandbox" }

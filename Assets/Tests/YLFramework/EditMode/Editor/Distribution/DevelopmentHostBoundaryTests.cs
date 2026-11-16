@@ -34,6 +34,7 @@ namespace YLFramework.Tests
             "com.unity.2d.tilemap.extras", "com.unity.2d.tooling", "com.unity.burst", "com.unity.cinemachine", "com.unity.collections",
             "com.unity.ext.nunit", "com.unity.feature.2d", "com.unity.ide.rider", "com.unity.ide.visualstudio",
             "com.unity.inputsystem", "com.unity.mathematics", "com.unity.nuget.newtonsoft-json", "com.unity.probuilder",
+            "com.unity.localization", "com.unity.addressables", "com.unity.scriptablebuildpipeline",
             "com.unity.multiplayer.center", "com.unity.nuget.mono-cecil", "com.unity.test-framework.performance",
             "com.unity.render-pipelines.core", "com.unity.render-pipelines.universal", "com.unity.render-pipelines.universal-config",
             "com.unity.searcher", "com.unity.settings-manager", "com.unity.shadergraph", "com.unity.splines",

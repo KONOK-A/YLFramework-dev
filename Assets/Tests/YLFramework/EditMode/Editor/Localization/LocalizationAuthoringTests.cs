@@ -1,160 +1,82 @@
 using System;
-using System.IO;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.Compilation;
+using UnityEditor.Localization;
 using UnityEngine;
+using UnityEngine.Localization;
 using YLFramework.Editor.Localization;
 using YLFramework.Localization;
+using UnityEngine.UI;
 
 namespace YLFramework.Tests.Extensions.Data
 {
     public class LocalizationAuthoringTests
     {
-        private string _path;
-        private string _languagesPath;
-        private MultiLanguageConfigs _root;
-        private LanguageConfig _english;
-        private LanguageConfig _chinese;
-        private string[] _absentParents = Array.Empty<string>();
-
-        [Test]
-        public void LocalizationOwnsItsRuntimeAndEditorWithoutReverseMainOrDataAssetsDependencies()
+        [TestCase("Packages/com.kano.ylframework.localization/Runtime/Systems/Localization/LocalizationSession.cs", "YLFramework.Localization", "ce712fe79d36d83449db36826f4a2f34")]
+        [TestCase("Packages/com.kano.ylframework.localization/Runtime/Systems/Localization/LocalizeText.cs", "YLFramework.Localization", "cd445c14d6aa82c49a8d22b7ece51211")]
+        public void CurrentScriptsHaveTheirOwnStableIdentity(string path, string assembly, string guid)
         {
-            var runtime = typeof(LocalizationManager).Assembly;
-            var editor = typeof(LocalizationAuthoring).Assembly;
-            Assert.That(runtime.GetName().Name, Is.EqualTo("YLFramework.Localization"));
-            Assert.That(editor.GetName().Name, Is.EqualTo("YLFramework.Localization.Editor"));
-            Assert.That(typeof(LocalizationAuthoring).IsVisible, Is.False);
-            Assert.That(typeof(LocalizationAuthoring).IsPublic, Is.False);
-            Assert.That(AppDomain.CurrentDomain.GetAssemblies().Count(owner => owner.GetType(typeof(LocalizationAuthoring).FullName) != null), Is.EqualTo(1));
-            Assert.That(typeof(YLFramework.Resource.ResourceSystem).Assembly.GetType(typeof(LocalizeImage).FullName), Is.Null);
-            Assert.That(typeof(YLFramework.Editor.Core.CreateModuleCommand).Assembly.GetType(typeof(LocalizationAuthoring).FullName), Is.Null);
-            Assert.That(runtime.GetReferencedAssemblies().Select(reference => reference.Name), Does.Not.Contain("YLFramework.DataAssets").And.Not.Contain("YLFramework.Excel.Editor"));
-            Assert.That(editor.GetReferencedAssemblies().Select(reference => reference.Name), Does.Not.Contain("YLFramework.DataAssets").And.Not.Contain("YLFramework.DataAssets.Editor"));
-            var required = typeof(LocalizeImage).GetCustomAttributes(typeof(RequireComponent), true).Cast<RequireComponent>().Single();
-            Assert.That(required.m_Type0, Is.EqualTo(typeof(YLFramework.Resource.ResourceImage)));
-        }
-
-        [TestCase("48588b1d9a7c5a14b817b732e9568227", "Runtime/Systems/Localization/LocalizationManager.cs")]
-        [TestCase("02373141161f98548927076bb0014367", "Runtime/Systems/Localization/MultiLanguageConfigs.cs")]
-        [TestCase("d5ae76428dc6dc047a8b1d62832313c2", "Runtime/Systems/Localization/LocalizeString.cs")]
-        [TestCase("2345dd753f4b47642becd100e4fb0255", "Runtime/Systems/Localization/LocalizeImage.cs")]
-        public void MovedLocalizationKeepsOriginalScriptIdentity(string guid, string relative)
-        {
-            Assert.That(AssetDatabase.GUIDToAssetPath(guid), Is.EqualTo("Packages/com.kano.ylframework.localization/" + relative));
-        }
-
-        [SetUp]
-        public void SetUp()
-        {
-            const string Parent = "Assets/Tests/YLFramework/Fixtures/Extensions/Data/Localization";
-            _absentParents = new[]
-            {
-                Parent, "Assets/Tests/YLFramework/Fixtures/Extensions/Data", "Assets/Tests/YLFramework/Fixtures/Extensions",
-                "Assets/Tests/YLFramework/Fixtures", "Assets/YLFrameworkData/Localization", "Assets/YLFrameworkData"
-            }.Where(path => !Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)) && !File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)) && !File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"))).ToArray();
-            EnsureFolder(Parent);
-            _path = Parent + "/Run-" + Guid.NewGuid().ToString("N") + ".asset";
-            _root = ScriptableObject.CreateInstance<MultiLanguageConfigs>();
-            AssetDatabase.CreateAsset(_root, _path);
-            _languagesPath = LocalizationAuthoring.GetLanguageFolder(_root);
-        }
-
-        [TearDown]
-        public void TearDown()
-        {
-            if (_root)
-            {
-                Undo.ClearUndo(_root);
-            }
-
-            if (_english)
-            {
-                Undo.ClearUndo(_english);
-            }
-
-            if (_chinese)
-            {
-                Undo.ClearUndo(_chinese);
-            }
-
-            if (TestContext.CurrentContext.Result.Outcome.Status == NUnit.Framework.Interfaces.TestStatus.Failed)
-            {
-                Console.WriteLine("Preserved failed localization fixture: " + _path + " | " + _languagesPath);
-                return;
-            }
-
-            if (!string.IsNullOrEmpty(_languagesPath))
-            {
-                AssetDatabase.DeleteAsset(_languagesPath);
-            }
-
-            if (!string.IsNullOrEmpty(_path))
-            {
-                AssetDatabase.DeleteAsset(_path);
-            }
-
-            foreach (var path in _absentParents)
-            {
-                if (Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)) && Directory.GetFileSystemEntries(global::YLFramework.Testing.PackageTestPaths.Physical(path)).Length == 0)
-                {
-                    Assert.That(AssetDatabase.DeleteAsset(path), Is.True, path);
-                }
-            }
-        }
-
-        [Test, Order(-1), Category("YL.Test.ParentCleanup")]
-        public void TearDownReturnsNewEmptyAuthoringParents()
-        {
-            _english = LocalizationAuthoring.CreateLanguage(_root, SystemLanguage.English);
-            TearDown();
-            foreach (var path in _absentParents)
-            {
-                Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)), Is.False, path);
-                Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")), Is.False, path + ".meta");
-            }
+            Assert.That(System.IO.Path.GetFileNameWithoutExtension(CompilationPipeline.GetAssemblyNameFromScriptPath(path)), Is.EqualTo(assembly));
+            Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
         }
 
         [Test]
-        public void AuthoringCreateDuplicateUndoSaveReopenAndRemoveReferenceKeepsAsset()
+        public void DefaultRuntimeDoesNotDependOnOptionalBusinessAuthoringPackages()
         {
-            _english = LocalizationAuthoring.CreateLanguage(_root, SystemLanguage.English);
-            LocalizationAuthoring.AddEntry(_root, 1, MultiLanguageType.String);
-            _english.languagesInfo[0].str = "source";
-            _chinese = LocalizationAuthoring.CreateLanguage(_root, SystemLanguage.ChineseSimplified);
-            Assert.That(_chinese.languagesInfo[0].id, Is.EqualTo(1));
-            Assert.That(_chinese.languagesInfo[0].str, Is.Null, "A new language must not impersonate the source translation.");
-            LocalizationAuthoring.DuplicateEntry(_root, 1, 2);
-            Assert.That(_english.GetLanguageInfo(2).str, Is.EqualTo("source"));
-            var languagePath = AssetDatabase.GetAssetPath(_chinese);
-            Undo.IncrementCurrentGroup();
-            LocalizationAuthoring.RemoveLanguageReference(_root, _chinese);
-            Undo.FlushUndoRecordObjects();
-            Assert.That(AssetDatabase.LoadAssetAtPath<LanguageConfig>(languagePath), Is.SameAs(_chinese));
-            Undo.PerformUndo();
-            Assert.That(_root.Languages.Contains(_chinese), Is.True);
-            EditorUtility.SetDirty(_english);
-            AssetDatabase.SaveAssetIfDirty(_english);
-            AssetDatabase.SaveAssetIfDirty(_root);
-            AssetDatabase.ImportAsset(_path, ImportAssetOptions.ForceUpdate);
-            var reopened = AssetDatabase.LoadAssetAtPath<MultiLanguageConfigs>(_path);
-            Assert.That(reopened.Languages.Count, Is.EqualTo(2));
-            Assert.That(reopened.GetLanguageConfigData(SystemLanguage.English).GetLanguageInfo(2).str, Is.EqualTo("source"));
-            Assert.Throws<InvalidOperationException>(() => LocalizationAuthoring.AddEntry(reopened, 2, MultiLanguageType.String));
+            var references = typeof(LocalizationSession).Assembly.GetReferencedAssemblies().Select(name => name.Name).ToArray();
+            Assert.That(references, Does.Contain("Unity.Localization"));
+            Assert.That(references, Does.Not.Contain("YLFramework.DataAssets"));
+            Assert.That(references, Does.Not.Contain("YLFramework.Excel.Editor"));
         }
 
-        private static void EnsureFolder(string path)
+        [Test]
+        public void CopyStableReferenceUsesOfficialCollectionIdentityWithoutChangingTheTemplate()
         {
-            if (AssetDatabase.IsValidFolder(path))
+            var folder = "Assets/__YLLocalizationReference_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", System.IO.Path.GetFileName(folder));
+            try
             {
-                return;
+                var locale = Locale.CreateLocale("en");
+                AssetDatabase.CreateAsset(locale, folder + "/en.asset");
+                var collection = LocalizationEditorSettings.CreateStringTableCollection("Ref-" + Guid.NewGuid().ToString("N"), folder, new[] { locale });
+                collection.SharedData.AddKey("item", 9007199254740993L);
+                var reference = new LocalizedString(collection.TableCollectionName, "item");
+                var json = JObject.Parse(LocalizationReferenceAuthoring.CopyReference(reference));
+                Assert.That((string)json["tableGuid"], Is.EqualTo(collection.SharedData.TableCollectionNameGuid.ToString("N")));
+                Assert.That((string)json["entryId"], Is.EqualTo("9007199254740993"));
+                Assert.That(reference.TableReference.TableCollectionName, Is.EqualTo(collection.TableCollectionName));
+                Assert.That(reference.TableEntryReference.Key, Is.EqualTo("item"));
             }
+            finally { AssetDatabase.DeleteAsset(folder); }
+        }
 
-            var slash = path.LastIndexOf('/');
-            var parent = path.Substring(0, slash);
-            EnsureFolder(parent);
-            AssetDatabase.CreateFolder(parent, path.Substring(slash + 1));
+        [Test]
+        public void CurrentGroupDiagnosticsFindUnsafeGatesMissingFontAndDuplicateTextWriters()
+        {
+            var root = new GameObject("diagnostic-root", typeof(RectTransform), typeof(CanvasGroup));
+            try
+            {
+                var group = root.AddComponent<YLFramework.Localization.LocalizationGroup>();
+                group.Content = root.GetComponent<CanvasGroup>();
+                var label = new GameObject("diagnostic-label", typeof(RectTransform), typeof(Text));
+                label.transform.SetParent(root.transform, false);
+                label.GetComponent<Text>().font = null;
+                label.AddComponent<LocalizeText>();
+                var official = label.AddComponent<UnityEngine.Localization.Components.LocalizeStringEvent>();
+                var setter = (UnityEngine.Events.UnityAction<string>)Delegate.CreateDelegate(typeof(UnityEngine.Events.UnityAction<string>),
+                    label.GetComponent<Text>(), typeof(Text).GetProperty("text").SetMethod);
+                UnityEditor.Events.UnityEventTools.AddPersistentListener(official.OnUpdateString, setter);
+                var method = typeof(LocalizationSetup).GetMethod("ValidateGroup");
+                Assert.That(method, Is.Not.Null, "Authoring assistance must diagnose the selected group, not only provide menu links.");
+                var errors = (System.Collections.Generic.IReadOnlyList<string>)method.Invoke(null, new object[] { group });
+                Assert.That(errors.Any(error => error.Contains("CanvasGroup")), Is.True);
+                Assert.That(errors.Any(error => error.Contains("font")), Is.True);
+                Assert.That(errors.Any(error => error.Contains("writer")), Is.True);
+            }
+            finally { UnityEngine.Object.DestroyImmediate(root); }
         }
     }
 }

@@ -393,6 +393,25 @@ try {
         Reject { New-YLRegistryReleaseManifest -SourceCommit ('a' * 40) -Toolchain @{ node = '24.22.2'; npm = '10.9.9'; powershell = '7.6.9' } -Packages $packages } 'toolchain|Node'
         Reject { New-YLRegistryReleaseManifest -SourceCommit ('a' * 40) -Toolchain @{ node = '22.23.3'; npm = '10.9.9'; powershell = '7.6.9' } -Packages @($packages[0]) } 'five|batch'
     }
+    Case 'Release producer and reader accept 7.6+ while retaining the exact patch identity' {
+        $packages = @(foreach ($id in (Get-YLRegistryPackageIds)) { Read-YLRegistryTarball -Path (Fixture-Tar $id) })
+        foreach ($version in @('7.6.0', '7.6.9', '7.7.0', '8.0.0')) {
+            $manifest = New-YLRegistryReleaseManifest -SourceCommit ('a' * 40) -Toolchain @{node='22.23.3';npm='10.9.9';powershell=$version} -Packages $packages
+            Check ($manifest.toolchain.powershell -ceq $version) 'The producer replaced the actual PowerShell patch with a policy label.'
+            $path = Join-Path $run.path ('minimum-powershell-release-' + $version + '.json')
+            Write-YLTestJson -Path $path -Value $manifest
+            $read = Read-YLRegistryRelease -Path $path -PackageRoot $sources
+            $wire = [IO.File]::ReadAllText($path) | ConvertFrom-Json -AsHashtable -DateKind String
+            Check ($read.sourceCommit -ceq $manifest.sourceCommit -and $wire.toolchain.powershell -ceq $version) 'The reader rejected the release identity or the serialized manifest lost the exact PowerShell patch.'
+        }
+        foreach ($invalid in @('7.5.99', '5.1.0', '7.7', '7.7.0.1', '7.7.0-preview.1', 'not-version', $true)) {
+            Reject { New-YLRegistryReleaseManifest -SourceCommit ('a' * 40) -Toolchain @{node='22.23.3';npm='10.9.9';powershell=$invalid} -Packages $packages } 'toolchain|PowerShell'
+            $manifest.toolchain.powershell = $invalid
+            $path = Join-Path $run.path ('invalid-powershell-release-' + [Guid]::NewGuid().ToString('N') + '.json')
+            Write-YLTestJson -Path $path -Value $manifest
+            Reject { Read-YLRegistryRelease -Path $path -PackageRoot $sources } 'toolchain|PowerShell'
+        }
+    }
     Case 'Producer never invents CI success and requires complete run identity' {
         $names = @('GITHUB_ACTIONS', 'GITHUB_REPOSITORY', 'GITHUB_WORKFLOW', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')
         $saved = @{}; foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }

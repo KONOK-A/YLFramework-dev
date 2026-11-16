@@ -14,6 +14,8 @@ using YLFramework.DataAssets;
 using YLFramework.Localization;
 using YLFramework.Resource;
 using YLFramework.Save;
+using UnityEngine.Localization;
+using YLFramework.Tests.Localization;
 using Object = UnityEngine.Object;
 using ResourceLocation = YLFramework.Resource.ResourceLocation;
 
@@ -33,6 +35,7 @@ namespace YLFramework.Tests.Extensions.Data
         private readonly List<Object> _objects = new();
         private ResourceSystem _resource;
         private SaveStore _store;
+        private LocalizationFixture _localization;
 
         [UnitySetUp]
         public IEnumerator SetUp()
@@ -41,7 +44,6 @@ namespace YLFramework.Tests.Extensions.Data
             Assert.That(EditorSettings.enterPlayModeOptionsEnabled, Is.True);
             Assert.That(EditorSettings.enterPlayModeOptions, Is.EqualTo(EnterPlayModeOptions.DisableDomainReload));
             Assert.That(ResourceSystem.Current, Is.Null);
-            Assert.That(LocalizationManager.Configs, Is.Empty);
             Assert.That(ScriptableObjectManager.RegistrationCount, Is.Zero);
             Assert.That(_storeField.GetValue(null), Is.Null, "Do not close another Save owner.");
             for (int i = 0; i < SceneManager.sceneCount; i++)
@@ -74,16 +76,10 @@ namespace YLFramework.Tests.Extensions.Data
                 Assert.That(EditorSettings.enterPlayModeOptions, Is.EqualTo(EnterPlayModeOptions.DisableDomainReload));
                 Assert.That(_domainToken, Is.EqualTo(token), "The managed domain must actually survive both entries.");
                 Assert.That(ResourceSystem.Current, Is.Null);
-                Assert.That(LocalizationManager.Configs, Is.Empty);
                 Assert.That(ScriptableObjectManager.RegistrationCount, Is.Zero);
                 Assert.That(_storeField.GetValue(null), Is.Null);
-                var language = ScriptableObject.CreateInstance<LanguageConfig>();
-                _objects.Add(language);
-                language.language = SystemLanguage.English;
-                language.languagesInfo.Add(new LanguageInfo { id = 17, str = "round-" + round });
-                var localization = ScriptableObject.CreateInstance<MultiLanguageConfigs>();
-                _objects.Add(localization);
-                localization.Languages.Add(language);
+                _localization = new LocalizationFixture();
+                _localization.StringTable(_localization.English).GetEntry("name").Value = "round-" + round;
                 var data = ScriptableObject.CreateInstance<ScriptableObjectConfigs>();
                 _objects.Add(data);
                 data.name = "domain-data";
@@ -93,14 +89,12 @@ namespace YLFramework.Tests.Extensions.Data
                 child.configName = "round-" + round;
                 child.parent = data;
                 data.configs.Add(child);
-                var source = new Source { Localization = localization, Data = data };
-                var locAddress = new ResourceAddress("domain-b", "localization");
+                var source = new Source { Data = data };
                 var dataAddress = new ResourceAddress("domain-b", "data");
                 using (var initialized = ResourceSystem.InitializeAsync(new ResourceConfiguration(new[]
                 {
                     new ResourceCatalog("domain-b", new[]
                     {
-                        new ResourceCatalogEntry("localization", locAddress, new ResourceLocation(source.Id, "localization", typeof(MultiLanguageConfigs))),
                         new ResourceCatalogEntry("data", dataAddress, new ResourceLocation(source.Id, "data", typeof(ScriptableObjectConfigs)))
                     })
                 }, new IResourceSource[] { source })))
@@ -108,10 +102,13 @@ namespace YLFramework.Tests.Extensions.Data
                     _resource = initialized.TakeResult();
                 }
 
-                var locOwner = LocalizationManager.LoadConfigAsync(_resource, locAddress);
+                var locOwner = new LocalizationSession();
+                string translated = null;
+                locOwner.BindString(new LocalizedString(_localization.Strings, "name"), value => translated = value);
                 ScriptableObjectManager.Load(_resource, dataAddress);
-                LocalizationManager.Language = SystemLanguage.English;
-                Assert.That(LocalizationManager.GetString(17), Is.EqualTo("round-" + round));
+                for (var frame = 0; frame < 5; frame++)
+                    yield return null;
+                Assert.That(translated, Is.EqualTo("round-" + round));
                 Assert.That(ScriptableObjectManager.GetConfig("domain-data").GetName(17), Is.EqualTo("round-" + round));
                 SaveManager.SetStorageRoot(Path.Combine(output, "save-round-" + round));
                 _store = SaveManager.Store;
@@ -136,7 +133,7 @@ namespace YLFramework.Tests.Extensions.Data
                     domainToken = _domainToken,
                     pid = System.Diagnostics.Process.GetCurrentProcess().Id,
                     domainReloadDisabled = EditorSettings.enterPlayModeOptionsEnabled && EditorSettings.enterPlayModeOptions == EnterPlayModeOptions.DisableDomainReload,
-                    localizationOwners = LocalizationManager.Configs.Count,
+                    localizationSessionClosed = locOwner.IsDisposed,
                     dataOwners = ScriptableObjectManager.RegistrationCount,
                     locOwnerClosed = locOwner.IsDisposed,
                     leases = _resource.GetDiagnosticsSnapshot().LeaseCount,
@@ -145,11 +142,11 @@ namespace YLFramework.Tests.Extensions.Data
                     saveClosed
                 };
                 File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Path.Combine(output, "domain-round-" + round + ".json")), JsonConvert.SerializeObject(record, Formatting.Indented));
-                Assert.That(record.localizationOwners, Is.Zero);
+                Assert.That(record.localizationSessionClosed, Is.True);
                 Assert.That(record.dataOwners, Is.Zero);
                 Assert.That(record.locOwnerClosed, Is.True);
                 Assert.That(record.leases, Is.Zero);
-                Assert.That(record.sourceReleases, Is.EqualTo(2));
+                Assert.That(record.sourceReleases, Is.EqualTo(1));
                 Assert.That(saveClosed, Is.True, "The previous Unity session must not retain the Save file lock/cache owner.");
                 if (_resource.State == ResourceSystemState.Ready)
                 {
@@ -161,6 +158,8 @@ namespace YLFramework.Tests.Extensions.Data
                 Assert.That(ResourceSystem.Current, Is.Null);
                 _resource = null;
                 _store = null;
+                _localization.Dispose();
+                _localization = null;
                 DestroyOwnedObjects();
             }
         }
@@ -178,7 +177,8 @@ namespace YLFramework.Tests.Extensions.Data
                 yield return new ExitPlayMode();
             }
 
-            LocalizationManager.Shutdown();
+            _localization?.Dispose();
+            _localization = null;
             ScriptableObjectManager.Clear();
             SaveManager.Close();
             if (_resource != null && _resource.State == ResourceSystemState.Ready)
@@ -228,10 +228,9 @@ namespace YLFramework.Tests.Extensions.Data
         {
             public ResourceSourceId Id => new("domain-b-source");
             public bool SupportsSynchronousLoad => true;
-            public Object Localization;
             public Object Data;
             public int Releases;
-            private Object Asset(Type type) => type == typeof(MultiLanguageConfigs) ? Localization : Data;
+            private Object Asset(Type type) => Data;
             public void Validate(ResourceCatalogEntry entry)
             {
             }

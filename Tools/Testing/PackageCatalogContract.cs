@@ -80,6 +80,15 @@ namespace YLFramework.Testing
                     {
                         if (value is not JObject version) { throw Error("Invalid catalog version define."); }
                         Fields(version, "name", "expression", "define");
+                        bool tmpCode = Text(package, "id") == "com.kano.ylframework.localization" &&
+                            name == "YLFramework.Localization.TMP" && Text(version, "name") == "com.unity.textmeshpro" &&
+                            Text(version, "expression") == "1.0.0" && Text(version, "define") == "YL_LOCALIZATION_TMP";
+                        if (tmpCode)
+                        {
+                            if (defines.Contains(Text(version, "define")) || !versionDefines.Add(Text(version, "define")))
+                                throw Error("A native code condition cannot be a catalog assembly gate.");
+                            continue;
+                        }
                         if ((!ids.Contains(Text(version, "name")) && Text(version, "name") != "com.code-philosophy.hybridclr") ||
                             !new[] { "0.0.0", "[9.0.3,9.0.4)" }.Contains(Text(version, "expression")) ||
                             !defines.Contains(Text(version, "define")) || !versionDefines.Add(Text(version, "define"))) { throw Error("Unknown/unsupported catalog package condition."); }

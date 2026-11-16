@@ -36,13 +36,16 @@ jobs:
         run: |
           $version = $PSVersionTable.PSVersion
           if (-not $IsWindows -or $PSVersionTable.PSEdition -ne 'Core' -or
-              $version.Major -ne 7 -or $version.Minor -ne 6) {
-            throw "Expected Windows PowerShell Core 7.6.x; found $version"
+              $version -lt [version]'7.6.0') {
+            throw "Expected Windows PowerShell Core 7.6 or later; found $version"
           }
           if (-not (Test-Path -LiteralPath $env:GITHUB_WORKSPACE -PathType Container)) {
             throw 'Repository parent is missing.'
           }
           $null = [IO.Directory]::CreateDirectory((Join-Path $env:GITHUB_WORKSPACE 'Temp'))
+
+      - name: Test PowerShell minimum policy
+        run: ./Tools/Testing/Tests/Test-YLPowerShellMinimum.ps1
 
       - name: Install pinned .NET SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0

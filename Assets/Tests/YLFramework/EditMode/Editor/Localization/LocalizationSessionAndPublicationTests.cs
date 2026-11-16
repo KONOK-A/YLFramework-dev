@@ -4,15 +4,20 @@ using System.IO;
 using System.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.AddressableAssets;
+using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.Localization;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.Localization;
+using UnityEngine.Localization.Settings;
+using UnityEngine.Localization.Tables;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
-using YLFramework.Editor.Resource;
 using YLFramework.Localization;
-using YLFramework.Resource;
 using YLFramework.Testing.EditorFixtures;
+using YLFramework.Tests.Localization;
 using Object = UnityEngine.Object;
-using ResourceLocation = YLFramework.Resource.ResourceLocation;
 
 namespace YLFramework.Tests.Extensions.Data
 {
@@ -20,37 +25,13 @@ namespace YLFramework.Tests.Extensions.Data
     public class LocalizationSessionAndPublicationTests
     {
         private static readonly string _domainToken = Guid.NewGuid().ToString("N");
-        private LocalizationConfigHandle _owner;
-        private ResourceSystem _resources;
-        private MultiLanguageConfigs _root;
-        private LanguageConfig _english;
+        private LocalizationFixture _fixture;
+        private LocalizationSession _session;
         private string _folder;
-        private bool _hadPreference;
-        private int _preference;
-
-        private sealed class Operation : ResourceSourceOperation
-        {
-            internal void Finish(Object value) => Complete(value, null);
-        }
-
-        private sealed class Source : IResourceSource
-        {
-            internal MultiLanguageConfigs Root;
-            internal int Releases;
-            public ResourceSourceId Id => new ResourceSourceId("localization-two-play");
-            public bool SupportsSynchronousLoad => true;
-            public void Validate(ResourceCatalogEntry entry)
-            {
-            }
-            public ResourceSourceResult Load(ResourceCatalogEntry entry, Type type) => new ResourceSourceResult(Root);
-            public ResourceSourceOperation LoadAsync(ResourceCatalogEntry entry, Type type)
-            {
-                var result = new Operation();
-                result.Finish(Root);
-                return result;
-            }
-            public void Release(Object value) => Releases++;
-        }
+        private LocalizationSettings _previousSettings;
+        private AddressableAssetSettings _previousAddressables;
+        private bool _ownsPublication;
+        private bool _createdDefaultFolder;
 
         [SetUp]
         public void RequireOwnedHost()
@@ -58,199 +39,150 @@ namespace YLFramework.Tests.Extensions.Data
             Assert.That(Application.isBatchMode && !EditorApplication.isPlaying, Is.True);
             Assert.That(EditorSettings.enterPlayModeOptionsEnabled, Is.True);
             Assert.That(EditorSettings.enterPlayModeOptions, Is.EqualTo(EnterPlayModeOptions.DisableDomainReload));
-            Assert.That(ResourceSystem.Current, Is.Null);
-            Assert.That(LocalizationManager.Configs, Is.Empty);
             Assert.That(Directory.Exists(global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput()), Is.True);
-            _hadPreference = PlayerPrefs.HasKey(LocalizationManager.LanguagePreferenceKey);
-            _preference = PlayerPrefs.GetInt(LocalizationManager.LanguagePreferenceKey);
-        }
-
-        private void CreateRoot()
-        {
-            _root = ScriptableObject.CreateInstance<MultiLanguageConfigs>();
-            _root.name = "PublishedLocale";
-            _english = ScriptableObject.CreateInstance<LanguageConfig>();
-            _english.language = SystemLanguage.English;
-            _english.languagesInfo.Add(new LanguageInfo { id = 17, str = "hello {0}" });
-            _root.Languages.Add(_english);
         }
 
         [UnityTest]
         public IEnumerator TwoActualPlaySessionsCloseOnlyTheirLocalizationOwners()
         {
-            string token = _domainToken;
-            for (int round = 0; round < 2; round++)
+            var token = _domainToken;
+            for (var round = 0; round < 2; round++)
             {
                 yield return new EnterPlayMode(false);
                 Assert.That(_domainToken, Is.EqualTo(token));
-                Assert.That(LocalizationManager.Configs, Is.Empty);
-                CreateRoot();
-                var source = new Source { Root = _root };
-                var address = new ResourceAddress("localization-two-play", "root");
-                using (var initialized = ResourceSystem.InitializeAsync(new ResourceConfiguration(new[]
-                {
-                    new ResourceCatalog("localization-two-play", new[] { new ResourceCatalogEntry("root", address, new ResourceLocation(source.Id, "root", typeof(MultiLanguageConfigs))) })
-                }, new IResourceSource[] { source })))
-                {
-                    Assert.That(initialized.Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
-                    _resources = initialized.TakeResult();
-                }
-                _owner = LocalizationManager.LoadConfigAsync(_resources, address);
-                while (_owner.IsLoading)
-                {
+                _fixture = new LocalizationFixture();
+                _session = new LocalizationSession();
+                string value = null;
+                _session.BindString(new LocalizedString(_fixture.Strings, "name"), result => value = result);
+                for (var frame = 0; frame < 5; frame++)
                     yield return null;
-                }
-                Assert.That(_owner.Error, Is.Null);
-                Assert.That(_owner.Config, Is.SameAs(_root));
-                Assert.That(LocalizationManager.GetString(17), Is.EqualTo("hello {0}"));
+                Assert.That(value, Is.EqualTo("Sword"));
                 yield return new ExitPlayMode();
-                Assert.That(_owner.IsDisposed, Is.True);
-                Assert.That(LocalizationManager.Configs, Is.Empty);
-                Assert.That(source.Releases, Is.EqualTo(1));
-                Assert.That(_resources.GetDiagnosticsSnapshot().LeaseCount, Is.Zero);
-                _owner = null;
-                _resources = null;
-                if (_root)
-                {
-                    Object.DestroyImmediate(_root);
-                }
-                if (_english)
-                {
-                    Object.DestroyImmediate(_english);
-                }
-                _root = null;
-                _english = null;
+                Assert.That(_session.IsDisposed, Is.True);
+                _fixture.Dispose();
+                _fixture = null;
+                _session = null;
             }
         }
 
-        [UnityTest]
+        [UnityTest, Timeout(1200000)]
         public IEnumerator FormalPublicationLoadsTheMovedTypesInEditorAndActualStandalonePlayers()
         {
             _folder = "Assets/__YLLocale_" + Guid.NewGuid().ToString("N");
-            AssetDatabase.CreateFolder("Assets", _folder.Substring("Assets/".Length));
-            AssetDatabase.CreateFolder(_folder, "Content");
-            CreateRoot();
-            AssetDatabase.CreateAsset(_root, _folder + "/Content/Root.asset");
-            AssetDatabase.CreateAsset(_english, _folder + "/Content/English.asset");
-            var project = ScriptableObject.CreateInstance<ResourceProject>();
-            project.projectId = "loc-" + Guid.NewGuid().ToString("N").Substring(0, 8);
-            project.sourceDirectories.Add(new ResourceSourceDirectory { guid = AssetDatabase.AssetPathToGUID(_folder + "/Content") });
-            var group = new ResourceGroup { id = "Languages", packing = ResourcePacking.Together };
-            group.selections.Add(new ResourceSelection { guid = AssetDatabase.AssetPathToGUID(_folder + "/Content/Root.asset"), address = "root" });
-            group.selections.Add(new ResourceSelection { guid = AssetDatabase.AssetPathToGUID(_folder + "/Content/English.asset"), address = "english" });
-            project.groups.Add(group);
-            AssetDatabase.CreateAsset(project, _folder + "/Project.asset");
-            EditorUtility.SetDirty(_root);
-            EditorUtility.SetDirty(_english);
-            EditorUtility.SetDirty(project);
-            AssetDatabase.SaveAssetIfDirty(_root);
-            AssetDatabase.SaveAssetIfDirty(_english);
-            AssetDatabase.SaveAssetIfDirty(project);
-            var release = ResourcePublisher.Publish(ResourceBundleBuilder.Build(project, BuildTarget.StandaloneWindows64), "localization-assembly-v1");
-            var moved = release.Catalog.Assets.Where(asset => asset.AssetType.StartsWith("YLFramework.Localization.", StringComparison.Ordinal)).ToArray();
-            Assert.That(moved, Has.Length.EqualTo(2));
-            Assert.That(moved.Select(asset => asset.AssetAssembly), Is.All.EqualTo("YLFramework.Localization"));
-            string output = global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput();
-            StandaloneFixturePlayer.BuildAndRun(output, _folder, "YLFramework.Localization", release, scene =>
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(_folder));
+            AssetDatabase.CreateFolder(_folder, "Addressables");
+            _previousSettings = LocalizationEditorSettings.ActiveLocalizationSettings;
+            _previousAddressables = AddressableAssetSettingsDefaultObject.Settings;
+            _createdDefaultFolder = !AssetDatabase.IsValidFolder("Assets/AddressableAssetsData");
+            if (_createdDefaultFolder)
+                AssetDatabase.CreateFolder("Assets", "AddressableAssetsData");
+            _ownsPublication = true;
+            var addressables = AddressableAssetSettings.Create(_folder + "/Addressables", "Settings", true, true);
+            AddressableAssetSettingsDefaultObject.Settings = addressables;
+            var settings = ScriptableObject.CreateInstance<LocalizationSettings>();
+            AssetDatabase.CreateAsset(settings, _folder + "/LocalizationSettings.asset");
+            LocalizationEditorSettings.ActiveLocalizationSettings = settings;
+            var english = Locale.CreateLocale("en");
+            var french = Locale.CreateLocale("fr");
+            AssetDatabase.CreateAsset(english, _folder + "/English.asset");
+            AssetDatabase.CreateAsset(french, _folder + "/French.asset");
+            LocalizationEditorSettings.AddLocale(english);
+            LocalizationEditorSettings.AddLocale(french);
+            var locales = new[] { english, french };
+            var strings = LocalizationEditorSettings.CreateStringTableCollection("PublishedText-" + Guid.NewGuid().ToString("N"), _folder, locales);
+            foreach (var locale in locales)
+            {
+                var table = (StringTable)strings.GetTable(locale.Identifier);
+                table.AddEntry("greeting", locale == english ? "hello {count}" : "salut {count}").IsSmart = true;
+                EditorUtility.SetDirty(table);
+                AssetDatabase.SaveAssetIfDirty(table);
+            }
+            EditorUtility.SetDirty(strings.SharedData);
+            AssetDatabase.SaveAssetIfDirty(strings.SharedData);
+            AssetDatabase.SaveAssetIfDirty(strings);
+            var assets = LocalizationEditorSettings.CreateAssetTableCollection("PublishedAssets-" + Guid.NewGuid().ToString("N"), _folder, locales);
+            var texture = new Texture2D(8, 8);
+            texture.SetPixels(Enumerable.Repeat(Color.cyan, 64).ToArray());
+            texture.Apply();
+            AssetDatabase.CreateAsset(texture, _folder + "/Icon.asset");
+            var sprite = Sprite.Create(texture, new Rect(0, 0, 8, 8), Vector2.zero);
+            sprite.name = "PublishedIcon";
+            AssetDatabase.AddObjectToAsset(sprite, texture);
+            AssetDatabase.SaveAssetIfDirty(texture);
+            var font = Font.CreateDynamicFontFromOSFont("Arial", 16);
+            AssetDatabase.CreateAsset(font, _folder + "/Font.fontsettings");
+            foreach (var locale in locales)
+            {
+                assets.AddAssetToTable(locale.Identifier, "icon", sprite);
+                assets.AddAssetToTable(locale.Identifier, "font", font);
+            }
+            foreach (var table in assets.AssetTables)
+                AssetDatabase.SaveAssetIfDirty(table);
+            EditorUtility.SetDirty(assets.SharedData);
+            AssetDatabase.SaveAssetIfDirty(assets.SharedData);
+            AssetDatabase.SaveAssetIfDirty(assets);
+            AssetDatabase.SaveAssetIfDirty(settings);
+            foreach (var group in addressables.groups.Where(group => group))
+            {
+                foreach (var schema in group.Schemas)
+                    if (schema)
+                        AssetDatabase.SaveAssetIfDirty(schema);
+                AssetDatabase.SaveAssetIfDirty(group);
+            }
+            AssetDatabase.SaveAssetIfDirty(addressables);
+            AddressableAssetSettings.BuildPlayerContent(out var content);
+            Assert.That(content.Error, Is.Null.Or.Empty);
+            Assert.That(Directory.Exists(Addressables.BuildPath), Is.True);
+            Assert.That(Directory.GetFiles(Addressables.BuildPath, "*.bundle", SearchOption.AllDirectories), Is.Not.Empty);
+            var output = global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput();
+            File.WriteAllText(Path.Combine(output, "addressables-build.json"),
+                "{\"status\":\"Built\",\"contentSystem\":\"Unity Localization/Addressables\",\"backend\":\"IL2CPP\"}");
+            StandaloneFixturePlayer.BuildAndRun(output, _folder, "YLFramework.Localization", null, scene =>
             {
                 var type = Type.GetType("YLFramework.Tests.Localization.LocalizationPlayerProbe, YLFramework.Localization.Acceptance", true);
-                var host = new GameObject("LocalizationStandaloneProbe");
+                var host = new GameObject("OfficialLocalizationPlayerProbe");
                 host.SetActive(false);
                 SceneManager.MoveGameObjectToScene(host, scene);
                 var probe = host.AddComponent(type);
-                foreach (var value in new[] { ("projectId", release.Catalog.ProjectId), ("catalogDigest", release.Catalog.CatalogDigest), ("compatibility", release.Catalog.AppContentCompatibilityId) })
-                {
-                    type.GetField(value.Item1).SetValue(probe, value.Item2);
-                }
-                var binding = host.AddComponent<LocalizeString>();
-                binding.enabled = false;
-                binding.Id = 17;
-                using (var serialized = new SerializedObject(binding))
-                {
-                    serialized.FindProperty("componentType").enumValueIndex = (int)ComponentType.Other;
-                    serialized.FindProperty("componentFullName").stringValue = type.FullName;
-                    serialized.FindProperty("fieldName").stringValue = "Value";
-                    serialized.ApplyModifiedPropertiesWithoutUndo();
-                }
-                type.GetField("binding").SetValue(probe, binding);
+                type.GetField("text").SetValue(probe, new LocalizedString(strings.SharedData.TableCollectionNameGuid, "greeting"));
+                type.GetField("picture").SetValue(probe, new LocalizedSprite { TableReference = assets.SharedData.TableCollectionNameGuid, TableEntryReference = "icon" });
+                type.GetField("font").SetValue(probe, new LocalizedFont { TableReference = assets.SharedData.TableCollectionNameGuid, TableEntryReference = "font" });
+                type.GetField("english").SetValue(probe, english);
+                type.GetField("french").SetValue(probe, french);
                 host.SetActive(true);
-            }, new[] { "YL_LOCALIZATION_ACCEPTANCE" });
-            var snapshot = ResourceLocalSnapshot.Open(Path.GetFullPath(release.DirectoryPath), project.projectId, release.Catalog.CatalogDigest,
-                release.Catalog.Platform, release.Catalog.AppContentCompatibilityId);
-            var catalog = snapshot.CreateCatalog(new[] { typeof(MultiLanguageConfigs), typeof(LanguageConfig) });
-            string projectId = project.projectId;
-            yield return new EnterPlayMode(false);
-            using (var initialized = ResourceSystem.InitializeAsync(new ResourceConfiguration(new[] { catalog })))
-            {
-                Assert.That(initialized.Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
-                _resources = initialized.TakeResult();
-            }
-            _owner = LocalizationManager.LoadConfigAsync(_resources, new ResourceAddress(projectId, "root"));
-            while (_owner.IsLoading)
-            {
-                yield return null;
-            }
-            Assert.That(_owner.Error, Is.Null);
-            Assert.That(_owner.Config, Is.Not.Null);
-            LocalizationManager.Language = SystemLanguage.Japanese;
-            Assert.That(LocalizationManager.GetString(17), Is.EqualTo("hello {0}"));
-            _owner.Dispose();
-            _owner = null;
-            Assert.That(_resources.GetDiagnosticsSnapshot().LeaseCount, Is.Zero);
-            using (var shutdown = _resources.ShutdownAsync())
-            {
-                yield return shutdown;
-                Assert.That(shutdown.Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
-            }
-            _resources = null;
-            yield return new ExitPlayMode();
+            }, new[] { "YL_LOCALIZATION_ACCEPTANCE" }, scriptingBackend: ScriptingImplementation.IL2CPP, developmentBuild: false);
+            yield return null;
         }
 
         [UnityTearDown]
         public IEnumerator CleanupOwnedFixture()
         {
             if (EditorApplication.isPlaying)
-            {
                 yield return new ExitPlayMode();
-            }
-            _owner?.Dispose();
-            _owner = null;
-            LocalizationManager.Shutdown();
-            if (_resources != null && _resources.State == ResourceSystemState.Ready)
+            _session?.Dispose();
+            _session = null;
+            _fixture?.Dispose();
+            _fixture = null;
+            if (_ownsPublication)
             {
-                using var closed = _resources.ShutdownAsync();
-                yield return closed;
-                Assert.That(closed.Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
-            }
-            _resources = null;
-            if (_hadPreference)
-            {
-                PlayerPrefs.SetInt(LocalizationManager.LanguagePreferenceKey, _preference);
-            }
-            else
-            {
-                PlayerPrefs.DeleteKey(LocalizationManager.LanguagePreferenceKey);
-            }
-            PlayerPrefs.Save();
-            if (_folder != null && TestContext.CurrentContext.Result.Outcome.Status != NUnit.Framework.Interfaces.TestStatus.Failed)
-            {
-                Assert.That(AssetDatabase.DeleteAsset(_folder), Is.True);
-            }
-            else if (_folder == null)
-            {
-                if (_root)
+                LocalizationEditorSettings.ActiveLocalizationSettings = _previousSettings;
+                if (_previousAddressables)
+                    AddressableAssetSettingsDefaultObject.Settings = _previousAddressables;
+                else
                 {
-                    Object.DestroyImmediate(_root);
+                    EditorBuildSettings.RemoveConfigObject(AddressableAssetSettingsDefaultObject.kDefaultConfigObjectName);
+                    typeof(AddressableAssetSettingsDefaultObject).GetField("s_DefaultSettingsObject", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                        .SetValue(null, null);
                 }
-                if (_english)
+                if (TestContext.CurrentContext.Result.Outcome.Status != NUnit.Framework.Interfaces.TestStatus.Failed)
                 {
-                    Object.DestroyImmediate(_english);
+                    AssetDatabase.DeleteAsset(_folder);
+                    if (_createdDefaultFolder)
+                        AssetDatabase.DeleteAsset("Assets/AddressableAssetsData");
                 }
             }
+            _ownsPublication = false;
             _folder = null;
-            _root = null;
-            _english = null;
-            Assert.That(LocalizationManager.Configs, Is.Empty);
         }
     }
 }

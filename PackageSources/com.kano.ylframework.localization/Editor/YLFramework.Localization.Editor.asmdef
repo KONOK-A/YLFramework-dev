@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Localization.Editor",
     "rootNamespace": "YLFramework.Editor.Localization",
-    "references": ["YLFramework.Localization", "YLFramework.Editor"],
+    "references": ["YLFramework.Runtime", "YLFramework.Localization", "YLFramework.Editor", "Unity.Localization", "Unity.Localization.Editor", "Unity.ResourceManager", "Unity.Addressables", "Unity.Addressables.Editor", "UnityEngine.UI"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

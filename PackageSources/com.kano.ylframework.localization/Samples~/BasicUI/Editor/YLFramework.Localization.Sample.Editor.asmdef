@@ -1,0 +1,6 @@
+{
+  "name":"YLFramework.Localization.Sample.Editor",
+  "references":["YLFramework.Runtime","YLFramework.Localization","YLFramework.Localization.Editor","YLFramework.Localization.Sample","Unity.Localization","Unity.Localization.Editor","UnityEngine.UI","Unity.Addressables","Unity.Addressables.Editor"],
+  "includePlatforms":["Editor"],
+  "autoReferenced":true
+}

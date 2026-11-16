@@ -1,0 +1,7 @@
+{
+  "name":"YLFramework.Localization.DataSample",
+  "references":["YLFramework.Runtime","YLFramework.DataAssets","YLFramework.Localization","Unity.Localization"],
+  "defineConstraints":["YL_DATA_ASSETS_PACKAGE"],
+  "versionDefines":[{"name":"com.kano.ylframework.data-assets","expression":"0.0.0","define":"YL_DATA_ASSETS_PACKAGE"}],
+  "autoReferenced":true
+}

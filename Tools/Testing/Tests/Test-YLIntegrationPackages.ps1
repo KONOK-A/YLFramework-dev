@@ -200,7 +200,7 @@ $source = Get-YLIntegrationSource @sourceArguments
 if ($Integration -cne 'DOTween' -and ($PSBoundParameters.ContainsKey('DOTweenSdkMode') -or $PSBoundParameters.ContainsKey('DOTweenArchive'))) { throw 'DOTween SDK parameters require Integration DOTween.' }
 if ($Integration -ceq 'DOTween' -and $DOTweenSdkMode -cin @('Absent', 'DefineOnly') -and $PSBoundParameters.ContainsKey('DOTweenArchive')) { throw 'DOTween Absent/DefineOnly refuses an SDK archive.' }
 if ($MyInvocation.InvocationName -eq '.') { return }
-if (-not $IsWindows -or $PSVersionTable.PSVersion.Major -ne 7 -or $PSVersionTable.PSVersion.Minor -ne 6) { throw 'Windows PowerShell Core 7.6 is required.' }
+if (-not $IsWindows -or $PSVersionTable.PSVersion -lt [version]'7.6.0') { throw 'Windows PowerShell Core 7.6+ is required.' }
 $repository = Get-YLTestPath ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..')))
 $catalogPath = Join-Path $repository 'Tools/Packaging/PackageCatalog.json'
 $catalog = Read-YLPackageCatalog -Path $catalogPath

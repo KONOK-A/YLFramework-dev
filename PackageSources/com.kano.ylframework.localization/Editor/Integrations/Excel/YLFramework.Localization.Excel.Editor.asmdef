@@ -1,0 +1,14 @@
+{
+  "name": "YLFramework.Localization.Excel.Editor",
+  "rootNamespace": "YLFramework.Editor.Localization.Excel",
+  "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.DataAssets", "YLFramework.DataAssets.Editor", "YLFramework.Localization", "YLFramework.Localization.Editor", "YLFramework.Localization.DataAssets.Editor", "YLFramework.Excel.Editor"],
+  "includePlatforms": ["Editor"],
+  "overrideReferences": true,
+  "precompiledReferences": [],
+  "defineConstraints": ["YL_DATA_ASSETS_PACKAGE", "YL_EXCEL_PACKAGE"],
+  "versionDefines": [
+    {"name":"com.kano.ylframework.data-assets","expression":"0.0.0","define":"YL_DATA_ASSETS_PACKAGE"},
+    {"name":"com.kano.ylframework.excel","expression":"0.0.0","define":"YL_EXCEL_PACKAGE"}
+  ],
+  "autoReferenced": true
+}
