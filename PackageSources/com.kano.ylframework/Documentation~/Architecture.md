@@ -48,7 +48,7 @@ PackageSources/
 | `YLFramework.Runtime` | Unity / UGUI、Json.NET、BouncyCastle，不引用框架 Editor |
 | `YLFramework.Editor` | 主 Runtime、UGUI、Json.NET，仅 Editor；Help 共用该主体 |
 | `YLFramework.DataAssets` / `.Editor` | 主包与自身 Runtime，Editor 不引用 Excel |
-| `YLFramework.Localization` / `.Editor` | 主包、UGUI 与自身 Runtime，不依赖 DataAssets/Excel |
+| `YLFramework.Localization` / `.Editor` | 主包、UGUI、官方 Localization/Addressables；TMP 及 DataAssets/Excel 作者适配分开编译，不强装选装包 |
 | `YLFramework.Save` | Json.NET 与 UnityEngine，不依赖主包；普通 DTO/BCL 存储与主包字典组合可分别使用 |
 | `YLFramework.StateMachine` / `.Editor` | 主包与自身 Runtime，配置式执行内核独立于主包轻量 FSM |
 | `YLFramework.Character2D` / `YLFramework.Platform2D` | 同属 Movement2D，各引用主 Runtime，不互相引用；作者工具归 `YLFramework.Movement2D.Editor` |
@@ -107,7 +107,7 @@ Foundation 的 Unity 挂载/销毁直接使用原生 API。ColorSelector 是消�
 - Resource 为 Core 安装资源适配，Core 不直接依赖具体加载器。
 - Resource → Audio 的装配在 `Systems/Resource/Integration/Audio`，命名 Provider 用资源租约保活，ResourceSystem 仍是资产和 Bundle 的释放权威。
 - `Systems/Audio/Actions/PlaySoundAction` 是同一 Runtime 内的 Action/Audio 协作；DOTween 则是有外部 SDK 前置的条件适配。
-- Localization、DataAssets 与 Gameplay 配置可以借用 ResourceSystem，不另建资源下载或底层释放权威；主包不反向引用它们。
+- DataAssets 与 Gameplay 配置可以借用 ResourceSystem；Localization 的表/Locale/本地化资产由官方 Localization/Addressables 管理，YL 只持有消费者绑定和本方句柄，不桥接第二套资源 Provider。主包不反向引用选装模块。
 
 | 能力 | 调度边界 |
 | --- | --- |

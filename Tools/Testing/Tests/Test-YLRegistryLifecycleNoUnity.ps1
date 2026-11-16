@@ -360,6 +360,16 @@ try {
         $script:legacy = $id -ceq 'com.kano.ylframework.excel'
         $case = Invoke-YLRegistryLifecycle @caseArguments
         Check ($case.status -ceq 'Completed' -and $case.phases.Count -eq 4) "Frozen entry lifecycle failed for ${id}: $($case.error)"
+        if ($id -ceq 'com.kano.ylframework.localization') {
+            $graph = $case.phases[0].report
+            foreach ($mode in @('editor', 'player')) {
+                Check (@($graph.compilation[$mode].name) -ccontains 'YLFramework.Localization.TMP') 'A TMP code condition must not remove its declared assembly from the lifecycle graph.'
+                $missing = Copy-Value $graph
+                $missing.compilation[$mode] = @($missing.compilation[$mode] | Where-Object name -CNE 'YLFramework.Localization.TMP')
+                Reject { Assert-YLRegistryLifecycleCompilation -Report $missing -Roots @($id) -Release $source.release } 'compilation|assembly'
+            }
+            Check (@($graph.compilation.editor.name | Where-Object { $_ -cin @('YLFramework.Localization.DataAssets.Editor', 'YLFramework.Localization.Excel.Editor') }).Count -eq 0) 'Localization alone must not enable DataAssets or Excel adapters.'
+        }
         $script:legacy = $false
     }
     foreach ($selection in @(@{ roots = $movementRoots }, @{ roots = @((Read-YLPackageCatalog).packages.id) })) {
@@ -368,6 +378,15 @@ try {
         $case = Invoke-YLRegistryLifecycle @caseArguments
         Check ($case.status -ceq 'Completed' -and $case.phases.Count -eq 4 -and $case.sentinels.status -ceq 'Unchanged') "Fixed composite lifecycle failed: $($case.error)"
         $graph = Copy-Value $case.phases[0].report
+        if ($script:scenarioRoots.Count -eq $packages.Count) {
+            foreach ($adapter in @('YLFramework.Localization.DataAssets.Editor', 'YLFramework.Localization.Excel.Editor')) {
+                Check (@($graph.compilation.editor.name) -ccontains $adapter) 'The complete package set must retain both independently gated Localization adapters.'
+                $missing = Copy-Value $graph
+                $missing.compilation.editor = @($missing.compilation.editor | Where-Object name -CNE $adapter)
+                Reject { Assert-YLRegistryLifecycleCompilation -Report $missing -Roots $script:scenarioRoots -Release $source.release } 'compilation|assembly|adapter'
+                Check (@($graph.compilation.player.name) -cnotcontains $adapter) 'Localization authoring adapters must not enter the Player graph.'
+            }
+        }
         $graph.compilation.player = @($graph.compilation.player | Where-Object name -CNE 'YLFramework.Overlap')
         Reject { Assert-YLRegistryLifecycleCompilation -Report $graph -Roots $script:scenarioRoots -Release $source.release } 'compilation|assembly'
     }

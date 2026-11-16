@@ -191,7 +191,7 @@ ResourceAudioClipProvider 每次成功交付独立 Clip 租约，由 Audio 播�
 
 AudioClipLibrary 的 Resource 条目只使用 projectId/key，当前来源为 Clip=0/ExternalProvider=3/Resource=4，没有隐藏 BundleName 字段；配置及拒选规则见[音频素材库](Audio/Resources.md#素材库)。
 
-配置数据接入时，将应用实际类型通过 ResourceProjectMount 的 assetTypes 参数显式提供，包括具体根/直接加载条目类型；可选 Localization/DataAssets 的登记句柄持有根租约，业务先停 UI 再归还句柄，条目借用不得超过根生命周期，不把领域依赖写进 Resource 默认类型表。完整流程见源码仓库当前的 [Localization 手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.localization/Documentation~/README.md)与 [DataAssets 手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.data-assets/Documentation~/README.md)。
+配置数据接入时，将应用实际类型通过 ResourceProjectMount 的 assetTypes 参数显式提供，包括具体根/直接加载条目类型；DataAssets 的登记句柄持有根租约，条目借用不得超过根生命周期，不把领域依赖写进 Resource 默认类型表。Localization 的表与本地化资产走官方 Localization/Addressables，不再用 Resource 加载旧语言根；业务配置中的官方引用可与 Resource 加载的 DataAssets 配合。完整流程见源码仓库当前的 [Localization 手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.localization/Documentation~/README.md)与 [DataAssets 手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.data-assets/Documentation~/README.md)。
 
 ## Core 场景控制
 

@@ -264,6 +264,48 @@ try {
         }
         Reject { Assert-YLRegistryResolvedGraph @arguments } 'manifest|direct|source|registry|lock|depth|dependenc|package|cache|version|graph|identity'
     }
+    $localizationGraph = Copy-Value $graphArgs
+    $localizationId = 'com.kano.ylframework.localization'
+    $frozenLocalization = @($localizationGraph.Release.packages | Where-Object id -CEQ $localizationId)[0]
+    $frozenLocalization.dependencies['com.unity.localization'] = '1.5.14'
+    $frozenLocalization.dependencies['com.unity.ugui'] = '1.0.0'
+    $localizationGraph.EntryPackage = $localizationId
+    $localizationGraph.EntryPackages = @($localizationId)
+    $localizationGraph.Manifest = New-YLRegistryHostManifest -PackageSource Registry -Release $localizationGraph.Release -EntryPackage $localizationId -RegistryUrl $url
+    $mainRow = Copy-Value @($graphArgs.Rows | Where-Object name -CEQ 'com.kano.ylframework')[0]
+    $mainRow.isDirectDependency = $false
+    $localizationGraph.Rows = @($mainRow, @{
+        name = $localizationId; version = $version; source = 'Registry'; packageId = "$localizationId@$version"
+        resolvedPath = Join-Path $localizationGraph.HostRoot "Library/PackageCache/$localizationId"
+        isDirectDependency = $true; registryUrl = $url; dependencies = $frozenLocalization.dependencies
+    }, (Copy-Value @($graphArgs.Rows | Where-Object name -CEQ 'com.unity.ugui')[0]))
+    $localizationGraph.Lock = @{ dependencies = @{} }
+    foreach ($row in $localizationGraph.Rows) {
+        $localizationGraph.Lock.dependencies[$row.name] = @{ version = $row.version; source = $(if ($row.source -ceq 'BuiltIn') { 'builtin' } else { 'registry' });
+            dependencies = $row.dependencies; depth = $(if ($row.name -ceq $localizationId) { 0 } else { 1 }) }
+        if ($row.source -cne 'BuiltIn') { $localizationGraph.Lock.dependencies[$row.name].url = $url }
+    }
+    foreach ($official in @(@{name='com.unity.localization';version='1.5.14';depth=1;dependencies=@{'com.unity.addressables'='1.25.0'}},
+        @{name='com.unity.addressables';version='2.10.3';depth=2;dependencies=@{}})) {
+        $localizationGraph.Rows += @{ name=$official.name;version=$official.version;source='Registry';packageId=$official.name+'@'+$official.version;
+            resolvedPath=(Join-Path $localizationGraph.HostRoot ('Library/PackageCache/'+$official.name));isDirectDependency=$false;
+            registryUrl='https://packages.unity.com';dependencies=$official.dependencies }
+        $localizationGraph.Lock.dependencies[$official.name] = @{version=$official.version;source='registry';url='https://packages.unity.com';
+            depth=$official.depth;dependencies=$official.dependencies}
+    }
+    $localizationEvidence = Assert-YLRegistryResolvedGraph @localizationGraph
+    Check ($localizationEvidence.packages.Count -eq 5) 'The actual Unity 6 Addressables baseline must preserve the frozen Localization closure.'
+    foreach ($fault in @('other-minor', 'other-major', 'other-editor', 'other-declaration')) {
+        $bad = Copy-Value $localizationGraph
+        $addressablesRow = @($bad.Rows | Where-Object name -CEQ 'com.unity.addressables')[0]
+        switch ($fault) {
+            'other-minor' { $addressablesRow.version='2.9.0';$addressablesRow.packageId='com.unity.addressables@2.9.0';$bad.Lock.dependencies['com.unity.addressables'].version='2.9.0' }
+            'other-major' { $addressablesRow.version='3.0.0';$addressablesRow.packageId='com.unity.addressables@3.0.0';$bad.Lock.dependencies['com.unity.addressables'].version='3.0.0' }
+            'other-editor' { $bad.EditorVersion='2022.3.62f3' }
+            'other-declaration' { @($bad.Rows | Where-Object name -CEQ 'com.unity.localization')[0].dependencies['com.unity.addressables']='1.24.0';$bad.Lock.dependencies['com.unity.localization'].dependencies['com.unity.addressables']='1.24.0' }
+        }
+        Reject { Assert-YLRegistryResolvedGraph @bad } 'version|baseline|declaration'
+    }
     if ($ControllerUnity) {
         $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
         $guardWorkspace = Initialize-YLTestWorkspace -WorkspaceRoot (Join-Path $root 'ControllerGuards') -Repository $repository

@@ -1,0 +1,5 @@
+{
+  "name":"YLFramework.Localization.Sample",
+  "references":["YLFramework.Runtime","YLFramework.Localization","Unity.Localization","Unity.ResourceManager","UnityEngine.UI"],
+  "autoReferenced":true
+}

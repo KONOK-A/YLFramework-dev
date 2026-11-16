@@ -63,7 +63,7 @@ Workspace/
 | --- | --- | --- |
 | 主包 | `com.kano.ylframework` | `YLFramework.Runtime` |
 | DataAssets | 主包、`.data-assets` | `YLFramework.DataAssets` |
-| Localization | 主包、`.localization` | `YLFramework.Localization` |
+| Localization | 主包、`.localization`；官方 Localization/Addressables 由 UPM 解析 | `YLFramework.Localization`；TMP 另引用 `.TMP`，DataAssets/Excel 为选装作者适配 |
 | Save | 仅 `.save`，不需要主包；Json.NET 由 UPM 解析 | `YLFramework.Save` |
 | StateMachine | 主包、`.state-machine` | `YLFramework.StateMachine` |
 | Movement2D | 主包、`.movement2d` | `YLFramework.Character2D`、`YLFramework.Platform2D` |

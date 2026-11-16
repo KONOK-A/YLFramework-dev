@@ -13,6 +13,11 @@ function Get-YLNativeTestAssembly {
     foreach ($package in $Catalog['packages'] | Where-Object { $_['id'] -cnotin $PackageIds }) {
         foreach ($declaration in $package['assemblies']) { $null = $absent.Add($declaration['name']) }
     }
+    if ('com.kano.ylframework.localization' -cnotin $PackageIds) {
+        foreach ($name in @('Unity.Localization', 'Unity.Localization.Editor', 'Unity.Addressables', 'Unity.Addressables.Editor', 'Unity.ResourceManager')) {
+            $null = $absent.Add($name)
+        }
+    }
     $copy = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $Assembly -Depth 25) -AsHashtable -NoEnumerate
     $copy['references'] = @($Assembly['references'] | Where-Object { -not $absent.Contains($_) })
     return ,$copy

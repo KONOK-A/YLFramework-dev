@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Localization.Acceptance",
     "rootNamespace": "YLFramework.Tests.Localization",
-    "references": ["YLFramework.Runtime", "YLFramework.Localization"],
+    "references": ["YLFramework.Runtime", "YLFramework.Localization", "Unity.Localization", "Unity.ResourceManager"],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

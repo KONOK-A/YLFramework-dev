@@ -10,6 +10,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Build;
+using UnityEditor.Build.Player;
 using UnityEditor.Compilation;
 using UnityEditor.PackageManager;
 using UnityEngine;
@@ -50,7 +51,7 @@ namespace YLFramework.Testing
                     isBatchMode = Application.isBatchMode, scriptCompilationFailed = EditorUtility.scriptCompilationFailed,
                     capturedUtc = DateTime.UtcNow.ToString("o"), status = "Failed", packages = new object[0], assemblies = new object[0],
                     nativeInstallation = "NotRun", playerBuild = "NotRun", playerRuntime = "NotRun", hotUpdatePlayer = "NotVerified",
-                    scope = "Actual Unity Editor compilation and Player compilation graph only. Not a native or hot-update Player pass."
+                    scope = "Actual Unity Editor and Player script compilation/assembly references only. Not a Player build, runtime or hot-update pass."
                 });
                 if (EditorUtility.scriptCompilationFailed || EditorApplication.isCompiling || EditorApplication.isUpdating)
                 {
@@ -74,7 +75,8 @@ namespace YLFramework.Testing
                 var player = CompilationPipeline.GetAssemblies(AssembliesType.PlayerWithoutTestAssemblies);
                 report["editorGraph"] = JArray.FromObject(editor.Select(Graph));
                 report["playerGraph"] = JArray.FromObject(player.Select(Graph));
-                ValidateGraph(request, editor, player);
+                var playerReferences = CompilePlayerReferences(request, report, player);
+                report["upstreamInfrastructure"] = ValidateGraph(request, editor, player, playerReferences);
                 var required = new JArray();
                 foreach (var expected in AssemblyPlan(request).Cast<JObject>().Where(row => (bool)row["enabled"]))
                 {
@@ -161,18 +163,7 @@ namespace YLFramework.Testing
                 if (integration == "HybridCLR" || integration == "AllPackages")
                 {
                     var sdk = installed.Single(package => package.name == "com.code-philosophy.hybridclr");
-                    JObject sdkReport;
-                    if (Artifact(request)) { sdkReport = CaptureRegistrySdk(request); }
-                    else
-                    {
-                        var expected = (JObject)request["sdk"];
-                        string revision = GitRevision(sdk, Text(expected, "declaration"), Text(expected, "revision"), "v9.0.3");
-                        if (sdk.version != "9.0.3" || Text((JObject)manifest["dependencies"], sdk.name) != Text(expected, "declaration"))
-                        {
-                            throw new InvalidOperationException("The actual official HybridCLR SDK source/version/commit is incorrect.");
-                        }
-                        sdkReport = PackageRow(sdk); sdkReport["revision"] = revision;
-                    }
+                    var sdkReport = CaptureHybridSdk(request, sdk);
                     foreach (string name in new[] { "YLFramework.HybridCLR", "YLFramework.HybridCLR.Editor" })
                     {
                         var assembly = editor.Single(item => item.name == name);
@@ -288,11 +279,187 @@ namespace YLFramework.Testing
                 defineEnabled = mode == "Required", sdkEditorToolingEnabled = mode == "Required", wrapperCompiled = mode == "Required", version = Text((JObject)request["sdk"], "version"), dll, sha256 = Hash(dll), modules = sdkSources });
         }
 
-        private static void ValidateGraph(JObject request, CompiledAssembly[] editor, CompiledAssembly[] player)
+        private static PackageInfo OfficialPackageOwner(CompiledAssembly assembly, PackageInfo[] installed)
+        {
+            if (assembly.sourceFiles == null || assembly.sourceFiles.Length == 0) return null;
+            var approved = installed.Where(package => package.name.StartsWith("com.unity.", StringComparison.Ordinal) && !string.IsNullOrEmpty(package.resolvedPath) &&
+                (package.source == PackageSource.BuiltIn || package.source == PackageSource.Registry && package.registry != null &&
+                    string.Equals(package.registry.url?.TrimEnd('/'), "https://packages.unity.com", StringComparison.OrdinalIgnoreCase))).ToArray();
+            PackageInfo first = null;
+            foreach (var source in assembly.sourceFiles)
+            {
+                var owner = approved.FirstOrDefault(package => OwnsSource(package, source));
+                if (owner == null) return null;
+                first ??= owner;
+            }
+            return first;
+        }
+
+        private static bool OwnsSource(PackageInfo package, string source)
+        {
+            string normalized = source.Replace('\\', '/');
+            if (Regex.IsMatch(normalized, @"(?:^|/)\.\.(?:/|$)")) return false;
+            string prefix = "Packages/" + package.name + "/";
+            string path = normalized.StartsWith(prefix, StringComparison.Ordinal) ? Path.Combine(package.resolvedPath, normalized.Substring(prefix.Length)) :
+                Path.IsPathRooted(source) ? source : Path.Combine(Project(), source);
+            if (!File.Exists(path) || !Inside(path, package.resolvedPath)) return false;
+            RejectLinks(path);
+            return true;
+        }
+
+        private static bool OfficialTestInfrastructure(CompiledAssembly assembly, PackageInfo owner)
+        {
+            if (assembly.name != "UnityEngine.TestRunner" || owner?.name != "com.unity.test-framework" || !assembly.sourceFiles.All(source => OwnsSource(owner, source))) return false;
+            var definitions = Files(owner.resolvedPath).Where(path => path.EndsWith(".asmdef", StringComparison.Ordinal)).Select(ReadJson)
+                .Where(definition => (string)definition["name"] == assembly.name).ToArray();
+            return definitions.Length == 1 && definitions[0]["autoReferenced"]?.Type == JTokenType.Boolean && !(bool)definitions[0]["autoReferenced"];
+        }
+
+        private static PackageInfo ApprovedSdkOwner(JObject request, CompiledAssembly assembly, PackageInfo[] installed)
+        {
+            if (!new[] { "HybridCLR.Editor", "HybridCLR.Runtime" }.Contains(assembly.name) || !new[] { "HybridCLR", "AllPackages" }.Contains(Text(request, "integration"))) return null;
+            var sdk = installed.SingleOrDefault(package => package.name == "com.code-philosophy.hybridclr");
+            if (sdk == null || string.IsNullOrEmpty(sdk.resolvedPath) || assembly.sourceFiles == null || assembly.sourceFiles.Length == 0 || !assembly.sourceFiles.All(source => OwnsSource(sdk, source))) return null;
+            CaptureHybridSdk(request, sdk);
+            var definitions = Files(sdk.resolvedPath).Where(path => path.EndsWith(".asmdef", StringComparison.Ordinal)).Select(ReadJson)
+                .Where(definition => (string)definition["name"] == assembly.name).ToArray();
+            if (definitions.Length != 1 || DeclaredTestReferences(definitions[0], installed)) return null;
+            return sdk;
+        }
+
+        private static bool DeclaredTestReferences(JObject definition, PackageInfo[] installed)
+        {
+            foreach (string reference in new[] { "references", "precompiledReferences" }
+                .SelectMany(field => ((JArray)definition[field])?.Values<string>() ?? Enumerable.Empty<string>()))
+            {
+                string name = reference;
+                if (reference.StartsWith("GUID:", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = CompilationPipeline.GetAssemblyDefinitionFilePathFromAssemblyReference(reference);
+                    if (string.IsNullOrEmpty(path)) throw new InvalidOperationException("An explicit assembly GUID could not be resolved: " + reference);
+                    var roots = installed.Where(package => !string.IsNullOrEmpty(package.resolvedPath))
+                        .Select(package => JObject.FromObject(new { name = package.name, root = package.resolvedPath })).ToArray();
+                    path = Physical(Path.IsPathRooted(path) || path.StartsWith("Packages/", StringComparison.Ordinal) ? path : Path.Combine(Project(), path), roots);
+                    RejectLinks(path);
+                    name = Text(ReadJson(path), "name");
+                }
+                if (Regex.IsMatch(name, "TestRunner|Tests|Acceptance|nunit", RegexOptions.IgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        private static bool OnlyUnusedCompilerTestReferences(CompiledAssembly assembly, JArray plan, PackageInfo[] installed, PackageInfo officialOwner, PackageInfo approvedSdkOwner = null)
+        {
+            var tests = References(assembly).Where(reference => Regex.IsMatch(reference, "TestRunner|Tests|Acceptance|nunit", RegexOptions.IgnoreCase)).ToArray();
+            if (tests.Length == 0 || tests.Any(reference => reference != "UnityEngine.TestRunner" && reference != "UnityEditor.TestRunner" && reference != "nunit.framework")) return false;
+            var owner = plan.Cast<JObject>().SingleOrDefault(row => Text(row, "name") == assembly.name);
+            if (owner != null)
+            {
+                var package = installed.Single(row => row.name == Text(owner, "package"));
+                var definition = ReadJson(Path.Combine(package.resolvedPath, Text(owner, "path")));
+                if (DeclaredTestReferences(definition, installed)) return false;
+            }
+            else if (officialOwner == null && approvedSdkOwner == null && assembly.name != "Assembly-CSharp-Editor") return false;
+            var emitted = AppDomain.CurrentDomain.GetAssemblies().Where(value => value.GetName().Name == assembly.name).ToArray();
+            if (approvedSdkOwner != null)
+            {
+                string expectedOutput = Path.GetFullPath(Path.Combine(Project(), "Library/ScriptAssemblies", assembly.name + ".dll"));
+                if (emitted.Length != 1 || string.IsNullOrEmpty(assembly.outputPath) || !File.Exists(expectedOutput) ||
+                    !string.Equals(Path.GetFullPath(assembly.outputPath), expectedOutput, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(Path.GetFullPath(emitted[0].Location), expectedOutput, StringComparison.OrdinalIgnoreCase)) return false;
+                RejectLinks(expectedOutput);
+            }
+            return emitted.Length == 1 && !emitted[0].GetReferencedAssemblies().Any(reference =>
+                Regex.IsMatch(reference.Name, "TestRunner|Tests|Acceptance|nunit|Mcp|ReflectorNet", RegexOptions.IgnoreCase));
+        }
+
+        private static Dictionary<string, string[]> CompilePlayerReferences(JObject request, JObject report, CompiledAssembly[] player)
+        {
+            string output = Path.Combine(Text(request, "output"), "PlayerScripts");
+            if (Directory.Exists(output) || File.Exists(output)) throw new InvalidOperationException("Player compilation output must be new.");
+            Directory.CreateDirectory(output);
+            var result = PlayerBuildInterface.CompilePlayerScripts(new ScriptCompilationSettings
+            {
+                group = BuildTargetGroup.Standalone, target = BuildTarget.StandaloneWindows64, options = ScriptCompilationOptions.None
+            }, output);
+            if (result.assemblies == null || result.assemblies.Count == 0) throw new InvalidOperationException("Player script compilation returned no assemblies.");
+            var references = new Dictionary<string, string[]>(StringComparer.Ordinal);
+            var artifacts = new JArray();
+            report["playerCompilation"] = artifacts;
+            string Capture(string path, string kind)
+            {
+                path = Path.GetFullPath(path);
+                RejectLinks(path);
+                string name = System.Reflection.AssemblyName.GetAssemblyName(path).Name;
+                var emitted = Array.Empty<string>();
+                if (kind != "UnityPlatformReference")
+                {
+                    // This metadata-only API belongs to Unity's Mono runtime, not the NoUnity .NET host.
+                    var assembly = (System.Reflection.Assembly)typeof(System.Reflection.Assembly).GetMethod("ReflectionOnlyLoadFrom", new[] { typeof(string) })
+                        .Invoke(null, new object[] { path });
+                    if (!string.Equals(Path.GetFullPath(assembly.Location), path, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Player assembly metadata came from a different file.");
+                    emitted = assembly.GetReferencedAssemblies().Select(value => value.Name).ToArray();
+                }
+                if (Path.GetFileName(path) != name + ".dll") throw new InvalidOperationException("Player assembly identity/path mismatch.");
+                references.Add(name, emitted);
+                artifacts.Add(JObject.FromObject(new { name, path, kind, sha256 = Hash(path), referencesInspected = kind != "UnityPlatformReference",
+                    references = kind == "UnityPlatformReference" ? null : emitted, target = "StandaloneWindows64" }));
+                return name;
+            }
+            foreach (string returned in result.assemblies)
+            {
+                string path = Path.GetFullPath(Path.IsPathRooted(returned) || File.Exists(returned) ? returned : Path.Combine(output, returned));
+                if (!Inside(path, output) || !File.Exists(path)) throw new InvalidOperationException("Player compilation returned a missing or out-of-scope assembly.");
+                string name = Capture(path, "PlayerScript");
+                if (!player.Any(assembly => assembly.name == name)) throw new InvalidOperationException("An actual Player script output is absent from its compilation graph: " + name);
+            }
+            if (player.Any(assembly => !references.ContainsKey(assembly.name))) throw new InvalidOperationException("The actual Player compilation is missing a graph assembly.");
+            var installed = PackageInfo.GetAllRegisteredPackages();
+            var candidates = player.SelectMany(assembly => assembly.compiledAssemblyReferences).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase)
+                .GroupBy(Path.GetFileNameWithoutExtension).ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+            var pending = new Queue<string>(player.Where(assembly => !OfficialTestInfrastructure(assembly, OfficialPackageOwner(assembly, installed)))
+                .SelectMany(assembly => references[assembly.name]));
+            while (pending.Count != 0)
+            {
+                string name = pending.Dequeue();
+                if (Regex.IsMatch(name, @"TestRunner|Tests|Acceptance|nunit|Mcp|ReflectorNet|UnityEditor|(?:^|\.)Editor(?:\.|$)|Assembly-CSharp-Editor", RegexOptions.IgnoreCase))
+                    throw new InvalidOperationException("A restricted dependency entered the actual Player closure: " + name);
+                if (references.ContainsKey(name)) continue;
+                if (!candidates.TryGetValue(name, out var paths) || paths.Any(path => !File.Exists(path)) || paths.Select(Hash).Distinct(StringComparer.Ordinal).Count() != 1)
+                    throw new InvalidOperationException("An actual Player dependency is missing or ambiguous: " + name);
+                string path = paths[0];
+                bool platform = Inside(path, EditorApplication.applicationContentsPath);
+                bool approvedAssets = Text(request, "integration") == "DOTween" && Inside(path, Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween"));
+                if (!platform && !approvedAssets && !installed.Any(package => !string.IsNullOrEmpty(package.resolvedPath) && Inside(path, package.resolvedPath)))
+                    throw new InvalidOperationException("A Player dependency is outside its registered package or approved SDK: " + path);
+                if (Capture(path, platform ? "UnityPlatformReference" : "PrecompiledDependency") != name) throw new InvalidOperationException("A Player dependency has a different assembly identity.");
+                foreach (string reference in references[name]) pending.Enqueue(reference);
+            }
+            return references;
+        }
+
+        private static void ValidatePlayerClosure(CompiledAssembly[] player, IDictionary<string, string[]> references, PackageInfo[] installed)
+        {
+            var pending = new Queue<string>(player.Where(assembly => !OfficialTestInfrastructure(assembly, OfficialPackageOwner(assembly, installed))).Select(assembly => assembly.name));
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            while (pending.Count != 0)
+            {
+                string name = pending.Dequeue();
+                if (!visited.Add(name)) continue;
+                if (Regex.IsMatch(name, @"TestRunner|Tests|Acceptance|nunit|Mcp|ReflectorNet|UnityEditor|(?:^|\.)Editor(?:\.|$)|Assembly-CSharp-Editor", RegexOptions.IgnoreCase))
+                    throw new InvalidOperationException("A restricted dependency entered the actual Player closure: " + name);
+                if (!references.TryGetValue(name, out var emitted)) throw new InvalidOperationException("Actual transitive Player IL evidence is missing: " + name);
+                foreach (string reference in emitted) pending.Enqueue(reference);
+            }
+        }
+
+        private static JArray ValidateGraph(JObject request, CompiledAssembly[] editor, CompiledAssembly[] player, IDictionary<string, string[]> playerReferences = null)
         {
             var installed = PackageInfo.GetAllRegisteredPackages();
             var plan = AssemblyPlan(request);
+            var classifications = new JArray();
             PackageCatalogContract.AssertGraph(plan, editor.Select(row => row.name), player.Select(row => row.name));
+            if (playerReferences != null) ValidatePlayerClosure(player, playerReferences, installed);
             foreach (var graph in new[] { editor, player })
             {
                 var core = graph.SingleOrDefault(row => row.name == "YLFramework.RedDots");
@@ -319,6 +486,32 @@ namespace YLFramework.Testing
             foreach (var assembly in editor.Concat(player))
             {
                 var compiledSources = new List<string>();
+                var officialOwner = OfficialPackageOwner(assembly, installed);
+                var officialEditorOwner = !player.Contains(assembly) ? officialOwner : null;
+                var approvedSdkOwner = ApprovedSdkOwner(request, assembly, installed);
+                bool runtimeInfrastructure = player.Contains(assembly) && playerReferences != null && playerReferences.ContainsKey(assembly.name) && OfficialTestInfrastructure(assembly, officialOwner);
+                if (player.Contains(assembly) && playerReferences != null)
+                {
+                    if (!playerReferences.TryGetValue(assembly.name, out var emitted)) throw new InvalidOperationException("Actual Player IL evidence is missing: " + assembly.name);
+                    if ((!runtimeInfrastructure && Regex.IsMatch(assembly.name, "TestRunner|Tests|Acceptance|nunit", RegexOptions.IgnoreCase)) ||
+                        emitted.Any(reference => Regex.IsMatch(reference, "TestRunner|Tests|Acceptance|nunit|Mcp|ReflectorNet|UnityEditor|YLFramework.*Editor", RegexOptions.IgnoreCase) &&
+                            !(runtimeInfrastructure && reference == "nunit.framework")))
+                        throw new InvalidOperationException("Restricted dependency in actual Player IL: " + assembly.name + "; " + string.Join(", ", emitted));
+                }
+                if (runtimeInfrastructure) classifications.Add(JObject.FromObject(new { name = assembly.name, classification = "UnconsumedOfficialTestInfrastructure",
+                    owner = officialOwner.name, version = officialOwner.version, source = officialOwner.source.ToString(), references = playerReferences[assembly.name] }));
+                bool unusedCompilerTests = !player.Contains(assembly) && OnlyUnusedCompilerTestReferences(assembly, plan, installed, officialOwner, approvedSdkOwner);
+                if (approvedSdkOwner != null && unusedCompilerTests) classifications.Add(JObject.FromObject(new { name = assembly.name,
+                    classification = "ApprovedSdkUnusedCompilerTestReferences", side = "Editor", owner = approvedSdkOwner.name, version = approvedSdkOwner.version,
+                    source = approvedSdkOwner.source.ToString(), loadedPath = assembly.outputPath, sha256 = Hash(assembly.outputPath) }));
+                var compilerTests = References(assembly).Where(reference => Regex.IsMatch(reference, "TestRunner|Tests|Acceptance|nunit", RegexOptions.IgnoreCase)).ToArray();
+                bool unusedPlayerCompilerTests = player.Contains(assembly) && compilerTests.Length != 0 && (officialOwner != null || approvedSdkOwner != null) && playerReferences != null &&
+                    playerReferences.TryGetValue(assembly.name, out var emittedPlayer) &&
+                    !emittedPlayer.Any(reference => Regex.IsMatch(reference, "TestRunner|Tests|Acceptance|nunit|Mcp|ReflectorNet", RegexOptions.IgnoreCase)) &&
+                    compilerTests.All(reference => reference == "UnityEngine.TestRunner" || reference == "UnityEditor.TestRunner" || reference == "nunit.framework");
+                if (approvedSdkOwner != null && unusedPlayerCompilerTests) classifications.Add(JObject.FromObject(new { name = assembly.name,
+                    classification = "ApprovedSdkUnusedCompilerTestReferences", side = "Player", owner = approvedSdkOwner.name, version = approvedSdkOwner.version,
+                    source = approvedSdkOwner.source.ToString(), references = playerReferences[assembly.name] }));
                 if (assembly.name == "YLFramework.Runtime")
                 {
                     var forbidden = References(assembly).Where(reference =>
@@ -327,15 +520,25 @@ namespace YLFramework.Testing
                         Regex.IsMatch(reference, "TestRunner|Tests|Mcp|ReflectorNet|Analyzer", RegexOptions.IgnoreCase)).ToArray();
                     if (forbidden.Length != 0) { throw new InvalidOperationException("The main Runtime acquired an unapproved dependency: " + string.Join(", ", forbidden)); }
                 }
-                if (Regex.IsMatch(assembly.name, "TestRunner|Tests|Acceptance|Mcp|ReflectorNet", RegexOptions.IgnoreCase) ||
-                    References(assembly).Any(reference => Regex.IsMatch(reference, "TestRunner|nunit|Mcp|ReflectorNet", RegexOptions.IgnoreCase)))
+                if (Regex.IsMatch(assembly.name, "Mcp|ReflectorNet", RegexOptions.IgnoreCase) ||
+                    References(assembly).Any(reference => Regex.IsMatch(reference, "Mcp|ReflectorNet", RegexOptions.IgnoreCase)) ||
+                    officialEditorOwner == null && !runtimeInfrastructure && Regex.IsMatch(assembly.name, "TestRunner|Tests|Acceptance", RegexOptions.IgnoreCase) ||
+                    officialEditorOwner == null && !runtimeInfrastructure && !unusedCompilerTests && !unusedPlayerCompilerTests && References(assembly).Any(reference => Regex.IsMatch(reference, "TestRunner|Tests|Acceptance|nunit", RegexOptions.IgnoreCase)))
                 {
-                    throw new InvalidOperationException("Tests or MCP entered the consumer compilation graph.");
+                    var emittedReferences = player.Contains(assembly)
+                        ? playerReferences != null && playerReferences.TryGetValue(assembly.name, out var actualPlayer) ? actualPlayer : Array.Empty<string>()
+                        : AppDomain.CurrentDomain.GetAssemblies().Where(value => value.GetName().Name == assembly.name)
+                            .SelectMany(value => value.GetReferencedAssemblies()).Select(value => value.Name).ToArray();
+                    throw new InvalidOperationException("Tests or MCP entered the consumer compilation graph: " + assembly.name +
+                        "; side=" + (player.Contains(assembly) ? "Player" : "Editor") + "; official owner=" + officialOwner?.name +
+                        "; emitted restricted=" + string.Join(", ", emittedReferences.Where(value => Regex.IsMatch(value, "TestRunner|Tests|Acceptance|nunit|Mcp|ReflectorNet", RegexOptions.IgnoreCase))) +
+                        "; restricted references=" + string.Join(", ", References(assembly).Where(reference => Regex.IsMatch(reference, "TestRunner|Tests|Acceptance|nunit|Mcp|ReflectorNet", RegexOptions.IgnoreCase))));
                 }
                 foreach (string source in assembly.sourceFiles)
                 {
                     string normalized = source.Replace('\\', '/');
-                    if (Regex.IsMatch(normalized, @"(?:^|/)(?:Samples~|Samples|Tests)(?:/|$)|(?:^|/)\.\.?(?:/|$)", RegexOptions.IgnoreCase))
+                    if (Regex.IsMatch(normalized, @"(?:^|/)\.\.?(?:/|$)") || officialEditorOwner == null && !runtimeInfrastructure &&
+                        Regex.IsMatch(normalized, @"(?:^|/)(?:Samples~|Samples|Tests)(?:/|$)", RegexOptions.IgnoreCase))
                     {
                         throw new InvalidOperationException("Default Samples, Tests or traversal entered the compilation graph: " + source);
                     }
@@ -391,6 +594,7 @@ namespace YLFramework.Testing
             {
                 throw new InvalidOperationException("Excel or MiniExcel leaked into the actual Player assembly graph.");
             }
+            return classifications;
         }
 
         private static void ValidateGitSource(JObject request)
@@ -817,6 +1021,19 @@ namespace YLFramework.Testing
             }
             if (hybrid) { CaptureRegistrySdk(request); }
             return result;
+        }
+
+        private static JObject CaptureHybridSdk(JObject request, PackageInfo sdk)
+        {
+            if (Artifact(request)) return CaptureRegistrySdk(request);
+            var expected = request["sdk"] as JObject;
+            if (Text(expected, "declaration") != "https://gitee.com/focus-creative-games/hybridclr_unity.git#v9.0.3" ||
+                Text(expected, "revision") != "6cadd24d101f4cbd00cd80190106f6621132d24d")
+                throw new InvalidOperationException("HybridCLR requires its exact approved Git source and revision.");
+            string revision = GitRevision(sdk, Text(expected, "declaration"), Text(expected, "revision"), "v9.0.3");
+            if (sdk.version != "9.0.3" || Text((JObject)ReadJson(Path.Combine(Project(), "Packages/manifest.json"))["dependencies"], sdk.name) != Text(expected, "declaration"))
+                throw new InvalidOperationException("The actual official HybridCLR SDK source/version/commit is incorrect.");
+            var row = PackageRow(sdk); row["revision"] = revision; return row;
         }
 
         private static JObject CaptureRegistrySdk(JObject request)

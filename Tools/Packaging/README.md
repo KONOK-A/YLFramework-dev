@@ -22,13 +22,13 @@
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryPackagesNoUnity.ps1 -TemporaryRoot $env:TEMP
 ```
 
-入口要求 PowerShell `7.6.x`，将当前 `PackageSources` 复制到自有临时夹具，检查白名单、必需文档、依赖、元数据、GUID 与负载。它会创建工具自己的临时目录，不覆盖给定父目录的其他内容。
+入口要求 Windows PowerShell Core `7.6+`，将当前 `PackageSources` 复制到自有临时夹具，检查白名单、必需文档、依赖、元数据、GUID 与负载。它会创建工具自己的临时目录，不覆盖给定父目录的其他内容。
 
 显式提供 `-NodeRoot` 时才额外执行固定版本的真实 npm pack；未提供时该分支不会运行，不能把脚本完成称作真实 npm 打包或 UPM 安装通过。较小的 [Test-YLUpmPackages.ps1](../Testing/Tests/Test-YLUpmPackages.ps1) 只检查基础文档/GUID，不替代完整打包合同，也不在当前 CI 中。
 
 ## 构建固定提交候选
 
-[Build-YLRegistryPackages.ps1](Build-YLRegistryPackages.ps1) 使用 Git 提交构建候选，不直接打包未提交的工作区。要求固定 Node `22.23.3`、随附 npm `10.9.9`、PowerShell `7.6.x`、Git 与 Git LFS；使用已准备的工具环境，不修改全局 Node/npm 配置或带入令牌。
+[Build-YLRegistryPackages.ps1](Build-YLRegistryPackages.ps1) 使用 Git 提交构建候选，不直接打包未提交的工作区。要求固定 Node `22.23.3`、随附 npm `10.9.9`、PowerShell Core `7.6+`、Git 与 Git LFS；使用已准备的工具环境，不修改全局 Node/npm 配置或带入令牌。回执保留真实 PowerShell 完整 patch 版本，不把最低版本标签写成实际工具链；复现候选仍须核对同一回执和制品字节。
 
 从仓库根执行，先把 `YL_PACKAGE_WORKSPACE` 设为仓库外、明确自有的绝对输出根：
 

@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Tests.Fixtures",
     "rootNamespace": "YLFramework.Tests",
-    "references": ["YLFramework.Runtime", "UnityEngine.UI", "UnityEngine.TestRunner"],
+    "references": ["YLFramework.Runtime", "UnityEngine.UI", "UnityEngine.TestRunner", "Unity.Localization", "Unity.Addressables", "Unity.ResourceManager"],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
@@ -9,6 +9,6 @@
     "precompiledReferences": ["nunit.framework.dll"],
     "autoReferenced": false,
     "defineConstraints": ["UNITY_INCLUDE_TESTS"],
-    "versionDefines": [],
+    "versionDefines": [{ "name": "com.kano.ylframework.localization", "expression": "0.0.0", "define": "YL_LOCALIZATION_PACKAGE" }],
     "noEngineReferences": false
 }

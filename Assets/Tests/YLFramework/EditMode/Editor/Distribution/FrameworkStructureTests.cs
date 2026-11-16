@@ -24,7 +24,7 @@ namespace YLFramework.Tests
                 ("com.kano.ylframework.overlap", "Runtime/Detection/OverlapDetector3D.cs", "93df00acc5406744487711e68d2d09a6"),
                 ("com.kano.ylframework.gameplay", "Runtime/Skill/SkillConfigData.cs", "1a3a29525ba46c2468186d1837b21fb5"),
                 ("com.kano.ylframework.data-assets", "Runtime/Systems/DataAssets/ScriptableObjectConfigs.cs", "5e54610ded7e2994aaa66cefe28b02ce"),
-                ("com.kano.ylframework.localization", "Runtime/Systems/Localization/LanguageConfig.cs", "30a56d547611e6f448ff727ea7957e29"),
+                ("com.kano.ylframework.localization", "Runtime/Systems/Localization/LocalizationSession.cs", "ce712fe79d36d83449db36826f4a2f34"),
                 ("com.kano.ylframework.save", "Runtime/Systems/Save/SaveManager.cs", "ff5957d84032533449f21601f372570a"),
                 ("com.kano.ylframework.reddot", "Runtime/Systems/Reddot/Reddot.cs", "3ff4191f5232945449bde5c92a1b497d"),
                 ("com.kano.ylframework.excel", "Editor/ExcelValues.cs", "c12cc4e0c0435a9488f224355bc0d70e"),

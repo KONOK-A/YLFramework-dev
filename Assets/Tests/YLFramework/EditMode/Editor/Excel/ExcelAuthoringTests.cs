@@ -279,7 +279,7 @@ namespace YLFramework.Tests.Extensions.Data
         public void RuntimeRootsDoNotStoreUnusedWorkbookPaths()
         {
             Assert.That(typeof(YLFramework.DataAssets.ScriptableObjectConfigs).GetField("excel_path"), Is.Null);
-            Assert.That(typeof(YLFramework.Localization.MultiLanguageConfigs).GetField("excel_path"), Is.Null);
+            Assert.That(typeof(UnityEngine.Localization.LocalizedString).GetField("excel_path"), Is.Null);
         }
         [Test]
         public void DuplicateHeaderDuplicateIdAndUnknownEnumAreNotSilentlyDropped()

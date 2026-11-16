@@ -285,6 +285,31 @@ try {
         $unknown = Join-Path $sourceRoot 'com.kano.ylframework.unknown'; $null = [IO.Directory]::CreateDirectory($unknown)
         Reject { Get-YLRegistryPackageSet -Root $sourceRoot } 'Unknown|unlisted|catalog|unauthorized'
     }
+    $tmpCatalog = Clone $catalog
+    $tmpOwner = @($tmpCatalog.packages | Where-Object id -CEQ 'com.kano.ylframework.localization')[0]
+    $tmpOwner.assemblies = @($tmpOwner.assemblies | Where-Object name -CNE 'YLFramework.Localization.TMP')
+    $tmpOwner.assemblies += @{ name = 'YLFramework.Localization.TMP'; path = 'Runtime/Integrations/TMP/YLFramework.Localization.TMP.asmdef';
+        player = $true; defineConstraints = @(); versionDefines = @(@{ name = 'com.unity.textmeshpro'; expression = '1.0.0'; define = 'YL_LOCALIZATION_TMP' }) }
+    Case 'The official TMP code condition does not invent an assembly prerequisite' {
+        $path = Join-Path $root 'TMPPackageCatalog.json'
+        [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $tmpCatalog -Depth 40), [Text.UTF8Encoding]::new($false))
+        $accepted = Read-YLPackageCatalog -Path $path
+        Check ($accepted.packages.Count -eq $catalog.packages.Count) 'A code condition must not add an installation unit.'
+    }
+    foreach ($fault in @('unknown-external', 'different-expression', 'external-assembly-gate')) {
+        Case "The TMP code condition refuses $fault" {
+            $bad = Clone $tmpCatalog
+            $adapter = @($bad.packages | Where-Object id -CEQ 'com.kano.ylframework.localization')[0].assemblies[-1]
+            switch ($fault) {
+                'unknown-external' { $adapter.versionDefines[0].name = 'com.unknown.sdk' }
+                'different-expression' { $adapter.versionDefines[0].expression = '2.0.0' }
+                'external-assembly-gate' { $adapter.defineConstraints = @('YL_LOCALIZATION_TMP') }
+            }
+            $path = Join-Path $root 'InvalidTMPPackageCatalog.json'
+            [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $bad -Depth 40), [Text.UTF8Encoding]::new($false))
+            Reject { Read-YLPackageCatalog -Path $path } 'catalog|condition|define|package'
+        }
+    }
     foreach ($fault in @('schema-type', 'unknown-field', 'duplicate-package', 'duplicate-assembly', 'unsafe-path', 'invalid-player', 'unknown-version-package', 'unmapped-define')) {
         Case "Catalog schema refuses $fault" {
             $bad = Clone $catalog
@@ -307,6 +332,17 @@ try {
     if (-not [IO.File]::Exists($contractSource)) { throw 'RED: the compiled package catalog/source-set contract is missing.' }
     $references = @([IO.Directory]::EnumerateFiles((Join-Path $PSHOME 'ref'), '*.dll')) + @([Newtonsoft.Json.Linq.JObject].Assembly.Location)
     Add-Type -Path $contractSource -ReferencedAssemblies $references -CompilerOptions @('/langversion:9.0', '/nowarn:1701')
+    Case 'Compiled catalog retains TMP as a code condition, not a fabricated package gate' {
+        $inputs = [Newtonsoft.Json.Linq.JArray]::Parse('[{"name":"com.kano.ylframework","version":"0.1.0-preview.1"},{"name":"com.kano.ylframework.localization","version":"0.1.0-preview.1"}]')
+        $json = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $tmpCatalog -Depth 40))
+        $plan = [YLFramework.Testing.PackageCatalogContract]::Definitions($json, $inputs, 'Package', '')
+        $adapter = @($plan | Where-Object { [string]$_['name'] -ceq 'YLFramework.Localization.TMP' })
+        Check ($adapter.Count -eq 1 -and [bool]$adapter[0]['enabled'].Value) 'Code macros must not silently exclude the SDK adapter assembly.'
+        $owner = @($json['packages'] | Where-Object { [string]$_['id'] -ceq 'com.kano.ylframework.localization' })[0]
+        $definition = @($owner['assemblies'] | Where-Object { [string]$_['name'] -ceq 'YLFramework.Localization.TMP' })[0]
+        $definition['defineConstraints'] = [Newtonsoft.Json.Linq.JArray]::new([object[]]@('YL_LOCALIZATION_TMP'))
+        Reject { [YLFramework.Testing.PackageCatalogContract]::Validate($json) } 'catalog|condition|define'
+    }
     foreach ($mode in @('Required', 'Absent', 'SdkOnly', 'DefineOnly')) {
         Case "DOTween conditional plan independently records SDK mode $mode" {
             $inputs = [Newtonsoft.Json.Linq.JArray]::Parse('[{"name":"com.kano.ylframework","version":"0.1.0-preview.1"}]')

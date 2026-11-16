@@ -5,11 +5,12 @@ using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Compilation;
+using UnityEditor.Localization;
 using UnityEngine;
+using UnityEngine.Localization;
+using UnityEngine.Localization.Tables;
 using YLFramework.DataAssets;
 using YLFramework.Editor.DataAssets;
-using YLFramework.Editor.Localization;
-using YLFramework.Localization;
 using YLFramework.Save;
 using YLFramework.Serialization;
 
@@ -20,8 +21,8 @@ namespace YLFramework.Tests.DataBatch
     {
         [TestCase("Packages/com.kano.ylframework.data-assets/Runtime/Systems/DataAssets/ScriptableObjectData.cs", "YLFramework.DataAssets")]
         [TestCase("Packages/com.kano.ylframework.data-assets/Editor/Systems/DataAssets/ConfigsWindow.cs", "YLFramework.DataAssets.Editor")]
-        [TestCase("Packages/com.kano.ylframework.localization/Runtime/Systems/Localization/LocalizeString.cs", "YLFramework.Localization")]
-        [TestCase("Packages/com.kano.ylframework.localization/Editor/Systems/Localization/LocalizationConfigsWindow.cs", "YLFramework.Localization.Editor")]
+        [TestCase("Packages/com.kano.ylframework.localization/Runtime/Systems/Localization/LocalizeText.cs", "YLFramework.Localization")]
+        [TestCase("Packages/com.kano.ylframework.localization/Editor/Systems/Localization/LocalizationReferenceAuthoring.cs", "YLFramework.Localization.Editor")]
         [TestCase("Packages/com.kano.ylframework.save/Runtime/Systems/Save/SaveManager.cs", "YLFramework.Save")]
         [TestCase("Assets/Tests/YLFramework/EditMode/Systems/Save/SaveFacadeContractsTests.cs", "YLFramework.Save.Tests.EditMode")]
         [TestCase("Assets/Tests/YLFramework/Fixtures/Save/Runtime/SavePlayerProbe.cs", "YLFramework.Save.Acceptance")]
@@ -42,9 +43,7 @@ namespace YLFramework.Tests.DataBatch
             Assert.That(metadata.Success, Is.True, path + ".meta");
             Assert.That(metadata.Groups[1].Value, Is.EqualTo(guid));
             if (path == "Packages/com.kano.ylframework.save/Runtime/Systems/Save/SaveManager.cs")
-            {
-                Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo("ff5957d84032533449f21601f372570a"));
-            }
+                Assert.That(guid, Is.EqualTo("ff5957d84032533449f21601f372570a"));
         }
     }
 
@@ -54,97 +53,72 @@ namespace YLFramework.Tests.DataBatch
         [Test]
         public void AuthoredDataAndLanguageColdReadFeedOneExplicitStoreDictionary()
         {
-            string folder = "Assets/__YLDataComposition_" + Guid.NewGuid().ToString("N");
-            string[] absentParents = new[] { "Assets/YLFrameworkData/DataAssets", "Assets/YLFrameworkData/Localization", "Assets/YLFrameworkData" }
-                .Where(path => !Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)) &&
-                    !File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta"))).ToArray();
-            Assert.That(AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder)), Is.Not.Empty);
-            string dataFolder = null, languageFolder = null;
-            var data = ScriptableObject.CreateInstance<ScriptableObjectConfigs>();
-            var localization = ScriptableObject.CreateInstance<MultiLanguageConfigs>();
-            bool passed = false;
+            var folder = "Assets/__YLDataComposition_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
+            string dataFolder = null;
+            ScriptableObjectConfigs data = null;
             try
             {
-                string dataPath = folder + "/Data.asset", localizationPath = folder + "/Languages.asset";
+                var locale = Locale.CreateLocale("en");
+                AssetDatabase.CreateAsset(locale, folder + "/en.asset");
+                var collection = LocalizationEditorSettings.CreateStringTableCollection("Data-" + Guid.NewGuid().ToString("N"), folder, new[] { locale });
+                var table = (StringTable)collection.GetTable(locale.Identifier);
+                var entry = table.AddEntry("item.title", "daily translated item");
+                var key = entry.KeyId;
+                var collectionGuid = collection.SharedData.TableCollectionNameGuid;
+                EditorUtility.SetDirty(table);
+                EditorUtility.SetDirty(collection.SharedData);
+                AssetDatabase.SaveAssetIfDirty(table);
+                AssetDatabase.SaveAssetIfDirty(collection.SharedData);
+                var tablePath = AssetDatabase.GetAssetPath(table);
+                data = ScriptableObject.CreateInstance<ScriptableObjectConfigs>();
+                var dataPath = folder + "/Data.asset";
                 AssetDatabase.CreateAsset(data, dataPath);
-                AssetDatabase.CreateAsset(localization, localizationPath);
+                ScriptableObjectConfigsController.SetDataType(data, AssetDatabase.LoadAssetAtPath<MonoScript>(
+                    "Assets/Tests/YLFramework/EditMode/Editor/Data/LocalizationDataFixture.cs"));
                 dataFolder = ScriptableObjectConfigsController.GetDataPath(data);
-                languageFolder = LocalizationAuthoring.GetLanguageFolder(localization);
-                foreach (string path in new[] { dataFolder, languageFolder })
-                {
-                    Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path)) ||
-                        File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")), Is.False, path);
-                }
-                ScriptableObjectConfigsController.SetDataType(data,
-                    AssetDatabase.LoadAssetAtPath<MonoScript>("Packages/com.kano.ylframework.data-assets/Runtime/Systems/DataAssets/ScriptableObjectData.cs"));
-                var row = ScriptableObjectConfigsController.CreateData(typeof(ScriptableObjectData), data);
+                var row = (LocalizationDataFixture)ScriptableObjectConfigsController.CreateData(typeof(LocalizationDataFixture), data);
                 row.id = 17;
                 row.configName = "daily-item";
+                row.title = new LocalizedString(collectionGuid, key);
                 EditorUtility.SetDirty(row);
-                var language = LocalizationAuthoring.CreateLanguage(localization, SystemLanguage.English);
-                LocalizationAuthoring.AddEntry(localization, row.id, MultiLanguageType.String);
-                language.GetLanguageInfo(row.id).str = "daily translated item";
-                EditorUtility.SetDirty(language);
                 ScriptableObjectConfigsController.Save(data);
-                AssetDatabase.SaveAssetIfDirty(language);
-                AssetDatabase.SaveAssetIfDirty(localization);
-                string dataGuid = AssetDatabase.AssetPathToGUID(dataPath), localizationGuid = AssetDatabase.AssetPathToGUID(localizationPath);
+                var guid = AssetDatabase.AssetPathToGUID(dataPath);
                 Resources.UnloadAsset(row);
                 Resources.UnloadAsset(data);
-                Resources.UnloadAsset(language);
-                Resources.UnloadAsset(localization);
+                Resources.UnloadAsset(table);
                 data = AssetDatabase.LoadAssetAtPath<ScriptableObjectConfigs>(dataPath);
-                localization = AssetDatabase.LoadAssetAtPath<MultiLanguageConfigs>(localizationPath);
-                row = data.configs.Single();
+                row = (LocalizationDataFixture)data.configs.Single();
+                table = AssetDatabase.LoadAssetAtPath<StringTable>(tablePath);
                 Assert.That(row.parent, Is.SameAs(data));
-                Assert.That(data.typeScriptGuid, Is.EqualTo("a1743beab98e80e47b2c8b4917852add"));
-                Assert.That(AssetDatabase.AssetPathToGUID(dataPath), Is.EqualTo(dataGuid));
-                Assert.That(AssetDatabase.AssetPathToGUID(localizationPath), Is.EqualTo(localizationGuid));
-                string translated = localization.GetLanguageConfigData(SystemLanguage.English).GetLanguageInfo(row.id).str;
-                var dictionary = new SerializedDictionary<string, string> { { row.configName, translated } };
-                string storeRoot = Path.Combine(global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput(), "data-authoring-" + Guid.NewGuid().ToString("N"));
-                Assert.That(Directory.Exists(storeRoot) || File.Exists(storeRoot), Is.False, storeRoot);
+                Assert.That(AssetDatabase.AssetPathToGUID(dataPath), Is.EqualTo(guid));
+                Assert.That(row.title.TableReference.TableCollectionNameGuid, Is.EqualTo(collectionGuid));
+                var dictionary = new SerializedDictionary<string, string> { { row.configName, table.GetEntry(row.title.TableEntryReference.KeyId).Value } };
+                var output = Path.Combine(global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput(), "data-authoring-" + Guid.NewGuid().ToString("N"));
                 var settings = SaveManager.DefaultSerializerSettings;
-                using (var store = new SaveStore(storeRoot, settings))
+                using (var store = new SaveStore(output, settings))
                 {
                     var slot = store.CreateSaveItem(0);
                     store.SaveObject(dictionary, "authored", slot.SaveId);
                     store.ClearCache();
                     var restored = store.LoadObject<SerializedDictionary<string, string>>("authored", slot.SaveId);
                     Assert.That(restored, Is.Not.SameAs(dictionary));
-                    Assert.That(restored.Single().Key, Is.EqualTo("daily-item"));
                     Assert.That(restored["daily-item"], Is.EqualTo("daily translated item"));
                 }
                 Assert.That(SaveManager.DefaultSerializerSettings, Is.SameAs(settings));
-                passed = true;
             }
             finally
             {
-                if (passed)
+                if (data)
                 {
-                    if (data)
-                    {
-                        Undo.ClearUndo(data);
-                        foreach (var row in data.configs)
-                            if (row)
-                                Undo.ClearUndo(row);
-                    }
-                    if (localization)
-                    {
-                        Undo.ClearUndo(localization);
-                        foreach (var language in localization.Languages)
-                            if (language)
-                                Undo.ClearUndo(language);
-                    }
-                    foreach (string path in new[] { dataFolder, languageFolder, folder })
-                        if (!string.IsNullOrEmpty(path) && AssetDatabase.IsValidFolder(path))
-                            AssetDatabase.DeleteAsset(path);
-                    foreach (string path in absentParents)
-                        if (AssetDatabase.IsValidFolder(path) && !Directory.EnumerateFileSystemEntries(global::YLFramework.Testing.PackageTestPaths.Physical(path)).Any())
-                            AssetDatabase.DeleteAsset(path);
+                    Undo.ClearUndo(data);
+                    foreach (var row in data.configs)
+                        if (row)
+                            Undo.ClearUndo(row);
                 }
-                else
-                    TestContext.Out.WriteLine("Preserved failed Data composition: " + folder);
+                if (!string.IsNullOrEmpty(dataFolder))
+                    AssetDatabase.DeleteAsset(dataFolder);
+                AssetDatabase.DeleteAsset(folder);
             }
         }
     }

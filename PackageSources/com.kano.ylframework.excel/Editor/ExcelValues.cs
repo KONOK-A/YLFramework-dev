@@ -296,8 +296,22 @@ namespace YLFramework.Integrations.Excel.Editor
         }
 
         // 差异及并发保护都比较原字段，不能让有损导出或Ignore掩盖实际写入变化。
-        internal static string State(object value) => JsonConvert.SerializeObject(Fields(value.GetType(), true).ToDictionary(f => f.Name,
-            f => typeof(Object).IsAssignableFrom(f.FieldType) ? f.GetValue(value) == null ? string.Empty : Reference(f.GetValue(value) as Object) : f.GetValue(value)));
+        internal static string State(object value)
+        {
+            // Unity 引用类包含不应读取的运行期属性（例如异步句柄）；SO 的持久字段以 Unity 序列化为准。
+            var serialized = value is ScriptableObject asset ? JObject.Parse(EditorJsonUtility.ToJson(asset)) : null;
+            if (serialized?.Count == 1 && serialized["MonoBehaviour"] is JObject wrapper)
+                serialized = wrapper;
+            var fields = new Dictionary<string, object>();
+            foreach (var field in Fields(value.GetType(), true))
+            {
+                var current = field.GetValue(value);
+                fields.Add(field.Name, typeof(Object).IsAssignableFrom(field.FieldType)
+                    ? current == null ? string.Empty : Reference(current as Object)
+                    : serialized != null && serialized.TryGetValue(field.Name, out var state) ? state : current);
+            }
+            return JsonConvert.SerializeObject(fields);
+        }
         // 接受空引用或 GUID[:localFileID] 文本格式，不在此检查资产存在性。
         internal static void ValidateReference(string text)
         {

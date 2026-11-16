@@ -1,0 +1,13 @@
+{
+  "name": "YLFramework.Localization.Excel.Tests",
+  "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.DataAssets", "YLFramework.DataAssets.Editor", "YLFramework.Localization", "YLFramework.Localization.Editor", "YLFramework.Excel.Editor", "Unity.Localization", "Unity.Localization.Editor", "Unity.ResourceManager", "Unity.Addressables.Editor", "YLFramework.Tests.Fixtures"],
+  "includePlatforms": ["Editor"],
+  "overrideReferences": true,
+  "precompiledReferences": ["nunit.framework.dll", "Newtonsoft.Json.dll"],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "defineConstraints": ["UNITY_INCLUDE_TESTS", "YL_EXCEL_PACKAGE", "YL_LOCALIZATION_PACKAGE"],
+  "versionDefines": [
+    {"name":"com.kano.ylframework.excel","expression":"0.0.0","define":"YL_EXCEL_PACKAGE"},
+    {"name":"com.kano.ylframework.localization","expression":"0.0.0","define":"YL_LOCALIZATION_PACKAGE"}
+  ]
+}

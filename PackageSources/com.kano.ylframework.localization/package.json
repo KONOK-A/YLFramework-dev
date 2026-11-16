@@ -2,12 +2,16 @@
   "name": "com.kano.ylframework.localization",
   "version": "0.1.0-preview.1",
   "displayName": "YLFramework Localization",
-  "description": "Explicit localization roots, deterministic fallback, text/image bindings and Unity authoring tools.",
+  "description": "Unity Localization integration with session-owned UI bindings, observable variables and coordinated presentation.",
   "unity": "2022.3",
   "unityRelease": "62f3",
   "license": "MIT",
   "author": { "name": "Kano" },
   "repository": { "type": "git", "url": "https://github.com/KONOK-A/YLFramework-dev.git", "directory": "PackageSources/com.kano.ylframework.localization" },
-  "files": ["package.json", "package.json.meta", "README.md", "README.md.meta", "LICENSE.md", "LICENSE.md.meta", "Runtime", "Runtime.meta", "Editor", "Editor.meta", "Documentation~"],
-  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1", "com.unity.ugui": "1.0.0" }
+  "files": ["package.json", "package.json.meta", "README.md", "README.md.meta", "LICENSE.md", "LICENSE.md.meta", "Runtime", "Runtime.meta", "Editor", "Editor.meta", "Documentation~", "Samples~"],
+  "samples": [
+    { "displayName": "Basic UI", "description": "Create a complete official-table UI with locale, data and presentation coordination.", "path": "Samples~/BasicUI" },
+    { "displayName": "DataAssets Excel", "description": "Business configuration references. Requires the optional DataAssets and Excel packages.", "path": "Samples~/DataAssetsExcel" }
+  ],
+  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1", "com.unity.ugui": "1.0.0", "com.unity.localization": "1.5.14" }
 }

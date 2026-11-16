@@ -598,7 +598,7 @@ function New-YLRegistryReleaseManifest {
     param([string] $SourceCommit, [Collections.IDictionary] $Toolchain, [object[]] $Packages, [Collections.IDictionary] $Catalog = (Read-YLPackageCatalog))
     if ($SourceCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'Release source commit must be 40 lowercase hex.' }
     if ($null -eq $Toolchain -or $Toolchain['node'] -cne '22.23.3' -or $Toolchain['npm'] -cne '10.9.9' -or
-        $Toolchain['powershell'] -isnot [string] -or $Toolchain['powershell'] -cnotmatch '^7\.6\.[0-9]+$') { throw 'Release toolchain must be Node 22.23.3 / npm 10.9.9 / PowerShell 7.6.x.' }
+        -not (Test-YLPackagePowerShellVersion $Toolchain['powershell'])) { throw 'Release toolchain must be Node 22.23.3 / npm 10.9.9 / PowerShell 7.6+ with an exact patch version.' }
     Assert-YLRegistryPackageBatch -Packages $Packages -Catalog $Catalog
     $rows = @(foreach ($id in (Get-YLRegistryPackageIds -Catalog $Catalog)) {
         $package = @($Packages | Where-Object id -CEQ $id)[0]
@@ -620,7 +620,7 @@ function Invoke-YLRegistryPackageBuild {
     Set-StrictMode -Version 3.0
     $ErrorActionPreference = 'Stop'
     . (Join-Path $PSScriptRoot '../Testing/Common/Process.ps1')
-    if (-not $IsWindows -or $PSVersionTable.PSVersion.Major -ne 7 -or $PSVersionTable.PSVersion.Minor -ne 6) { throw 'Packaging requires Windows PowerShell Core 7.6.x.' }
+    if (-not $IsWindows -or $PSVersionTable.PSVersion -lt [version]'7.6.0') { throw 'Packaging requires Windows PowerShell Core 7.6+.' }
     if ($SourceCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'SourceCommit must be a full 40 lowercase hex commit.' }
     $Repository = Get-YLTestPath $Repository
     $OutputRoot = Get-YLTestPath $OutputRoot

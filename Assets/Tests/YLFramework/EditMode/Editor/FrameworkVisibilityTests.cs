@@ -17,7 +17,6 @@ namespace YLFramework.Tests
         [TestCase("YLFramework.StateMachine.Editor", "YLFramework.Editor.StateMachine.StateMachineMenu")]
         [TestCase("YLFramework.StateMachine.Editor", "YLFramework.Editor.StateMachine.StateMachineEditorTools")]
         [TestCase("YLFramework.StateMachine.Editor", "YLFramework.Editor.StateMachine.ListenerFile")]
-        [TestCase("YLFramework.Localization.Editor", "YLFramework.Editor.Localization.LocalizationAuthoring")]
         public void ImplementationTypesAreNotPartOfThePublicContract(string assemblyName, string fullName)
         {
             var type = System.Reflection.Assembly.Load(assemblyName).GetType(fullName);

@@ -4,7 +4,6 @@
   "references": [
     "YLFramework.Runtime",
     "YLFramework.DataAssets",
-    "YLFramework.Localization",
     "YLFramework.Save",
     "YLFramework.Tests.Fixtures"
   ],
@@ -17,7 +16,7 @@
   ],
   "autoReferenced": false,
   "defineConstraints": [
-    "UNITY_EDITOR || YL_DATA_ACCEPTANCE || YL_UNITY_JSON_ACCEPTANCE"
+    "UNITY_EDITOR || YL_UNITY_JSON_ACCEPTANCE"
   ],
   "versionDefines": [],
   "noEngineReferences": false
