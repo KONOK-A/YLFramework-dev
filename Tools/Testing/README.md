@@ -14,6 +14,12 @@
 
 先执行与改动最相关的检查，再按影响扩大范围。包构建、LocalTarball/Registry 验证和发行准备集中见[打包工具说明](../Packaging/README.md)，这里维护测试执行与结果约定。
 
+### 模块结项必需项
+
+框架模块开发和功能改动必须包含当前使用的受支持 Unity/实际目标平台的 **IL2CPP Player 构建及实际运行验收**。Editor、Mono Player 或 NoUnity CI 均不能替代；只构建成功、只声明后端或只生成报告也不算完成。缺少工具链、构建失败、Player 未运行或未普通退出时，IL2CPP 验收仍为未完成，不能宣布模块已全部结项。
+
+优先复用现有 PlayerNative 与模块夹具；没有模块级入口时先补入口和对应回归，不退回到只跑 Daily。报告分列 Editor、IL2CPP 构建和 Player 运行，记录实际后端、裁剪/构建模式、目标、输入指纹与进程结果。此要求不意味着每次重跑全部 Unity 补丁/平台矩阵；纯文档修改仍按事实、链接与差异检查，不冒充发生了新的平台验收。
+
 ## 前置
 
 - Windows 与 PowerShell `7.6.x`，使用 `pwsh -NoLogo -NoProfile -NonInteractive -File`。
@@ -85,6 +91,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | Localization | Daily / Special | 回退、显示、图片租约、作者、会话与 Player |
 | Excel / ExcelGameplay | Daily | 实际 XLSX、预览与提交；后者显式组合 Gameplay |
 | Action | Daily / Special | Action / Observable 的取消、池化、宿主与场景生命周期；Special 为 batchmode 的真实两次 Play 与 Timing 隔离 |
+| ActionTimingIL2CPP | Special | 必需的 Windows x64 IL2CPP Release/Medium 裁剪构建与双进程 Action/Timing 运行回归，不安装可选 SDK |
 | DOTween | Daily | 完整批准 SDK、条件程序集、行为与同宿主 Help XML |
 | HybridCLR | Daily | SDK 前置下的 Editor/PlayMode 与显式样例，不代表 native 安装或热更 Player |
 | Help | Daily | 真实元数据/XML、窗口、搜索、注册及只读边界 |
@@ -106,6 +113,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 - DOTween 用 `-DOTweenArchive` 显式提供批准 Standard SDK，测试工具校验完整归档，在自有宿主部署并设置宏，不读取或改写开发宿主 SDK/宏。普通 Action/Help 不安装此 SDK。
 - 连续 Play / SessionScenes 使用工具拥有、已保存的空场景。只在严格确认 UTF 默认布局和测试尚未开始时准备场景，不自动保存未知或脏场景。
 - Player 探针仅在相应 `YL_*_ACCEPTANCE` 构建符号或专用产品外程序集启用，不能进入普通生产编译图。
+- Action/Timing 结项还必须运行 `-Suite Special -Module ActionTimingIL2CPP`，不能以 `Special/Action` 会话或人工 Game View 像素结果代替。首次 IL2CPP 构建应提供足够的 `-TimeoutSeconds`（如 3600）；构建器使用现有 C++ 工具链，不自动安装或升级它。
 - PoolingPlayer选择Mono，PoolingIL2CPP选择实际IL2CPP；两者使用相同负载。Unity2022 LTS和IL2CPP是实际支持目标，应在对应Editor执行检查，不由当前Mono结果替代，也不等于要求每次小改全平台/全补丁矩阵。Release的 `measurementKind=ReleaseTiming`，分配为 `NotMeasured`；Development的 `measurementKind=DevelopmentAllocationEvents`，先验证空区间、32/8192字节分配分别记录0/1/1次事件，再采集当前线程限定区间的 `GC.Alloc` Count。事件不是字节，Development耗时不当作发行性能。记录输入指纹和逐批值，创建/重置/丢弃、活跃数与校验值必须正确；Destroy请求与含帧等待的完成耗时分列。校准/负载失败保留报告并失败退出，不伪造平台支持或零成本。
 - 当前Pooling工作负载版本4为76病例，在原72固定输入后追加 `Audio.Pending.0/1/24/128`：真实公开异步请求持续Loading，同址共享一次provider，采样外绑定实际宿主Update；每批64次更新。Audio病例中的 `medianNanosecondsPerPair` 是通用报告字段，此处pairsPerIteration=1，单位为ns/Update；不是声部吞吐或真实帧FPS。取消和late lease释放在采样外断言，不将同帧接纳/List.Remove成本混入等待快照。
 

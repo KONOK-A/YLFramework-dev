@@ -178,6 +178,8 @@ else { /* 用 wait.Status 区分 Cancelled / Faulted / Invalidated */ }
 
 ## 使用边界
 
+功能改动结项须执行 `Special/ActionTimingIL2CPP` 的实际 IL2CPP 构建与双进程运行，不能用本页的 Editor/逻辑回归替代。它与 Action 共用维护夹具，但不合并两个运行时内核；前置与 CLI 合同见仓库 `Tools/Testing/README.md`。
+
 不提供线程安全、跨线程调度、持久化任务、后台运行或高精度时钟保证。全部 Unity 对象访问与任务操作应在 Unity 主线程进行。
 
 性能边界以本页说明的算法成本和显式复用范围为准，不保证整个调用链零分配。逐帧进度、插值与组合流程使用 [Action](Action.md)，共享三相位订阅使用 [Update](Update.md)，它们不共用 Timer 的范围和句柄。

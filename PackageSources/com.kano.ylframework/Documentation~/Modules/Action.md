@@ -253,6 +253,10 @@ public sealed class TweenActionExample : MonoBehaviour
 - internal `ActionPool<T>` 无缓存数量上限，模块外不可配置，组合 YL 池并以 LIFO 复用；回收队列、回收标记与租约由 Action 管理。同一动作不能同时交给两个执行器；归还后不能继续使用原始动作或控制器引用。
 - [`ScreenTransitionCanvas.prefab`](../../Runtime/Systems/Action/Resources/ActionKit/ScreenTransitionCanvas.prefab) 是主包内正式资产，Resources key 为 `ActionKit/ScreenTransitionCanvas`，不依赖导入样例。消费方不运行产品资源重建命令、不写入只读包目录；自定义资源由使用工程明确持有。不新增 ResourceSystem 或外部资源后端的 Loader。
 
+## Player 验收
+
+模块功能改动结项必须包含真实 IL2CPP Player 构建与运行，不能用 Editor、Mono 或无 Unity 的 CI 替代。维护入口为 `Tools/Testing/Invoke-YLTests.ps1 -Action Run -Suite Special -Module ActionTimingIL2CPP`；它复用工具自有宿主，验证 Windows x64 Release、Medium 裁剪及两个独立进程的公共 API 场景。该入口不安装或代表可选 SDK；其他平台和适配器须按实际改动补相应验收。具体前置、超时与结果合同以 `Tools/Testing/README.md` 为准。
+
 ## 屏幕过渡
 
 `FadeInOut(onInFinish = null)` 顺序拥有默认一秒 `FadeIn`、同步中段回调和默认一秒 `FadeOut`。调用方选择 `Start(owner)`、场景或全局宿主；父序列统一等待、暂停、取消和释放子动作，回调异常沿所选执行器的普通序列错误路径处理。需要自定义颜色、时长或步骤时，显式组合独立 FadeIn/FadeOut。

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 模块功能改动的验收要求补充真实 IL2CPP Player 构建和运行，不再仅凭 Editor/Mono/工具 CI 结项。新增独立 `ActionTimingIL2CPP` 门禁，复用 PlayerNative：Windows x64 Release、Medium 裁剪、双进程公共 API 与生命周期回归；探针隔离在产品编译图之外，不新增运行时 API 或可选 SDK 依赖。
+
 - Action 新增 `StartHandle` / `StartHandleCurrentScene` / `StartHandleGlobal`，复用现有 ActionHandle 与执行租约，匿名安全控制不再要求名字；原 Start 和命名 API、有效输入的时钟/首步/重复语义保留。
 - Action 必需委托、非有限时长、无效启动宿主和非法更新模式明确早失败，Repeat 小于 -1 不再无声挂起。原先用非法值永久阻塞的用法改用 Condition(() => false)；不改变有限零/负时长及空 Parallel 的既有时序。
 - 内置组合拒绝自身、重复对象、已释放父/子和已调度根子项；配置失败或父 Append 拒绝时清理本次新建责任并保留原始异常。重复逻辑应分别构造子动作，非全局动作图所有权检查，无类型或序列化迁移。
