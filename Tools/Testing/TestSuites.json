@@ -1101,6 +1101,36 @@
       "sampleInputs": []
     },
     {
+      "name": "ActionTimingIL2CPP",
+      "shortHostKey": true,
+      "category": "",
+      "assemblies": [],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Required Action/Timing Windows x64 IL2CPP Release acceptance: Medium stripping, public API scenarios and two independent actual Player processes; never an Editor or Mono substitute.",
+      "prepareSessionScene": true,
+      "prepareSceneTemplates": true,
+      "suites": ["Special"],
+      "specialBackend": "PlayerNative",
+      "specialModes": ["EditMode"],
+      "specialCategory": "YL.Special.ActionTimingIL2CPP",
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/ActionTiming"],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/ActionTiming"],
+      "editTests": ["Assets/Tests/YLFramework/Fixtures/ActionTiming/Editor"],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/ActionTiming/Runtime/YLFramework.ActionTiming.Acceptance.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/ActionTiming/Editor/YLFramework.ActionTiming.Tests.Player.Editor.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
       "name": "Action",
       "prepareSessionScene": true,
       "prepareSceneTemplates": true,

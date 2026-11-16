@@ -133,6 +133,25 @@ try {
                 ($module.editTests -join ',') -ceq 'Assets/Tests/YLFramework/EditMode/Systems/Action' -and
                 ($module.playTests -join ',') -ceq 'Assets/Tests/YLFramework/PlayMode/Systems/Action') 'Daily must retain its original leaves but exclude Special.'
         }
+        Test-Case 'Action and Timing have a maintained actual IL2CPP Player gate, not an Editor or Mono substitute' {
+            . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $entries = @($configuration.modules | Where-Object name -CEQ 'ActionTimingIL2CPP')
+            Assert-That ($entries.Count -eq 1) 'Action/Timing cannot be accepted without an actual IL2CPP build and run entry.'
+            $module = $entries[0]
+            Assert-That (($module.suites -join ',') -ceq 'Special' -and $module.specialBackend -ceq 'PlayerNative' -and
+                $module.specialCategory -ceq 'YL.Special.ActionTimingIL2CPP' -and ($module.specialModes -join ',') -ceq 'EditMode' -and
+                $module.shortHostKey -and -not $module.graphics -and $module.prepareSessionScene -and $module.prepareSceneTemplates) 'The AOT gate must build and run in an isolated headless Player host.'
+            Assert-That (($module.packageInputs -join ',') -ceq 'com.kano.ylframework' -and $module.sampleInputs.Count -eq 0 -and
+                ($module.runtimeSources -join ',') -ceq 'PackageSources/com.kano.ylframework/Runtime') 'Ordinary Action/Timing AOT must not acquire optional SDKs or unrelated domain packages.'
+            Assert-That ('Assets/Tests/YLFramework/Fixtures/ActionTiming' -cin $module.nativeFixtureInputs -and
+                ($module.editTests -join ',') -ceq 'Assets/Tests/YLFramework/Fixtures/ActionTiming/Editor' -and $module.playTests.Count -eq 0) 'The declared Player source and build case must actually be selected.'
+            $probe = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/ActionTiming/Runtime/YLFramework.ActionTiming.Acceptance.asmdef')
+            Assert-That (($probe.references -join ',') -ceq 'YLFramework.Runtime' -and -not $probe.autoReferenced -and
+                ($probe.defineConstraints -join ',') -ceq 'UNITY_EDITOR || YL_ACTIONTIMING_ACCEPTANCE' -and
+                @($probe.precompiledReferences).Count -eq 0) 'Player probes must stay outside ordinary products and must not rely on NUnit/Editor.'
+        }
         Test-Case 'Pooling Player selects the real split-metric cost fixture without leaking probes into products' {
             . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))

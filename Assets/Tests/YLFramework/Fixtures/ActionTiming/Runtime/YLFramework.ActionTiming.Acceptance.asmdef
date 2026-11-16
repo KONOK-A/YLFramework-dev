@@ -1,0 +1,14 @@
+{
+    "name": "YLFramework.ActionTiming.Acceptance",
+    "rootNamespace": "YLFramework.ActionTiming.Acceptance",
+    "references": ["YLFramework.Runtime"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": ["UNITY_EDITOR || YL_ACTIONTIMING_ACCEPTANCE"],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
