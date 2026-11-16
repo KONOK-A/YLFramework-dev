@@ -190,6 +190,15 @@ namespace UnityEditor.Compilation
                 if (entry.id == "movement2d") result.Add(new Assembly { name = "YLFramework.Platform2D", sourceFiles = new[] { "Packages/com.kano.ylframework.movement2d/Runtime/Platform/Product.cs" } });
                 if (mode == AssembliesType.Editor) result.Add(new Assembly { name = "YLFramework." + entry.editor, sourceFiles = new[] { "Packages/com.kano.ylframework." + entry.id + "/Editor/Product.cs" } });
             }
+            if (ids.Contains("com.kano.ylframework.localization"))
+            {
+                result.Add(new Assembly { name = "YLFramework.Localization.TMP", sourceFiles = new[] { "Packages/com.kano.ylframework.localization/Runtime/Integrations/TMP/Product.cs" } });
+                if (mode == AssembliesType.Editor)
+                {
+                    if (ids.Contains("com.kano.ylframework.data-assets")) result.Add(new Assembly { name = "YLFramework.Localization.DataAssets.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework.localization/Editor/Integrations/DataAssets/Product.cs" } });
+                    if (ids.Contains("com.kano.ylframework.excel")) result.Add(new Assembly { name = "YLFramework.Localization.Excel.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework.localization/Editor/Integrations/Excel/Product.cs" } });
+                }
+            }
             if (mode == AssembliesType.Editor && ids.Contains("com.kano.ylframework.excel"))
             {
                 var excel = new Assembly { name = "YLFramework.Excel.Editor", sourceFiles = new[] { "Packages/com.kano.ylframework.excel/Editor/Excel.cs" }, compiledAssemblyReferences = new[] { "Library/PackageCache/com.kano.ylframework.excel/Editor/Plugins/MiniExcel.dll" } };
