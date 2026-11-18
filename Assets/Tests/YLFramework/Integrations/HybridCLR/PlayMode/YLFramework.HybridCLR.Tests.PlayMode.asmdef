@@ -4,6 +4,8 @@
   "references": [
     "YLFramework.Runtime",
     "YLFramework.HybridCLR",
+    "Unity.Addressables",
+    "Unity.ResourceManager",
     "UnityEngine.TestRunner",
     "YLFramework.Tests.Fixtures"
   ],

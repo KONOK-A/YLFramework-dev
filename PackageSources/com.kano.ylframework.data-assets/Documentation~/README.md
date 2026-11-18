@@ -55,31 +55,43 @@ public sealed class DataAssetsExample : MonoBehaviour
 
 ### 通过 Resource 加载
 
-先由应用初始化 `ResourceSystem`，挂载目录时通过 `ResourceProjectMount(..., assetTypes: compiledTypes)` 或 `ResourceLocalSnapshot.CreateCatalog` 提供显式编译类型清单。登记实际加载的根类型与直接加载的具体条目类型，不能用开放泛型替代具体类型。
+先由应用启动并持有 `ResourceStartup`，业务借用其 `Resources`。配置根配置为官方 Addressables 条目，例如 `game/config/items`；`new ResourceAddress("game", "config/items")` 只是将项目命名空间与路径投影为同一个官方地址，不挂载私有 Catalog，也不登记另一套资产类型清单。
 
-`ScriptableObjectManager.Load(resources, address)` 返回 `ScriptableObjectRegistration`，其内部持有根 `AssetLease`；登记校验失败会归还租约。`LoadAsync(resources, address)` 返回 `ScriptableObjectAsset<ScriptableObjectConfigs>`，可在协程中等待：
+| 入口 | 返回值与责任 |
+| --- | --- |
+| `AddConfig(root)` | `ScriptableObjectRegistration`；借用外部根，不取得其资源所有权 |
+| `Load(resources, address)` | `ScriptableObjectRegistration`；只增持 YL 已持有的根，登记持有独立 `AssetLease` |
+| `LoadAsync(resources, address)` | `ScriptableObjectAsset<ScriptableObjectConfigs>`；拥有本消费者请求、成功根租约及关联登记 |
+
+冷资源使用 `LoadAsync`。同步 `Load` 未命中已加载租约时抛 `ResourceException`，`Kind == ResourceError.InProgress`；不会发起加载、阻塞等待或返回 null。只让外部 Addressables 持有资产，不等于它已经进入 YL 的热资源集合。
+
+下面是 Unity 协程内的一次读取，文件引用 `YLFramework.DataAssets` 与 `UnityEngine`，假定根内已创建 ID 1。等待成功且 owner 仍有效后才借读；方法退出时归还本次 owner：
 
 ```csharp
-var owner = ScriptableObjectManager.LoadAsync(resources, address);
-try
+using var owner = ScriptableObjectManager.LoadAsync(resources,
+    new YLFramework.Resource.ResourceAddress("game", "config/items"));
+yield return owner;
+if (owner.Status != YLFramework.Resource.ResourceRequestStatus.Succeeded || !owner.IsValid)
 {
-    yield return owner;
-    if (owner.Status != YLFramework.Resource.ResourceRequestStatus.Succeeded)
-    {
-        Debug.LogException(owner.Error ?? new System.OperationCanceledException());
-        yield break;
-    }
+    Debug.LogException(owner.Error ?? new System.OperationCanceledException());
+    yield break;
+}
 
-    var loadedRoot = owner.Asset;
-    // 只在 owner 有效期间借读 loadedRoot 及其条目。
-}
-finally
-{
-    owner.Dispose();
-}
+var entry = owner.Asset.GetScriptableObjectData(1);
+Debug.Log(entry ? entry.configName : "未找到配置");
+// 此处借读已结束；using 退出后不能继续保留 entry 使用。
 ```
 
-片段中的 `resources/address` 由应用提供。等待完成不会释放句柄；若需持续使用配置，把 owner 存入业务所有者并在停用、销毁或取消时显式释放，不依赖协程自然结束。`IsDone` 只表示请求已终结，`IsValid` 才表示当前仍持有有效租约；失败原因见 `Error`。
+片段中的 `resources` 由应用提供，`Debug` 来自 `UnityEngine`。等待完成本身不会释放句柄；若 UI 或业务要长期借读，不使用上述局部 `using`，而把 owner 存入业务所有者，在停用、销毁或取消时显式 `Dispose()`。`IsDone` 只表示请求已终结，`IsValid` 才表示当前仍持有有效租约；失败原因见 `Error`。
+
+确需同步登记时，先在主线程 async 方法中预加载，并在调用 `Load` 时保留预加载租约：
+
+```csharp
+using var warm = await resources.AcquireAsync<ScriptableObjectConfigs>("game/config/items");
+using var registration = ScriptableObjectManager.Load(resources,
+    new YLFramework.Resource.ResourceAddress("game", "config/items"));
+var root = registration.Config; // registration 独立保活，不借用 warm 的释放责任。
+```
 
 ### 单例配置与作者操作
 
@@ -95,7 +107,7 @@ finally
 | --- | --- |
 | 配置根 | `displayName/configs/typeScriptGuid`；显示名、条目列表、作者类型脚本 GUID |
 | 配置条目 | `parent/id/configName/icon/description`；所属根、根内 ID、名称、图标定位和说明 |
-| 图标定位 | `projectName/iconName`；YL Resource 的 ProjectId / Path，`TryGetAddress` 只构造地址 |
+| 图标定位 | `projectName/iconName`；投影为官方 `projectName/iconName` 地址，`TryGetAddress` 只构造地址、不加载 |
 | 工作簿表头 | `configName` 显式对应 `config_name`，`description` 对应 `des`，`typeScriptGuid` 对应 `type_script_guid` |
 
 工作簿列名是独立格式协议，按 `ExcelColumnName` 声明解释，不从 namespace 或程序集名推断。配置资产和生成数据属于使用工程，包的更新或移除不会替应用删除它们。
@@ -103,10 +115,13 @@ finally
 ## 所有权、错误与限制
 
 - 同一根可由多个 owner 登记，每份返回值只释放自己的登记和租约。普通消费者用自身句柄 `Dispose()`；`RemoveConfig` 会撤销匹配根的全部登记，只用于明确的域级管理。
-- `Clear()` 关闭 DataAssets 的所有登记与加载，包括单例配置，不关闭应用共享的 `ResourceSystem`。先停止使用配置的 UI / 业务，再结束配置 owner。
+- `Clear()` 关闭 DataAssets 的所有登记与加载，包括单例配置，不关闭应用共享的 `ResourceSystem`。普通 owner 退出只释放自己；只有应用明确结束整个 DataAssets 域时才调用 `Clear()`。
+- 关闭顺序是先停止配置的 UI / 业务借读，再释放登记或加载 owner、调用所持单例的 `Release()`，最后才由应用等待 `ResourceStartup.StopAsync()`。仍有独立租约时 Resource 可返回 `Busy`，应找到并归还责任后重试，不强制卸载。
+- Resource Scope 只管理其接纳的资源租约，不是业务 registry。关闭 Scope 不等于 `ScriptableObjectManager.Clear()`，也不能把 `ScriptableObjectRegistration` 或 `ScriptableObjectAsset<T>` 当成可交给 `Scope.Own` 的资源租约；业务 owner 仍负责注销。
 - 在 Unity 主线程使用这些 API。根和条目都是 Unity 对象，不提供后台访问或复制隔离。
-- 注册失败、重复 ID、名称歧义或失效登记会明确报错。异步加载成功取得资源后仍可能因登记校验失败而 `Failed`；此时修复输入再重新创建 owner，不把完成误当成功。
-- Resource Catalog 使用真实类型全名与程序集身份，Bundle 与 Catalog 应由同一套当前配置正式构建和发布，不能手改 Catalog JSON 或摘要。
+- 注册失败、重复 ID、名称歧义或失效登记会明确报错。异步加载成功取得资源后仍可能因登记校验失败而 `Failed`，并归还本次根租约；这不撤销其他 owner 的成功登记。加载未完成时 Dispose 只撤销本消费者等待，不取消其他消费者，也不让迟到结果重新登记。
+- 配置根要求精确的主资产地址，不支持附加 SubAsset 选择。官方地址未找到、类型不符或资源会话不可用时检查 `Error`；同步热路径的 `InProgress` 不能当成“配置不存在”。
+- 资源通过官方 Addressables 内容流程与 Player 一起构建、发布和验证，不手工维护私有 Catalog 或摘要，也不能把一次 Editor 读取当成 Player / AOT 验证。
 - 自定义派生类型、反射成员及其 IL2CPP 保留由应用负责；仅登记根类型不等于保留全部业务子类。
 
 ## 相关文档

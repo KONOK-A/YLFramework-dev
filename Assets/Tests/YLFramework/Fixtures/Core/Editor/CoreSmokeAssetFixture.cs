@@ -2,6 +2,9 @@ using System;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.AddressableAssets;
+using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -9,7 +12,6 @@ using YLFramework.Core.Tests;
 using YLFramework.Editor.Resource;
 using YLFramework.Resource;
 using Object = UnityEngine.Object;
-using YLFramework.Editor.Common;
 
 namespace YLFramework.Core.Editor.Tests
 {
@@ -24,14 +26,8 @@ namespace YLFramework.Core.Editor.Tests
             }
 
             string root = YLCoreSmokeModule.FixtureRoot;
-            string projectPath = root + "/ResourceProject.asset";
-            foreach (string guid in AssetDatabase.FindAssets("t:ResourceProject"))
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                var candidate = AssetDatabase.LoadAssetAtPath<ResourceProject>(path);
-                Require(candidate.projectId != YLCoreSmokeModule.Project || path == projectPath,
-                    "Fixture project name is already owned by " + path);
-            }
+            var settings = RequireSettings();
+            ResourceEditorOperations.ValidateBuild(settings);
 
             EnsureFolder(root);
             string viewPath = root + "/" + nameof(YLCoreSmokeView) + ".prefab";
@@ -62,60 +58,111 @@ namespace YLFramework.Core.Editor.Tests
             CreateOrValidateScene(YLCoreSmokeModule.ScenePath, true);
             CreateOrValidateScene(YLCoreSmokeModule.HarnessPath, false);
 
-            var project = AssetDatabase.LoadAssetAtPath<ResourceProject>(projectPath);
-            if (!project)
-            {
-                Require(!File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(projectPath)) && string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(projectPath)),
-                    "Existing project asset has an unexpected type.");
-                project = ScriptableObject.CreateInstance<ResourceProject>();
-                project.projectId = YLCoreSmokeModule.Project;
-                project.displayName = "Core Resource Fixture";
-                project.sourceDirectories.Add(new ResourceSourceDirectory { guid = AssetDatabase.AssetPathToGUID(root) });
-                AssetDatabase.CreateAsset(project, projectPath);
-                AddBundle(project, "views", viewPath);
-                AddBundle(project, "panels", panelPath);
-                AddBundle(project, "text", new[] { tablePath }.Concat(failureTables.Select(name => root + "/" + name + ".json")).ToArray());
-                AddBundle(project, "scenes", YLCoreSmokeModule.ScenePath, YLCoreSmokeModule.HarnessPath);
-                EditorUtility.SetDirty(project);
-                AssetDatabase.SaveAssetIfDirty(project);
-            }
-
-            Require(project.projectId == YLCoreSmokeModule.Project && project.sourceDirectories != null && project.sourceDirectories.Count == 1 &&
-                project.sourceDirectories.Any(x => x != null && x.guid == AssetDatabase.AssetPathToGUID(root) && x.addressPrefix == ""),
-                "Existing project identity does not match; it was not overwritten.");
-            Require(project.groups != null && project.groups.Count == 4, "Unexpected fixture groups.");
-            ValidateBundle(project, "views", viewPath);
-            ValidateBundle(project, "panels", panelPath);
-            ValidateBundle(project, "text", new[] { tablePath }.Concat(failureTables.Select(name => root + "/" + name + ".json")).ToArray());
-            ValidateBundle(project, "scenes", YLCoreSmokeModule.ScenePath, YLCoreSmokeModule.HarnessPath);
-            ResourceBuildMap.Create(project);
+            Register(settings, "views", viewPath);
+            Register(settings, "panels", panelPath);
+            Register(settings, "text", new[] { tablePath }.Concat(failureTables.Select(name => root + "/" + name + ".json")).ToArray());
+            Register(settings, "scenes", YLCoreSmokeModule.ScenePath, YLCoreSmokeModule.HarnessPath);
+            AssetDatabase.SaveAssetIfDirty(settings);
         }
 
+        /// <summary>只返回新行为选项；内容事实始终由已准备的官方 Settings 和正式内容决定。</summary>
         public static ResourceConfiguration CreateConfiguration()
         {
-            var project = AssetDatabase.LoadAssetAtPath<ResourceProject>(YLCoreSmokeModule.FixtureRoot + "/ResourceProject.asset");
-            Require(project, "Create the independent YL fixture in Edit Mode first.");
-            return new ResourceEditorSimulation(new[] { project }).CreateConfiguration();
+            RequireSettings();
+            return new ResourceConfiguration();
         }
 
-        private static void AddBundle(ResourceProject project, string name, params string[] paths)
+        /// <summary>供 owned test host 的无参 prepare 调用；不接管用户主工程。</summary>
+        public static void BuildContent()
         {
-            project.groups.Add(new ResourceGroup
+            var project = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            var ownerPath = Path.Combine(project, ".yl-owner.json");
+            Require(File.Exists(ownerPath), "Formal fixture preparation requires an owned test host.");
+            var owner = JsonUtility.FromJson<HostOwner>(File.ReadAllText(ownerPath));
+            Require(owner != null && owner.schemaVersion == 1 && owner.purpose == "YLTesting.Directory" && owner.kind == "Host" &&
+                string.Equals(Path.GetFullPath(owner.path), project, StringComparison.OrdinalIgnoreCase), "Invalid test host owner.");
+            var directory = Path.Combine(project, "Temp", "YLCoreSmokeContent", Guid.NewGuid().ToString("N"));
+            for (var cursor = new DirectoryInfo(directory); cursor != null; cursor = cursor.Parent)
             {
-                id = name,
-                selections = paths.Select(path => new ResourceSelection
-                {
-                    guid = AssetDatabase.AssetPathToGUID(path),
-                    address = Path.GetFileNameWithoutExtension(path)
-                }).ToList()
-            });
+                Require(!cursor.Exists || (cursor.Attributes & FileAttributes.ReparsePoint) == 0, "Fixture state archives cannot traverse linked paths.");
+            }
+            Directory.CreateDirectory(directory);
+            Debug.Log(BuildContentTo(Path.Combine(directory, "addressables_content_state.bin")).Summary);
         }
 
-        private static void ValidateBundle(ResourceProject project, string name, params string[] paths)
+        /// <summary>实际正式构建，并拒绝覆盖本轮 Player 内容状态归档。</summary>
+        public static ResourceEditorBuildReport BuildContentTo(string contentStateArchivePath)
         {
-            var groups = project.groups.Where(group => group.id == name).ToArray();
-            Require(groups.Length == 1 && groups[0].selections.Select(x => AssetDatabase.GUIDToAssetPath(x.guid))
-                .OrderBy(x => x).SequenceEqual(paths.OrderBy(x => x)), "Unexpected fixture group " + name);
+            CreateOrValidate();
+            return ResourceEditorOperations.BuildContent(RequireSettings(), contentStateArchivePath);
+        }
+
+        private static AddressableAssetSettings RequireSettings()
+        {
+            var settings = AddressableAssetSettingsDefaultObject.GetSettings(false);
+            Require(settings, "Prepare existing official default Addressables settings before the Core fixture; no parallel authoring configuration is created.");
+            return settings;
+        }
+
+        private static void Register(AddressableAssetSettings settings, string name, params string[] paths)
+        {
+            var groupName = YLCoreSmokeModule.Project + "-" + name;
+            var matches = settings.groups.Where(group => group && group.Name == groupName).ToArray();
+            Require(matches.Length <= 1, "Ambiguous official fixture group: " + groupName);
+            var existing = new System.Collections.Generic.List<AddressableAssetEntry>();
+            settings.GetAllAssets(existing, false);
+            foreach (var path in paths)
+            {
+                var guid = AssetDatabase.AssetPathToGUID(path);
+                var key = YLCoreSmokeModule.Project + "/" + Path.GetFileNameWithoutExtension(path);
+                Require(!string.IsNullOrEmpty(guid), "Missing real source GUID: " + path);
+                Require(!existing.Any(entry => entry.guid != guid && (entry.address == key || entry.labels.Contains(key))) &&
+                    !existing.Any(entry => entry.guid == guid && (entry.address != key || matches.Length == 0 || entry.parentGroup != matches[0])),
+                    "Official fixture source/key is already owned by another entry: " + key);
+            }
+            if (matches.Length == 1)
+            {
+                var group = matches[0];
+                var schema = group.GetSchema<BundledAssetGroupSchema>();
+                Require(!group.ReadOnly && schema && schema.IncludeInBuild && schema.IncludeAddressInCatalog && schema.IncludeGUIDInCatalog &&
+                    group.entries.Count == paths.Length && group.entries.All(entry => paths.Contains(entry.AssetPath) &&
+                        entry.address == YLCoreSmokeModule.Project + "/" + Path.GetFileNameWithoutExtension(entry.AssetPath)),
+                    "Existing official fixture group does not match; it was not overwritten: " + groupName);
+                return;
+            }
+            var groupPath = settings.GroupFolder + "/" + groupName + ".asset";
+            Require(!File.Exists(groupPath) && !File.Exists(groupPath + ".meta") && !Directory.Exists(groupPath),
+                "Unknown official group output is occupied: " + groupPath);
+            foreach (var type in new[] { typeof(BundledAssetGroupSchema), typeof(ContentUpdateGroupSchema) })
+            {
+                var schemaPath = settings.GroupSchemaFolder + "/" + groupName + "_" + type.Name + ".asset";
+                Require(!File.Exists(schemaPath) && !File.Exists(schemaPath + ".meta"), "Unknown schema output is occupied: " + schemaPath);
+            }
+            var created = settings.CreateGroup(groupName, false, false, false, null, typeof(BundledAssetGroupSchema), typeof(ContentUpdateGroupSchema));
+            var bundled = created.GetSchema<BundledAssetGroupSchema>();
+            bundled.BuildPath.SetVariableByName(settings, AddressableAssetSettings.kLocalBuildPath);
+            bundled.LoadPath.SetVariableByName(settings, AddressableAssetSettings.kLocalLoadPath);
+            bundled.IncludeInBuild = bundled.IncludeAddressInCatalog = bundled.IncludeGUIDInCatalog = true;
+            created.GetSchema<ContentUpdateGroupSchema>().StaticContent = false;
+            foreach (var path in paths)
+            {
+                settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(path), created)
+                    .SetAddress(YLCoreSmokeModule.Project + "/" + Path.GetFileNameWithoutExtension(path));
+            }
+            foreach (var schema in created.Schemas)
+            {
+                AssetDatabase.SaveAssetIfDirty(schema);
+            }
+            AssetDatabase.SaveAssetIfDirty(created);
+        }
+
+        [Serializable]
+        private sealed class HostOwner
+        {
+            public int schemaVersion;
+            public string purpose;
+            public string kind;
+            public string path;
         }
 
         private static void CreateOrValidatePrefab<T>(string path, bool panel) where T : Component

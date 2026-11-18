@@ -18,6 +18,7 @@ using UnityEditor;
 
 namespace YLFramework.Tests.CommonSystem
 {
+    [Category("YL.Resource.Addressables.Regression")]
     public class SceneControllerPlayModeTests
     {
         private sealed class TestModule : Module
@@ -186,7 +187,9 @@ namespace YLFramework.Tests.CommonSystem
         private SceneController _controller;
         private ProbeProvider _provider;
         private Module _previousCurrent;
+        private ResourceStartup _resourceStartup;
         private ResourceSystem _resources;
+        private readonly List<Scene> _realScenes = new();
         private bool _hasTimedOut;
         private Action _abortPlaySession;
 
@@ -194,10 +197,11 @@ namespace YLFramework.Tests.CommonSystem
         public IEnumerator SetUp()
         {
             _hasTimedOut = false;
+            _realScenes.Clear();
 #if UNITY_EDITOR
             _abortPlaySession = () => EditorApplication.isPlaying = false;
 #else
-            abortPlaySession = Application.Quit;
+            _abortPlaySession = Application.Quit;
 #endif
             Assert.That(CoreResourceAccess.Provider, Is.Null, "Do not replace an external provider.");
             Assert.That(ModuleManager.GetModule<TestModule>(), Is.Null);
@@ -249,18 +253,23 @@ namespace YLFramework.Tests.CommonSystem
             var manager = typeof(ModuleManager).GetProperty("Instance", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
             typeof(ModuleManager).GetField("_currentModule", BindingFlags.Instance | BindingFlags.NonPublic)
                 .SetValue(manager, _previousCurrent);
-            if (_resources != null)
+            if (_resourceStartup != null)
             {
-                foreach (var record in _resources.GetSceneRecords().Where(record => record.IsLoaded))
-                {
-                    using var unload = _resources.UnloadSceneAsync(record);
-                    yield return Await(() => unload.IsDone, "owned scene unload");
-                    Assert.That(unload.Error, Is.Null);
-                }
-                using var shutdown = _resources.ShutdownAsync();
+                using var shutdown = _resourceStartup.StopAsync();
                 yield return Await(() => shutdown.IsDone, "resource shutdown");
-                Assert.That(shutdown.Error, Is.Null);
+                Assert.That(shutdown.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), shutdown.Error?.ToString());
+                Assert.That(shutdown.TakeResult(), Is.True);
+                Assert.That(_realScenes.All(scene => !scene.IsValid() && !scene.isLoaded), Is.True,
+                    "Only stopping the owning application scene scope ends all surviving Core scene intents.");
+                var diagnostics = _resources.GetDiagnostics();
+                Assert.That(diagnostics.LeaseCount, Is.Zero);
+                Assert.That(diagnostics.ScopeCount, Is.Zero);
+                Assert.That(diagnostics.RequestCount, Is.Zero);
+                Assert.That(diagnostics.PendingWorkCount, Is.Zero);
+                Assert.That(diagnostics.DrainingHandleCount, Is.Zero);
+                Assert.That(diagnostics.Errors, Is.Empty);
                 _resources = null;
+                _resourceStartup = null;
             }
             CoreResourceAccess.Unbind(_provider);
         }
@@ -546,67 +555,77 @@ namespace YLFramework.Tests.CommonSystem
             Assert.That(_provider.Calls, Is.Empty);
         }
 
-#if UNITY_EDITOR
-        private void BindRealResources()
+        private IEnumerator BindRealResources()
         {
-            const string Root = "Assets/Tests/YLFramework/Fixtures/CommonSystem/ResourceProject.asset";
             Assert.That(ResourceSystem.Current, Is.Null, "Never replace an external Resource authority.");
-            var projectType = Type.GetType("YLFramework.Editor.Resource.ResourceProject, YLFramework.Editor", true);
-            var project = AssetDatabase.LoadAssetAtPath(Root, projectType);
-            Assert.That(project, Is.Not.Null, "Create the owned CommonSystem fixtures in EditMode first.");
-            var projects = Array.CreateInstance(projectType, 1);
-            projects.SetValue(project, 0);
-            var simulationType = Type.GetType("YLFramework.Editor.Resource.ResourceEditorSimulation, YLFramework.Editor", true);
-            var simulation = Activator.CreateInstance(simulationType, new object[] { projects, null });
-            var config = (ResourceConfiguration)simulationType.GetMethod("CreateConfiguration", Type.EmptyTypes)
-                .Invoke(simulation, null);
-            using var initialize = ResourceSystem.InitializeAsync(config);
-            Assert.That(initialize.Error, Is.Null);
-            _resources = initialize.TakeResult();
+            _resourceStartup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: false);
+            using var start = _resourceStartup.StartAsync();
+            yield return Await(() => start.IsDone, "official Resource startup");
+            Assert.That(start.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), start.Error?.ToString());
+            _resources = start.TakeResult().Resources;
+            Assert.That(CoreResourceAccess.Provider, Is.SameAs(_provider));
+            CoreResourceAccess.Unbind(_provider);
             _resources.BindCoreResourceProvider();
-            _module.ProjectName = "YL.CommonSystem.Fixture";
+            _module.ProjectName = "ownership";
         }
 
         [UnityTest]
         public IEnumerator RealAdditiveIntentsStayIndependentAndSurviveModuleClose()
         {
-            BindRealResources();
+            yield return BindRealResources();
             var active = SceneManager.GetActiveScene();
-            using var first = _controller.LoadSceneAsync("CommonTarget", LoadSceneMode.Additive);
+            using var first = _controller.LoadSceneAsync("scene", LoadSceneMode.Additive);
             yield return Await(() => !first.keepWaiting, "first additive scene");
             Assert.That(first.Status, Is.EqualTo(CoreResourceStatus.Succeeded), first.Error?.ToString());
             Assert.That(first.Progress, Is.EqualTo(1));
             Assert.That(first.IsDisposed, Is.False);
-            var firstScene = first.TakeResult().Scene;
+            var firstResult = first.TakeResult();
+            Assert.That(firstResult.HasSceneSideEffects, Is.True);
+            var firstScene = firstResult.Scene;
+            _realScenes.Add(firstScene);
             Assert.That(firstScene.isLoaded, Is.True);
             Assert.Throws<InvalidOperationException>(() => first.TakeResult());
 
-            using var second = _controller.LoadSceneAsync("CommonTarget", LoadSceneMode.Additive);
+            using var second = _controller.LoadSceneAsync("scene", LoadSceneMode.Additive);
             yield return Await(() => !second.keepWaiting, "second additive scene");
             Assert.That(second.Status, Is.EqualTo(CoreResourceStatus.Succeeded), second.Error?.ToString());
             var secondScene = second.TakeResult().Scene;
+            _realScenes.Add(secondScene);
             Assert.That(secondScene.handle, Is.Not.EqualTo(firstScene.handle));
             Assert.That(secondScene.path, Is.EqualTo(firstScene.path));
             Assert.That(SceneManager.GetActiveScene(), Is.EqualTo(active));
 
-            using var canceled = _controller.LoadSceneAsync("CommonTarget", LoadSceneMode.Additive);
-            using var independent = CoreResourceAccess.Provider.LoadSceneAsync(_module.ProjectName, "CommonNeutral", LoadSceneMode.Additive);
+            using var canceled = _controller.LoadSceneAsync("scene", LoadSceneMode.Additive);
+            using var independent = CoreResourceAccess.Provider.LoadSceneAsync(_module.ProjectName, "scene", LoadSceneMode.Additive);
             _module.Close();
             Assert.That(canceled.IsDisposed, Is.True);
             Assert.That(canceled.Status, Is.EqualTo(CoreResourceStatus.Canceled));
             yield return Await(() => !independent.keepWaiting, "independent scene request");
             Assert.That(independent.Status, Is.EqualTo(CoreResourceStatus.Succeeded), independent.Error?.ToString());
             var independentScene = independent.TakeResult().Scene;
+            _realScenes.Add(independentScene);
             Assert.That(independentScene.isLoaded && firstScene.isLoaded && secondScene.isLoaded, Is.True);
             Assert.That(first.IsDisposed || second.IsDisposed, Is.False);
             Assert.That(canceled.Status, Is.EqualTo(CoreResourceStatus.Canceled));
+            first.Dispose();
+            second.Dispose();
+            independent.Dispose();
             yield return null;
+            Assert.That(independentScene.isLoaded && firstScene.isLoaded && secondScene.isLoaded, Is.True,
+                "Neither Module.Close nor disposing a Core observation owns scene unload.");
+
+            var unload = SceneManager.UnloadSceneAsync(firstScene);
+            Assert.That(unload, Is.Not.Null);
+            yield return Await(() => unload.isDone && !firstScene.IsValid(), "external native scene unload");
+            Assert.That(secondScene.isLoaded && independentScene.isLoaded, Is.True,
+                "An external unload must end only its exact native scene, not all intents sharing an address.");
+            Assert.That(canceled.Status, Is.EqualTo(CoreResourceStatus.Canceled), "A late scene operation cannot overwrite cancellation.");
         }
 
         [UnityTest]
         public IEnumerator RealFailureKeepsItsTerminalAndDoesNotReserveTheAddress()
         {
-            BindRealResources();
+            yield return BindRealResources();
             using var first = _controller.LoadSceneAsync("missing-common-scene", LoadSceneMode.Additive);
             yield return Await(() => !first.keepWaiting, "missing scene");
             Assert.That(first.Status, Is.EqualTo(CoreResourceStatus.Failed));
@@ -616,7 +635,6 @@ namespace YLFramework.Tests.CommonSystem
             _module.Close();
             Assert.That(first.IsDisposed, Is.False);
         }
-#endif
 
         [UnityTest]
         public IEnumerator TimeoutRequestsIsolationAbortBeforeReportingFailure()

@@ -6,6 +6,7 @@ using YLFramework.Resource;
 
 namespace YLFramework.Tests.Resource
 {
+    [Category("YL.Resource.Addressables")]
     public class ResourceRequestTests
     {
         private sealed class Owner : IDisposable

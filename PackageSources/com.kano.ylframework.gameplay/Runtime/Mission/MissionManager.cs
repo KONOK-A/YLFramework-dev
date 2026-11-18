@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 using YLFramework.Pooling;
 using YLFramework.Singletons;
@@ -20,7 +21,7 @@ namespace YLFramework.Mission
             /// <summary>只作为定义来源保留的配表资产。</summary>
             internal MissionsConfig Source;
             /// <summary>由 LoadConfig 取得、随配表释放的资源租约。</summary>
-            internal IDisposable Lease;
+            internal AssetLease<MissionsConfig> Lease;
             /// <summary>以任务 ID 索引的运行实例。</summary>
             internal readonly Dictionary<int, MissionBase> Missions = new();
             /// <summary>以名称哈希索引的独立运行参数。</summary>
@@ -31,6 +32,8 @@ namespace YLFramework.Mission
         private static readonly Dictionary<int, RuntimeConfig> _configs = new();
         private static readonly Dictionary<int, string> _keys = new();
         private static readonly Dictionary<Type, ObjectPool<MissionBase>> _pools = new();
+        private static readonly HashSet<ResourceRequest<AssetLease<MissionsConfig>>> _configLoads = new();
+        private static int _configGeneration;
         private static bool _isStopping;
         /// <summary>当前已登记的任务配表数量。</summary>
         public static int ConfigCount => _configs.Count;
@@ -112,6 +115,7 @@ namespace YLFramework.Mission
 
             var state = new RuntimeConfig { Name = source.name, Source = source };
             _configs.Add(key, state);
+            int generation = _configGeneration;
             try
             {
                 foreach (var parameter in source.parameters)
@@ -162,13 +166,18 @@ namespace YLFramework.Mission
                         _pools.Add(type, pool);
                     }
                     var mission = pool.Allocate();
+                    bool recorded = false;
                     try
                     {
+                        RequireRegistration(key, state, generation);
                         mission.MissionConfig = UnityEngine.Object.Instantiate(data);
+                        RequireRegistration(key, state, generation);
                         mission.MissionConfig.parent = source;
                         mission.ConfigNameHash = key;
                         state.Missions.Add(data.id, mission);
+                        recorded = true;
                         mission.Init();
+                        RequireRegistration(key, state, generation);
                         foreach (var condition in mission.MissionConfig.conditions)
                         {
                             var references = state.References[condition.ParamNameHash];
@@ -180,18 +189,32 @@ namespace YLFramework.Mission
                     }
                     catch
                     {
-                        if (!state.Missions.ContainsKey(data.id))
+                        if (!recorded)
                         {
-                            pool.Recycle(mission);
+                            var copy = mission.MissionConfig;
+                            try
+                            {
+                                pool.Recycle(mission);
+                            }
+                            finally
+                            {
+                                mission.MissionConfig = null;
+                                if (copy)
+                                    UnityEngine.Object.Destroy(copy);
+                            }
                         }
 
                         throw;
                     }
                 }
+                RequireRegistration(key, state, generation);
             }
             catch
             {
-                _configs.Remove(key);
+                if (_configs.TryGetValue(key, out var current) && ReferenceEquals(current, state))
+                {
+                    _configs.Remove(key);
+                }
                 try
                 {
                     Release(state);
@@ -204,10 +227,61 @@ namespace YLFramework.Mission
             }
         }
 
-        /// <summary>取得并登记任务配表，成功后由管理器持有资源租约，失败时释放本次租约。</summary>
+        /// <summary>构造器和配置副本回调可关闭或替换登记；旧加载不能继续写入新同名配表。</summary>
+        private static void RequireRegistration(int key, RuntimeConfig state, int generation)
+        {
+            if (_isStopping || generation != _configGeneration || !_configs.TryGetValue(key, out var current) || !ReferenceEquals(current, state))
+            {
+                throw new OperationCanceledException("Mission config registration was cancelled or replaced.");
+            }
+        }
+
+        /// <summary>只同步登记已加载配表，冷资源明确抛 InProgress；失败只释放本次租约。</summary>
         public static void LoadConfig(ResourceSystem resources, ResourceAddress address)
         {
-            var lease = resources.Acquire<MissionsConfig>(address);
+            if (resources == null)
+                throw new ArgumentNullException(nameof(resources));
+            if (!address.IsValid || address.SubAsset != null)
+            {
+                throw new ResourceException(ResourceError.InvalidAddress, "A Mission config requires an exact project/path address.");
+            }
+            string key = address.ProjectId + "/" + address.Path;
+            if (!resources.TryAcquireLoaded<MissionsConfig>(key, out var lease))
+            {
+                throw new ResourceException(ResourceError.InProgress, "The Mission config is not loaded. Use LoadConfigAsync: " + key);
+            }
+            RegisterConfig(lease);
+        }
+
+        /// <summary>异步取得并登记配表；管理器持有独立根租约，Shutdown 仅取消本管理器的等待。</summary>
+        public static async Task LoadConfigAsync(ResourceSystem resources, ResourceAddress address)
+        {
+            if (resources == null)
+                throw new ArgumentNullException(nameof(resources));
+            if (_isStopping)
+                throw new InvalidOperationException("任务会话正在退出。");
+            int generation = _configGeneration;
+            using var request = resources.AcquireAsync<MissionsConfig>(address);
+            _configLoads.Add(request);
+            try
+            {
+                var lease = await request;
+                if (_isStopping || generation != _configGeneration)
+                {
+                    lease.Dispose();
+                    throw new OperationCanceledException("Mission config loading was cancelled by manager closure.");
+                }
+                RegisterConfig(lease);
+            }
+            finally
+            {
+                _configLoads.Remove(request);
+            }
+        }
+
+        /// <summary>登记成功后接管本次根租约；登记失败只归还本次取得的责任。</summary>
+        private static void RegisterConfig(AssetLease<MissionsConfig> lease)
+        {
             try
             {
                 AddConfig(lease.Asset);
@@ -471,8 +545,13 @@ namespace YLFramework.Mission
             }
 
             _isStopping = true;
+            _configGeneration++;
             try
             {
+                foreach (var request in new List<ResourceRequest<AssetLease<MissionsConfig>>>(_configLoads))
+                {
+                    request.Cancel();
+                }
                 foreach (var key in new List<int>(_configs.Keys))
                 {
                     RemoveConfig(key);

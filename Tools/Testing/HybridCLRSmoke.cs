@@ -5,7 +5,9 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Security.Cryptography;
 using UnityEngine;
+using UnityEngine.AddressableAssets.Initialization;
 using YLFramework.Core;
 using YLFramework.Integrations.HybridCLR;
 using YLFramework.Resource;
@@ -26,6 +28,7 @@ namespace YLFramework.Testing
         private ResourceSystem _resources;
         private Detail _detail;
         private int _firstFrame;
+        private Receipt _receipt;
 
         private void Awake()
         {
@@ -106,7 +109,7 @@ namespace YLFramework.Testing
             {
                 if (_output != null)
                 {
-                    var diagnostics = _resources?.GetDiagnosticsSnapshot();
+                    var diagnostics = (_resources ?? _sample?.Startup?.Resources)?.GetDiagnostics();
                     var report = new Report
                     {
                         resultId = resultId,
@@ -119,9 +122,22 @@ namespace YLFramework.Testing
                         platform = Application.platform.ToString(),
                         graphicsDevice = SystemInfo.graphicsDeviceType.ToString(),
                         frames = Time.frameCount - _firstFrame,
-                        recordCount = diagnostics?.RecordCount ?? -1,
+                        inputHash = _receipt?.inputHash,
+                        contentHash = _receipt?.contentHash,
+                        addressablesVersion = _receipt?.addressablesVersion,
+                        ledgerMeasured = diagnostics != null,
+                        resourceState = diagnostics?.State.ToString(),
+                        scopeCount = diagnostics?.ScopeCount ?? -1,
+                        requestCount = diagnostics?.RequestCount ?? -1,
+                        pendingWorkCount = diagnostics?.PendingWorkCount ?? -1,
+                        drainingHandleCount = diagnostics?.DrainingHandleCount ?? -1,
+                        cleanupErrors = diagnostics?.Errors.ToArray() ?? new[] { "Diagnostics unavailable" },
                         leaseCount = diagnostics?.LeaseCount ?? -1,
                         stages = _stages.ToArray(),
+                        moduleStage = _sample?.ModuleRequest?.Stage,
+                        moduleException = _sample?.ModuleRequest?.Exception?.ToString(),
+                        observedCodePackageId = _sample?.ModuleRequest?.Code?.CodePackageId,
+                        startupCatalogUpdated = _sample?.StartupCatalogUpdated ?? false,
                         hybridClr = _detail
                     };
                     using var stream = new FileStream(Path.Combine(_output, "result.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
@@ -158,6 +174,7 @@ namespace YLFramework.Testing
             Check(receiptPath.StartsWith(Path.GetDirectoryName(output) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase),
                 "The runtime receipt must belong to this result root.");
             var receipt = JsonUtility.FromJson<Receipt>(File.ReadAllText(receiptPath));
+            _receipt = receipt;
             Check(receipt.resultId == resultId && receipt.hostId == hostId && receipt.unityVersion == Application.unityVersion,
                 "A foreign native build receipt is refused.");
             CheckNoLinks(receipt.cacheRoot);
@@ -170,25 +187,27 @@ namespace YLFramework.Testing
             Check(!AppDomain.CurrentDomain.GetAssemblies().Any(assembly => receipt.assemblies.Contains(assembly.GetName().Name)),
                 "Hot assemblies must not be statically linked or preloaded.");
             _stages.Add("Started");
-            var snapshot = ResourceLocalSnapshot.OpenBuiltIn(receipt.projectId, receipt.catalogDigest, "StandaloneWindows64", receipt.compatibilityId);
-            var store = new ArtifactStore(receipt.cacheRoot, new[]
-            {
-                new ResourceProjectMount(receipt.projectId, "StandaloneWindows64", receipt.compatibilityId, snapshot)
-            });
+            Check(ContentHash(receipt.cacheRoot) == receipt.contentHash, "Actual official AA publication bytes differ from the receipt.");
+            Check(receipt.sampleVersion == "v1" || receipt.sampleVersion == "v2", "An exact sample revision is required.");
+            var patch = receipt.sampleVersion == "v2";
             _sample = new HybridCLRExample();
-            yield return _sample.Run(new ResourceConfiguration(store), receipt.projectId, receipt.compatibilityId);
+            yield return _sample.Run(new ResourceConfiguration(enableStartupCatalogUpdates: patch), receipt.projectId, receipt.compatibilityId,
+                patch ? ResourceManagerRuntimeData.kCatalogAddress : null);
             _resources = _sample.Startup.Resources;
+            Check(_sample.StartupCatalogUpdated == patch, "Only the patch run must apply an explicit official startup catalog update.");
             var code = _sample.ModuleRequest.Code;
-            Check(_sample.ModuleRequest.Exception == null && code.Mode == HybridCLRLoadMode.Native && !code.IsSimulation &&
-                code.CodePackageId == receipt.codePackageId, "Real native code loading did not complete.");
+            Check(_sample.ModuleRequest.Exception == null && code != null && code.Mode == HybridCLRLoadMode.Native && !code.IsSimulation &&
+                code.CodePackageId == receipt.codePackageId,
+                $"Native code identity mismatch: stage={_sample.ModuleRequest.Stage}, expected={receipt.codePackageId}, observed={code?.CodePackageId}.");
             HybridCLRManifest manifest;
-            using (var request = _sample.Startup.Resources.AcquireAsync<TextAsset>(new ResourceAddress(receipt.projectId, HybridCLRManifest.ManifestPath)))
+            using (var request = _sample.Startup.Resources.AcquireAsync<TextAsset>(receipt.manifestAddress))
             {
                 yield return request;
                 using var lease = request.TakeResult();
+                Check(Hash(lease.Asset.bytes) == receipt.manifestSha256, "The loaded official Manifest bytes differ from publication.");
                 manifest = HybridCLRManifest.Parse(lease.Asset.text);
             }
-            Check(manifest.CodePackageId == receipt.codePackageId && manifest.AotMetadata.Length > 0 &&
+            Check(manifest.SchemaVersion == 2 && manifest.CodePackageId == receipt.codePackageId && manifest.AotMetadata.Length > 0 &&
                 manifest.AotMetadata.Select(payload => payload.Name).SequenceEqual(receipt.metadataAssemblies), "The loaded metadata manifest differs from the final base.");
             _stages.Add("HybridCLRMetadata");
             _detail = new Detail
@@ -197,14 +216,44 @@ namespace YLFramework.Testing
                 isSimulation = code.IsSimulation,
                 codePackageId = code.CodePackageId,
                 nativeVariant = receipt.nativeVariant,
+                sampleVersion = receipt.sampleVersion,
+                manifestSchemaVersion = manifest.SchemaVersion,
+                manifestAddress = receipt.manifestAddress,
+                manifestSha256 = receipt.manifestSha256,
                 metadataAssemblies = manifest.AotMetadata.Select(payload => payload.Name).ToArray(),
                 assemblies = code.Assemblies.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray(),
                 message = HybridCLRExampleState.Message,
                 asyncResult = HybridCLRExampleState.Async.GetAwaiter().GetResult(),
                 prefabMarker = _sample.PrefabMarker
             };
-            Check(_sample.ModuleRequest.Module.State == ModuleState.Running && _detail.message == "v1: YL Resource configuration; dependency-count=2" &&
-                _detail.asyncResult == "v1-async" && _detail.prefabMarker == "v1-prefab", "The real hot Module, async or prefab did not execute.");
+            var payloads = new List<Payload>();
+            using (var observed = _resources.CreateScope("native byte observations"))
+            {
+                foreach (var payload in manifest.AotMetadata.Concat(manifest.HotUpdateAssemblies))
+                {
+                    using var reading = observed.LoadAsync<TextAsset>(HybridCLRManifest.ResourceKey(receipt.projectId, payload.Address));
+                    yield return reading;
+                    var bytes = reading.TakeResult().bytes;
+                    HybridCLRManifest.ValidatePayload(payload, bytes);
+                    payloads.Add(new Payload
+                    {
+                        role = manifest.AotMetadata.Contains(payload) ? "AotMetadata" : "HotUpdate",
+                        name = payload.Name,
+                        address = payload.Address,
+                        sha256 = Hash(bytes),
+                        length = bytes.LongLength,
+                        mvid = payload.Mvid,
+                        fullName = payload.Identity
+                    });
+                }
+                using var closed = observed.CloseAsync();
+                yield return closed;
+                Check(closed.TakeResult(), "Native byte observation scope did not close.");
+            }
+            _detail.payloads = payloads.ToArray();
+            Check((receipt.sampleVersion == "v1" || receipt.sampleVersion == "v2") && _sample.ModuleRequest.Module.State == ModuleState.Running &&
+                _detail.message == receipt.sampleVersion + ": YL Resource configuration; dependency-count=2" &&
+                _detail.asyncResult == receipt.sampleVersion + "-async" && _detail.prefabMarker == receipt.sampleVersion + "-prefab", "The real versioned hot Module, async or prefab did not execute.");
             _stages.Add("HybridCLRModule");
             var support = code.Assemblies["YLFramework.HybridCLR.Sample.Support"].GetType("YLFramework.Samples.HybridCLR.HotUpdate.VersionInfo", true);
             _detail.reflectionCount = (int)support.GetMethod("Count").MakeGenericMethod(typeof(string)).Invoke(null,
@@ -224,8 +273,11 @@ namespace YLFramework.Testing
             using var shutdown = _sample.CloseAsync();
             yield return shutdown;
             Check(shutdown.TakeResult() && ResourceSystem.Current == null, "The owned native sample did not close.");
-            var final = _resources.GetDiagnosticsSnapshot();
-            Check(final.RecordCount == 0 && final.LeaseCount == 0 && _runtimeError.Length == 0, "Native resources or runtime errors remain.");
+            var final = _resources.GetDiagnostics();
+            Check(final.State == ResourceSystemState.Closed && final.LeaseCount == 0 && final.ScopeCount == 0 &&
+                final.RequestCount == 0 && final.PendingWorkCount == 0 && final.DrainingHandleCount == 0 && final.Errors.Count == 0 && _runtimeError.Length == 0,
+                "Native schema2 ownership ledgers or runtime errors remain.");
+            Check(ContentHash(receipt.cacheRoot) == receipt.contentHash, "Official AA publication changed during execution.");
             _stages.Add("HybridCLRShutdown");
         }
 
@@ -271,7 +323,7 @@ namespace YLFramework.Testing
             public string unityVersion;
             public string projectId;
             public string compatibilityId;
-            public string catalogDigest;
+            public string inputHash, contentHash, addressablesVersion, sampleVersion, manifestAddress, manifestSha256;
             public string codePackageId;
             public string nativeVariant;
             public string cacheRoot;
@@ -295,12 +347,37 @@ namespace YLFramework.Testing
             public int reflectionCount;
             public bool repeatedLoadReused;
             public bool wrongBaseRejected;
+            public string sampleVersion, manifestAddress, manifestSha256;
+            public int manifestSchemaVersion;
+            public Payload[] payloads;
+        }
+
+        [Serializable]
+        private sealed class Payload
+        {
+            public string role, name, address, sha256, mvid, fullName;
+            public long length;
+        }
+
+        private static string Hash(byte[] bytes)
+        {
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+        }
+        private static string ContentHash(string root)
+        {
+            var rows = Directory.GetFiles(root, "*", SearchOption.AllDirectories).Select(path => new
+            {
+                path = path.Substring(root.TrimEnd('\\', '/').Length + 1).Replace('\\', '/'),
+                hash = Hash(File.ReadAllBytes(path))
+            }).OrderBy(row => row.path, StringComparer.Ordinal);
+            return Hash(Encoding.UTF8.GetBytes(string.Concat(rows.Select(row => row.path + "\0" + row.hash + "\n"))));
         }
 
         [Serializable]
         private sealed class Report
         {
-            public int schemaVersion = 1;
+            public int schemaVersion = 2;
             public string purpose = "YLTesting.PlayerSmoke";
 #if ENABLE_IL2CPP
             public string backend = "IL2CPP";
@@ -317,9 +394,16 @@ namespace YLFramework.Testing
             public string platform;
             public string graphicsDevice;
             public int frames;
-            public int recordCount;
+            public string inputHash, contentHash, addressablesVersion, resourceState;
+            public int scopeCount, requestCount, pendingWorkCount, drainingHandleCount;
+            public bool ledgerMeasured;
+            public string[] cleanupErrors;
             public int leaseCount;
             public string[] stages;
+            public string moduleStage;
+            public string moduleException;
+            public string observedCodePackageId;
+            public bool startupCatalogUpdated;
             public Detail hybridClr;
         }
     }

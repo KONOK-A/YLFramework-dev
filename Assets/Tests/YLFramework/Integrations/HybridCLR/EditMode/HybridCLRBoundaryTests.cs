@@ -52,8 +52,12 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var assembly = AppDomain.CurrentDomain.GetAssemblies().Single(value => value.GetName().Name == "YLFramework.HybridCLR.Tests.PlayMode");
             var bytes = File.ReadAllBytes(assembly.Location);
             var payload = manifest.HotUpdateAssemblies.Single();
+            Assert.That(manifest.SchemaVersion, Is.EqualTo(2));
+            Assert.That(payload.Name, Is.EqualTo(assembly.GetName().Name));
             Assert.That(payload.Identity, Is.EqualTo(assembly.GetName().FullName));
             Assert.That(payload.Mvid, Is.EqualTo(assembly.ManifestModule.ModuleVersionId.ToString("D")));
+            Assert.That(payload.Length, Is.EqualTo(bytes.LongLength));
+            Assert.That(payload.Address, Is.EqualTo(global::YLFramework.Integrations.HybridCLR.HybridCLRManifest.PayloadAddress(payload.Name, false)));
             Assert.That(payload.Sha256, Is.EqualTo(global::YLFramework.Integrations.HybridCLR.HybridCLRManifest.Hash(bytes)));
             Assert.That(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(HybridCLRTestFixtures.Root + "/Entry.bytes")), Is.EqualTo(bytes));
         }
@@ -124,12 +128,13 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             CollectionAssert.AreEqual(editorOnly ? new[] { "Editor" } : Array.Empty<string>(), definition["includePlatforms"].Values<string>());
             var expectedReferences = test
                 ? (editorOnly
-                    ? new[] { "YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "YLFramework.HybridCLR.Editor",
-                        "YLFramework.HybridCLR.Sample.Editor", "HybridCLR.Editor", "UnityEngine.TestRunner", "UnityEditor.TestRunner", "YLFramework.Tests.Fixtures" }
-                    : new[] { "YLFramework.Runtime", "YLFramework.HybridCLR", "UnityEngine.TestRunner", "YLFramework.Tests.Fixtures" })
-                : (editorOnly
-                    ? new[] { "YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "HybridCLR.Runtime", "HybridCLR.Editor" }
-                    : new[] { "YLFramework.Runtime", "HybridCLR.Runtime" });
+                     ? new[] { "YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "YLFramework.HybridCLR.Editor",
+                         "Unity.Addressables.Editor", "Unity.Addressables", "Unity.ResourceManager", "YLFramework.HybridCLR.Sample.Editor", "HybridCLR.Editor",
+                         "UnityEngine.TestRunner", "UnityEditor.TestRunner", "YLFramework.Tests.Fixtures" }
+                     : new[] { "YLFramework.Runtime", "YLFramework.HybridCLR", "Unity.Addressables", "Unity.ResourceManager", "UnityEngine.TestRunner", "YLFramework.Tests.Fixtures" })
+                 : (editorOnly
+                      ? new[] { "YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "HybridCLR.Runtime", "HybridCLR.Editor", "Unity.Addressables", "Unity.Addressables.Editor", "Unity.ResourceManager" }
+                     : new[] { "YLFramework.Runtime", "HybridCLR.Runtime", "Unity.Addressables" });
             Assert.That(definition["references"].Values<string>(), Is.EquivalentTo(expectedReferences));
             var expectedPrecompiled = new[] { "Newtonsoft.Json.dll" }
                 .Concat(test ? new[] { "nunit.framework.dll" } : Array.Empty<string>())
@@ -148,9 +153,11 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         }
 
         private static bool IsApprovedSubjectDependency(string name, bool editor) =>
-            new[] { "YLFramework.Runtime", "mscorlib", "netstandard", "System", "UnityEngine", "Newtonsoft.Json",
-                "BouncyCastle.Cryptography", "nunit.framework", "Microsoft.CSharp", "Microsoft.Win32.Primitives" }.Contains(name) ||
-            name.StartsWith("System.", StringComparison.Ordinal) ||
+             new[] { "YLFramework.Runtime", "mscorlib", "netstandard", "System", "UnityEngine", "Newtonsoft.Json",
+                  "nunit.framework", "Microsoft.CSharp", "Microsoft.Win32.Primitives",
+                 "Unity.Addressables", "Unity.ResourceManager", "Unity.Profiling.Core" }.Contains(name) ||
+             name.StartsWith("System.", StringComparison.Ordinal) ||
+             (editor && new[] { "Unity.Addressables.Editor", "Unity.ScriptableBuildPipeline", "Unity.ScriptableBuildPipeline.Editor" }.Contains(name)) ||
             (editor && (name == "YLFramework.Editor" || name == "UnityEditor" || name.StartsWith("UnityEditor.", StringComparison.Ordinal))) ||
             name.StartsWith("UnityEngine.", StringComparison.Ordinal);
 

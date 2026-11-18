@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_yl-resource-multidirectory-modern-20261018__other
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_yl-resource-multidirectory-modern-20261018__other
+  m_GUID: ad6fde42358d1e648b8b21746ba3bcae
+  m_SerializeEntries:
+  - m_GUID: c4e9748d1daa714458c2e8564826e7e8
+    m_Address: yl-resource-multidirectory-modern-20261018/prefabs/CrossRootB.prefab
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-resource-multidirectory-modern-20261018/other
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: 38c937ae24427284caab771d903d1174, type: 2}
+    - {fileID: 11400000, guid: e5c496128989d544692cb4efe868f14a, type: 2}

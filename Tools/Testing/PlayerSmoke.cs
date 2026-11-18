@@ -1,26 +1,36 @@
 using System;
 using System.Collections;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using UnityEngine;
 using YLFramework.Events;
 using YLFramework.Resource;
-using Debug = UnityEngine.Debug;
-using ResourceLocation = YLFramework.Resource.ResourceLocation;
 
 namespace YLFramework.Testing
 {
-    /// <summary>仅显式安装到分发接收宿主的 Player 冒烟，不进入正式包。</summary>
     public sealed class PlayerSmoke : MonoBehaviour
     {
-        public string resultId;
-        public string hostId;
-        private readonly List<string> _stages = new();
+        public const string MessageKey = "distribution/message";
+        [Serializable]
+        private sealed class Result
+        {
+            public int schemaVersion = 2;
+            public string purpose = "YLTesting.PlayerSmoke";
+            public string status, error, resultId, hostId, unityVersion, runtimeAssembly, platform, backend, graphicsDevice;
+            public string inputHash, contentHash, addressablesVersion, resourceState;
+            public int pid, frames, leaseCount, scopeCount, requestCount, pendingWorkCount, drainingHandleCount;
+            public bool isEditor, ledgerMeasured;
+            public string[] stages, cleanupErrors = Array.Empty<string>();
+        }
+
+        public string resultId, hostId, resultRoot, inputHash, contentHash, addressablesVersion;
+        private readonly System.Collections.Generic.List<string> _stages = new();
         private string _output;
+        private ResourceStartup _startup;
+        private ResourceSystem _system;
         private string _runtimeError = string.Empty;
-        private ResourceSystem _resources;
         private int _firstFrame;
 
         private void Awake()
@@ -28,191 +38,155 @@ namespace YLFramework.Testing
             _firstFrame = Time.frameCount;
             Application.logMessageReceived += ObserveLog;
         }
-
         private void OnDestroy() => Application.logMessageReceived -= ObserveLog;
-
         private void ObserveLog(string message, string stack, LogType type)
         {
-            if (type == LogType.Error || type == LogType.Assert || type == LogType.Exception)
-            {
-                _runtimeError += message + Environment.NewLine;
-            }
+            if (type == LogType.Error || type == LogType.Assert || type == LogType.Exception) _runtimeError += message + Environment.NewLine;
         }
 
         private IEnumerator Start()
         {
-            var routine = Run();
+            var args = Environment.GetCommandLineArgs();
+            var index = Array.IndexOf(args, "-ylSmokeOutput");
+            if (index < 0 || index + 1 >= args.Length) { Application.Quit(9); yield break; }
+            _output = Path.Combine(Path.GetFullPath(args[index + 1]), "result.json");
+            if (File.Exists(_output)) { Application.Quit(9); yield break; }
+            var root = Path.GetFullPath(resultRoot);
+            if (!_output.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            { Application.Quit(9); yield break; }
+            for (var path = Path.GetDirectoryName(_output); path != null; path = Path.GetDirectoryName(path))
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) { Application.Quit(9); yield break; }
+            var work = Run();
             while (true)
             {
-                object current = null;
-                bool next = false;
-                Exception failure = null;
-                try
-                {
-                    next = routine.MoveNext();
-                    if (next)
-                    {
-                        current = routine.Current;
-                    }
-                }
+                object next = null;
+                bool more;
+                try { more = work.MoveNext(); if (more) next = work.Current; }
                 catch (Exception error)
                 {
-                    failure = error;
-                }
-                if (failure != null)
-                {
-                    Debug.LogException(failure);
-                    WriteReport("Failed", failure.ToString());
-                    Application.Quit(1);
+                    (work as IDisposable)?.Dispose();
+                    Finish(error);
                     yield break;
                 }
-                if (!next)
-                {
-                    ((IDisposable)routine).Dispose();
-                    WriteReport("Passed", string.Empty);
-                    Debug.Log("[YLPlayerSmoke] PASS " + resultId);
-                    Application.Quit(0);
-                    yield break;
-                }
-                yield return current;
+                if (!more) break;
+                yield return next;
             }
+            Finish(null);
         }
 
         private IEnumerator Run()
         {
-            var arguments = Environment.GetCommandLineArgs();
-            var index = Array.IndexOf(arguments, "-ylSmokeOutput");
-            Check(index >= 0 && index + 1 < arguments.Length, "Explicit owned output is required.");
-            _output = Path.GetFullPath(arguments[index + 1]);
-            Check(Directory.Exists(_output), "Output must already exist.");
-            for (var path = _output; path != null; path = Path.GetDirectoryName(path))
-            {
-                Check((File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0, "Linked output is refused.");
-            }
-            Check(!Application.isEditor && Application.isPlaying && Application.platform == RuntimePlatform.WindowsPlayer,
-                "A real Windows Player must execute the scene.");
-            Check(!string.IsNullOrEmpty(resultId) && !string.IsNullOrEmpty(hostId), "Build identity is missing.");
-            Check(ResourceSystem.Current == null, "The Player must start fresh.");
+            Require(!Application.isEditor && Application.isPlaying && Application.platform == RuntimePlatform.WindowsPlayer && ResourceSystem.Current == null &&
+                !string.IsNullOrEmpty(resultId) && !string.IsNullOrEmpty(hostId), "Smoke must run in a fresh actual Windows Player.");
+            Require(ContentFingerprint() == contentHash, "Actual StreamingAssets/aa content differs from its build receipt.");
             _stages.Add("Started");
-            yield return null;
-
-            var address = new ResourceAddress("player-smoke", "message");
-            using (var initialized = ResourceSystem.InitializeAsync(new ResourceConfiguration(new[]
+            _startup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: false);
+            using var starting = _startup.StartAsync();
+            while (!starting.IsDone) yield return null;
+            _ = starting.TakeResult();
+            _system = _startup.Resources;
+            using var scope = _system.CreateScope("distribution smoke scope");
+            using var loading = scope.LoadAsync<TextAsset>(MessageKey);
+            while (!loading.IsDone) yield return null;
+            Require(loading.TakeResult().text == "YLFramework distribution AA smoke", "Official AA TextAsset payload differs.");
+            using var acquiring = _system.AcquireAsync<TextAsset>(MessageKey);
+            while (!acquiring.IsDone) yield return null;
+            using var independent = acquiring.TakeResult();
+            _stages.Add("ResourceLoaded");
+            int observed = 0;
+            using (var channel = new EventChannel())
             {
-                new ResourceCatalog("player-smoke", new[]
+                var subscription = channel.Register(() => observed++);
+                try
                 {
-                    new ResourceCatalogEntry("message", address,
-                        new ResourceLocation(ResourceSourceId.Resources, "YLPlayerSmoke/Message", typeof(TextAsset)))
-                })
-            })))
-            {
-                yield return initialized;
-                _resources = initialized.TakeResult();
-            }
-            AssetLease<TextAsset> released;
-            using (var request = _resources.AcquireAsync<TextAsset>(address))
-            {
-                yield return request;
-                using (var lease = request.TakeResult())
-                {
-                    released = lease;
-                    Check(lease.IsValid && lease.Asset.text.Trim() == "yl-player-smoke-v1", "Real Resources payload did not load.");
-                    _stages.Add("ResourceLoaded");
-                    int changes = 0;
-                    using (var channel = new EventChannel())
-                    {
-                        var subscription = channel.Register(() => changes++);
-                        try
-                        {
-                            channel.TriggerAll();
-                            Check(changes == 1, "The core event registration did not receive its notification.");
-                            subscription.Unregister();
-                            channel.TriggerAll();
-                            Check(changes == 1, "The core event registration was not released.");
-                        }
-                        finally
-                        {
-                            subscription.Unregister();
-                        }
-                    }
-                    _stages.Add("EventLifecycle");
-                    using var busy = _resources.ShutdownAsync();
-                    Check(busy.Status == ResourceRequestStatus.Failed && busy.Error.Kind == ResourceError.Busy && lease.IsValid,
-                        "Shutdown must preserve a caller's live lease.");
-                    _stages.Add("BusyOwnerProtected");
+                    channel.TriggerAll();
+                    Require(observed == 1, "Event registration did not receive its notification.");
+                    subscription.Unregister();
+                    channel.TriggerAll();
+                    Require(observed == 1, "Event unregistration did not take effect.");
                 }
+                finally { subscription.Unregister(); }
             }
-            Check(!released.IsValid && _resources.GetDiagnosticsSnapshot().LeaseCount == 0, "Resource lease release did not complete.");
+            _stages.Add("EventLifecycle");
+            using var busy = _startup.StopAsync();
+            while (!busy.IsDone) yield return null;
+            Require(busy.Status == ResourceRequestStatus.Failed && busy.Error?.Kind == ResourceError.Busy &&
+                _startup.OwnsResourceSystem && independent.IsValid && !scope.IsDisposed && ReferenceEquals(_startup.Resources, _system),
+                "Busy shutdown revoked another owner's lease/scope.");
+            _stages.Add("BusyOwnerProtected");
+            independent.Dispose();
+            using var closing = scope.CloseAsync();
+            while (!closing.IsDone) yield return null;
+            Require(closing.TakeResult(), "Scope did not close.");
+            Require(!independent.IsValid && _system.GetDiagnostics().LeaseCount == 0, "Actual resource lease release did not complete.");
             _stages.Add("ResourceReleased");
-            using (var shutdown = _resources.ShutdownAsync())
-            {
-                yield return shutdown;
-                Check(shutdown.TakeResult() && ResourceSystem.Current == null && _resources.State == ResourceSystemState.Closed,
-                    "The real Resource authority did not close.");
-            }
+            using var stopping = _startup.StopAsync();
+            while (!stopping.IsDone) yield return null;
+            Require(stopping.TakeResult() && !_startup.OwnsResourceSystem, "Startup did not finish its owned shutdown.");
             yield return null;
-            Check(_resources.GetDiagnosticsSnapshot().RecordCount == 0 && _runtimeError.Length == 0, "Runtime errors or resources remain.");
+            var diagnostics = _system.GetDiagnostics();
+            Require(diagnostics.State == ResourceSystemState.Closed && diagnostics.LeaseCount == 0 &&
+                diagnostics.ScopeCount == 0 && diagnostics.RequestCount == 0 && diagnostics.PendingWorkCount == 0 &&
+                diagnostics.DrainingHandleCount == 0 && diagnostics.Errors.Count == 0 && _runtimeError.Length == 0 && ResourceSystem.Current == null,
+                "The five schema2 ledgers or runtime errors did not drain.");
+            Require(ContentFingerprint() == contentHash, "Player content changed during its execution.");
             _stages.Add("Shutdown");
         }
 
-        private static void Check(bool condition, string message)
+        private static string ContentFingerprint()
         {
-            if (!condition)
+            var root = Path.Combine(Application.streamingAssetsPath, "aa");
+            var rows = Directory.GetFiles(root, "*", SearchOption.AllDirectories).Select(path => new
             {
-                throw new InvalidOperationException(message);
-            }
+                path = path.Substring(root.TrimEnd('\\', '/').Length + 1).Replace('\\', '/'),
+                hash = Hash(File.ReadAllBytes(path))
+            }).OrderBy(row => row.path, StringComparer.Ordinal);
+            return Hash(Encoding.UTF8.GetBytes(string.Concat(rows.Select(row => row.path + "\0" + row.hash + "\n"))));
         }
-
-        private void WriteReport(string status, string error)
+        private static string Hash(byte[] bytes)
         {
-            if (_output == null)
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+        }
+        private void Finish(Exception error)
+        {
+            var diagnostics = _system?.GetDiagnostics();
+            var result = new Result
             {
-                return;
-            }
-            var diagnostics = _resources?.GetDiagnosticsSnapshot();
-            var report = new Report
-            {
+                status = error == null && _runtimeError.Length == 0 ? "Passed" : "Failed",
+                error = (error?.ToString() ?? "") + _runtimeError,
                 resultId = resultId,
                 hostId = hostId,
-                status = status,
-                error = error + _runtimeError,
+                inputHash = inputHash,
+                contentHash = contentHash,
+                addressablesVersion = addressablesVersion,
                 unityVersion = Application.unityVersion,
-#if ENABLE_IL2CPP
-                backend = "IL2CPP",
-#else
-                backend = "Mono",
-#endif
-                pid = Process.GetCurrentProcess().Id,
-                isEditor = Application.isEditor,
+                runtimeAssembly = typeof(ResourceSystem).Assembly.GetName().Name,
                 platform = Application.platform.ToString(),
+                isEditor = Application.isEditor,
                 frames = Time.frameCount - _firstFrame,
-                recordCount = diagnostics?.RecordCount ?? -1,
+                graphicsDevice = SystemInfo.graphicsDeviceType.ToString(),
+                pid = System.Diagnostics.Process.GetCurrentProcess().Id,
+                ledgerMeasured = diagnostics != null,
+                resourceState = diagnostics?.State.ToString(),
                 leaseCount = diagnostics?.LeaseCount ?? -1,
-                stages = _stages.ToArray()
+                scopeCount = diagnostics?.ScopeCount ?? -1,
+                requestCount = diagnostics?.RequestCount ?? -1,
+                pendingWorkCount = diagnostics?.PendingWorkCount ?? -1,
+                drainingHandleCount = diagnostics?.DrainingHandleCount ?? -1,
+                cleanupErrors = diagnostics?.Errors.ToArray() ?? new[] { "Diagnostics unavailable" },
+                stages = _stages.ToArray(),
+#if ENABLE_IL2CPP
+                backend = "IL2CPP"
+#else
+                backend = "Mono"
+#endif
             };
-            using var stream = new FileStream(Path.Combine(_output, "result.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-            using var writer = new StreamWriter(stream, new UTF8Encoding(false));
-            writer.Write(JsonUtility.ToJson(report, true));
+            using (var stream = new FileStream(_output, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(false))) writer.Write(JsonUtility.ToJson(result, true));
+            if (result.status == "Passed") Debug.Log("[YLPlayerSmoke] PASS " + resultId); else if (error != null) Debug.LogException(error);
+            Application.Quit(result.status == "Passed" ? 0 : 1);
         }
-
-        [Serializable]
-        private sealed class Report
-        {
-            public int schemaVersion = 1;
-            public string purpose = "YLTesting.PlayerSmoke";
-            public string resultId;
-            public string hostId;
-            public string status;
-            public string error;
-            public string unityVersion;
-            public string backend;
-            public int pid;
-            public bool isEditor;
-            public string platform;
-            public int frames;
-            public int recordCount;
-            public int leaseCount;
-            public string[] stages;
-        }
+        private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     }
 }

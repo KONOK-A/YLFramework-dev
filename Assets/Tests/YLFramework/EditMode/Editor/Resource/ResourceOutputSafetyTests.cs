@@ -4,7 +4,6 @@ using System.IO;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine.TestTools;
-using YLFramework.Editor.Resource;
 
 namespace YLFramework.Tests.ResourceEditor
 {
@@ -13,7 +12,6 @@ namespace YLFramework.Tests.ResourceEditor
     {
         private const string StateKey = "YL.ResourceOutputSafetyTests";
         private static string _root => SessionState.GetString(StateKey, "");
-        private static Type Output => typeof(ResourceCodeGenerator).Assembly.GetType("YLFramework.Editor.Resource.ResourceReferenceOutput");
         [UnitySetUp]
         public IEnumerator SetUp()
         {
@@ -56,7 +54,7 @@ namespace YLFramework.Tests.ResourceEditor
             SessionState.EraseString(StateKey + ".Definition");
             SessionState.EraseString(StateKey + ".Source");
         }
-        private static bool Publish(string path) => (bool)ResourceEditorTests.Invoke(Output, "Publish", path, "namespace Safe82c { public static class References {} }\n");
+        private static bool Publish(string path) => ResourceAddressablesGeneratorFixture.Publish(path, "namespace Safe82c { public static class References {} }\n");
 
         [Test]
         public void GenerationRefusesAncestorAssemblyFileOccupancyAndOutOfAssetsPaths()

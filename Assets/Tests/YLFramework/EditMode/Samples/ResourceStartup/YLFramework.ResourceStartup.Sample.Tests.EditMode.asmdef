@@ -7,6 +7,9 @@
     "YLFramework.Tests.Fixtures",
     "YLFramework.ResourceStartup.Sample",
     "YLFramework.ResourceStartup.Sample.Editor",
+    "Unity.Addressables",
+    "Unity.Addressables.Editor",
+    "Unity.ResourceManager",
     "UnityEngine.UI",
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner"

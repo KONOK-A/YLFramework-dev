@@ -18,7 +18,6 @@
         "Runtime/Systems/Action/Integration/DOTween/Dependencies.json",
         "Runtime/Systems/Action/Integration/DOTween/LICENSE.md",
         "Prefabs/YLFramework.prefab",
-        "Plugins/BouncyCastle/BouncyCastle.Cryptography.dll",
         "Plugins/BouncyCastle/SOURCE.txt",
         "Runtime/Core/Analyzers/YLFramework.Analyzers.dll",
         "Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs",

@@ -35,9 +35,10 @@ SOFTWARE.
 
 ## Other Licenses
 
-- The bundled BouncyCastle.Cryptography binary is covered by the retained
-  Bouncy Castle copyright above and the full MIT terms in this file. Its exact
-  provenance is in [BouncyCastle SOURCE](Plugins/BouncyCastle/SOURCE.txt).
+- Older versions bundled BouncyCastle.Cryptography under the retained Bouncy
+  Castle copyright and MIT terms above. The current main package does not
+  include that binary. Its historical provenance is preserved in
+  [BouncyCastle SOURCE](Plugins/BouncyCastle/SOURCE.txt).
 - MiniExcel is not included in or required by this main package. The optional
   `com.kano.ylframework.excel` package supplies MiniExcel under Apache-2.0,
   Copyright (c) 2021 LIN, WEI-HAN, with its own

@@ -58,7 +58,7 @@ namespace YLFramework.DataAssets
             return owner;
         }
 
-        /// <summary>同步取得根Lease并登记；登记失败自动归还Lease。</summary>
+        /// <summary>只同步增持已加载根并登记；冷资源要求 LoadAsync，登记失败自动归还本次租约。</summary>
         /// <param name="resource">负责取得根资产的资源系统。</param>
         /// <param name="address">根资产在资源目录中的地址。</param>
         /// <returns>拥有本次租约的登记，由调用方释放。</returns>
@@ -70,7 +70,15 @@ namespace YLFramework.DataAssets
             }
 
             var generation = DataAssetLifetime.Generation;
-            var lease = resource.Acquire<ScriptableObjectConfigs>(address);
+            if (!address.IsValid || address.SubAsset != null)
+            {
+                throw new ResourceException(ResourceError.InvalidAddress, "A configuration root requires an exact project/path address.");
+            }
+            string key = address.ProjectId + "/" + address.Path;
+            if (!resource.TryAcquireLoaded<ScriptableObjectConfigs>(key, out var lease))
+            {
+                throw new ResourceException(ResourceError.InProgress, "The DataAssets root is not loaded. Use LoadAsync: " + key);
+            }
             try
             {
                 if (generation != DataAssetLifetime.Generation)

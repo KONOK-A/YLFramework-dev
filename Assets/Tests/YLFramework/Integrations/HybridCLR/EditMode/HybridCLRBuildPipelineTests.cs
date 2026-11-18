@@ -7,8 +7,13 @@ using System.Text;
 using System.Threading;
 using dnlib.DotNet;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.AddressableAssets;
+using UnityEditor.AddressableAssets.Build;
+using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEngine;
 using YLFramework.Editor.Resource;
 using YLFramework.Integrations.HybridCLR;
@@ -22,8 +27,8 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         private string _rootGuid;
         private string _temporary;
         private HybridCLRBuildProfile _profile;
+        private AddressableAssetSettings _settings;
         private string _workspaceRoot;
-        private string _releaseRoot;
 
         [SetUp]
         public void SetUp()
@@ -34,21 +39,25 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             _rootGuid = AssetDatabase.CreateFolder("Assets/Tests/YLFramework/Fixtures", "HybridCLRBuild-" + id);
             _temporary = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kilo", "YLHybridCLRBuild-" + id);
             Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary));
-            var project = ScriptableObject.CreateInstance<ResourceProject>();
-            project.projectId = "hot-" + id;
-            AssetDatabase.CreateAsset(project, _root + "/Project.asset");
-            var recipe = ScriptableObject.CreateInstance<ResourceBuildRecipe>();
-            recipe.project = project;
-            recipe.action = ResourceBuildAction.BuildAndPublish;
-            recipe.appContentCompatibilityId = "base-v1";
-            AssetDatabase.CreateAsset(recipe, _root + "/Recipe.asset");
+            _settings = AddressableAssetSettings.Create(_root, "Settings", true, true);
+            _settings.DisableCatalogUpdateOnStartup = true;
+            _settings.BuildRemoteCatalog = true;
+            _settings.profileSettings.SetValue(_settings.activeProfileId, AddressableAssetSettings.kRemoteBuildPath, _temporary + "/OfficialOutput");
+            _settings.profileSettings.SetValue(_settings.activeProfileId, AddressableAssetSettings.kRemoteLoadPath, "https://hybridclr-tests.invalid/" + id);
+            var bundle = _settings.DefaultGroup.GetSchema<BundledAssetGroupSchema>();
+            bundle.BuildPath.SetVariableByName(_settings, AddressableAssetSettings.kRemoteBuildPath);
+            bundle.LoadPath.SetVariableByName(_settings, AddressableAssetSettings.kRemoteLoadPath);
+            _settings.DefaultGroup.GetSchema<ContentUpdateGroupSchema>().StaticContent = false;
             _profile = ScriptableObject.CreateInstance<HybridCLRBuildProfile>();
-            _profile.recipe = recipe;
+            _profile.schemaVersion = 2;
+            _profile.addressableSettings = _settings;
+            _profile.codeGroup = _settings.DefaultGroup;
+            _profile.projectId = "hot-" + id;
+            _profile.appContentCompatibilityId = "base-v1";
             _profile.generatedAssetDirectory = _root + "/Generated";
             _profile.baselineDirectory = System.IO.Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical("HybridCLRBaselines/" + id));
             AssetDatabase.CreateAsset(_profile, _root + "/Profile.asset");
-            AssetDatabase.SaveAssetIfDirty(project);
-            AssetDatabase.SaveAssetIfDirty(recipe);
+            SaveOfficialSettings();
             AssetDatabase.SaveAssetIfDirty(_profile);
         }
 
@@ -67,10 +76,6 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                 Directory.Delete(global::YLFramework.Testing.PackageTestPaths.Physical(_workspaceRoot), true);
             }
 
-            if (_releaseRoot != null && Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(_releaseRoot)))
-            {
-                Directory.Delete(global::YLFramework.Testing.PackageTestPaths.Physical(_releaseRoot), true);
-            }
         }
 
         [Test]
@@ -86,7 +91,12 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Assert.That(PlayerSettings.GetApiCompatibilityLevel(BuildTargetGroup.Standalone), Is.EqualTo(compatibility));
         }
 
-        [TestCase("recipe")]
+        [TestCase("schemaVersion")]
+        [TestCase("addressableSettings")]
+        [TestCase("codeGroup")]
+        [TestCase("projectId")]
+        [TestCase("target")]
+        [TestCase("appContentCompatibilityId")]
         [TestCase("development")]
         [TestCase("generatedAssetDirectory")]
         [TestCase("baselineDirectory")]
@@ -110,7 +120,12 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             EditorUtility.SetDirty(_profile);
             AssetDatabase.SaveAssetIfDirty(_profile);
             var child = ScriptableObject.CreateInstance<HybridCLRBuildProfile>();
-            child.recipe = _profile.recipe;
+            child.schemaVersion = 2;
+            child.addressableSettings = _settings;
+            child.codeGroup = _profile.codeGroup;
+            child.projectId = "current-" + Guid.NewGuid().ToString("N");
+            child.appContentCompatibilityId = _profile.appContentCompatibilityId;
+            child.target = _profile.target;
             child.development = development;
             child.generatedAssetDirectory = _root + "/ChildGenerated";
             child.baselineDirectory = _profile.baselineDirectory;
@@ -145,8 +160,8 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             string fingerprint = Fingerprint(child);
             var paths = new[]
             {
-                path, AssetDatabase.GetAssetPath(_profile), AssetDatabase.GetAssetPath(_profile.recipe),
-                AssetDatabase.GetAssetPath(_profile.recipe.project)
+                path, AssetDatabase.GetAssetPath(_profile), AssetDatabase.GetAssetPath(_settings),
+                AssetDatabase.GetAssetPath(_profile.codeGroup)
             };
             var guids = paths.Select(AssetDatabase.AssetPathToGUID).ToArray();
             var bytes = paths.Select(value => File.ReadAllBytes(value)).ToArray();
@@ -154,21 +169,26 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(child, out string childGuid, out long childId), Is.True);
             Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(child))),
                 Is.EqualTo("fa0a9e25cfd87fc4987e563e9e6a591d"));
-            var recipe = _profile.recipe;
-            var project = recipe.project;
+            var settings = child.addressableSettings;
+            var group = child.codeGroup;
+            var projectId = child.projectId;
             var generated = child.generatedAssetDirectory;
             var baseline = child.baselineDirectory;
             Resources.UnloadAsset(child);
             Resources.UnloadAsset(_profile);
-            Resources.UnloadAsset(recipe);
-            Resources.UnloadAsset(project);
-            Assert.That((bool)child || (bool)_profile || (bool)recipe || (bool)project, Is.False);
+            Resources.UnloadAsset(group);
+            Resources.UnloadAsset(settings);
+            Assert.That((bool)child || (bool)_profile || (bool)settings || (bool)group, Is.False);
 
             var reloaded = AssetDatabase.LoadAssetAtPath<HybridCLRBuildProfile>(path);
             _profile = reloaded.baseProfile;
+            _settings = reloaded.addressableSettings;
             using (var serialized = new SerializedObject(reloaded))
             {
-                Assert.That(serialized.FindProperty("recipe").objectReferenceValue, Is.SameAs(_profile.recipe));
+                Assert.That(serialized.FindProperty("schemaVersion").intValue, Is.EqualTo(2));
+                Assert.That(serialized.FindProperty("recipe").objectReferenceValue, Is.Null);
+                Assert.That(serialized.FindProperty("addressableSettings").objectReferenceValue, Is.SameAs(_profile.addressableSettings));
+                Assert.That(serialized.FindProperty("codeGroup").objectReferenceValue, Is.SameAs(_profile.codeGroup));
                 Assert.That(serialized.FindProperty("baseProfile").objectReferenceValue, Is.SameAs(_profile));
                 Assert.That(serialized.FindProperty("development").boolValue, Is.EqualTo(development));
             }
@@ -180,8 +200,9 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Assert.That(reloaded.baselineDirectory, Is.EqualTo(baseline));
             Assert.That(reloaded.hotUpdateAssemblies, Is.EqualTo(selectRoots ? new[] { "Current.Entry", "Current.Support" } : Array.Empty<string>()));
             Assert.That(_profile.development, Is.EqualTo(development));
-            Assert.That(reloaded.recipe.project.projectId, Does.StartWith("hot-"));
-            Assert.That(reloaded.recipe.appContentCompatibilityId, Is.EqualTo("base-v1"));
+            Assert.That(reloaded.projectId, Is.EqualTo(projectId));
+            Assert.That(reloaded.appContentCompatibilityId, Is.EqualTo("base-v1"));
+            Assert.That(reloaded.target, Is.EqualTo(_profile.target));
             Assert.That(Fingerprint(reloaded), Is.EqualTo(fingerprint));
             var output = Environment.GetEnvironmentVariable("YL_TEST_OUTPUT_ROOT");
             Assert.That(Directory.Exists(output), Is.True, "Run this contract through the declared owned native host.");
@@ -205,7 +226,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var report = HybridCLRBuildPipeline.BuildBasePlayer(null, new BuildPlayerOptions());
             Assert.That(report.HasSucceeded, Is.False);
             Assert.That(report.Stages.Select(s => s.Name), Is.EqualTo(new[] { "Preflight" }));
-            Assert.That(report.Release, Is.Null);
+            Assert.That(report.ResourceBuild, Is.Null);
             Assert.That(report.Manifest, Is.Null);
             Assert.That(report.PlayerBuild, Is.Null);
             Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(_profile.generatedAssetDirectory)), Is.False);
@@ -415,22 +436,66 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         }
 
         [Test]
-        public void RealDllBytesPublishThroughResourceAndCancellationPreservesTheOldRelease()
+        public void RealDllBytesBuildOfficialContentAndCancellationPreservesArchivedStateAndOutput()
+        {
+            var project = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            var marker = Path.Combine(project, ".yl-owner.json");
+            Assert.That(Application.isBatchMode && File.Exists(marker), Is.True, "Real content builds need a tool-owned batch host.");
+            var owner = JObject.Parse(File.ReadAllText(marker));
+            Assert.That((string)owner["purpose"], Is.EqualTo("YLTesting.Directory"));
+            Assert.That((string)owner["kind"], Is.EqualTo("Host"));
+            Assert.That(Path.GetFullPath((string)owner["path"]), Is.EqualTo(project).IgnoreCase);
+            var previous = AddressableAssetSettingsDefaultObject.GetSettings(false);
+            Assert.That(previous, Is.Not.Null, "The native profile must supply its own baseline Settings.");
+            _settings.BuildAddressablesWithPlayerBuild = AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer;
+            Assert.That(_settings.RemoteCatalogBuildPath.SetVariableByName(_settings, AddressableAssetSettings.kRemoteBuildPath), Is.True);
+            Assert.That(_settings.RemoteCatalogLoadPath.SetVariableByName(_settings, AddressableAssetSettings.kRemoteLoadPath), Is.True);
+            EditorUtility.SetDirty(_settings);
+            SaveOfficialSettings();
+            try
+            {
+                AddressableAssetSettingsDefaultObject.Settings = _settings;
+                VerifyOfficialContentBuildAndCancellation();
+            }
+            finally
+            {
+                Assert.That(AddressableAssetSettingsDefaultObject.GetSettings(false), Is.SameAs(_settings));
+                AddressableAssetSettingsDefaultObject.Settings = previous;
+                Assert.That(AddressableAssetSettingsDefaultObject.GetSettings(false), Is.SameAs(previous));
+            }
+        }
+
+        private void VerifyOfficialContentBuildAndCancellation()
         {
             var baseline = CreateFormatFixture();
             var inputs = FixtureInputs();
             HybridCLRBuildPipeline.CommitPayloads(_profile, baseline.InitialManifest, inputs);
-            ConfigureResourceSelection();
+            _workspaceRoot = _temporary + "/OfficialBuild";
+            Assert.That(Directory.Exists(_workspaceRoot), Is.False);
+            Directory.CreateDirectory(_workspaceRoot);
             var report = new HybridCLRBuildReport { Manifest = baseline.InitialManifest };
-            HybridCLRBuildPipeline.PublishResources(report, _profile, default, null);
-            Assert.That(report.Release, Is.Not.Null, report.ResourceBuild?.Summary);
-            var digest = report.Release.Catalog.CatalogDigest;
-            var oldCatalog = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(report.Release.DirectoryPath + "/resource-catalog.json"));
+            HybridCLRBuildPipeline.PublishResources(report, _profile, default, null, _workspaceRoot);
+            Assert.That(report.ResourceBuild, Is.TypeOf<ResourceEditorBuildReport>());
+            Assert.That(report.ResourceBuild.Result.Error, Is.Null.Or.Empty, report.ResourceBuild.Summary);
+            Assert.That(report.ResourceBuild.IsContentUpdate, Is.False);
+            Assert.That(File.Exists(report.ResourceBuild.Result.OutputPath), Is.True);
+            Assert.That(Path.GetFullPath(report.ResourceBuild.ContentStatePath), Is.EqualTo(Path.GetFullPath(_workspaceRoot + "/addressables_content_state.bin")));
+            Assert.That(ContentUpdateScript.LoadContentState(report.ResourceBuild.ContentStatePath), Is.Not.Null, "Use an actual official packed content-state, not a private release tuple.");
+            var state = File.ReadAllBytes(report.ResourceBuild.ContentStatePath);
+            var runtimeData = File.ReadAllBytes(report.ResourceBuild.Result.OutputPath);
+            var settings = File.ReadAllBytes(AssetDatabase.GetAssetPath(_settings));
+            var group = File.ReadAllBytes(AssetDatabase.GetAssetPath(_profile.codeGroup));
             var canceled = new HybridCLRBuildReport { Manifest = baseline.InitialManifest };
-            Assert.Throws<OperationCanceledException>(() => HybridCLRBuildPipeline.PublishResources(canceled, _profile, new CancellationToken(true), null));
-            Assert.That(canceled.Release, Is.Null);
-            Assert.That(ResourcePublisher.ReadCurrent(_profile.recipe.project, _profile.recipe.target, "base-v1").Catalog.CatalogDigest, Is.EqualTo(digest));
-            CollectionAssert.AreEqual(oldCatalog, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(report.Release.DirectoryPath + "/resource-catalog.json")));
+            var canceledWorkspace = _temporary + "/CanceledBuild";
+            Assert.That(Directory.Exists(canceledWorkspace), Is.False);
+            Directory.CreateDirectory(canceledWorkspace);
+            Assert.Throws<OperationCanceledException>(() => HybridCLRBuildPipeline.PublishResources(canceled, _profile, new CancellationToken(true), null, canceledWorkspace));
+            Assert.That(canceled.ResourceBuild, Is.Null);
+            Assert.That(File.Exists(canceledWorkspace + "/addressables_content_state.bin"), Is.False);
+            CollectionAssert.AreEqual(state, File.ReadAllBytes(report.ResourceBuild.ContentStatePath));
+            CollectionAssert.AreEqual(runtimeData, File.ReadAllBytes(report.ResourceBuild.Result.OutputPath));
+            CollectionAssert.AreEqual(settings, File.ReadAllBytes(AssetDatabase.GetAssetPath(_settings)));
+            CollectionAssert.AreEqual(group, File.ReadAllBytes(AssetDatabase.GetAssetPath(_profile.codeGroup)));
         }
 
         [Test]
@@ -487,22 +552,17 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var sharedBytes = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(sharedPath));
             var sharedGuid = AssetDatabase.AssetPathToGUID(sharedPath);
 
-            var otherProject = ScriptableObject.CreateInstance<ResourceProject>();
-            otherProject.projectId = "second-" + Guid.NewGuid().ToString("N");
-            AssetDatabase.CreateAsset(otherProject, _root + "/OtherProject.asset");
-            var otherRecipe = ScriptableObject.CreateInstance<ResourceBuildRecipe>();
-            otherRecipe.project = otherProject;
-            otherRecipe.action = ResourceBuildAction.BuildAndPublish;
-            otherRecipe.appContentCompatibilityId = "base-v1";
-            AssetDatabase.CreateAsset(otherRecipe, _root + "/OtherRecipe.asset");
             var other = ScriptableObject.CreateInstance<HybridCLRBuildProfile>();
-            other.recipe = otherRecipe;
+            other.schemaVersion = 2;
+            other.addressableSettings = _settings;
+            other.codeGroup = _profile.codeGroup;
+            other.projectId = "second-" + Guid.NewGuid().ToString("N");
+            other.target = _profile.target;
+            other.appContentCompatibilityId = _profile.appContentCompatibilityId;
             other.generatedAssetDirectory = _root + "/OtherGenerated";
             other.baselineDirectory = _profile.baselineDirectory;
             AssetDatabase.CreateAsset(other, _root + "/OtherProfile.asset");
             SelectProjectAssemblies(other, "Project.B");
-            AssetDatabase.SaveAssetIfDirty(otherProject);
-            AssetDatabase.SaveAssetIfDirty(otherRecipe);
             AssetDatabase.SaveAssetIfDirty(other);
             HybridCLRBuildPipeline.CommitPayloads(other, ProjectManifest(other, inputs), inputs);
 
@@ -523,7 +583,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             SetBaseProfile(child, _profile);
             var original = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/baseline.json"));
             Assert.DoesNotThrow(() => ValidateBinding(child, baseline));
-            Assert.That(child.recipe.project.projectId, Is.Not.EqualTo(baseline.InitialManifest.ProjectId));
+            Assert.That(child.projectId, Is.Not.EqualTo(baseline.InitialManifest.ProjectId));
             Assert.That(baseline.ProfileGuid, Is.EqualTo(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(_profile))));
             CollectionAssert.AreEqual(original, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/baseline.json")));
         }
@@ -556,7 +616,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                     child.baselineDirectory += "-different";
                     break;
                 case "compatibility":
-                    child.recipe.appContentCompatibilityId = "other-base";
+                    child.appContentCompatibilityId = "other-base";
                     break;
                 default:
                     child.development = !_profile.development;
@@ -583,7 +643,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             File.WriteAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/baseline.json"), bytes);
             File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/complete.json"), JsonConvert.SerializeObject(new
             {
-                schemaVersion = 1,
+                schemaVersion = 2,
                 baselineSha256 = HybridCLRManifest.Hash(bytes)
             }));
             Assert.Throws<InvalidDataException>(() => HybridCLRBuildBaseline.Read(_temporary));
@@ -623,7 +683,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             File.WriteAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/baseline.json"), bytes);
             File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/complete.json"), JsonConvert.SerializeObject(new
             {
-                schemaVersion = 1,
+                schemaVersion = 2,
                 baselineSha256 = HybridCLRManifest.Hash(bytes)
             }));
             var frozen = HybridCLRBuildBaseline.Read(_temporary);
@@ -640,22 +700,17 @@ namespace YLFramework.Tests.Integrations.HybridCLR
 
         private HybridCLRBuildProfile ChildProfile()
         {
-            var project = ScriptableObject.CreateInstance<ResourceProject>();
-            project.projectId = "child-" + Guid.NewGuid().ToString("N");
-            AssetDatabase.CreateAsset(project, _root + "/ChildProject.asset");
-            var recipe = ScriptableObject.CreateInstance<ResourceBuildRecipe>();
-            recipe.project = project;
-            recipe.target = _profile.recipe.target;
-            recipe.appContentCompatibilityId = _profile.recipe.appContentCompatibilityId;
-            AssetDatabase.CreateAsset(recipe, _root + "/ChildRecipe.asset");
             var child = ScriptableObject.CreateInstance<HybridCLRBuildProfile>();
-            child.recipe = recipe;
+            child.schemaVersion = 2;
+            child.addressableSettings = _settings;
+            child.codeGroup = _profile.codeGroup;
+            child.projectId = "child-" + Guid.NewGuid().ToString("N");
+            child.target = _profile.target;
+            child.appContentCompatibilityId = _profile.appContentCompatibilityId;
             child.generatedAssetDirectory = _root + "/ChildGenerated";
             child.baselineDirectory = _profile.baselineDirectory;
             child.development = _profile.development;
             AssetDatabase.CreateAsset(child, _root + "/ChildProfile.asset");
-            AssetDatabase.SaveAssetIfDirty(project);
-            AssetDatabase.SaveAssetIfDirty(recipe);
             AssetDatabase.SaveAssetIfDirty(child);
             return child;
         }
@@ -708,22 +763,17 @@ namespace YLFramework.Tests.Integrations.HybridCLR
 
         private HybridCLRAssemblySet FixtureInputs() => HybridCLRAssemblyAnalysis.Analyze(new[] { _temporary + "/HotUpdate/Hot.Entry.dll" }, new[] { _temporary + "/Aot/Base.dll" });
 
-        private void ConfigureResourceSelection()
+        private void SaveOfficialSettings()
         {
-            var project = _profile.recipe.project;
-            project.sourceDirectories.Add(new ResourceSourceDirectory { guid = AssetDatabase.AssetPathToGUID(_profile.generatedAssetDirectory) });
-            project.groups.Add(new ResourceGroup
+            foreach (var group in _settings.groups)
             {
-                id = "hotupdate",
-                selections = new System.Collections.Generic.List<ResourceSelection>
-                { new ResourceSelection { guid = AssetDatabase.AssetPathToGUID(_profile.generatedAssetDirectory + "/hybridclr"), extensions = new[] { ".bytes", ".json" } } }
-            });
-            EditorUtility.SetDirty(project);
-            AssetDatabase.SaveAssetIfDirty(project);
-            _workspaceRoot = System.IO.Path.GetDirectoryName(ResourceBundleBuilder.GetWorkspacePath(project, _profile.recipe.target));
-            _releaseRoot = System.IO.Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical("AssetBundles/YLFramework/" + project.projectId + "/" + _profile.recipe.target));
-            Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(_workspaceRoot)), Is.False);
-            Assert.That(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(_releaseRoot)), Is.False);
+                if (!group)
+                    continue;
+                foreach (var schema in group.Schemas)
+                    AssetDatabase.SaveAssetIfDirty(schema);
+                AssetDatabase.SaveAssetIfDirty(group);
+            }
+            AssetDatabase.SaveAssetIfDirty(_settings);
         }
 
         [Test]
@@ -741,6 +791,10 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         [TestCase("changed-native-file")]
         [TestCase("unknown-file")]
         [TestCase("changed-receipt")]
+        [TestCase("changed-content-state")]
+        [TestCase("missing-content-state")]
+        [TestCase("legacy-marker")]
+        [TestCase("legacy-baseline")]
         public void ACorruptOrIncompleteFrozenBaselineIsNotPatchInput(string invalid)
         {
             var baseline = CreateFormatFixture();
@@ -758,6 +812,30 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                 case "unknown-file":
                     File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/unknown.dll"), "unknown");
                     break;
+                case "changed-content-state":
+                    File.AppendAllText(_temporary + "/" + HybridCLRBuildBaseline.ContentStateFile, "corrupted");
+                    break;
+                case "missing-content-state":
+                    File.Delete(_temporary + "/" + HybridCLRBuildBaseline.ContentStateFile);
+                    break;
+                case "legacy-marker":
+                    File.WriteAllText(_temporary + "/complete.json", JsonConvert.SerializeObject(new
+                    {
+                        schemaVersion = 1,
+                        baselineSha256 = HybridCLRManifest.Hash(File.ReadAllBytes(_temporary + "/baseline.json"))
+                    }));
+                    break;
+                case "legacy-baseline":
+                    var legacy = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(_temporary + "/baseline.json"));
+                    legacy["SchemaVersion"] = 1;
+                    var legacyBytes = Encoding.UTF8.GetBytes(legacy.ToString(Formatting.None));
+                    File.WriteAllBytes(_temporary + "/baseline.json", legacyBytes);
+                    File.WriteAllText(_temporary + "/complete.json", JsonConvert.SerializeObject(new
+                    {
+                        schemaVersion = 2,
+                        baselineSha256 = HybridCLRManifest.Hash(legacyBytes)
+                    }));
+                    break;
                 default:
                     File.AppendAllText(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/baseline.json"), " ");
                     break;
@@ -772,6 +850,8 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var baseline = CreateFormatFixture();
             var loaded = HybridCLRBuildBaseline.Read(_temporary);
             Assert.That(loaded.PlayerBuildHash, Is.EqualTo(baseline.PlayerBuildHash));
+            Assert.That(loaded.SchemaVersion, Is.EqualTo(2));
+            Assert.That(loaded.ResourceBackend, Is.EqualTo("addressables-v2"));
             Assert.That(loaded.Files.Single(f => f.Path == "Aot/Base.dll").Identity, Is.EqualTo("Base, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"));
             Assert.That(loaded.Root, Is.EqualTo(System.IO.Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary))));
         }
@@ -801,7 +881,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var hot = HybridCLRAssemblyAnalysis.Read(WriteAssembly("Hot.Entry"));
             var manifest = new HybridCLRManifest
             {
-                ProjectId = _profile.recipe.project.projectId,
+                ProjectId = _profile.projectId,
                 AppContentCompatibilityId = "base-v1",
                 UnityVersion = Application.unityVersion,
                 HotUpdateAssemblies = new[] { new HybridCLRPayload { Name = hot.Name, Identity = hot.Identity, Mvid = hot.Mvid,
@@ -811,6 +891,8 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/HotUpdate"));
             File.Move(global::YLFramework.Testing.PackageTestPaths.Physical(hot.Path), global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/HotUpdate/" + hot.Name + ".dll"));
             var bridge = System.Text.Encoding.UTF8.GetBytes("format-test-only: not a native Player receipt");
+            Directory.CreateDirectory(_temporary + "/Addressables");
+            File.WriteAllBytes(_temporary + "/" + HybridCLRBuildBaseline.ContentStateFile, bridge);
             foreach (var name in HybridCLRBuildBaseline.GeneratedNames)
             {
                 File.WriteAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/Generated/" + name), bridge);
@@ -825,13 +907,14 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                 InitialManifest = manifest,
                 Files = new[] { new HybridCLRBaselineFile { Path = "Aot/Base.dll", Length = aot.Length, Sha256 = aot.Sha256, Identity = aot.Identity, Mvid = aot.Mvid },
                     new HybridCLRBaselineFile { Path = "HotUpdate/" + hot.Name + ".dll", Length = hot.Length, Sha256 = hot.Sha256, Identity = hot.Identity, Mvid = hot.Mvid } }
-                    .Concat(HybridCLRBuildBaseline.GeneratedNames.Select(n => new HybridCLRBaselineFile { Path = "Generated/" + n, Length = bridge.Length, Sha256 = HybridCLRManifest.Hash(bridge) })).ToArray()
+                    .Concat(HybridCLRBuildBaseline.GeneratedNames.Select(n => new HybridCLRBaselineFile { Path = "Generated/" + n, Length = bridge.Length, Sha256 = HybridCLRManifest.Hash(bridge) }))
+                    .Append(new HybridCLRBaselineFile { Path = HybridCLRBuildBaseline.ContentStateFile, Length = bridge.Length, Sha256 = HybridCLRManifest.Hash(bridge) }).ToArray()
             };
             var bytes = System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(baseline));
             File.WriteAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/baseline.json"), bytes);
             File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(_temporary + "/complete.json"), JsonConvert.SerializeObject(new
             {
-                schemaVersion = 1,
+                schemaVersion = 2,
                 baselineSha256 = HybridCLRManifest.Hash(bytes)
             }));
             return baseline;

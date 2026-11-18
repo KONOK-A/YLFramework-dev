@@ -38,7 +38,7 @@ YLFramework 为 Unity C# 项目提供按需组合的基础机制、业务与表�
 | Module / MVC、View / Panel、UI 根与输入 | [UI](Modules/UI.md) |
 | 资产、实例、场景与图片加载 | [Resource 接入](Modules/Resource.md) |
 | 配置、图集、工作台与代码生成 | [Resource 作者工具](Modules/Resource/Authoring.md) |
-| 部署、更新、加密与平台限制 | [Resource 交付](Modules/Resource/Delivery.md) |
+| 官方内容交付、启动更新与验证边界 | [Resource 交付](Modules/Resource/Delivery.md) |
 | 播放、Options、句柄与关闭 | [Audio](Modules/Audio.md) |
 | 命名 Provider、素材库与资源租约 | [Audio 资源](Modules/Audio/Resources.md) |
 | 淡变、Mixer、组件与播放策略 | [Audio 进阶](Modules/Audio/Advanced.md) |

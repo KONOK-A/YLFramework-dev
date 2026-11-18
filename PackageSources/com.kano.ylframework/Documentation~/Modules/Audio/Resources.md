@@ -6,7 +6,7 @@
 
 ## 命名播放
 
-先由应用显式启动并持有 `ResourceStartup.Resources`，再取得项目 Provider。启动与关闭见[资源管理](../Resource.md#初始化与关闭)，Audio 不隐式初始化 Resource。
+先由应用显式启动并持有 `ResourceStartup`，再借用其 `Resources` 取得 Provider。启动与关闭见[资源管理](../Resource.md#初始化与关闭)，Audio 不隐式初始化或关闭 Resource。Provider 项目只是地址命名空间，不要求挂载旧 YL Catalog：下例的官方地址分别为 `game-audio/ui/click` 与 `game-audio/music/theme`，它们须已配置在官方 Addressables 内容中。
 
 ```csharp
 using YLFramework.Audio;
@@ -15,12 +15,13 @@ using YLFramework.Resource;
 // resources 是已启动、由应用持有的 ResourceSystem。
 var provider = resources.GetAudioClipProvider("game-audio");
 var click = new AudioClipAddress(provider, "ui/click");
-AudioHandle handle = AudioKit.PlaySoundNamed(click);
+AudioPlayRequest clickRequest = AudioKit.PlaySoundAsync(click); // 冷资源正常走异步。
 
 var music = new AudioClipAddress(provider, "music/theme");
 AudioPlayRequest request = AudioKit.PlayMusicAsync(music,
     onStarted: (clip, originalHandle) => originalHandle.SetVolumeScale(0.8f));
 // owner 退出或撤销本次播放时：
+clickRequest.Cancel();
 request.Cancel();
 ```
 
@@ -31,15 +32,17 @@ request.Cancel();
 | 命名控制通道 | channel.PlayNamed | channel.PlayAsync |
 | 通道借源，仅 Exclusive | channel.PlayBorrowedNamed | channel.PlayBorrowedAsync |
 
-同步入口返回 `AudioHandle`，异步入口返回 `AudioPlayRequest`。缺省 Music 的 null Options 循环，Voice/Sound 非循环；通道的 null Options 始终非循环，循环要显式传 `MusicDefaults` 或 Loop=true。Sound 回调参数顺序为 onFinished 再 onStarted，其余命名入口为 onStarted 再 onFinished。
+同步入口返回 `AudioHandle`，异步入口返回 `AudioPlayRequest`。使用内建 Resource Provider 时，同步列仅是热路径，不会替冷资产阻塞加载。缺省 Music 的 null Options 循环，Voice/Sound 非循环；通道的 null Options 始终非循环，循环要显式传 `MusicDefaults` 或 Loop=true。Sound 回调参数顺序为 onFinished 再 onStarted，其余命名入口为 onStarted 再 onFinished。
 
 命名 Crossfade 使用 `address, duration, options=null, onStarted=null, onFinished=null`，没有直接 Clip `CrossFadeMusic` 的 ignoreTimeScale/curve 可选参数。它复用内核默认的 unscaled/EqualPower 过渡，加载可提交前不截断旧曲，尾轨各持有原资源租约。
 
-同步仅承诺资产取得同步，不保证后台解码或 Streaming 已同步就绪。同一 Audio 缓存身份正在异步取得时，同步取得抛错，不阻塞主线程或抢占 producer；改用异步入口共享结果。跨 Audio 缓存遇 Resource 同身份在途，同步取得也明确返回 InProgress。
+内建 `ResourceAudioClipProvider.Load(key)` 只调用 `TryAcquireLoaded<AudioClip>` 增持就绪引用；没有可用租约时抛 `ResourceException`，`Kind == ResourceError.InProgress`，包括尚未发起加载的冷地址。只由外部 Addressables 持有并不保证命中 YL 热集合；默认使用异步播放或先显式预载，不用同步等待补救。
+
+同一 Audio 缓存身份仍在异步取得时，同步读取先抛 `InvalidOperationException`，应改异步入口共享结果；未命中 Audio 缓存而内建 Resource 后端也未就绪时才按上述 `InProgress` 失败。热命中也不保证后台解码或 Streaming 已同步就绪。自定义 Provider 的同步策略由其合同决定，不能据此承诺所有后端都支持冷同步加载。
 
 ### Provider 身份与实现责任
 
-`AudioClipAddress` 的完整身份是**同一个 Provider 实例 + 完整且精确的 key**。Project/Bundle/后端上下文应固定在 Provider 或包含在 key 中；不同 Provider、不同 key 不因 clip.name 或 Clip 对象相等合并资源所有权。复用配置好的 Provider，不要每次 Play 创建后端。
+`AudioClipAddress` 的完整身份是**同一个 Provider 实例 + 完整且精确的 key**。项目命名空间或后端上下文应固定在 Provider 或包含在 key 中；不同 Provider、不同 key 不因 clip.name 或 Clip 对象相等合并资源所有权。`GetAudioClipProvider("game-audio")` 在同一 ResourceSystem 中复用该命名空间的 Provider；传入 key 为 `ui/click`，不要再重复加项目前缀。复用配置好的 Provider，不要每次 Play 创建后端。
 
 自定义 `IAudioClipProvider` 需要实现：
 
@@ -83,29 +86,35 @@ Exclusive 的最新有效命名请求撤销同拓扑旧 pending，旧播放保�
 
 ## 租约与缓存
 
-`ResourceAudioClipProvider` 固定所属 ResourceSystem/ProjectId。每次成功取得独立 `AssetLease<AudioClip>`，再包装为 AudioClipLease；同 System/Project 复用 Provider 引用，会话关闭后旧 Provider 失效，不重新绑定新会话。key 是主资产逻辑地址，不是 Bundle 文件名、Resources 物理路径或 SubAsset 选择表达式。
+`ResourceAudioClipProvider` 固定借用所属全局 ResourceSystem/ProjectId，不拥有服务停止权，也不另建资产缓存。每次后端成功取得独立 `AssetLease<AudioClip>`，再包装为 `AudioClipLease`；同 System/Project 复用 Provider 引用，会话关闭后旧 Provider 失效，不重新绑定新会话。`ProjectId/key` 是官方主资产地址，不是 Bundle 文件名、Resources 物理路径或 SubAsset 选择表达式。
 
 | 持有者 | 何时保活或归还 |
 |---|---|
 | 直接 Clip 调用方 | 播放、暂停、分类 off 等待重播期间一直保活；Audio 不接管 |
-| Audio 缓存中的同 Provider/key | 共享一个真实后端租约，播放、等待者、显式预加载和 idle 消费各自结算 |
-| 播放请求 | 数据等待、循环/暂停、Music/Voice off、Crossfade 尾轨、未取消 one-shot 均保留责任 |
+| Audio 缓存中的同 Provider/key | 持有一个真实后端租约，向播放、等待者与显式预加载交付各自的 `AudioClipLease`；idle 期间仍保活 |
+| 播放请求与尾轨 | 各自持有播放责任；数据等待、循环/暂停、Music/Voice off、Crossfade 尾轨、未取消 one-shot 均不提前归还 |
 | Source 闲置池 | 不持有 Clip；与资产缓存是两套预算 |
-| Resource 后端 | 当前不额外缓存零租约 Clip；Resources borrowed 归零只清记录，AB 最后资产/依赖 owner 归还后才 Unload(true) |
+| Resource 后端 | 只归还自己持有的官方句柄引用；其他 YL / 外部 Addressables owner 的责任不受 Audio 关闭影响，也不保证立刻卸载原生内容 |
 
 ```csharp
 AudioKit.ClipCacheCapacity = 4;
 AudioKit.ClipCacheIdleSeconds = 15;
-using (var preload = AudioKit.AcquireClip(music))
+// 在主线程 async 方法中先取得冷 Clip；music 来自前面的 Provider/key。
+using (var warm = await resources.AcquireAsync<UnityEngine.AudioClip>("game-audio/music/theme"))
 {
-    AudioKit.PlayMusicNamed(music); // 与预加载共享同一完整资源身份。
+    using (var preload = AudioKit.AcquireClip(music)) // 已热，只增加显式 Audio 保活责任。
+    {
+        AudioKit.PlayMusicNamed(music); // 播放取得自己的责任，不借用 preload 的生命周期。
+    }
 }
 AudioKit.ClearClipCache(); // 不影响活跃 Music。
 ```
 
-`AcquireClip` 同步取得显式保活租约，由调用方 Dispose。ClipCacheCapacity 只限**闲置条目数**，ClipCacheIdleSeconds 使用 unscaled 时钟，两项都大于 0 才缓存。缩容、到期和 ClearClipCache 只释放当下闲置，不卸载活跃责任；淘汰释放重入后重新检查是否已被取得。Shutdown 释放 idle。
+`AcquireClip` 是同步增持显式保活租约，不是内建 Resource 冷加载入口，由调用方 Dispose；没有 `AcquireClipAsync`。无需显式保活时直接用 `PlayMusicAsync` 等异步播放即可。上例 `warm` 归还后，播放或缓存仍以自己的后端租约保活。ClipCacheCapacity 只限**闲置条目数**，ClipCacheIdleSeconds 使用 unscaled 时钟，两项都大于 0 才缓存。缩容、到期和 ClearClipCache 只释放当下闲置，不卸载活跃责任；淘汰释放重入后重新检查是否已被取得。Shutdown 释放 idle。
 
-显式租约可以跨 Audio Shutdown 继续保活，关闭缓存不再收回它作 idle，最终 Dispose 才归还 owner。应用关闭顺序是：停止自己 Audio 请求/尾轨、清不再需要的 idle、归还显式 Clip 租约，再执行所属 ResourceStartup.StopAsync 或由资源 owner 调 ShutdownAsync。仍有这些责任时 Resource 返回可恢复 Busy，不强制销毁 Clip。Audio Shutdown 的迟到 Resource 结果交给关闭缓存后立即归还；Resource 会话退出则失效请求并继续 native 收尾。
+显式租约可以跨 Audio Shutdown 继续保活，关闭缓存不再收回它作 idle，最终 Dispose 才归还 owner。单个业务 owner 退出只取消自己的请求、Stop 自己的句柄或 Dispose 自己的通道，不随意全局 Shutdown。
+
+应用级关闭先 `AudioKit.Shutdown()`，使播放、尾轨、pending 与 idle 缓存收尾，再 Dispose 应用仍持有的显式 Clip 租约，最后等待所属 `ResourceStartup.StopAsync()`。Audio 的关闭本身不调用 Resource 停止入口，也不替其他业务清 registry；Resource Scope 不能代替这些 Audio owner 的释放。仍有这些或其他独立责任时 Resource 返回可恢复 `ResourceError.Busy`，找到实际 owner 归还后重试，不强制销毁 Clip。Audio Shutdown 后的迟到 Resource 结果只归还原责任；原生工作继续按 Resource 协议排空，不投递到新 Audio 会话。
 
 ## 素材库
 
@@ -117,7 +126,7 @@ AudioKit.ClearClipCache(); // 不影响活跃 Music。
 |---|---|
 | Clip=0 | 绑定 clip，由外部 owner 保活 |
 | ExternalProvider=3 | 填后端完整 key；向 GroupPlayer.SetProvider 或 Library.TrySelect 显式传同一个 Provider |
-| Resource=4 | 填稳定 projectId 与 Catalog 逻辑 key；仅读取已显式初始化的 ResourceSystem |
+| Resource=4 | 填 projectId 与项目内 key，投影为官方 `projectId/key` 地址；只借用已显式启动的全局 ResourceSystem，不要求另行挂载项目 Catalog |
 
 编号不连续，不能重新压缩。任何未定义 source（包括 1/2）使整个组拒选，即使该项权重为零、旁边有合法 Clip；不跳过、不随机也不替换当前播放。不存在隐藏 BundleName 字段或根据 Bundle 名猜 ProjectId 的逻辑。
 

@@ -36,8 +36,13 @@ namespace YLFramework.Resource
     public sealed class CoreResourceProvider : ICoreResourceProvider
     {
         private readonly ResourceSystem _owner;
+        private readonly ResourceScope _applicationScenes;
         /// <summary>借用已初始化的唯一资源权威，不接管其关闭责任。</summary>
-        internal CoreResourceProvider(ResourceSystem owner) => this._owner = owner;
+        internal CoreResourceProvider(ResourceSystem owner)
+        {
+            _owner = owner;
+            _applicationScenes = owner.CreateScope("Core.ApplicationScenes");
+        }
 
         /// <summary>取得 TextAsset 后读出文本值并归还临时资产租约，不把原资产交给 Core 消费者。</summary>
         public CoreResourceRequest<string> ReadTextAsync(string projectId, string address)
@@ -49,12 +54,20 @@ namespace YLFramework.Resource
                 }
             });
 
-        /// <summary>同步取得独立 Prefab 租约并包装为 Core 合同，失败转换为 Core 可识别的错误。</summary>
+        /// <summary>只同步保留已加载的 Prefab；冷资源明确要求预加载或异步取得，不阻塞官方生产。</summary>
         public CorePrefabLease AcquirePrefab(string projectId, string address)
         {
             try
             {
-                return new PrefabLease(_owner, _owner.Acquire<GameObject>(new ResourceAddress(projectId, address)));
+                _owner.RequireAvailable();
+                var resourceAddress = new ResourceAddress(projectId, address);
+                string key = resourceAddress.ProjectId + "/" + resourceAddress.Path;
+                if (!_owner.TryAcquireLoaded<GameObject>(key, out var lease))
+                {
+                    throw new ResourceException(ResourceError.InProgress,
+                        "The Core prefab is not loaded. Preload it or use AcquirePrefabAsync: " + key);
+                }
+                return new PrefabLease(_owner, lease);
             }
             catch (Exception error)
             {
@@ -68,14 +81,28 @@ namespace YLFramework.Resource
                 () => _owner.AcquireAsync<GameObject>(new ResourceAddress(projectId, address)),
                 lease => new PrefabLease(_owner, lease), lease => lease.Dispose());
 
-        /// <summary>加载真实场景后归还临时场景租约，只向 Core 交付副作用观察值，不交付卸载权。</summary>
+        /// <summary>成功场景归应用场景域持有；Core 只观察真实场景，关闭 Module 或请求不隐式卸载。</summary>
         public CoreResourceRequest<CoreSceneResult> LoadSceneAsync(string projectId, string address, LoadSceneMode mode)
             => Convert<SceneLease, CoreSceneResult>(
-                () => _owner.LoadSceneAsync(new ResourceAddress(projectId, address), mode), lease =>
+                () =>
                 {
-                    using (lease)
+                    var resourceAddress = new ResourceAddress(projectId, address);
+                    return _owner.LoadSceneAsync(resourceAddress.ProjectId + "/" + resourceAddress.Path, mode);
+                }, lease =>
+                {
+                    try
                     {
-                        return new CoreSceneResult(lease.Scene, true);
+                        var result = new CoreSceneResult(lease.Scene, true);
+                        _applicationScenes.Own(lease);
+                        return result;
+                    }
+                    catch
+                    {
+                        if (((IResourceLease)lease).Scope == null)
+                        {
+                            lease.Dispose();
+                        }
+                        throw;
                     }
                 });
 
@@ -294,12 +321,12 @@ namespace YLFramework.Resource
             }
             /// <summary>透传资产租约、会话与 Unity 对象的联合有效性。</summary>
             public override bool IsValid => _lease.IsValid;
-            /// <summary>从原资源权威取得独立实例租约，不消费当前 Prefab 租约。</summary>
+            /// <summary>沿用 Core checkout 的复用语义，取得独立实例租约而不消费当前 Prefab 租约。</summary>
             public override CoreInstanceLease Instantiate(Transform parent, Scene scene)
             {
                 try
                 {
-                    return new InstanceHandle(_owner.Instantiate(_lease, parent, scene));
+                    return new InstanceHandle(_owner.Rent(_lease, parent, scene));
                 }
                 catch (Exception error)
                 {

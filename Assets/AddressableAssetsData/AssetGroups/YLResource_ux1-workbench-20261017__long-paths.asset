@@ -1,0 +1,71 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_ux1-workbench-20261017__long-paths
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_ux1-workbench-20261017__long-paths
+  m_GUID: cbd7c3ca96f8c0343a0465d9dfecebd1
+  m_SerializeEntries:
+  - m_GUID: 333e10257aa6bb7459fb60db768657ec
+    m_Address: ux1-workbench-20261017/LongPaths_For_Inspector_Readability_And_Copy_Verification/LongResourceName_For_Sorting_And_Inspector_Copy_Check_02.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/long-paths
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 3dca3b3865ffefa43b740d0c65e8c00b
+    m_Address: ux1-workbench-20261017/LongPaths_For_Inspector_Readability_And_Copy_Verification/LongResourceName_For_Sorting_And_Inspector_Copy_Check_07.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/long-paths
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 53c8c49bf70dd954b91ad7700e9e6cd1
+    m_Address: ux1-workbench-20261017/LongPaths_For_Inspector_Readability_And_Copy_Verification/LongResourceName_For_Sorting_And_Inspector_Copy_Check_08.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/long-paths
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 54b8238daeb8c88479704756c5ec9c0e
+    m_Address: ux1-workbench-20261017/LongPaths_For_Inspector_Readability_And_Copy_Verification/LongResourceName_For_Sorting_And_Inspector_Copy_Check_04.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/long-paths
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 69dc6ba13e9141d46a55790b27cb4059
+    m_Address: ux1-workbench-20261017/LongPaths_For_Inspector_Readability_And_Copy_Verification/LongResourceName_For_Sorting_And_Inspector_Copy_Check_01.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/long-paths
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: a90dc0516c1074f47b0cafd70888f64f
+    m_Address: ux1-workbench-20261017/LongPaths_For_Inspector_Readability_And_Copy_Verification/LongResourceName_For_Sorting_And_Inspector_Copy_Check_06.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/long-paths
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: b118b4b4fb0dc2e44827bcf12229716e
+    m_Address: ux1-workbench-20261017/LongPaths_For_Inspector_Readability_And_Copy_Verification/LongResourceName_For_Sorting_And_Inspector_Copy_Check_05.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/long-paths
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: cd18e00a8407a1c4287fd94c934afac4
+    m_Address: ux1-workbench-20261017/LongPaths_For_Inspector_Readability_And_Copy_Verification/LongResourceName_For_Sorting_And_Inspector_Copy_Check_03.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/long-paths
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: 34013d34895682c4bab401b996b438f2, type: 2}
+    - {fileID: 11400000, guid: 28aecb4fd02de65459fe4b307dca8d78, type: 2}

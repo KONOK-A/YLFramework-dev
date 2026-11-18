@@ -283,11 +283,10 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(definition.includePlatforms, Is.EqualTo(new[] { "Editor" }));
             Assert.That(definition.excludePlatforms, Is.Empty);
             Assert.That(definition.autoReferenced, Is.True);
+            string[] officialAuthoring = { "Unity.Addressables", "Unity.Addressables.Editor", "Unity.ResourceManager" };
             var references = definition.references.Select(ResolveReference).ToArray();
-            Assert.That(references, Is.EquivalentTo(new[]
-            {
-                "YLFramework.Runtime", "UnityEngine.UI"
-            }), "The Editor subject must not require the original backend or optional adapters.");
+            Assert.That(references, Is.EquivalentTo(new[] { "YLFramework.Runtime", "UnityEngine.UI" }.Concat(officialAuthoring)),
+                "The Editor subject must reference only the framework, UI and official authoring APIs, not the retired backend or optional adapters.");
             Assert.That(references.Distinct().Count(), Is.EqualTo(references.Length));
             Assert.That(definition.overrideReferences, Is.True);
             Assert.That(definition.precompiledReferences, Is.EqualTo(new[] { "Newtonsoft.Json.dll" }));
@@ -299,7 +298,7 @@ namespace YLFramework.Core.Editor.Tests
             Assert.That(compiledReferences, Does.Not.Contain("YLFramework.Editor.Help"));
             Assert.That(compiledReferences, Does.Not.Contain("YLFramework.Core.Editor"));
             Assert.That(compiledReferences.Any(n => n == "UnityEditor" || n.StartsWith("UnityEditor.", StringComparison.Ordinal)), Is.True);
-            Assert.That(compiledReferences.Any(IsForbiddenReference), Is.False,
+            Assert.That(compiledReferences.Any(name => IsForbiddenReference(name) && !officialAuthoring.Contains(name)), Is.False,
                 string.Join(", ", compiledReferences));
         }
 

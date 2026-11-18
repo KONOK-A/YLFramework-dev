@@ -307,10 +307,10 @@ namespace YLFramework.RedDots.Acceptance
             Require(final.Nodes.All(node => node.Value == 0) && _report.diagnosticSources == 0 && _report.diagnosticSubscribers == 0 &&
                 final.BatchDepth == 0 && final.DirtyNodeCount == 0 && !final.IsFlushing, "Probe left sources, listeners or notifications behind.");
             var resource = ResourceSystem.Current;
-            var resources = resource?.GetDiagnosticsSnapshot();
             _report.resourceWasNull = resource == null;
-            _report.leaseCount = resources?.LeaseCount ?? 0;
-            _report.recordCount = resources?.RecordCount ?? 0;
+            Require(_report.resourceWasNull, "RedDots must not create or adopt a Resource service.");
+            // Keep the existing resource-free JSON contract only after proving there is no service to measure.
+            _report.leaseCount = _report.recordCount = 0;
             Require(_report.resourceWasNull && _report.leaseCount == 0 && _report.recordCount == 0 && string.IsNullOrEmpty(_report.catalogDigest),
                 "RedDots must remain genuinely resource-free, not report a fake successful catalog.");
         }

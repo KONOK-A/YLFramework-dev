@@ -1,15 +1,17 @@
 using UnityEditor;
+using UnityEditor.AddressableAssets.Settings;
 
 namespace YLFramework.Editor.Resource
 {
-    /// <summary>Project 资产的工作台入口；退出全局 Importer 标记写入菜单。</summary>
+    /// <summary>官方 Addressables 配置的导航入口，不写 Importer 或旧 Project。</summary>
     public static class ResServiceAssetsMenu
     {
-        /// <summary>打开工作台并沿用当前所选的 ResourceProject，不直接修改资源定义。</summary>
+        /// <summary>打开官方配置增强窗口，不创建或修改资源定义。</summary>
         [MenuItem("Assets/YLFramework/Resource Workbench")]
         public static void OpenWorkbench() => ResServiceEditorWindow.OpenResServiceWindow();
-        /// <summary>仅在 Project 窗口恰好选中一个资源项目时启用此菜单。</summary>
+        /// <summary>只接受官方设置或分组，不把旧 Project 当作新版作者事实。</summary>
         [MenuItem("Assets/YLFramework/Resource Workbench", true)]
-        private static bool ValidateWorkbench() => Selection.objects.Length == 1 && Selection.activeObject is ResourceProject;
+        private static bool ValidateWorkbench() => Selection.objects.Length == 1 &&
+            (Selection.activeObject is AddressableAssetSettings || Selection.activeObject is AddressableAssetGroup);
     }
 }

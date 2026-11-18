@@ -183,7 +183,7 @@ namespace YLFramework.Integrations.HybridCLR
         }
 
         /// <summary>在主线程创建加载器，借用当前可用的资源服务而不取得其关闭权。</summary>
-        /// <param name="resources">已启动并挂载所需项目的 ResourceSystem。</param>
+        /// <param name="resources">已启动、借用官方 Addressables 的 ResourceSystem。</param>
         /// <param name="appContentCompatibilityId">应用明确提供的基座内容兼容身份。</param>
         public HybridCLRLoader(ResourceSystem resources, string appContentCompatibilityId)
             : this(resources, appContentCompatibilityId, DefaultCalls(), _processState) { }
@@ -283,7 +283,7 @@ namespace YLFramework.Integrations.HybridCLR
             UpdatePendingRegistration();
             try
             {
-                var pending = _resources.AcquireAsync<TextAsset>(manifestAddress);
+                var pending = _resources.AcquireAsync<TextAsset>(HybridCLRManifest.ResourceKey(manifestAddress.ProjectId, manifestAddress.Path));
                 job.Pending = pending;
                 pending.Completed += r => ReadManifest(job, r);
                 if (!request.IsDone)
@@ -384,7 +384,7 @@ namespace YLFramework.Integrations.HybridCLR
                     var payload = job.Payloads[job.Index];
                     job.Request.AssemblyName = payload.Name;
                     job.Request.ReportProgress(0.1f + 0.6f * job.Index / job.Payloads.Length);
-                    var pending = _resources.AcquireAsync<TextAsset>(new ResourceAddress(job.Manifest.ProjectId, payload.Address));
+                    var pending = _resources.AcquireAsync<TextAsset>(HybridCLRManifest.ResourceKey(job.Manifest.ProjectId, payload.Address));
                     job.Pending = pending;
                     if (pending.IsDone)
                     {
@@ -895,7 +895,7 @@ namespace YLFramework.Integrations.HybridCLR
                 throw new ObjectDisposedException(nameof(HybridCLRLoader));
             }
 
-            if (_isExecutionStopping || _hasSessionEnded || _session != _generation || !_resources.IsAvailable)
+            if (_isExecutionStopping || _hasSessionEnded || _session != _generation || !_resources.IsAvailable || !_resources.IsSessionActive)
             {
                 throw new InvalidOperationException("This HybridCLR loader's Play/Resource session is unavailable.");
             }

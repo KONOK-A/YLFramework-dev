@@ -1,15 +1,26 @@
 using System;
+using UnityEditor;
+using UnityEditor.AddressableAssets.Settings;
 using UnityEngine;
 using YLFramework.Editor.Resource;
 
 namespace YLFramework.Integrations.HybridCLR.Editor
 {
-    /// <summary>显式构建编排配置；Project/Target/基座身份只读取 Resource Recipe，不覆盖官方程序集设置。</summary>
+    /// <summary>Addressables 代码交付与原生基座的显式编排输入，不复制官方 Entries/Labels/Profiles。</summary>
     [CreateAssetMenu(menuName = "YLFramework/HybridCLR/Build Profile", fileName = "HybridCLRBuildProfile")]
     public sealed class HybridCLRBuildProfile : ScriptableObject
     {
-        /// <summary>资源构建及发布配方，提供项目、目标平台和内容兼容身份。</summary>
+        /// <summary>旧资产的迁移输入；非空时拒绝构建，不自动改写旧配方。</summary>
+        [HideInInspector]
         public ResourceBuildRecipe recipe;
+        /// <summary>新版基座合同；旧配置须明确迁移并重新构建，不兼容旧冻结基座。</summary>
+        public int schemaVersion = 2;
+        public AddressableAssetSettings addressableSettings;
+        public AddressableAssetGroup codeGroup;
+        /// <summary>仅作为规范 address 的业务命名空间，不表示私有 Catalog。</summary>
+        public string projectId;
+        public BuildTarget target = BuildTarget.StandaloneWindows64;
+        public string appContentCompatibilityId = "aa-base-v2";
         /// <summary>须与当前 Editor 和 Player 选项完全匹配的 Development 标记。</summary>
         public bool development;
         /// <summary>本配置拥有的 Assets 相对生成根，只交付规范 .bytes/.json 代码资源。</summary>

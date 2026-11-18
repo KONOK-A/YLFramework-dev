@@ -1,12 +1,15 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Build;
+using UnityEditor.AddressableAssets;
+using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEngine;
-using YLFramework.Editor.Resource;
 using YLFramework.Integrations.HybridCLR.Editor;
 
 namespace YLFramework.Tests.Integrations.HybridCLR
@@ -15,6 +18,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
     {
         private string _root;
         private HybridCLRBuildProfile _profile;
+        private AddressableAssetSettings _official;
         private UnityEditorInternal.AssemblyDefinitionAsset[] _definitions;
         private string[] _names;
         private string[] _preserved;
@@ -33,22 +37,37 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var name = "HybridCLRInputs-" + Guid.NewGuid().ToString("N");
             _root = "Assets/Tests/YLFramework/Fixtures/" + name;
             AssetDatabase.CreateFolder("Assets/Tests/YLFramework/Fixtures", name);
-            var project = ScriptableObject.CreateInstance<ResourceProject>();
-            project.projectId = name;
-            AssetDatabase.CreateAsset(project, _root + "/Project.asset");
-            var recipe = ScriptableObject.CreateInstance<ResourceBuildRecipe>();
-            recipe.project = project;
-            recipe.action = ResourceBuildAction.BuildAndPublish;
-            recipe.appContentCompatibilityId = "inputs-v1";
-            AssetDatabase.CreateAsset(recipe, _root + "/Recipe.asset");
+            var previousDefault = AddressableAssetSettingsDefaultObject.GetSettings(false);
+            _official = AddressableAssetSettings.Create(_root, "Settings", true, true);
+            _official.DisableCatalogUpdateOnStartup = true;
+            _official.BuildRemoteCatalog = true;
+            _official.profileSettings.SetValue(_official.activeProfileId, AddressableAssetSettings.kRemoteBuildPath, "Build/HybridCLRInputs/" + name);
+            _official.profileSettings.SetValue(_official.activeProfileId, AddressableAssetSettings.kRemoteLoadPath, "https://hybridclr-inputs.invalid/" + name);
+            Assert.That(_official.RemoteCatalogBuildPath.SetVariableByName(_official, AddressableAssetSettings.kRemoteBuildPath), Is.True);
+            Assert.That(_official.RemoteCatalogLoadPath.SetVariableByName(_official, AddressableAssetSettings.kRemoteLoadPath), Is.True);
+            var code = _official.DefaultGroup;
+            var bundle = code.GetSchema<BundledAssetGroupSchema>();
+            bundle.BuildPath.SetVariableByName(_official, AddressableAssetSettings.kRemoteBuildPath);
+            bundle.LoadPath.SetVariableByName(_official, AddressableAssetSettings.kRemoteLoadPath);
+            code.GetSchema<ContentUpdateGroupSchema>().StaticContent = false;
             _profile = ScriptableObject.CreateInstance<HybridCLRBuildProfile>();
-            _profile.recipe = recipe;
+            _profile.schemaVersion = 2;
+            _profile.addressableSettings = _official;
+            _profile.codeGroup = code;
+            _profile.projectId = name;
+            _profile.appContentCompatibilityId = "inputs-v2";
+            _profile.target = BuildTarget.StandaloneWindows64;
             _profile.generatedAssetDirectory = _root + "/Generated";
             _profile.baselineDirectory = "HybridCLRBaselines/" + name;
             AssetDatabase.CreateAsset(_profile, _root + "/Profile.asset");
-            AssetDatabase.SaveAssetIfDirty(project);
-            AssetDatabase.SaveAssetIfDirty(recipe);
+            foreach (var asset in Authoring())
+            {
+                EditorUtility.SetDirty(asset);
+                AssetDatabase.SaveAssetIfDirty(asset);
+            }
             AssetDatabase.SaveAssetIfDirty(_profile);
+            HybridCLRBuildPipeline.ValidateResourceInputs(_profile);
+            Assert.That(AddressableAssetSettingsDefaultObject.GetSettings(false), Is.SameAs(previousDefault), "The fixture must not replace application/default Settings.");
         }
 
         [TearDown]
@@ -67,17 +86,19 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var snapshot = Capture(_profile);
             var original = _profile;
             Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(original, out string guid, out long localId), Is.True);
-            var recipe = original.recipe;
-            var project = recipe.project;
-            var recipeGuid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(recipe));
-            var projectGuid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(project));
+            var authoring = Authoring();
+            var identities = authoring.Select(asset =>
+            {
+                Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string assetGuid, out long id), Is.True);
+                var path = AssetDatabase.GetAssetPath(asset);
+                return (Guid: assetGuid, Id: id, Path: path, Type: asset.GetType(), Bytes: File.ReadAllBytes(path), Meta: File.ReadAllBytes(path + ".meta"));
+            }).ToArray();
             Resources.UnloadAsset(original);
-            Resources.UnloadAsset(recipe);
-            Resources.UnloadAsset(project);
+            foreach (var asset in authoring.Reverse())
+                Resources.UnloadAsset(asset);
             Assert.That(ReferenceEquals(original, null), Is.False);
             Assert.That((bool)original, Is.False);
-            Assert.That((bool)recipe, Is.False);
-            Assert.That((bool)project, Is.False);
+            Assert.That(authoring.All(asset => !asset), Is.True);
 
             var restored = Reload(snapshot);
             Assert.That(restored, Is.Not.Null);
@@ -85,19 +106,52 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(restored, out string afterGuid, out long afterId), Is.True);
             Assert.That(afterGuid, Is.EqualTo(guid));
             Assert.That(afterId, Is.EqualTo(localId));
-            Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(restored.recipe)), Is.EqualTo(recipeGuid));
-            Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(restored.recipe.project)), Is.EqualTo(projectGuid));
-            Assert.That(restored.recipe.appContentCompatibilityId, Is.EqualTo("inputs-v1"));
+            Assert.That(restored.recipe, Is.Null);
+            Assert.That(restored.schemaVersion, Is.EqualTo(2));
+            Assert.That(restored.appContentCompatibilityId, Is.EqualTo("inputs-v2"));
+            foreach (var identity in identities)
+            {
+                var asset = AssetDatabase.LoadAllAssetsAtPath(identity.Path).Single(value => value &&
+                    AssetDatabase.TryGetGUIDAndLocalFileIdentifier(value, out string savedGuid, out long savedId) && savedGuid == identity.Guid && savedId == identity.Id);
+                Assert.That(asset.GetType(), Is.EqualTo(identity.Type));
+                CollectionAssert.AreEqual(identity.Bytes, File.ReadAllBytes(identity.Path));
+                CollectionAssert.AreEqual(identity.Meta, File.ReadAllBytes(identity.Path + ".meta"));
+            }
+            _profile = restored;
+            _official = restored.addressableSettings;
         }
 
         [TestCase("profile")]
-        [TestCase("recipe")]
-        [TestCase("project")]
+        [TestCase("settings")]
+        [TestCase("group")]
+        [TestCase("bundle-schema")]
+        [TestCase("update-schema")]
         public void DirtyInputsCannotBecomeAnInitialSnapshot(string input)
         {
-            UnityEngine.Object asset = input == "profile" ? _profile : input == "recipe" ? _profile.recipe : _profile.recipe.project;
+            var asset = CapturedAsset(input);
+            var path = AssetDatabase.GetAssetPath(asset);
+            var bytes = File.ReadAllBytes(path);
             EditorUtility.SetDirty(asset);
             Assert.Throws<InvalidDataException>(() => Capture(_profile));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+        }
+
+        [TestCase("profile")]
+        [TestCase("settings")]
+        [TestCase("group")]
+        [TestCase("bundle-schema")]
+        [TestCase("update-schema")]
+        public void ReloadRejectsDirtyCapturedAuthoringWithoutChangingPersistedBytes(string input)
+        {
+            var snapshot = Capture(_profile);
+            var asset = CapturedAsset(input);
+            var path = AssetDatabase.GetAssetPath(asset);
+            var bytes = File.ReadAllBytes(path);
+            var metadata = File.ReadAllBytes(path + ".meta");
+            EditorUtility.SetDirty(asset);
+            Assert.Throws<InvalidDataException>(() => Reload(snapshot));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+            CollectionAssert.AreEqual(metadata, File.ReadAllBytes(path + ".meta"));
         }
 
         [TestCase(false)]
@@ -120,10 +174,13 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         [TestCase("baseline-root")]
         [TestCase("base-owner")]
         [TestCase("development")]
-        [TestCase("recipe-binding")]
-        [TestCase("project-binding")]
+        [TestCase("settings-binding")]
+        [TestCase("group-binding")]
         [TestCase("compatibility")]
         [TestCase("project-id")]
+        [TestCase("target")]
+        [TestCase("settings-policy")]
+        [TestCase("group-schema")]
         public void ReloadRejectsChangedSavedExecutionInputs(string changed)
         {
             var snapshot = Capture(_profile);
@@ -145,25 +202,30 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                 case "development":
                     _profile.development = !_profile.development;
                     break;
-                case "recipe-binding":
-                    var recipe = UnityEngine.Object.Instantiate(_profile.recipe);
-                    AssetDatabase.CreateAsset(recipe, _root + "/OtherRecipe.asset");
-                    _profile.recipe = recipe;
+                case "settings-binding":
+                    AssetDatabase.CreateFolder(_root, "Other");
+                    _profile.addressableSettings = AddressableAssetSettings.Create(_root + "/Other", "Settings", true, true);
                     break;
-                case "project-binding":
-                    var project = ScriptableObject.CreateInstance<ResourceProject>();
-                    project.projectId = "other";
-                    AssetDatabase.CreateAsset(project, _root + "/OtherProject.asset");
-                    _profile.recipe.project = project;
-                    asset = _profile.recipe;
+                case "group-binding":
+                    _profile.codeGroup = _official.CreateGroup("Other Code", false, false, true, null, typeof(BundledAssetGroupSchema), typeof(ContentUpdateGroupSchema));
                     break;
                 case "compatibility":
-                    _profile.recipe.appContentCompatibilityId = "inputs-v2";
-                    asset = _profile.recipe;
+                    _profile.appContentCompatibilityId = "changed-compatibility";
+                    break;
+                case "target":
+                    _profile.target = BuildTarget.Android;
+                    break;
+                case "settings-policy":
+                    _official.DisableCatalogUpdateOnStartup = false;
+                    asset = _official;
+                    break;
+                case "group-schema":
+                    var schema = _profile.codeGroup.GetSchema<BundledAssetGroupSchema>();
+                    schema.Compression = schema.Compression == BundledAssetGroupSchema.BundleCompressionMode.Uncompressed ? BundledAssetGroupSchema.BundleCompressionMode.LZ4 : BundledAssetGroupSchema.BundleCompressionMode.Uncompressed;
+                    asset = schema;
                     break;
                 default:
-                    _profile.recipe.project.projectId += "-changed";
-                    asset = _profile.recipe.project;
+                    _profile.projectId += "-changed";
                     break;
             }
             EditorUtility.SetDirty(asset);
@@ -262,6 +324,19 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Assert.That(type, Is.Not.Null, "Native build inputs need a persistent identity snapshot, not an old Unity wrapper.");
             return Invoke(type.GetMethod("Capture", BindingFlags.NonPublic | BindingFlags.Static), null, new object[] { profile });
         }
+
+        private UnityEngine.Object[] Authoring() => _official.groups.Where(group => group).Select(group => (UnityEngine.Object)group)
+            .Concat(_official.groups.Where(group => group).SelectMany(group => group.Schemas).Where(schema => schema)).Prepend(_official).Distinct().ToArray();
+
+        private UnityEngine.Object CapturedAsset(string input) => input switch
+        {
+            "profile" => _profile,
+            "settings" => _official,
+            "group" => _profile.codeGroup,
+            "bundle-schema" => _profile.codeGroup.GetSchema<BundledAssetGroupSchema>(),
+            "update-schema" => _profile.codeGroup.GetSchema<ContentUpdateGroupSchema>(),
+            _ => throw new ArgumentOutOfRangeException(nameof(input))
+        };
 
         private static HybridCLRBuildProfile Reload(object snapshot) => (HybridCLRBuildProfile)Invoke(
             snapshot.GetType().GetMethod("Reload", BindingFlags.NonPublic | BindingFlags.Instance), snapshot, Array.Empty<object>());

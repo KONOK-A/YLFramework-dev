@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using System.Threading.Tasks;
 using UnityEngine;
 using YLFramework.Pooling;
 using YLFramework.Singletons;
@@ -31,7 +32,7 @@ namespace YLFramework.Equipment
         {
             internal EquipmentsConfig Root;
             internal string Name;
-            internal IDisposable Lease;
+            internal AssetLease<EquipmentsConfig> Lease;
             internal bool IsClosing;
         }
 
@@ -68,6 +69,9 @@ namespace YLFramework.Equipment
         private static readonly object _returnedMarker = new();
         private static readonly Queue<Record> _pendingReturns = new();
         private static readonly List<Config> _retiredConfigs = new();
+        private static readonly HashSet<ResourceRequest<AssetLease<EquipmentsConfig>>> _configLoads = new();
+        private static readonly Dictionary<ResourceRequest<AssetLease<GameObject>>, (Config Config, IEquippable Host)> _creating = new();
+        private static int _configGeneration;
         private static int _depth;
         private static bool _isFlushing;
         private static bool _isStopping;
@@ -236,7 +240,7 @@ namespace YLFramework.Equipment
             _configs.Add(root.name, new Config { Root = root, Name = root.name });
         }
 
-        /// <summary>同步取得并登记装备配表，保留一份租约直到配表关闭且相关实例收尾。</summary>
+        /// <summary>只同步登记已加载装备配表，冷资源明确抛 InProgress；根租约保留到配表及相关实例收尾。</summary>
         /// <param name="resources">已初始化的资源系统。</param>
         /// <param name="address">装备配表的正式资源地址。</param>
         public static void LoadConfig(ResourceSystem resources, ResourceAddress address) => Run(() =>
@@ -247,7 +251,46 @@ namespace YLFramework.Equipment
                 throw new ArgumentNullException(nameof(resources));
             }
 
-            var lease = resources.Acquire<EquipmentsConfig>(address);
+            if (!address.IsValid || address.SubAsset != null)
+            {
+                throw new ResourceException(ResourceError.InvalidAddress, "An Equipment config requires an exact project/path address.");
+            }
+            string key = address.ProjectId + "/" + address.Path;
+            if (!resources.TryAcquireLoaded<EquipmentsConfig>(key, out var lease))
+            {
+                throw new ResourceException(ResourceError.InProgress, "The Equipment config is not loaded. Use LoadConfigAsync: " + key);
+            }
+            RegisterConfig(lease);
+        });
+
+        /// <summary>异步取得并登记配表；管理器持有独立根租约，Shutdown 仅取消本管理器的等待。</summary>
+        public static async Task LoadConfigAsync(ResourceSystem resources, ResourceAddress address)
+        {
+            Admit();
+            if (resources == null)
+                throw new ArgumentNullException(nameof(resources));
+            int generation = _configGeneration;
+            using var request = resources.AcquireAsync<EquipmentsConfig>(address);
+            _configLoads.Add(request);
+            try
+            {
+                var lease = await request;
+                if (_isStopping || generation != _configGeneration)
+                {
+                    lease.Dispose();
+                    throw new OperationCanceledException("Equipment config loading was cancelled by manager closure.");
+                }
+                RegisterConfig(lease);
+            }
+            finally
+            {
+                _configLoads.Remove(request);
+            }
+        }
+
+        /// <summary>登记成功后接管本次根租约；重复登记或校验失败只归还本次取得的责任。</summary>
+        private static void RegisterConfig(AssetLease<EquipmentsConfig> lease) => Run(() =>
+        {
             try
             {
                 AddConfigCore(lease.Asset);
@@ -317,6 +360,13 @@ namespace YLFramework.Equipment
             _configs.Remove(config.Name);
             _retiredConfigs.Add(config);
             var errors = new List<Exception>();
+            foreach (var pending in _creating.ToArray())
+            {
+                if (ReferenceEquals(pending.Value.Config, config))
+                {
+                    Attempt(errors, pending.Key.Cancel);
+                }
+            }
             foreach (var record in _records.Values.ToArray())
             {
                 Attempt(errors, () =>
@@ -352,10 +402,58 @@ namespace YLFramework.Equipment
             return type;
         }
 
-        /// <summary>取得未挂接的自有装备并调用 OnLoaded；不使用时须归还，不能继续使用已归还引用。</summary>
-        /// <param name="equipmentId">已登记的装备定义 ID；Asset 模式要求当前 ResourceSystem 已初始化。</param>
+        /// <summary>取得未挂接的自有装备并调用 OnLoaded；Asset 模式只使用已加载 Prefab，冷资源明确抛 InProgress。</summary>
+        /// <param name="equipmentId">已登记的装备定义 ID；Asset 冷资源使用 CreateEquipmentAsync，Script 模式不加载资源。</param>
         /// <returns>引用共享定义的运行实例；创建、组件检查或生命周期失败时抛出异常。</returns>
-        public static IEquipment CreateEquipment(int equipmentId) => Run(() =>
+        public static IEquipment CreateEquipment(int equipmentId) => Run(() => CreateEquipmentCore(equipmentId));
+
+        /// <summary>先异步取得 Prefab，再使用正式 Rent 复用路径；配表关闭取消本次等待，不返回静默 null。</summary>
+        public static Task<IEquipment> CreateEquipmentAsync(int equipmentId) => CreateAsync(equipmentId, null, false);
+
+        /// <summary>先异步取得 Prefab 再创建并挂接；宿主或配表关闭取消等待，许可拒绝仍按同步合同返回 null。</summary>
+        public static Task<IEquipment> CreateAndEquipAsync(IEquippable equipper, int equipmentId) => CreateAsync(equipmentId, equipper, true);
+
+        private static async Task<IEquipment> CreateAsync(int equipmentId, IEquippable host, bool equip)
+        {
+            Admit();
+            if (equip)
+            {
+                if (!IsAlive(host) || host.Equipments == null)
+                    throw new ArgumentException("A live equipment host with an initialized list is required.", nameof(host));
+                if (_closingHosts.Contains(host))
+                    throw new InvalidOperationException("Equipment host is closing.");
+            }
+            var data = Find(equipmentId, out var config);
+            if (!data)
+                throw new InvalidOperationException($"Equipment definition not found: {equipmentId}");
+            Validate(data);
+            if (data.equipmentType == EquipmentType.Script)
+                return equip ? CreateAndEquip(host, equipmentId) : CreateEquipment(equipmentId);
+
+            var resources = ResourceSystem.Current ??
+                throw new InvalidOperationException("Initialize ResourceSystem before creating Asset equipment.");
+            using var configPin = config.Lease?.Retain("Equipment.PendingCreation");
+            using var request = resources.AcquireAsync<GameObject>(new ResourceAddress(data.projectName, data.assetName));
+            _creating.Add(request, (config, host));
+            try
+            {
+                using var prefab = await request;
+                return Run(() =>
+                {
+                    if (config.IsClosing || !ReferenceEquals(Find(equipmentId, out var current), data) || !ReferenceEquals(current, config))
+                        throw new OperationCanceledException("Equipment creation was cancelled by config closure.");
+                    var equipment = CreateEquipmentCore(equipmentId, prefab, host);
+                    return equip ? EquipCreated(host, equipment) : equipment;
+                });
+            }
+            finally
+            {
+                _creating.Remove(request);
+            }
+        }
+
+        /// <summary>同步提交创建及 OnLoaded；异步入口可借用已取得的 Prefab，所有实例仍由本管理器归还。</summary>
+        private static IEquipment CreateEquipmentCore(int equipmentId, AssetLease<GameObject> prefab = null, IEquippable pendingHost = null)
         {
             Admit();
             var data = Find(equipmentId, out var config);
@@ -368,6 +466,7 @@ namespace YLFramework.Equipment
             var record = new Record
             {
                 Config = config,
+                PendingHost = pendingHost,
                 IsOwned = true,
                 Definition = data,
                 DefinitionRoot = config.Root
@@ -378,7 +477,21 @@ namespace YLFramework.Equipment
                 {
                     var resources = ResourceSystem.Current ??
                         throw new InvalidOperationException("Initialize ResourceSystem before creating Asset equipment.");
-                    record.Lease = resources.Instantiate(new ResourceAddress(data.projectName, data.assetName));
+                    if (prefab != null)
+                    {
+                        record.Lease = resources.Rent(prefab);
+                    }
+                    else
+                    {
+                        var address = new ResourceAddress(data.projectName, data.assetName);
+                        string key = address.ProjectId + "/" + address.Path;
+                        if (!resources.TryAcquireLoaded<GameObject>(key, out var loaded))
+                            throw new ResourceException(ResourceError.InProgress, "The Equipment prefab is not loaded. Use CreateEquipmentAsync: " + key);
+                        using (loaded)
+                        {
+                            record.Lease = resources.Rent(loaded);
+                        }
+                    }
                     var components = record.Lease.GameObject.GetComponents<MonoBehaviour>().OfType<IEquipment>().ToArray();
                     if (components.Length != 1)
                     {
@@ -411,11 +524,12 @@ namespace YLFramework.Equipment
                 // 在进入 OnLoaded 前记为已加载，使初始化回调失败时仍能尝试 OnUnloaded 清理。
                 record.IsLoaded = true;
                 record.Value.OnLoaded();
-                if (config.IsClosing || record.IsReleaseRequested || _isStopping || !IsAlive(record.Value))
+                if (config.IsClosing || record.IsReleaseRequested || record.IsEquipCancelled || _isStopping || !IsAlive(record.Value))
                 {
                     throw new InvalidOperationException("Equipment creation was cancelled during OnLoaded.");
                 }
 
+                record.PendingHost = null;
                 return record.Value;
             }
             catch (Exception error)
@@ -434,7 +548,7 @@ namespace YLFramework.Equipment
                 ThrowErrors(errors);
                 throw;
             }
-        });
+        }
 
         /// <summary>在宿主许可后挂接装备；外部传入且非本管理器创建的实例只借用，不触发加载或卸载钩子。</summary>
         /// <param name="equipper">有效且持有稳定、已初始化装备列表的宿主。</param>
@@ -555,7 +669,13 @@ namespace YLFramework.Equipment
         /// <returns>成功挂接的实例；许可拒绝或回调取消时返回 null，异常在清理后继续抛出。</returns>
         public static IEquipment CreateAndEquip(IEquippable equipper, int equipmentId) => Run(() =>
         {
-            var equipment = CreateEquipment(equipmentId);
+            var equipment = CreateEquipmentCore(equipmentId, pendingHost: equipper);
+            return EquipCreated(equipper, equipment);
+        });
+
+        /// <summary>挂接失败归还刚创建的自有实例；资源失败和业务异常不转换为空结果。</summary>
+        private static IEquipment EquipCreated(IEquippable equipper, IEquipment equipment)
+        {
             try
             {
                 if (Equip(equipper, equipment) == EquipState.Success)
@@ -572,7 +692,7 @@ namespace YLFramework.Equipment
 
             DestroyEquipment(equipment);
             return null;
-        });
+        }
 
         /// <summary>卸下已登记实例，并按选项请求归还；未登记或 null 的实例不处理。</summary>
         /// <param name="equipment">要卸下的运行实例。</param>
@@ -717,6 +837,13 @@ namespace YLFramework.Equipment
 
             _aggregateReturns = true;
             var errors = new List<Exception>();
+            foreach (var pending in _creating.ToArray())
+            {
+                if (ReferenceEquals(pending.Value.Host, equipper))
+                {
+                    Attempt(errors, pending.Key.Cancel);
+                }
+            }
             foreach (var snapshot in _records.Values
                 .Where(record =>
                     ReferenceEquals(record.Host, equipper) || ReferenceEquals(record.PendingHost, equipper))
@@ -754,6 +881,7 @@ namespace YLFramework.Equipment
             }
 
             _isStopping = true;
+            _configGeneration++;
             _aggregateReturns = true;
             foreach (var config in _configs.Values)
             {
@@ -763,6 +891,14 @@ namespace YLFramework.Equipment
 
             _configs.Clear();
             var errors = new List<Exception>();
+            foreach (var request in _configLoads.ToArray())
+            {
+                Attempt(errors, request.Cancel);
+            }
+            foreach (var request in _creating.Keys.ToArray())
+            {
+                Attempt(errors, request.Cancel);
+            }
             foreach (var record in _records.Values.ToArray())
             {
                 record.IsEquipCancelled = true;

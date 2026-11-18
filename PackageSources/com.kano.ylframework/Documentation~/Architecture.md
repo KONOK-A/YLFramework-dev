@@ -14,7 +14,7 @@
 | Prefabs / Resources | 随包的默认模板与运行资产 |
 | `Documentation~` / `Samples~` | 按文件路径打开的说明，以及显式 Import 后才编译的样例 |
 | 选装包 | 配置、本地化、存档、状态机、二维移动、检测、玩法、红点、Excel、HybridCLR |
-| `Plugins/BouncyCastle` | 随包依赖及来源许可，不等于依赖整个宿主 Plugins |
+| `Plugins/BouncyCastle/SOURCE.txt` | 旧加密实现的来源记录；不包含运行 DLL |
 | `Assets/Tests/YLFramework` / `Tools` | 源码仓库的测试和工具，不进入产品包 |
 | `Assets/YLFrameworkData` | 使用工程自己的配置与生成内容，不属于框架包输入 |
 
@@ -45,8 +45,8 @@ PackageSources/
 
 | 程序集 | 依赖与条件 |
 | --- | --- |
-| `YLFramework.Runtime` | Unity / UGUI、Json.NET、BouncyCastle，不引用框架 Editor |
-| `YLFramework.Editor` | 主 Runtime、UGUI、Json.NET，仅 Editor；Help 共用该主体 |
+| `YLFramework.Runtime` | Unity / UGUI、Json.NET、官方 Addressables 与 ResourceManager，不引用框架 Editor |
+| `YLFramework.Editor` | 主 Runtime、UGUI、Json.NET 和官方 Addressables Editor，仅 Editor；Help 共用该主体 |
 | `YLFramework.DataAssets` / `.Editor` | 主包与自身 Runtime，Editor 不引用 Excel |
 | `YLFramework.Localization` / `.Editor` | 主包、UGUI、官方 Localization/Addressables；TMP 及 DataAssets/Excel 作者适配分开编译，不强装选装包 |
 | `YLFramework.Save` | Json.NET 与 UnityEngine，不依赖主包；普通 DTO/BCL 存储与主包字典组合可分别使用 |
@@ -105,9 +105,9 @@ Foundation 的 Unity 挂载/销毁直接使用原生 API。ColorSelector 是消�
 ### 跨系统协作
 
 - Resource 为 Core 安装资源适配，Core 不直接依赖具体加载器。
-- Resource → Audio 的装配在 `Systems/Resource/Integration/Audio`，命名 Provider 用资源租约保活，ResourceSystem 仍是资产和 Bundle 的释放权威。
+- Resource → Audio 的装配在 `Systems/Resource/Integration/Audio`，命名 Provider 用独立资源租约保活；ResourceSystem 只结算自己取得的官方引用，Addressables 管底层共享内容和依赖。
 - `Systems/Audio/Actions/PlaySoundAction` 是同一 Runtime 内的 Action/Audio 协作；DOTween 则是有外部 SDK 前置的条件适配。
-- DataAssets 与 Gameplay 配置可以借用 ResourceSystem；Localization 的表/Locale/本地化资产由官方 Localization/Addressables 管理，YL 只持有消费者绑定和本方句柄，不桥接第二套资源 Provider。主包不反向引用选装模块。
+- DataAssets 与 Gameplay 配置可以借用 ResourceSystem；主包资源以 Addressables 为唯一内核，Scope/Lease 表达 YL 业务所有权。Localization 的表/Locale/本地化资产继续由官方包管理，各消费方只归还自己取得的句柄，不清全局设施。主包不反向引用选装模块。
 
 | 能力 | 调度边界 |
 | --- | --- |
@@ -124,7 +124,7 @@ Foundation 的 Unity 挂载/销毁直接使用原生 API。ColorSelector 是消�
 
 | 资源或会话 | 释放责任 |
 | --- | --- |
-| 资产、实例与场景 | ResourceSystem 管底层共享内容，消费者持 lease，不擅自卸载共享 Bundle |
+| 资产、实例与场景 | Addressables 管底层依赖，YL Scope/Lease 结算自身责任，消费者不擅自卸载共享 Bundle |
 | Module / View / Panel | 所属 Module 清理注册、业务对象和在途工作，不因关闭一个模块而关闭全局服务 |
 | 命名音频 | 先停播放，再归还 Provider 和资源租约 |
 | 配置登记 | 先结束使用配置的业务与 UI，再归还登记句柄和根资源 |

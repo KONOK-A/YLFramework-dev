@@ -164,22 +164,30 @@ function Read-YLTestXml {
 
 function Read-YLPlayerSmoke {
     param([string] $Path, [string] $ResultId, [string] $HostId, [string] $UnityVersion, [object] $ProcessResult,
-        [ValidateSet('Mono', 'IL2CPP')][string] $Backend = 'Mono', [object] $HybridCLR)
+        [ValidateSet('Mono', 'IL2CPP')][string] $Backend = 'Mono', [object] $HybridCLR,
+        [Parameter(Mandatory)][string] $InputHash, [Parameter(Mandatory)][string] $ContentHash,
+        [Parameter(Mandatory)][string] $AddressablesVersion)
     Assert-YLTestProcessSucceeded $ProcessResult
     $report = [IO.File]::ReadAllText((Get-YLTestPath $Path)) | ConvertFrom-Json -AsHashtable -DateKind String
-    foreach ($name in @('purpose', 'status', 'resultId', 'hostId', 'unityVersion', 'backend', 'platform')) {
+    foreach ($name in @('purpose', 'status', 'resultId', 'hostId', 'unityVersion', 'backend', 'platform', 'inputHash', 'contentHash', 'addressablesVersion', 'resourceState')) {
         if ($report[$name] -isnot [string]) { throw 'Player smoke string identity fields must not use coercible JSON types.' }
     }
     $stages = @('Started', 'ResourceLoaded', 'EventLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown')
     if ($null -ne $HybridCLR) { $stages = @('Started', 'HybridCLRMetadata', 'HybridCLRModule', 'HybridCLRReflection', 'HybridCLRShutdown') }
-    if ($report['schemaVersion'] -isnot [long] -or $report['schemaVersion'] -ne 1 -or $report['purpose'] -cne 'YLTesting.PlayerSmoke' -or
+    foreach ($name in @('leaseCount', 'scopeCount', 'requestCount', 'pendingWorkCount', 'drainingHandleCount')) {
+        if ($report[$name] -isnot [long] -or $report[$name] -ne 0) { throw "Player schema2 ownership ledger is missing or nonzero: $name" }
+    }
+    if ($report['schemaVersion'] -isnot [long] -or $report['schemaVersion'] -ne 2 -or $report['purpose'] -cne 'YLTesting.PlayerSmoke' -or
         $report['status'] -cne 'Passed' -or $report['resultId'] -cne $ResultId -or $report['hostId'] -cne $HostId -or
         $report['backend'] -cne $Backend -or
         $report['unityVersion'] -cne $UnityVersion -or $report['pid'] -isnot [long] -or $report['pid'] -ne $ProcessResult.pid -or
         $report['isEditor'] -isnot [bool] -or $report['isEditor'] -or $report['platform'] -cne 'WindowsPlayer' -or
         $report['frames'] -isnot [long] -or $report['frames'] -lt 1 -or
-        $report['recordCount'] -isnot [long] -or $report['recordCount'] -ne 0 -or
-        $report['leaseCount'] -isnot [long] -or $report['leaseCount'] -ne 0 -or
+        $report['resourceState'] -cne 'Closed' -or
+        $report['ledgerMeasured'] -isnot [bool] -or -not $report['ledgerMeasured'] -or
+        $report['cleanupErrors'] -isnot [array] -or $report['cleanupErrors'].Count -ne 0 -or
+        $report['inputHash'] -cne $InputHash -or $report['contentHash'] -cne $ContentHash -or $report['addressablesVersion'] -cne $AddressablesVersion -or
+        $InputHash -cnotmatch '^[0-9a-f]{64}$' -or $ContentHash -cnotmatch '^[0-9a-f]{64}$' -or
         $report['error'] -isnot [string] -or $report['error'].Length -ne 0 -or
         $report['stages'] -isnot [array] -or $report['stages'].Count -ne $stages.Count) {
         throw 'Player smoke identity, runtime state or behavior evidence is invalid.'
@@ -188,9 +196,12 @@ function Read-YLPlayerSmoke {
         if ($report['stages'][$i] -isnot [string] -or $report['stages'][$i] -cne $stages[$i]) { throw 'Player smoke behavior stages are incomplete or out of order.' }
     }
     if ($null -ne $HybridCLR) {
+        if ($report['startupCatalogUpdated'] -isnot [bool] -or $report['startupCatalogUpdated'] -ne ($HybridCLR.sampleVersion -ceq 'v2')) {
+            throw 'HybridCLR startup catalog evidence must show an explicit update in the patch process only.'
+        }
         $detail = $report['hybridClr']
         if ($detail -isnot [Collections.IDictionary]) { throw 'HybridCLR native evidence must be an object.' }
-        foreach ($name in @('mode', 'codePackageId', 'nativeVariant', 'message', 'asyncResult', 'prefabMarker')) {
+        foreach ($name in @('mode', 'codePackageId', 'nativeVariant', 'message', 'asyncResult', 'prefabMarker', 'sampleVersion', 'manifestAddress', 'manifestSha256')) {
             if ($detail[$name] -isnot [string]) { throw 'HybridCLR string evidence must not use coercible JSON types.' }
         }
         if ($Backend -cne 'IL2CPP' -or $detail -isnot [Collections.IDictionary] -or $detail['mode'] -cne 'Native' -or
@@ -198,8 +209,11 @@ function Read-YLPlayerSmoke {
             $detail['codePackageId'] -cne $HybridCLR.codePackageId -or $detail['codePackageId'] -cnotmatch '^[0-9a-f]{64}$' -or
             $detail['nativeVariant'] -cne $HybridCLR.nativeVariant -or
             $detail['reflectionCount'] -isnot [long] -or $detail['reflectionCount'] -ne 3 -or
-            $detail['message'] -cne 'v1: YL Resource configuration; dependency-count=2' -or
-            $detail['asyncResult'] -cne 'v1-async' -or $detail['prefabMarker'] -cne 'v1-prefab' -or
+            $HybridCLR.sampleVersion -cnotin @('v1', 'v2') -or $detail['sampleVersion'] -cne $HybridCLR.sampleVersion -or
+            $detail['message'] -cne "$($HybridCLR.sampleVersion): YL Resource configuration; dependency-count=2" -or
+            $detail['asyncResult'] -cne "$($HybridCLR.sampleVersion)-async" -or $detail['prefabMarker'] -cne "$($HybridCLR.sampleVersion)-prefab" -or
+            $detail['manifestSchemaVersion'] -isnot [long] -or $detail['manifestSchemaVersion'] -ne 2 -or
+            $detail['manifestAddress'] -cne $HybridCLR.manifestAddress -or $detail['manifestSha256'] -cne $HybridCLR.manifestSha256 -or
             $detail['repeatedLoadReused'] -isnot [bool] -or -not $detail['repeatedLoadReused'] -or
             $detail['wrongBaseRejected'] -isnot [bool] -or -not $detail['wrongBaseRejected'] -or
             $report['graphicsDevice'] -isnot [string] -or $report['graphicsDevice'] -cin @('', 'Null')) {
@@ -213,6 +227,18 @@ function Read-YLPlayerSmoke {
                 @($actual | Sort-Object -Unique).Count -ne $actual.Count -or
                 -not [Collections.Generic.HashSet[string]]::new($expected, [StringComparer]::Ordinal).SetEquals([string[]]$actual)) {
                 throw "HybridCLR exact $name evidence is incomplete, duplicate or foreign."
+            }
+        }
+        if ($detail['payloads'] -isnot [array] -or $detail['payloads'].Count -ne $HybridCLR.payloads.Count -or
+            $HybridCLR.payloads.Count -ne ($HybridCLR.metadataAssemblies.Count + $HybridCLR.assemblies.Count)) { throw 'Native assembly payload observations are incomplete.' }
+        foreach ($expected in $HybridCLR.payloads) {
+            $observed = @($detail['payloads'] | Where-Object { $_.role -ceq $expected.role -and $_.name -ceq $expected.name })
+            if ($observed.Count -ne 1) { throw 'Native assembly payload observations are duplicated or foreign.' }
+            foreach ($field in @('address', 'sha256', 'mvid', 'fullName', 'length')) {
+                if ($observed[0][$field] -cne $expected.$field) { throw "Actual native payload differs from the published assembly bytes: $field" }
+            }
+            if ($observed[0]['sha256'] -cnotmatch '^[0-9a-f]{64}$' -or $observed[0]['length'] -isnot [long] -or $observed[0]['length'] -le 0) {
+                throw 'Actual native assembly byte-SHA evidence is absent.'
             }
         }
     }

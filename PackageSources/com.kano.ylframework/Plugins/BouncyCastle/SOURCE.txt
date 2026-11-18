@@ -8,11 +8,11 @@ Official checksums: https://downloads.bouncycastle.org/csharp/docs/CHECKSUMS.csv
 Binary SHA-256: d61c1f2ba929a230a58e101ccd850e21f2675fa6b9814ec279633e8a089c3495
 Assembly version: 2.0.0.0
 
-YL Resource uses this assembly internally for HKDF-SHA256 only. AES-256-GCM
+The retired YL Resource backend used this assembly for HKDF-SHA256 only. AES-256-GCM
 is provided by Windows CNG Microsoft Primitive Provider on the explicitly
 supported Windows x64 Editor/Mono configurations. No Windows system DLL is
 redistributed, and this dependency does not add other encrypted platforms.
 
 Official artifact provenance and upstream checksums were verified in E04 G0
-and B1. This file records the exact product binary identity, not an assertion
+and B1. The current package does not ship this binary. This record is not an assertion
 of FIPS certification or support for every Unity platform/profile.

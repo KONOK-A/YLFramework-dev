@@ -19,6 +19,7 @@ namespace YLFramework.Tests.ResourceEditor
         private const string DefaultDirectory = "Assets/YLFrameworkData/Generated/ResourceReferences";
         private const string AssemblyName = "YLFramework.Generated.ResourceNames";
         private const string StateKey = "YL.ResourceGeneratorOutputTests";
+        private static string Inputs => SessionState.GetString(StateKey + ".Inputs", "");
 
         [UnitySetUp]
         public IEnumerator ReserveCleanProjectOutput()
@@ -31,6 +32,11 @@ namespace YLFramework.Tests.ResourceEditor
             SessionState.SetString(StateKey, TestContext.CurrentContext.Test.FullName);
             SessionState.SetString(StateKey + ".Module", "YLGeneratorTest_" + Guid.NewGuid().ToString("N"));
             SessionState.SetIntArray(StateKey + ".Selection", Selection.objects.Select(value => value.GetInstanceID()).ToArray());
+            var inputs = ResourceAddressablesGeneratorFixture.InputPrefix + Guid.NewGuid().ToString("N");
+            SessionState.SetString(StateKey + ".Inputs", inputs);
+            ResourceAddressablesGeneratorFixture.CreateInputs(inputs);
+            SessionState.SetString(StateKey + ".InputsHash", ResourceAddressablesGeneratorFixture.Fingerprint(inputs));
+            yield return ResourceGeneratorTestWait.Clear("Import official generator coexistence inputs");
         }
 
         [UnityTearDown]
@@ -52,6 +58,7 @@ namespace YLFramework.Tests.ResourceEditor
             {
                 File.Delete(LegacyRoot + ".meta");
             }
+            ResourceAddressablesGeneratorFixture.DeleteInputs(Inputs, SessionState.GetString(StateKey + ".InputsHash", ""));
             yield return new RecompileScripts(false);
             yield return ResourceGeneratorTestWait.Clear("Remove reserved default generator outputs");
             Assert.That(Directory.Exists(LegacyRoot) || File.Exists(LegacyRoot) || File.Exists(LegacyRoot + ".meta"), Is.False);
@@ -59,6 +66,8 @@ namespace YLFramework.Tests.ResourceEditor
             SessionState.EraseString(StateKey + ".Module");
             SessionState.EraseString(StateKey + ".Asset");
             SessionState.EraseIntArray(StateKey + ".Selection");
+            SessionState.EraseString(StateKey + ".Inputs");
+            SessionState.EraseString(StateKey + ".InputsHash");
         }
 
         [UnityTest]
@@ -111,7 +120,7 @@ namespace YLFramework.Tests.ResourceEditor
             switch (step)
             {
                 case 'R':
-                    Assert.That(ResourceCodeGenerator.GenerateReferences(new[] { ResourceCodeGenerationTests.Catalog("coexist.key") }), Is.True);
+                    Assert.That(GenerateReferences("coexist.key"), Is.True);
                     break;
                 case 'M':
                     CreateModuleCommand.CreateModule(SessionState.GetString(StateKey + ".Module", ""), "Project", false, "");
@@ -134,6 +143,12 @@ namespace YLFramework.Tests.ResourceEditor
             }
         }
 
+        private static bool GenerateReferences(string address, string directory = null)
+        {
+            using var fixture = new ResourceAddressablesGeneratorFixture(Inputs, new[] { address });
+            return directory == null ? ResourceCodeGenerator.GenerateReferences(fixture.Settings) : ResourceCodeGenerator.GenerateReferences(fixture.Settings, directory);
+        }
+
         private static void AssertDefaultOutputsUnchanged()
         {
             string source = DefaultDirectory + "/YLResourceReferences.cs";
@@ -148,7 +163,7 @@ namespace YLFramework.Tests.ResourceEditor
             var paths = new[] { source, assembly, moduleSource, assetPath, assetPath + ".meta" };
             var bytes = paths.Select(File.ReadAllBytes).ToArray();
             var times = paths.Select(File.GetLastWriteTimeUtc).ToArray();
-            Assert.That(ResourceCodeGenerator.GenerateReferences(new[] { ResourceCodeGenerationTests.Catalog("coexist.key") }), Is.False);
+            Assert.That(GenerateReferences("coexist.key"), Is.False);
             for (int index = 0; index < paths.Length; index++)
             {
                 CollectionAssert.AreEqual(bytes[index], File.ReadAllBytes(paths[index]), paths[index]);
@@ -160,7 +175,7 @@ namespace YLFramework.Tests.ResourceEditor
         public IEnumerator DefaultCreatesMissingParentsAndUsesTheSameLeafAsTheWriterContract()
         {
             yield return ResourceGeneratorTestWait.Clear("Generate default resource references");
-            Assert.That(ResourceCodeGenerator.GenerateReferences(new[] { ResourceCodeGenerationTests.Catalog("key") }), Is.True);
+            Assert.That(GenerateReferences("key"), Is.True);
             Assert.That(File.Exists(DefaultDirectory + "/YLResourceReferences.cs"), Is.True);
             var writer = typeof(ResourceCodeGenerator).Assembly.GetType("YLFramework.Editor.Resource.ResourceReferenceOutput");
             Assert.That(writer.GetField("DirectoryPath", BindingFlags.Static | BindingFlags.NonPublic).GetRawConstantValue(), Is.EqualTo(DefaultDirectory));
@@ -170,7 +185,7 @@ namespace YLFramework.Tests.ResourceEditor
         [UnityTest]
         public IEnumerator LegacyRootIdentityIsPreservedAndDefaultRefusesADuplicateWithoutCreatingParents()
         {
-            Assert.That(ResourceCodeGenerator.GenerateReferences(new[] { ResourceCodeGenerationTests.Catalog("legacy.key") }, LegacyRoot), Is.True);
+            Assert.That(GenerateReferences("legacy.key", LegacyRoot), Is.True);
             yield return new RecompileScripts();
             yield return ResourceGeneratorTestWait.Clear("Import existing legacy resource identity");
             AssertLegacyIdentityUnchanged();
@@ -184,7 +199,7 @@ namespace YLFramework.Tests.ResourceEditor
             var bytes = paths.Select(File.ReadAllBytes).ToArray();
             var times = paths.Select(File.GetLastWriteTimeUtc).ToArray();
 
-            var error = Assert.Throws<InvalidOperationException>(() => ResourceCodeGenerator.GenerateReferences(new[] { ResourceCodeGenerationTests.Catalog("legacy.key") }));
+            var error = Assert.Throws<InvalidOperationException>(() => GenerateReferences("legacy.key"));
 
             Assert.That(error.Message.Replace('\\', '/'), Does.Contain(assembly));
             Assert.That(error.Message, Does.Contain(AssemblyName).And.Contain("Documentation~/Modules/Resource.md"));
@@ -194,7 +209,7 @@ namespace YLFramework.Tests.ResourceEditor
                 CollectionAssert.AreEqual(bytes[index], File.ReadAllBytes(paths[index]), paths[index]);
                 Assert.That(File.GetLastWriteTimeUtc(paths[index]), Is.EqualTo(times[index]), paths[index]);
             }
-            Assert.That(ResourceCodeGenerator.GenerateReferences(new[] { ResourceCodeGenerationTests.Catalog("updated.key") }, LegacyRoot), Is.True,
+            Assert.That(GenerateReferences("updated.key", LegacyRoot), Is.True,
                 "An explicit valid legacy location must retain its identity, not be redirected or auto-moved.");
             for (int index = 1; index < paths.Length; index++)
             {
@@ -221,7 +236,7 @@ namespace YLFramework.Tests.ResourceEditor
             var before = File.ReadAllBytes(assembly);
             var meta = File.ReadAllBytes(assembly + ".meta");
 
-            var error = Assert.Throws<InvalidOperationException>(() => ResourceCodeGenerator.GenerateReferences(new[] { ResourceCodeGenerationTests.Catalog("key") }));
+            var error = Assert.Throws<InvalidOperationException>(() => GenerateReferences("key"));
 
             Assert.That(error.Message, Does.Contain(assembly).And.Contain("Documentation~/Modules/Resource.md"));
             Assert.That(Directory.Exists(LegacyRoot + "/Generated"), Is.False);

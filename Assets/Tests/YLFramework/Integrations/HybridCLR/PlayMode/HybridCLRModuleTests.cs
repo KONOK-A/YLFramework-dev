@@ -1,7 +1,6 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Reflection;
 using NUnit.Framework;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
@@ -49,17 +48,20 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         private int _nativeCalls;
         private string Entry => typeof(HybridCLRProbeModule).Assembly.GetName().Name;
 
-        [SetUp]
-        public void SetUp()
+        [UnitySetUp]
+        public IEnumerator SetUp()
         {
+            _fixture = null;
             _previousProvider = CoreResourceAccess.Provider;
             _ownedProvider = null;
             _pendingScene = null;
             _ownedScene = default;
             _ownedRequest = null;
             _nativeCalls = 0;
+            Assert.That(ModuleManager.GetModule(typeof(HybridCLRProbeModule)), Is.Null, "Do not close another entry's Module.");
+            Assert.That(ModuleManager.GetModule(typeof(HybridCLRWaitingModule)), Is.Null, "Do not take over another pending Module.");
             _fixture = new HybridCLRLoaderTests();
-            _fixture.Initialize();
+            yield return _fixture.Initialize();
             HybridCLRProbeModule.Starting = null;
         }
 
@@ -67,11 +69,10 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         public IEnumerator TearDown()
         {
             // RED 断言也要放行自己的场景等待，不遗留无法 Close 的 Starting Module。
+            _fixture?.FinishPendingResources();
             _pendingScene?.Succeed(_ownedScene);
-            for (var i = 0; i < 240 && _ownedRequest != null && !_ownedRequest.IsDone; i++)
-            {
-                yield return null;
-            }
+            yield return HybridCLRLoaderTests.Wait(() => _fixture?.Process?.ActiveJob == null && (_ownedRequest == null || _ownedRequest.IsDone),
+                "HybridCLR Module fixture drain");
 
             var waiting = ModuleManager.GetModule(typeof(HybridCLRWaitingModule));
             if (waiting != null && ReferenceEquals(waiting, _ownedRequest?.Module))
@@ -80,14 +81,17 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             }
 
             var module = ModuleManager.GetModule(typeof(HybridCLRProbeModule));
-            if (module != null)
+            if (module != null && ReferenceEquals(module, _ownedRequest?.Module))
             {
                 module.Close();
             }
 
             HybridCLRProbeModule.Starting = null;
             CoreResourceAccess.Unbind(_ownedProvider);
-            yield return _fixture.TearDown();
+            if (_fixture != null)
+            {
+                yield return _fixture.TearDown();
+            }
             if (_ownedScene.IsValid() && _ownedScene.isLoaded)
             {
                 yield return SceneManager.UnloadSceneAsync(_ownedScene);
@@ -102,11 +106,14 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         [UnityTest]
         public IEnumerator AThrowingSharedLoadObserverCannotStrandModuleStartup()
         {
+            _fixture.HoldResources = true;
             var load = _fixture.Loader.LoadAsync(HybridCLRLoaderTests.Address);
+            yield return HybridCLRLoaderTests.Wait(() => _fixture.PendingProvides == 1, "shared Module manifest producer");
             Assert.That(load.IsDone, Is.False, "This regression needs a real pending resource load.");
             LogAssert.Expect(UnityEngine.LogType.Exception, new System.Text.RegularExpressions.Regex("Intentional shared-load observer"));
             load.AddCompleteEvent(_ => throw new InvalidOperationException("Intentional shared-load observer"));
-            var request = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, typeof(HybridCLRProbeModule).FullName);
+            var request = _ownedRequest = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, typeof(HybridCLRProbeModule).FullName);
+            _fixture.FinishPendingResources();
             for (var i = 0; i < 30 && !request.IsDone; i++)
             {
                 yield return null;
@@ -120,10 +127,13 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         [UnityTest]
         public IEnumerator RemovingPublicLoadObserversCannotRemoveInternalModuleContinuation()
         {
+            _fixture.HoldResources = true;
             var load = _fixture.Loader.LoadAsync(HybridCLRLoaderTests.Address);
+            yield return HybridCLRLoaderTests.Wait(() => _fixture.PendingProvides == 1, "Module continuation manifest producer");
             Assert.That(load.IsDone, Is.False);
-            var request = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, typeof(HybridCLRProbeModule).FullName);
+            var request = _ownedRequest = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, typeof(HybridCLRProbeModule).FullName);
             load.RemoveAllCompleteEvent();
+            _fixture.FinishPendingResources();
             for (var i = 0; i < 30 && !request.IsDone; i++)
             {
                 yield return null;
@@ -136,7 +146,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         [UnityTest]
         public IEnumerator ExactEntryTypeUsesCoreLifecycleAndBlocksDisposalUntilModuleIsClosed()
         {
-            var request = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, typeof(HybridCLRProbeModule).FullName);
+            var request = _ownedRequest = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, typeof(HybridCLRProbeModule).FullName);
             Assert.Throws<NotSupportedException>(() => request.Abort());
             yield return request;
             Assert.That(request.Exception, Is.Null, request.Error);
@@ -152,13 +162,13 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         {
             var failure = new InvalidOperationException("Intentional isolated Module failure.");
             HybridCLRProbeModule.Starting = () => throw failure;
-            var failed = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, typeof(HybridCLRProbeModule).FullName);
+            var failed = _ownedRequest = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, typeof(HybridCLRProbeModule).FullName);
             yield return failed;
             Assert.That(failed.Exception, Is.SameAs(failure));
             Assert.That(failed.RequiresRestart, Is.False);
             Assert.That(ModuleManager.GetModule(typeof(HybridCLRProbeModule)), Is.Null);
             HybridCLRProbeModule.Starting = null;
-            var retry = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, typeof(HybridCLRProbeModule).FullName);
+            var retry = _ownedRequest = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, typeof(HybridCLRProbeModule).FullName);
             yield return retry;
             Assert.That(retry.Exception, Is.Null, retry.Error);
             Assert.That(retry.Code, Is.SameAs(failed.Code));
@@ -167,7 +177,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         [UnityTest]
         public IEnumerator MissingModuleTypeFinishesWithoutScanningOtherAssemblies()
         {
-            var request = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, "Definitely.Not.A.Module");
+            var request = _ownedRequest = _fixture.Loader.StartModuleAsync(HybridCLRLoaderTests.Address, Entry, "Definitely.Not.A.Module");
             yield return request;
             Assert.That(request.Exception, Is.TypeOf<TypeLoadException>());
             Assert.That(request.Module, Is.Null);
@@ -178,7 +188,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         public IEnumerator PendingModuleReportsMonotonicCodeAndCoreSceneProgressBeforeCompletion()
         {
             yield return _fixture.TearDown();
-            _fixture.Initialize("Metadata");
+            yield return _fixture.Initialize("Metadata");
             _ownedScene = SceneManager.CreateScene("YLHybridCLR.Progress." + Guid.NewGuid().ToString("N"));
             _pendingScene = new PendingScene { PendingProgress = 0.2f };
             _ownedProvider = new PendingSceneProvider(_pendingScene);
@@ -268,19 +278,14 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Assert.That(_ownedRequest.Module, Is.SameAs(ModuleManager.GetModule(typeof(HybridCLRProbeModule))));
             Assert.That(_ownedRequest.Module.State, Is.EqualTo(ModuleState.Running));
             Assert.That(_ownedRequest.Code, Is.Not.Null);
-            var mode = typeof(HybridCLRLoadResult).GetProperty("Mode", BindingFlags.Instance | BindingFlags.Public);
-            Assert.That(mode, Is.Not.Null, "必须明确区分 EditorFast、EditorSimulation 和 Native。");
-            Assert.That(mode.PropertyType.IsEnum, Is.True);
-            Assert.That(mode.PropertyType.FullName, Is.EqualTo("YLFramework.Integrations.HybridCLR.HybridCLRLoadMode"));
-            Assert.That(mode.GetValue(_ownedRequest.Code).ToString(), Is.EqualTo("EditorFast"));
+            Assert.That(_ownedRequest.Code.Mode, Is.EqualTo(HybridCLRLoadMode.EditorFast));
             Assert.That(_ownedRequest.Code.CodePackageId, Is.Null.Or.Empty, "未经 manifest 校验不能伪造 CodePackageId。");
             Assert.That(_ownedRequest.Code.Assemblies[Entry], Is.SameAs(typeof(HybridCLRProbeModule).Assembly));
             Assert.That(_nativeCalls, Is.Zero);
             Assert.That(_fixture.Process.Projects, Is.Empty);
             Assert.That(_fixture.Process.Assemblies, Is.Empty);
             Assert.That(_fixture.Process.ActiveJob, Is.Null);
-            Assert.That(_fixture.ResourcesSystem.GetDiagnosticsReport().History, Is.Empty, "快路径不能尝试读取 manifest、DLL 或 metadata。");
-            Assert.That(_fixture.ResourcesSystem.GetDiagnosticsSnapshot().LeaseCount, Is.Zero);
+            AssertNoCodeResourcesWereRead();
             Assert.Throws<InvalidOperationException>(() => _fixture.Loader.Dispose());
             _ownedRequest.Module.Close();
             _fixture.Loader.Dispose();
@@ -307,7 +312,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             Assert.That(_nativeCalls, Is.Zero);
             Assert.That(_fixture.Process.Projects, Is.Empty);
             Assert.That(_fixture.Process.Assemblies, Is.Empty);
-            Assert.That(_fixture.ResourcesSystem.GetDiagnosticsReport().History, Is.Empty);
+            AssertNoCodeResourcesWereRead();
             _fixture.Loader.Dispose();
         }
 
@@ -319,12 +324,14 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             yield return _ownedRequest;
             Assert.That(_ownedRequest.Exception, Is.Null);
             Assert.That(_ownedRequest.Module.State, Is.EqualTo(ModuleState.Running));
-            using (var shutdown = _fixture.ResourcesSystem.ShutdownAsync())
+            using (var shutdown = _fixture.Startup.StopAsync())
             {
                 yield return shutdown;
                 Assert.That(shutdown.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), shutdown.Error?.ToString());
             }
             Assert.That(_fixture.ResourcesSystem.IsAvailable, Is.False);
+            Assert.That(_fixture.ResourcesSystem.IsSessionActive, Is.False);
+            Assert.That(ResourceSystem.Current, Is.Null);
             Assert.That(_ownedRequest.Module.State, Is.EqualTo(ModuleState.Running));
             Assert.Throws<InvalidOperationException>(() => _fixture.Loader.Dispose(), "Resource shutdown is not Module shutdown.");
             _ownedRequest.Module.Close();
@@ -334,11 +341,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         private IEnumerator InitializeWithoutCodeResources()
         {
             yield return _fixture.TearDown();
-            var catalog = new ResourceCatalog("hybridclr-test", Array.Empty<ResourceCatalogEntry>());
-            using var init = ResourceSystem.InitializeAsync(new ResourceConfiguration(new[] { catalog }));
-            Assert.That(init.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), init.Error?.ToString());
-            _fixture.ResourcesSystem = init.TakeResult();
-            _fixture.ResourcesSystem.ConfigureDiagnosticsHistory(8);
+            yield return _fixture.Initialize(includeCodeResources: false, bindCoreResourceProvider: true);
             _fixture.Calls.LoadMetadata = _ =>
             {
                 _nativeCalls++;
@@ -349,19 +352,20 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                 _nativeCalls++;
                 throw new InvalidOperationException("EditorFast must not load DLL bytes.");
             };
-            _fixture.Loader = new HybridCLRLoader(_fixture.ResourcesSystem, "base-test", _fixture.Calls, _fixture.Process);
-            _ownedProvider = _fixture.ResourcesSystem.BindCoreResourceProvider();
+            _ownedProvider = _fixture.Startup.CoreProvider;
         }
 
-        private HybridCLRModuleRequest StartEditorModule(string entryAssemblyName, string moduleTypeFullName)
+        private void AssertNoCodeResourcesWereRead()
         {
-            // 缺失新 API 时以普通断言 RED，而不是让测试程序集编译失败。
-            var method = typeof(HybridCLRLoader).GetMethod("StartEditorModuleAsync", BindingFlags.Instance | BindingFlags.Public,
-                null, new[] { typeof(string), typeof(string), typeof(string) }, null);
-            Assert.That(method, Is.Not.Null, "缺少 public StartEditorModuleAsync(string, string, string)。");
-            Assert.That(method.ReturnType, Is.EqualTo(typeof(HybridCLRModuleRequest)));
-            return (HybridCLRModuleRequest)method.Invoke(_fixture.Loader, new object[] { "hybridclr-test", entryAssemblyName, moduleTypeFullName });
+            Assert.That(_fixture.Provides, Is.Zero, "EditorFast must not touch the manifest tripwire or any code asset.");
+            var ledger = _fixture.ResourcesSystem.GetDiagnostics();
+            Assert.That(ledger.LeaseCount, Is.Zero);
+            Assert.That(ledger.RequestCount, Is.Zero);
+            Assert.That(ledger.PendingWorkCount, Is.Zero);
         }
+
+        private HybridCLRModuleRequest StartEditorModule(string entryAssemblyName, string moduleTypeFullName) =>
+            _fixture.Loader.StartEditorModuleAsync("hybridclr-test", entryAssemblyName, moduleTypeFullName);
 #endif
 
         private sealed class PendingSceneProvider : ICoreResourceProvider

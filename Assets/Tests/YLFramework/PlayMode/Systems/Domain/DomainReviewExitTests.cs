@@ -1,15 +1,16 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 using YLFramework.Buff;
 using YLFramework.Resource;
 using YLFramework.Skill;
-using Object = UnityEngine.Object;
-using ResourceLocation = YLFramework.Resource.ResourceLocation;
 
 namespace YLFramework.Tests.Extensions.Domain
 {
+    [Category("YL.Resource.Addressables.Regression")]
     public class DomainReviewExitTests
     {
         private sealed class SkillHost : IEquippableSkill
@@ -54,94 +55,61 @@ namespace YLFramework.Tests.Extensions.Domain
                 }
             }
         }
-        private sealed class Source : IResourceSource
-        {
-            public ResourceSourceId Id => new("domain-review");
-            public bool SupportsSynchronousLoad => true;
-            internal Object Asset;
-            internal int Releases;
-            public void Validate(ResourceCatalogEntry entry)
-            {
-            }
-            public ResourceSourceResult Load(ResourceCatalogEntry entry, Type type) => new(Asset);
-            public ResourceSourceOperation LoadAsync(ResourceCatalogEntry entry, Type type) => throw new NotSupportedException();
-            public void Release(Object asset) => Releases++;
-        }
-        private readonly List<Object> _owned = new();
-        private ResourceSystem _resources;
+        private AddressablesDomainResourceFixture _fixture;
         private bool _isActive;
-        [SetUp]
-        public void Setup()
+        [UnitySetUp]
+        public IEnumerator Setup()
         {
+            _isActive = false;
+            _fixture = null;
             Assert.That(ResourceSystem.Current, Is.Null);
             Assert.That(SkillManager.ConfigCount + BuffManager.ConfigCount, Is.Zero);
             _isActive = true;
+            _fixture = new AddressablesDomainResourceFixture();
+            yield return _fixture.Start();
         }
-        [TearDown]
-        public void Cleanup()
+        [UnityTearDown]
+        public IEnumerator Cleanup()
         {
             if (!_isActive)
             {
-                return;
+                yield break;
             }
 
             _isActive = false;
-            try
-            {
-                SkillManager.Shutdown();
-            }
-            finally
+            var errors = new List<Exception>();
+            foreach (Action close in new Action[] { SkillManager.Shutdown, BuffManager.Shutdown })
             {
                 try
                 {
-                    BuffManager.Shutdown();
+                    close();
                 }
-                finally
+                catch (Exception error)
                 {
-                    if (_resources != null)
-                    {
-                        using var stopped = _resources.ShutdownAsync();
-                        Assert.That(stopped.Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
-                    }
-                    foreach (var asset in _owned)
-                    {
-                        if (asset)
-                        {
-                            Object.DestroyImmediate(asset);
-                        }
-                    }
-
-                    _owned.Clear();
-                    _resources = null;
+                    errors.Add(error);
                 }
             }
+            if (_fixture != null)
+                yield return _fixture.Close();
+            if (errors.Count != 0)
+                throw new AggregateException(errors);
         }
-        private T Own<T>() where T : ScriptableObject
-        {
-            var value = ScriptableObject.CreateInstance<T>();
-            _owned.Add(value);
-            return value;
-        }
-        private Source Resource(Object asset, Type type)
-        {
-            var source = new Source { Asset = asset };
-            using var initialized = ResourceSystem.InitializeAsync(new ResourceConfiguration(new[] { new ResourceCatalog("domain-review", new[]
-            { new ResourceCatalogEntry("root", new ResourceAddress("domain-review", "root"), new ResourceLocation(source.Id, "root", type)) }) }, new IResourceSource[] { source }));
-            _resources = initialized.TakeResult();
-            return source;
-        }
+        private T Own<T>() where T : ScriptableObject => _fixture.New<T>();
 
-        [Test]
-        public void SkillConfigExitContinuesAcrossOwnersAfterRemoveExceptionsAndReturnsLease()
+        [UnityTest]
+        public IEnumerator SkillConfigExitContinuesAcrossOwnersAfterRemoveExceptionsAndReturnsLease()
         {
             var root = Own<SkillsConfig>();
             root.name = "Domain.Review.Skill";
             var data = Own<SkillConfigData>();
             data.id = 100;
+            data.parent = root;
             data.skillClassFullName = typeof(ThrowingSkill).FullName;
             root.skills.Add(data);
-            var source = Resource(root, typeof(SkillsConfig));
-            SkillManager.LoadConfig(_resources, new ResourceAddress("domain-review", "root"));
+            _fixture.Add("root", root);
+            var load = _fixture.Track(SkillManager.LoadConfigAsync(_fixture.Resources, _fixture.Address("root")));
+            yield return AddressablesDomainResourceFixture.Wait(() => load.IsCompleted, "throwing skill config load");
+            Assert.That(load.IsCompletedSuccessfully, Is.True, load.Exception?.ToString());
             var first = new SkillHost();
             var second = new SkillHost();
             var a = SkillManager.AddSkills(first, 100);
@@ -152,21 +120,24 @@ namespace YLFramework.Tests.Extensions.Domain
             Assert.That(first.Skills, Is.Empty);
             Assert.That(second.Skills, Is.Empty);
             Assert.That(SkillManager.ConfigCount + SkillManager.HostCount, Is.Zero);
-            Assert.That(source.Releases, Is.EqualTo(1));
-            Assert.That(_resources.GetDiagnosticsSnapshot().RecordCount, Is.Zero);
+            yield return AddressablesDomainResourceFixture.Wait(() => _fixture.Provider.Releases == 1 && AddressablesDomainResourceFixture.IsQuiescent(_fixture.Resources), "throwing skill root cleanup");
+            AddressablesDomainResourceFixture.AssertQuiescent(_fixture.Resources);
         }
 
-        [Test]
-        public void BuffConfigExitContinuesAcrossOwnersAfterRemoveExceptionsAndReturnsLease()
+        [UnityTest]
+        public IEnumerator BuffConfigExitContinuesAcrossOwnersAfterRemoveExceptionsAndReturnsLease()
         {
             var root = Own<BuffsConfig>();
             root.name = "Domain.Review.Buff";
             var data = Own<BuffConfigData>();
             data.id = 100;
+            data.parent = root;
             data.buffClassFullName = typeof(ThrowingBuff).FullName;
             root.buffs.Add(data);
-            var source = Resource(root, typeof(BuffsConfig));
-            BuffManager.LoadConfig(_resources, new ResourceAddress("domain-review", "root"));
+            _fixture.Add("root", root);
+            var load = _fixture.Track(BuffManager.LoadConfigAsync(_fixture.Resources, _fixture.Address("root")));
+            yield return AddressablesDomainResourceFixture.Wait(() => load.IsCompleted, "throwing buff config load");
+            Assert.That(load.IsCompletedSuccessfully, Is.True, load.Exception?.ToString());
             var first = new BuffHost();
             var second = new BuffHost();
             BuffManager.AddBuff(first, 100);
@@ -175,7 +146,8 @@ namespace YLFramework.Tests.Extensions.Domain
             Assert.That(first.Buffs, Is.Empty);
             Assert.That(second.Buffs, Is.Empty);
             Assert.That(BuffManager.ConfigCount + BuffManager.HostCount + BuffManager.EffectOwnerCount, Is.Zero);
-            Assert.That(source.Releases, Is.EqualTo(1));
+            yield return AddressablesDomainResourceFixture.Wait(() => _fixture.Provider.Releases == 1 && AddressablesDomainResourceFixture.IsQuiescent(_fixture.Resources), "throwing buff root cleanup");
+            AddressablesDomainResourceFixture.AssertQuiescent(_fixture.Resources);
         }
 
         [Test]

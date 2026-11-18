@@ -70,7 +70,7 @@ namespace YLFramework.Editor.Help
                     HelpBlock.Paragraph("Editor 入口", "YLFramework/Resource/Workbench 用于配置资源项目、分析分包、构建与本地发布、版本交付和诊断。一个资源项目可登记多个已有来源目录及各自的地址前缀，无需把资源搬到统一专用根；组的选择项决定构建内容，图集生成目录按需单独登记。现有Editor配置已统一为此模型；从外部导入的旧单根配置不保证自动读取或迁移。" +
                         "YLFramework/Toolkit 下保留日志清理、打开目录与帮助。生成物与构建操作不从 Help 执行。" +
                         "Action/Audio 保持各自帮助和成熟工具，不在此复制其 API 文档。"),
-                    HelpBlock.Notice("交付边界", "框架只通过 UPM 包安装，旧 unitypackage Exporter 已退役。主包包含 Runtime、Editor、正式资产、BouncyCastle及许可、Documentation~ 与需显式导入的 Samples~。" +
+                    HelpBlock.Notice("交付边界", "框架只通过 UPM 包安装，旧 unitypackage Exporter 已退役。主包包含 Runtime、Editor、正式资产、许可、Documentation~ 与需显式导入的 Samples~。" +
                         "不含 Tests、独立选装包、外部SDK、开发工具、中间产物、游戏资源或 Assets/YLFrameworkData。" +
                          "框架仍需 UGUI、Newtonsoft 等既有依赖，主体不依赖外部资源框架。EventListener 使用原生 Inspector，Sirenix 插件已退出，宿主商业插件不分发。"),
                     Document("工具导航与 UPM 安装", "README.md"),

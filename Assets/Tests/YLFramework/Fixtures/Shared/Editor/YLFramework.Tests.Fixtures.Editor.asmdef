@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Tests.Fixtures.Editor",
     "rootNamespace": "YLFramework.Testing.EditorFixtures",
-    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.Tests.Fixtures"],
+    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.Tests.Fixtures", "Unity.Addressables", "Unity.Addressables.Editor", "Unity.ResourceManager"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

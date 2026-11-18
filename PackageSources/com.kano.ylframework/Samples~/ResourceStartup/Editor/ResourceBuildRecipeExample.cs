@@ -1,21 +1,18 @@
-using UnityEditor;
+using System.Threading;
+using UnityEditor.AddressableAssets.Settings;
 using YLFramework.Editor.Resource;
-using YLFramework.Resource;
 
 namespace YLFramework.Samples.Resource.Editor
 {
-    /// <summary>在已稳定的 Editor 主线程调用；不打开窗口、不依赖 Selection，不代表独立 CI/batchmode 验收。</summary>
-    public static class ResourceBuildRecipeExample
+    /// <summary>显式使用现有官方 Settings；文件保留原 GUID，不在 Editor 启动任何运行时服务。</summary>
+    public static class ResourceContentBuildExample
     {
-        /// <summary>显式加载已保存的构建配方并交给正式服务执行，不初始化 Runtime。</summary>
-        /// <param name="recipeAssetPath">Assets 下可编辑的 ResourceBuildRecipe 资产路径。</param>
-        /// <param name="applicationKeys">应用持有的可选内容密钥来源，不保存到配方，也不由样例释放。</param>
-        /// <returns>分阶段记录构建、发布和常量生成结果的报告，调用方须分别检查错误字段。</returns>
-        /// <remarks>配方与项目定义须先显式保存，目标平台须已激活；发布和常量生成由配方决定，输出不在调用结束时删除。</remarks>
-        public static ResourceEditorBuildReport Build(string recipeAssetPath, IResourceContentKeyProvider applicationKeys = null)
-        {
-            var recipe = AssetDatabase.LoadAssetAtPath<ResourceBuildRecipe>(recipeAssetPath);
-            return ResourceEditorOperations.ExecuteRecipe(recipe, provider: applicationKeys);
-        }
+        /// <summary>在稳定 Editor 中正式构建，并向明确的新路径归档本 Player 的官方内容状态；不上传或部署。</summary>
+        public static ResourceEditorBuildReport Build(AddressableAssetSettings settings, string contentStateArchivePath,
+            CancellationToken cancellation = default) => ResourceEditorOperations.BuildContent(settings, contentStateArchivePath, cancellation);
+
+        /// <summary>使用目标 Player 的冻结官方状态构建更新；限制冲突需用户先在官方工具中解决。</summary>
+        public static ResourceEditorBuildReport BuildUpdate(AddressableAssetSettings settings, string previousContentStatePath,
+            CancellationToken cancellation = default) => ResourceEditorOperations.BuildContentUpdate(settings, previousContentStatePath, cancellation);
     }
 }

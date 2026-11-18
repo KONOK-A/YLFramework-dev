@@ -443,7 +443,7 @@ namespace YLFramework.Foundation.Tests
             Assert.That(references, Does.Not.Contain("YLFramework.Foundation.Runtime"));
             Assert.That(references, Does.Not.Contain("YLFramework.Core.Runtime"));
             var allowedReferences = new[] { "netstandard", "mscorlib", "System", "Microsoft.CSharp", "Microsoft.Win32.Primitives",
-                "UnityEngine", "Newtonsoft.Json", "BouncyCastle.Cryptography" };
+                "UnityEngine", "Newtonsoft.Json", "Unity.Addressables", "Unity.ResourceManager", "Unity.Profiling.Core" };
             Assert.That(references.All(name => allowedReferences.Contains(name) ||
                 name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
                 name.StartsWith("UnityEditor.", StringComparison.Ordinal)),

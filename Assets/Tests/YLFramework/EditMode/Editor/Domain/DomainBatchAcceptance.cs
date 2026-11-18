@@ -140,7 +140,7 @@ namespace YLFramework.Tests.Extensions.Domain
                 var playerRefs = playerRuntime.assemblyReferences.Select(assembly => assembly.name)
                     .Concat(playerRuntime.compiledAssemblyReferences.Select(Path.GetFileNameWithoutExtension)).Distinct().OrderBy(name => name).ToArray();
                 if (playerRefs.Any(name => !new[] { "mscorlib", "netstandard", "System", "System.Core", "Microsoft.CSharp",
-                    "Newtonsoft.Json", "BouncyCastle.Cryptography" }.Contains(name) && !name.StartsWith("UnityEngine.", StringComparison.Ordinal)))
+                    "Newtonsoft.Json", "Unity.Addressables", "Unity.ResourceManager", "Unity.Profiling.Core" }.Contains(name) && !name.StartsWith("UnityEngine.", StringComparison.Ordinal)))
                 {
                     throw new InvalidOperationException("Forbidden Player assembly edge.");
                 }

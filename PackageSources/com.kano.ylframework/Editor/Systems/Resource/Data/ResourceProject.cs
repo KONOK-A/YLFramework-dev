@@ -5,8 +5,7 @@ using YLFramework.Resource;
 
 namespace YLFramework.Editor.Resource
 {
-    /// <summary>自有资源项目。SO GUID 表示配置归属，ProjectId 表示稳定技术身份；不读取旧 Importer 标记。</summary>
-    [CreateAssetMenu(menuName = "YLFramework/Resource/Project", fileName = "ResourceProject")]
+    /// <summary>旧版迁移输入。保留全部序列化字段，不再作为新版作者事实或构建入口。</summary>
     public sealed class ResourceProject : ScriptableObject
     {
         /// <summary>运行时地址及输出归属使用的稳定项目标识；修改不会迁移已有缓存或发布。</summary>

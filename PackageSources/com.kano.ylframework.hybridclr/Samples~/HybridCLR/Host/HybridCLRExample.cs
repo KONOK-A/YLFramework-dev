@@ -60,6 +60,11 @@ namespace YLFramework.Samples.HybridCLR
         {
             get; private set;
         }
+        /// <summary>本轮是否在读取业务资源前应用了显式选择的官方 Catalog。</summary>
+        public bool StartupCatalogUpdated
+        {
+            get; private set;
+        }
         private InstanceLease _instance;
         private bool _isStarting;
 
@@ -67,26 +72,43 @@ namespace YLFramework.Samples.HybridCLR
         /// <param name="configuration">应用提供的资源配置，须包含所需代码和样例资源。</param>
         /// <param name="projectId">本次代码及样例资源所在的项目身份。</param>
         /// <param name="compatibilityId">当前原生基座的内容兼容身份。</param>
+        /// <param name="startupCatalogId">调用方明确选择的官方 Catalog ID；不传时只使用已安装内容。</param>
         /// <returns>由应用启动并等待的协程枚举器，不自动在 Awake 或 Start 执行。</returns>
         /// <remarks>拒绝与本实例尚未关闭的职责重叠；发生异常后调用方仍负责关闭已创建的入口。</remarks>
-        public IEnumerator Run(ResourceConfiguration configuration, string projectId, string compatibilityId)
+        public IEnumerator Run(ResourceConfiguration configuration, string projectId, string compatibilityId, string startupCatalogId = null)
         {
             if (_isStarting || Startup?.Resources != null || Loader != null)
             {
                 throw new InvalidOperationException("Close this sample's prior responsibilities first.");
             }
+            if (startupCatalogId != null && (string.IsNullOrWhiteSpace(startupCatalogId) || configuration?.EnableStartupCatalogUpdates != true))
+            {
+                throw new ArgumentException("Select an exact catalog ID with controlled startup updates enabled.", nameof(startupCatalogId));
+            }
 
             _isStarting = true;
             Result = "Starting";
+            StartupCatalogUpdated = false;
             try
             {
                 HybridCLRExampleState.ProjectId = projectId;
                 HybridCLRExampleState.Message = null;
                 HybridCLRExampleState.Async = null;
-                Startup = new ResourceStartup(configuration, bindCore: true);
+                Startup = new ResourceStartup(configuration, bindCoreResourceProvider: true);
                 using var initialized = Startup.StartAsync();
                 yield return initialized;
                 initialized.TakeResult();
+                if (startupCatalogId != null)
+                {
+                    using var check = Startup.Resources.CheckForCatalogUpdatesAsync();
+                    yield return check;
+                    if (check.TakeResult().Contains(startupCatalogId, StringComparer.Ordinal))
+                    {
+                        using var apply = Startup.Resources.ApplyCatalogUpdatesAsync(new[] { startupCatalogId });
+                        yield return apply;
+                        StartupCatalogUpdated = apply.TakeResult();
+                    }
+                }
                 Loader = new HybridCLRLoader(Startup.Resources, compatibilityId);
                 ModuleRequest = Loader.StartModuleAsync(new ResourceAddress(projectId, HybridCLRManifest.ManifestPath), EntryAssembly, ModuleType);
                 yield return ModuleRequest;
@@ -102,7 +124,7 @@ namespace YLFramework.Samples.HybridCLR
                 }
 
                 var asyncResult = task.GetAwaiter().GetResult();
-                using var prefab = Startup.Resources.InstantiateAsync(new ResourceAddress(projectId, "sample/hot-view"));
+                using var prefab = Startup.Resources.InstantiateAsync(projectId + "/sample/hot-view");
                 yield return prefab;
                 _instance = prefab.TakeResult();
                 var behaviour = _instance.GameObject.GetComponents<Component>().SingleOrDefault(c => c && c.GetType().FullName == "YLFramework.Samples.HybridCLR.HotUpdate.ExampleBehaviour");

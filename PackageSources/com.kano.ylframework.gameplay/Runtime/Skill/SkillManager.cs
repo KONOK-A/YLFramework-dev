@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 using YLFramework.Pooling;
 using YLFramework.Singletons;
@@ -15,7 +16,9 @@ namespace YLFramework.Skill
     public static class SkillManager
     {
         private static readonly Dictionary<string, SkillsConfig> _configs = new(StringComparer.Ordinal);
-        private static readonly Dictionary<SkillsConfig, IDisposable> _leases = new();
+        private static readonly Dictionary<SkillsConfig, AssetLease<SkillsConfig>> _leases = new();
+        private static readonly HashSet<ResourceRequest<AssetLease<SkillsConfig>>> _configLoads = new();
+        private static int _configGeneration;
         private static readonly List<IEquippableSkill> _hosts = new();
         private static readonly HashSet<IEquippableSkill> _closing = new();
         private static readonly HashSet<SkillsConfig> _removingConfigs = new();
@@ -82,11 +85,53 @@ namespace YLFramework.Skill
             _configs.Add(config.name, config);
         }
 
-        /// <summary>Acquire的根Lease由Manager接管，直到RemoveConfig或Shutdown。</summary>
+        /// <summary>只同步登记已加载配表，冷资源明确抛 InProgress；根租约保留到配表或管理器关闭。</summary>
         /// <remarks>同一资产已有管理器租约时释放本次取得的租约；登记失败也释放本次租约。</remarks>
         public static void LoadConfig(ResourceSystem resources, ResourceAddress address)
         {
-            var lease = resources.Acquire<SkillsConfig>(address);
+            if (resources == null)
+                throw new ArgumentNullException(nameof(resources));
+            if (!address.IsValid || address.SubAsset != null)
+            {
+                throw new ResourceException(ResourceError.InvalidAddress, "A Skill config requires an exact project/path address.");
+            }
+            string key = address.ProjectId + "/" + address.Path;
+            if (!resources.TryAcquireLoaded<SkillsConfig>(key, out var lease))
+            {
+                throw new ResourceException(ResourceError.InProgress, "The Skill config is not loaded. Use LoadConfigAsync: " + key);
+            }
+            RegisterConfig(lease);
+        }
+
+        /// <summary>异步取得并登记配表；管理器持有独立根租约，Shutdown 仅取消本管理器的等待。</summary>
+        public static async Task LoadConfigAsync(ResourceSystem resources, ResourceAddress address)
+        {
+            if (resources == null)
+                throw new ArgumentNullException(nameof(resources));
+            if (_isStopping)
+                throw new InvalidOperationException("技能配表正在关闭。");
+            int generation = _configGeneration;
+            using var request = resources.AcquireAsync<SkillsConfig>(address);
+            _configLoads.Add(request);
+            try
+            {
+                var lease = await request;
+                if (_isStopping || generation != _configGeneration)
+                {
+                    lease.Dispose();
+                    throw new OperationCanceledException("Skill config loading was cancelled by manager closure.");
+                }
+                RegisterConfig(lease);
+            }
+            finally
+            {
+                _configLoads.Remove(request);
+            }
+        }
+
+        /// <summary>接管本次根租约；重复登记或校验失败只归还本次取得的责任。</summary>
+        private static void RegisterConfig(AssetLease<SkillsConfig> lease)
+        {
             try
             {
                 AddConfig(lease.Asset);
@@ -653,10 +698,15 @@ namespace YLFramework.Skill
             }
 
             _isStopping = true;
+            _configGeneration++;
             _depth++;
             var errors = new List<Exception>();
             try
             {
+                foreach (var request in new List<ResourceRequest<AssetLease<SkillsConfig>>>(_configLoads))
+                {
+                    request.Cancel();
+                }
                 foreach (var host in _hosts.ToArray())
                 {
                     try

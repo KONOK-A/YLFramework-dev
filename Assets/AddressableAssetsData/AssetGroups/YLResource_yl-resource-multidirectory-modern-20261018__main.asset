@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_yl-resource-multidirectory-modern-20261018__main
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_yl-resource-multidirectory-modern-20261018__main
+  m_GUID: dde556525c9a3174c811c663e76480f5
+  m_SerializeEntries:
+  - m_GUID: 2723e6ed8f82a094181e5f2daf2687b1
+    m_Address: yl-resource-multidirectory-modern-20261018/atlases/multi-root
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-resource-multidirectory-modern-20261018/main
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 87bc9585aa8022d4b8caa0d4511c45c5
+    m_Address: yl-resource-multidirectory-modern-20261018/text/selected.txt
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-resource-multidirectory-modern-20261018/main
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: e1cdd2cb3aa9a4f4d83fef176675efe0
+    m_Address: yl-resource-multidirectory-modern-20261018/prefabs/CrossRootA.prefab
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-resource-multidirectory-modern-20261018/main
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: d18c0671ddf042e4784b515ac5569116, type: 2}
+    - {fileID: 11400000, guid: da749ada84dbf8d4483961403c2a30f7, type: 2}

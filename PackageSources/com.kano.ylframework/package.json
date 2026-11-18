@@ -15,6 +15,7 @@
     "Plugins", "Plugins.meta", "Prefabs", "Prefabs.meta", "Documentation~", "Documentation~.meta", "Samples~", "Samples~.meta"
   ],
   "dependencies": {
+    "com.unity.addressables": "1.25.0",
     "com.unity.ugui": "1.0.0",
     "com.unity.nuget.newtonsoft-json": "3.2.1",
     "com.unity.modules.animation": "1.0.0",

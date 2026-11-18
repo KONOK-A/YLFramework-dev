@@ -18,6 +18,7 @@ $sdkProjects = @(
 $localOnly = @(
     '^(Library|Temp|Obj|Logs|UserSettings|Build|Builds|AssetBundles|MemoryCaptures|Recordings|UIElementsSchema|\.vs|\.idea)/'
     '^\.kilo/'
+    '^LocalArchives/ResourceLegacy(?:/|$)'
     '^(AGENTS\.md|kilocodeignore)$'
     '^Assets/YLFramework/AGENTS\.md(?:\.meta)?$'
     '^Assets/YLFramework(?:/|\.meta$)'

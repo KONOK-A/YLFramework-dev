@@ -105,10 +105,11 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 | HybridCLR | Daily | SDK 前置下的 Editor/PlayMode 与显式样例，不代表 native 安装或热更 Player |
 | Help | Daily | 真实元数据/XML、窗口、搜索、注册及只读边界 |
 | Audio | Daily / Special | 播放、资源、所有权与会话；输出测量另用 AudioNative |
-| AudioNative | Special | Bundle、PCM Listener、DSP/真实输出与图形 Player |
-| Resource | Daily / Special | Catalog/Codec/Bundle、场景、会话与租约 |
-| ResourceUpdates | Special | 更新、构建、签名、下载、Envelope、CNG 与控制协议 |
-| ResourceCurrentPublication | Special | 正式作者输入的保存冷读、构建/发布/部署与双进程 Player |
+| AudioNative | Special | 官方 Addressables 内容、PCM Listener、DSP/真实输出与图形 Player |
+| Resource | Daily / Special | 地址值合同；Special 验证真实的跨 Play 会话与资源所有权 |
+| ResourceAddressables / ResourceAddressablesRuntime | Daily | 官方内容、Scope/Lease、场景、实例、图片及包版本 |
+| ResourceUpdates | Special | 官方下载尺寸、预下载、Catalog 检查和首次启动更新窗口 |
+| ResourceCurrentPublication | Special | 正式 Addressables 构建与双进程 Player 消费，验证部署内容摘要和关闭账本 |
 
 组合测试不等于重复执行每个独立包的完整目录；独立 Save 用例也不应被装有主包的 Data 宿主代替。Quick 的源码切片不代表完整 Runtime 编译，安装图不代表 NUnit 或 Player 行为通过。
 
@@ -118,7 +119,6 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 - `Special/Action` 不开启交互桌面、不抢焦点；正常完成后只退出工具自有的后台 Editor。`ActionVisualTests` 属于 `YL.Manual.ActionVisual` 且标记 Explicit，不在 Daily/Special 自动选集中。原生画面使用下述独立非退出入口，不能改回自动桌面门禁或以模拟点击绕过前置。
 - `AudioSession` 只证明会话，`AudioNative` 才包含真实输出/DSP；设备条件不足应报告未执行，不改测量断言或系统音量。
 - Resource/Audio 的原生 Bundle 与 Player 流程受 Windows Mono 路径预算限制，使用足够短的独立工作根，不能通过路径别名、少复制输入或删产物来规避。
-- ResourceUpdates 的 TLS 夹具需要在实际运行进程环境中提供 `YL_RESOURCE_TEST_PFX` 和 `YL_RESOURCE_TEST_PASSWORD`，不要记录值或修改系统信任；缺少前置直接失败。
 - DOTween 用 `-DOTweenArchive` 显式提供批准 Standard SDK，测试工具校验完整归档，在自有宿主部署并设置宏，不读取或改写开发宿主 SDK/宏。普通 Action/Help 不安装此 SDK。
 - 连续 Play / SessionScenes 使用工具拥有、已保存的空场景。只在严格确认 UTF 默认布局和测试尚未开始时准备场景，不自动保存未知或脏场景。
 - Player 探针仅在相应 `YL_*_ACCEPTANCE` 构建符号或专用产品外程序集启用，不能进入普通生产编译图。

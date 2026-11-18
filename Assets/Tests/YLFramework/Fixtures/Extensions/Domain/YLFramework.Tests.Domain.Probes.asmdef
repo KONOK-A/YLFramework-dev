@@ -7,7 +7,9 @@
     "YLFramework.Skill",
     "YLFramework.Buff",
     "YLFramework.Mission",
-    "YLFramework.Equipment"
+    "YLFramework.Equipment",
+    "Unity.Addressables",
+    "Unity.ResourceManager"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

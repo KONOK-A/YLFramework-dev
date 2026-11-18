@@ -28,8 +28,10 @@ namespace YLFramework.Integrations.HybridCLR.Editor
     internal sealed class HybridCLRBuildBaseline
     {
         internal static readonly string[] GeneratedNames = { "AssemblyManifest.inc", "MethodBridge.inc", "UnityVersion.inc", "link.xml" };
-        /// <summary>基线回执格式版本，当前为 1。</summary>
-        public int SchemaVersion = 1;
+        internal const string ContentStateFile = "Addressables/addressables_content_state.bin";
+        /// <summary>Addressables 基座格式；旧私有 Resource 基座必须重新构建。</summary>
+        public int SchemaVersion = 2;
+        public string ResourceBackend = "addressables-v2";
         /// <summary>直接基座拥有者的 Profile 资产 GUID。</summary>
         public string ProfileGuid;
         /// <summary>生成基座时全局登记及相关构建设置的摘要。</summary>
@@ -71,7 +73,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             try
             {
                 var marker = ReadObject(File.ReadAllText(markerPath));
-                if (marker.Properties().Count() != 2 || marker.Value<int>("schemaVersion") != 1 ||
+                if (marker.Properties().Count() != 2 || marker.Value<int>("schemaVersion") != 2 ||
                     marker.Value<string>("baselineSha256") != HybridCLRManifest.Hash(bytes))
                 {
                     throw new InvalidDataException("The baseline completion marker does not match its receipt.");
@@ -84,7 +86,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             {
                 throw new InvalidDataException("Invalid baseline JSON.", exception);
             }
-            if (baseline == null || baseline.SchemaVersion != 1 || !IsHash(baseline.SettingsFingerprint) ||
+            if (baseline == null || baseline.SchemaVersion != 2 || baseline.ResourceBackend != "addressables-v2" || !IsHash(baseline.SettingsFingerprint) ||
                 !IsHash(baseline.PlayerBuildHash) || !Guid.TryParseExact(baseline.ProfileGuid, "N", out _) ||
                 baseline.InitialManifest == null || baseline.Files == null || baseline.Files.Length == 0 || baseline.Files.Length > 2048 ||
                 baseline.NativeRequirements == null || baseline.NativeRequirements.Length > 100000 ||
@@ -99,7 +101,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             var assemblyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var file in baseline.Files)
             {
-                if (file == null || !IsHash(file.Sha256) || file.Length <= 0 || file.Length > HybridCLRManifest.MaximumPayloadBytes)
+                if (file == null || !IsHash(file.Sha256) || file.Length <= 0 || file.Path != ContentStateFile && file.Length > HybridCLRManifest.MaximumPayloadBytes)
                 {
                     throw new InvalidDataException("Invalid baseline file record.");
                 }
@@ -122,15 +124,16 @@ namespace YLFramework.Integrations.HybridCLR.Editor
                         throw new InvalidDataException("Frozen assembly identity mismatch: " + file.Path);
                     }
                 }
-                else if (!GeneratedNames.Any(n => file.Path == "Generated/" + n) || file.Identity != null || file.Mvid != null)
+                else if ((!GeneratedNames.Any(n => file.Path == "Generated/" + n) && file.Path != ContentStateFile) || file.Identity != null || file.Mvid != null)
                 {
                     throw new InvalidDataException("Unexpected baseline artifact: " + file.Path);
                 }
             }
             if (!baseline.Files.Any(f => f.Path.StartsWith("Aot/", StringComparison.Ordinal)) ||
-                GeneratedNames.Any(n => !baseline.Files.Any(f => f.Path == "Generated/" + n)))
+                GeneratedNames.Any(n => !baseline.Files.Any(f => f.Path == "Generated/" + n)) ||
+                !baseline.Files.Any(file => file.Path == ContentStateFile))
             {
-                throw new InvalidDataException("The baseline lacks final AOT or required native generation artifacts.");
+                throw new InvalidDataException("The baseline lacks final AOT, native generation artifacts or the official Player content state.");
             }
 
             foreach (var payload in baseline.InitialManifest.HotUpdateAssemblies)
@@ -206,7 +209,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             File.WriteAllBytes(stage + "/baseline.json", descriptor);
             File.WriteAllText(stage + "/complete.json", JsonConvert.SerializeObject(new
             {
-                schemaVersion = 1,
+                schemaVersion = 2,
                 baselineSha256 = HybridCLRManifest.Hash(descriptor)
             }), new UTF8Encoding(false));
             Read(stage);

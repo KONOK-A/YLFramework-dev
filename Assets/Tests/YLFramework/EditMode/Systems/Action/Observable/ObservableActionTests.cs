@@ -204,7 +204,8 @@ namespace YLFramework.Tests.Actions
                 Assert.That(method.GetParameters().Any(parameter => parameter.IsOptional), Is.False);
             }
             Assert.That(type.Assembly.GetReferencedAssemblies().All(reference =>
-                new[] { "netstandard", "mscorlib", "System", "System.Core", "Newtonsoft.Json", "BouncyCastle.Cryptography" }.Contains(reference.Name) ||
+                new[] { "netstandard", "mscorlib", "System", "System.Core", "Newtonsoft.Json", "Unity.Addressables",
+                    "Unity.ResourceManager", "Unity.Profiling.Core" }.Contains(reference.Name) ||
                 reference.Name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
                 reference.Name.StartsWith("UnityEditor.", StringComparison.Ordinal)), Is.True);
         }

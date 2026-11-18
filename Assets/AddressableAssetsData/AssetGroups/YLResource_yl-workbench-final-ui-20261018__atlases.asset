@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_yl-workbench-final-ui-20261018__atlases
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_yl-workbench-final-ui-20261018__atlases
+  m_GUID: 5be7419f4d80763428b0f2e15dd3ff80
+  m_SerializeEntries:
+  - m_GUID: 7b03530a077ed474387ee825756ad066
+    m_Address: yl-workbench-final-ui-20261018/atlases/icons/Extra
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-workbench-final-ui-20261018/atlases
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: a2ecc007754f66e4194b159a2f4f66e3
+    m_Address: yl-workbench-final-ui-20261018/atlases/menu
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-workbench-final-ui-20261018/atlases
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: be08e4aa06921ed4cafe5dc457b3d90b
+    m_Address: yl-workbench-final-ui-20261018/atlases/icons/Icons
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-workbench-final-ui-20261018/atlases
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: 53b6b715bd0068949befbc67b323c6c4, type: 2}
+    - {fileID: 11400000, guid: 1f7bb3b4a1bf4fd4993082203570b3bf, type: 2}

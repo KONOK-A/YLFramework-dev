@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Skill",
     "rootNamespace": "YLFramework.Skill",
-    "references": ["YLFramework.Runtime"],
+    "references": ["YLFramework.Runtime", "Unity.Addressables"],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

@@ -14,13 +14,40 @@ function Get-YLNativeTestAssembly {
         foreach ($declaration in $package['assemblies']) { $null = $absent.Add($declaration['name']) }
     }
     if ('com.kano.ylframework.localization' -cnotin $PackageIds) {
-        foreach ($name in @('Unity.Localization', 'Unity.Localization.Editor', 'Unity.Addressables', 'Unity.Addressables.Editor', 'Unity.ResourceManager')) {
+        foreach ($name in @('Unity.Localization', 'Unity.Localization.Editor')) {
             $null = $absent.Add($name)
         }
+    }
+    if ('com.kano.ylframework' -cnotin $PackageIds -and 'com.kano.ylframework.localization' -cnotin $PackageIds) {
+        foreach ($name in @('Unity.Addressables', 'Unity.Addressables.Editor', 'Unity.ResourceManager')) { $null = $absent.Add($name) }
     }
     $copy = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $Assembly -Depth 25) -AsHashtable -NoEnumerate
     $copy['references'] = @($Assembly['references'] | Where-Object { -not $absent.Contains($_) })
     return ,$copy
+}
+
+function Get-YLUnityAddressablesVersion([object] $EditorProfile) {
+    $null = Get-YLUnityPackageInputs $EditorProfile
+    $expected = if ($EditorProfile.version.StartsWith('2022.', [StringComparison]::Ordinal)) { '1.25.0' } else { '2.10.3' }
+    if ($null -eq $EditorProfile.PSObject.Properties['addressables'] -or $EditorProfile.addressables -cne $expected) {
+        throw 'The exact Editor profile must declare its verified Addressables version.'
+    }
+    return $expected
+}
+
+function Assert-YLUnityAddressablesVersion {
+    param([string] $ExpectedVersion, [Collections.IDictionary] $Lock, [object] $Response)
+    if (-not $Lock.Contains('dependencies') -or -not $Lock.dependencies.Contains('com.unity.addressables')) {
+        throw 'Addressables is absent from the actual host package resolution.'
+    }
+    $entry = $Lock.dependencies['com.unity.addressables']
+    if ($entry.version -cne $ExpectedVersion -or $entry.source -cne 'registry' -or
+        $null -eq $Response.PSObject.Properties['addressablesVersion'] -or
+        $null -eq $Response.PSObject.Properties['addressablesSource'] -or
+        $Response.addressablesVersion -cne $ExpectedVersion -or $Response.addressablesSource -cne 'Registry') {
+        throw 'Actual Addressables package version/source differs from the declared host profile.'
+    }
+    return [ordered]@{ requested = $ExpectedVersion; resolved = $entry.version; source = $entry.source; loaded = $Response.addressablesVersion }
 }
 
 function Get-YLUnityPackageInputs([object] $EditorProfile) {
@@ -195,10 +222,13 @@ function Invoke-YLUnitySuite {
         $nativeTools += $DOTweenArchive
     } elseif ($DOTweenArchive) { throw 'An ordinary native module cannot deploy a DOTween SDK.' }
     if ($hybridClr) {
-        if ($Module -cne 'HybridCLR' -or $Suite -cne 'Daily' -or $Definition.nativeLayout -cne 'Framework') { throw 'PrerequisiteNotMet: HybridCLR SDK requires the explicit Daily Framework module.' }
+        if ($Module -cnotin @('HybridCLR', 'ResourceAddressablesHybridCLR') -or $Suite -cne 'Daily' -or $Definition.nativeLayout -cne 'Framework' -or
+            ('com.kano.ylframework.hybridclr' -cnotin @($Definition.packageInputs))) { throw 'PrerequisiteNotMet: HybridCLR SDK requires its explicit Daily Framework integration module and package.' }
         $hybridSdk = Get-YLIntegrationHybridSdk -Repository $Repository
     }
     $profile = "Unity-$($EditorProfile.version)-UTF$($EditorProfile.testFramework)-UGUI$($EditorProfile.ugui)-$Suite-$($Definition.nativeLayout)-Graphics$($Definition.graphics)-IsolatedModes"
+    $addressablesVersion = if ($Definition.nativeLayout -ceq 'Framework') { Get-YLUnityAddressablesVersion $EditorProfile } else { $null }
+    if ($addressablesVersion) { $profile += '-AA' + $addressablesVersion }
     if ($sessionScene) { $profile += '-SessionScenes' }
     if ($desktop) { $profile += '-Desktop' }
     if ($dotween) { $profile += '-ApprovedDOTween-InitializeOnce' }
@@ -207,6 +237,7 @@ function Invoke-YLUnitySuite {
     $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $Repository
     $repositoryKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Repository.ToLowerInvariant()))).Substring(0, 12)
     $hostKey = "Unity-$($EditorProfile.version)-$Suite-$Module-$repositoryKey"
+    if ($addressablesVersion) { $hostKey += '-AA' + $addressablesVersion }
     if ($dotween) { $hostKey += '-SdkInitializeOnce' }
     if ($hybridClr) { $hostKey += '-HybridClrGitSdk' }
     $hasSamples = 'sampleInputs' -cin $Definition.PSObject.Properties.Name -and @($Definition.sampleInputs).Count -gt 0
@@ -300,6 +331,7 @@ function Invoke-YLUnitySuite {
             'com.unity.modules.jsonserialize' = '1.0.0'
         }
         if ($Definition.nativeLayout -ceq 'Framework') {
+            $dependencies['com.unity.addressables'] = $addressablesVersion
             $packageInputs = @(Get-YLUnityPackageInputs -EditorProfile $EditorProfile)
             $projectManifest = [IO.File]::ReadAllText((Join-Path $Repository $packageInputs[0])) | ConvertFrom-Json -DateKind String
             foreach ($dependency in $projectManifest.dependencies.PSObject.Properties | Where-Object { $_.Name.StartsWith('com.unity.modules.', [StringComparison]::Ordinal) }) {
@@ -353,6 +385,10 @@ function Invoke-YLUnitySuite {
                 disableDomainReload = ($Suite -ceq 'Special' -and 'disableDomainReload' -cin $Definition.PSObject.Properties.Name -and $Definition.disableDomainReload)
                 prepareSceneTemplates = ('prepareSceneTemplates' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSceneTemplates)
                 prepareSessionScene = ($sessionScene -and $Mode -cne 'PlayMode')
+                prepareAddressablesContent = ('prepareAddressablesContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareAddressablesContent)
+                prepareAddressablesConsumerContent = ('prepareAddressablesConsumerContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareAddressablesConsumerContent)
+                prepareCoreContent = ('prepareCoreContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareCoreContent)
+                prepareLocalizationContent = ('prepareLocalizationContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareLocalizationContent)
                 interactiveDesktop = $desktop
             }
             $requestPath = Join-Path $output 'request.json'
@@ -368,6 +404,10 @@ function Invoke-YLUnitySuite {
                 Assert-YLUnityResponseIdentity -Response $response -Request $request -UnityVersion $EditorProfile.version
                 if ($hybridClr) { $null = Get-YLIntegrationHybridSdk -Repository $hostRecord.path }
                 $Summary.unity.actualVersion = $response.unityVersion
+                if ($addressablesVersion) {
+                    $actualLock = [IO.File]::ReadAllText((Join-Path $hostRecord.path 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable -DateKind String
+                    $Summary['addressables'] = Assert-YLUnityAddressablesVersion -ExpectedVersion $addressablesVersion -Lock $actualLock -Response $response
+                }
                 if ($response.isBatchMode -isnot [bool] -or $response.isBatchMode -eq $desktop) { throw 'The actual Editor desktop/batch mode differs from the explicit host profile.' }
                 $Summary.unity['isBatchMode'] = $response.isBatchMode
                 $Summary.unity['testFrameworkVersion'] = $response.testFrameworkVersion

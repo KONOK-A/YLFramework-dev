@@ -4,6 +4,8 @@
 
 AudioKit 用于播放 Music、Voice 和 Sound，并用 `AudioHandle` 控制某一次请求。直接传入的 `AudioClip` 由调用方保活；需要按地址加载时，使用[命名资源与素材库](Audio/Resources.md)，不要把资源加载责任混入普通播放。
 
+内建 Resource Provider 借用应用已启动的全局 YL `ResourceSystem`，不替 Audio 启停服务。冷 Clip 使用 `PlayMusicAsync/PlayVoiceAsync/PlaySoundAsync`；同步命名入口只使用 Audio 缓存或 YL 已持有的热资源，未命中明确失败，不阻塞等待。Provider 的项目是地址命名空间，`project/key` 对应官方 Addressables 地址，不要求额外挂载项目 Catalog。
+
 ## 阅读路径
 
 | 要完成的任务 | 入口 |
@@ -187,7 +189,22 @@ var subscription = AudioKit.Settings.MusicVolume.RegisterWithInitValue(
 
 直接 Clip 在播放、暂停、Music/Voice off 等待重播期间都必须存活。Audio 结束后断开引用，不 `Destroy`、`Resources.UnloadAsset` 或接管外部资源；Mixer/Group/Listener 也由应用拥有。命名 Provider 的资源则由实际租约控制，见[租约与缓存](Audio/Resources.md#租约与缓存)。
 
-`AudioKit.Shutdown()` 属于应用级关闭：阻止新请求、结束播放与 pending、清自有池、闲置 Clip、设置订阅和静态会话状态，再释放自有宿主。自建宿主位于 `YLFramework/Audio` 并跨场景；借用 GameObject 保持层级，不因 Shutdown 销毁它或 Listener。旧句柄/迟到结果不能进入新会话。需要关闭 Resource 时，先归还 Audio 播放、尾轨、idle 缓存和显式 Clip 租约，再关闭对应 ResourceStartup，不能靠强卸载解决 Busy。
+`AudioKit.Shutdown()` 属于应用级关闭：阻止新请求、结束播放与 pending、清自有池、闲置 Clip、设置订阅和静态会话状态，再释放自有宿主。自建宿主位于 `YLFramework/Audio` 并跨场景；借用 GameObject 保持层级，不因 Shutdown 销毁它或 Listener。旧句柄/迟到结果不能进入新会话，也不会因此关闭借用的全局 Resource 服务。
+
+播放、缓存、显式预加载和 Crossfade 尾轨各自持有租约责任，不能只停最新 Music 就认定旧轨已归还。应用级退出先 `AudioKit.Shutdown()` 收尾 Audio 自有责任，再 Dispose 应用还持有的显式 Clip 租约，最后等待所属 `ResourceStartup.StopAsync()`。例如在组合根的 Unity 协程中：
+
+```csharp
+AudioKit.Shutdown();
+explicitClipLease?.Dispose(); // 组合根自己通过 AcquireClip 取得的租约，若有。
+using var stop = startup.StopAsync(); // startup 由同一组合根启动并持有。
+yield return stop;
+if (stop.Status != YLFramework.Resource.ResourceRequestStatus.Succeeded)
+{
+    UnityEngine.Debug.LogException(stop.Error);
+}
+```
+
+仍有播放、尾轨、idle、显式 Clip 或其他业务独立租约时，提前停 Resource 可返回可恢复的 `ResourceError.Busy`；归还实际责任后重试，不强制卸载。`ClearClipCache()` 只清闲置，不能代替停止活跃播放；Audio 也不负责替其他业务清 registry 或关闭 Resource Scope。后端在途工作可能仍需排空，Audio 取消不是 IO 已结束的保证。
 
 ## 实现入口
 

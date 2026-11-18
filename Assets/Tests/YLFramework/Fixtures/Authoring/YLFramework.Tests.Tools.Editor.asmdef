@@ -6,7 +6,9 @@
     "YLFramework.Editor",
     "YLFramework.Equipment",
     "YLFramework.Equipment.Acceptance.Player",
-    "YLFramework.Tests.Fixtures"
+    "YLFramework.Tests.Fixtures",
+    "Unity.Addressables",
+    "Unity.Addressables.Editor"
   ],
   "includePlatforms": [
     "Editor"

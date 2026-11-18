@@ -1,9 +1,0 @@
-{
-  "createdAtUtc": "2026-10-18T15:00:25.1496141Z",
-  "root": "Assets/YLFramework/Tests/Fixtures/ResourceMultiDirectory-20261018/Modern",
-  "projectId": "yl-resource-multidirectory-modern-20261018",
-  "projectGuid": "5c0f01c44d4e08a4c92590c5632501d2",
-  "app": "multidirectory-modern-v1",
-  "evidence": "C:/Users/Kano/AppData/Local/Temp/kilo/resource-multidirectory-20261018-a",
-  "scope": "Owned multi-directory, independent Atlas generation and empty-Scene Runtime fixtures. No automatic build/generation; does not adopt the original game or other sessions."
-}

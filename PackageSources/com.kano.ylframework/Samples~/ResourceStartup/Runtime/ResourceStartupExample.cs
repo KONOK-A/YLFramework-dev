@@ -1,220 +1,407 @@
 using System;
-using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 using YLFramework.Audio;
+using YLFramework.Core;
 using YLFramework.Resource;
 
 namespace YLFramework.Samples.Resource
 {
-    /// <summary>显式调用Begin/Run，不在Awake/Start/属性读取时启动。Editor配套入口只负责配置选择，业务共用Run。</summary>
-    /// <remarks>
-    /// 项目需配置 message 文本、data 示例资产及可选 tone 音频地址；创建配置不等于启动资源会话。
-    /// Player 使用明确的 Bundle 发布快照；Editor 模拟配置由配套编辑器入口装配，不作为加载失败的回退来源。
-    /// </remarks>
+    /// <summary>中立启动场景中的应用 owner；只在 Play/Player 显式启动，不在 Awake、属性或 Editor 工具中初始化。</summary>
+    /// <remarks>正常退出须先 await StopExampleAsync 再销毁 owner。OnDestroy 仅作异步兜底，不代表关闭完成。</remarks>
     public sealed class ResourceStartupExample : MonoBehaviour
     {
-        /// <summary>显式选择资源来源；Editor 模拟模式须由配套编辑器工厂装配。</summary>
-        public ResourceLoadMode mode = ResourceLoadMode.EditorSimulation;
-        /// <summary>资源项目的稳定标识，用于本轮地址解析和可选 Audio 后端选择。</summary>
-        public string projectId;
-        /// <summary>所选 Bundle 发布的平台名称，须与快照和内置部署的平台一致。</summary>
-        public string platform = "StandaloneWindows64";
-        /// <summary>应用预期的资源兼容标识，打开快照时须与发布目录声明一致。</summary>
-        public string appCompatibility = "startup-sample-v1";
-        /// <summary>非内置模式下明确选择的本地发布绝对目录，其末级目录名须为所选摘要。</summary>
-        public string snapshotDirectory;
-        /// <summary>应用明确绑定的发布 Catalog 字节 SHA-256，不通过扫描目录自动选择版本。</summary>
-        public string catalogDigest;
-        /// <summary>Bundle 模式是否读取已部署的内置版本；此开关不执行部署。</summary>
-        public bool useBuiltIn;
-        /// <summary>本轮启动是否请求绑定 Core 资源后端，不替换应用已有的其他后端。</summary>
-        public bool bindCore = true;
-        /// <summary>本轮是否装配所选项目的 Audio 后端并尝试播放 tone，不改共享音效偏好。</summary>
-        public bool useAudio = true;
+        public AssetReferenceT<TextAsset> message;
+        public AssetReferenceT<ResourceStartupExampleData> data;
+        public AssetReferenceGameObject prefab;
+        public AssetReferenceT<Texture2D> preview;
+        public AssetReferenceT<AudioClip> audioCue;
+        [Tooltip("可选的业务场景；以 Additive 加载并自动激活，不替换中立启动场景。")]
+        public AssetReference scene;
+        [Tooltip("False creates a fresh instance. True prewarms and resets an instance before reusing it.")]
+        public bool reusePrefab;
+        public bool bindCoreResourceProvider = true;
+        [Tooltip("Exact prefix of the authored message and cue addresses. Leave empty to omit the named bridges.")]
+        public string contentProjectId;
+        [Tooltip("Optional exact Catalog ID. Set only when this owner initializes Addressables first and automatic startup checks are disabled.")]
+        public string startupCatalogId;
+        [Tooltip("可选音频地址命名空间；登记 Provider 不代表已经播放或拥有 Audio 系统。")]
+        public string[] audioProjects = Array.Empty<string>();
 
-        /// <summary>应用在运行前注入并拥有其生命周期；不保存到Scene，生产密钥来源由应用提供。</summary>
-        [NonSerialized] public IResourceContentKeyProvider ContentKeyProvider;
+        private static readonly HashSet<Session> _pendingShutdowns = new HashSet<Session>();
+        private Session _session;
 
-        /// <summary>最近一轮显式创建的启动入口；未运行时为空，读取不会初始化资源。</summary>
-        public ResourceStartup Startup
+        public ResourceStartup Startup => _session?.Startup;
+        public string Result => _session?.Result ?? "Not started";
+        public Exception LastFailure => _session?.CleanupError ?? _session?.BusinessError;
+        public static int PendingShutdownCount => _pendingShutdowns.Count;
+        public static string PendingShutdownDetails => string.Join("\n", _pendingShutdowns.Select(session => session.Result));
+
+        /// <summary>只检查明确序列化的引用，不初始化、不加载、不修复官方配置。</summary>
+        public void ValidateReferences()
         {
-            get; private set;
-        }
-        /// <summary>最近一轮运行或关闭的展示状态；业务失败详情仍须查看原始异常。</summary>
-        public string Result { get; private set; } = "Not started";
-        private Coroutine _running;
-        private ResourceRequest<ResourceStartup> _initializing;
-        private ResourceScope _scope;
-        private bool _isClosing;
-        private bool _isBusinessCompleted;
-        private string _message;
-
-        /// <summary>验证明确选择的本地或内置快照，并声明示例所需的编译资产类型，不启动资源系统。</summary>
-        /// <returns>仅包含所选项目、快照与示例类型映射的挂载描述。</returns>
-        public ResourceProjectMount CreateMount() => new(projectId, platform, appCompatibility,
-            useBuiltIn ? ResourceLocalSnapshot.OpenBuiltIn(projectId, catalogDigest, platform, appCompatibility) :
-                ResourceLocalSnapshot.Open(snapshotDirectory, projectId, catalogDigest, platform, appCompatibility),
-            new[] { typeof(ResourceStartupExampleData) });
-
-        /// <summary>从当前样例选择创建只读 Bundle 配置，不初始化资源或获取内容密钥。</summary>
-        /// <remarks>只接受 Bundles 模式；本例不配置缓存根或远程来源，因此不会装配 ArtifactStore 更新流程。</remarks>
-        /// <returns>包含明确快照及可选应用密钥来源的资源配置。</returns>
-        public ResourceConfiguration CreateBundleConfiguration() => ResourceConfiguration.Create(mode, new[] { CreateMount() },
-            decryption: ContentKeyProvider == null ? null : new ResourceDecryptionOptions(ContentKeyProvider));
-
-        /// <summary>Player显式入口；模拟模式在此明确拒绝，不因为Bundle错误切换来源。</summary>
-        [ContextMenu("Run Bundles Example")]
-        public void BeginBundles()
-        {
-            if (mode != ResourceLoadMode.Bundles)
-            {
-                throw new InvalidOperationException("Player startup requires Bundles mode; use the Editor sample inspector for simulation.");
-            }
-
-            Begin(CreateBundleConfiguration());
+            Key(message, nameof(message));
+            Key(data, nameof(data));
+            Key(prefab, nameof(prefab));
+            Key(scene, nameof(scene), true);
+            Key(preview, nameof(preview), true);
+            ValidateNamedInputs();
         }
 
-        /// <summary>在 Play Mode 显式启动本组件托管的业务协程，前一轮责任未结清时拒绝重复启动。</summary>
-        /// <param name="configuration">调用方已明确选择来源的配置；选择配置本身不启动会话。</param>
-        public void Begin(ResourceConfiguration configuration)
+        /// <summary>冻结本轮官方 RuntimeKey 后启动；成功后内容仍由业务 Scope 持有，直到显式关闭。</summary>
+        public Task<string> StartExampleAsync(CancellationToken cancellation = default)
         {
             if (!Application.isPlaying)
             {
-                throw new InvalidOperationException("Run the example in Play Mode.");
+                throw new InvalidOperationException("Run native initialization in Play Mode or a Player, not an Editor authoring command.");
             }
-
-            if (_running != null || _isClosing || Startup?.Resources != null)
+            if (_session != null && !_session.Closed || _pendingShutdowns.Count != 0)
             {
-                throw new InvalidOperationException("Stop the previous startup before running again.");
+                throw new InvalidOperationException("Await the previous shutdown, or retry the retained pending shutdown owner first.");
             }
-
-            _running = StartCoroutine(Run(configuration));
+            var messageKey = Key(message, nameof(message));
+            var dataKey = Key(data, nameof(data));
+            var prefabKey = Key(prefab, nameof(prefab));
+            var sceneKey = Key(scene, nameof(scene), true);
+            var previewKey = Key(preview, nameof(preview), true);
+            var hasCue = ValidateNamedInputs();
+            var projectId = string.IsNullOrEmpty(contentProjectId) ? null : contentProjectId;
+            var catalogId = string.IsNullOrEmpty(startupCatalogId) ? null : startupCatalogId;
+            var projects = (audioProjects ?? Array.Empty<string>()).ToArray();
+            foreach (var project in projects)
+            {
+                _ = new ResourceAddress(project, "audio");
+            }
+            var session = new Session
+            {
+                Startup = new ResourceStartup(new ResourceConfiguration(enableStartupCatalogUpdates: catalogId != null), bindCoreResourceProvider, projects),
+                Cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellation, CancellationToken.None),
+                Owner = gameObject,
+                Label = "ResourceStartupExample/" + GetInstanceID()
+            };
+            _session = session;
+            session.Business = LoadBusinessAsync(session, messageKey, dataKey, prefabKey, sceneKey, reusePrefab, (projectId, catalogId, previewKey, hasCue));
+            return ObserveStartAsync(session);
         }
 
-        /// <summary>同一业务消费Text、自定义Data及可选Core/Audio；示例只归还自己的Scope、请求和播放。</summary>
-        /// <param name="configuration">本轮资源会话使用的明确配置，不因加载失败改变来源。</param>
-        /// <returns>由调用方驱动的业务与关闭等待迭代器。</returns>
-        /// <remarks>
-        /// 在 Play Mode 的 Unity 主线程驱动；提前中止时须释放迭代器或显式调用 StopExample。
-        /// ResourceStartup 按自身归属处理资源会话和 Core 绑定；共享 AudioKit 与应用密钥提供者仍由应用管理。
-        /// </remarks>
-        public IEnumerator Run(ResourceConfiguration configuration)
-        {
-            if (_isClosing || Startup?.Resources != null)
-            {
-                throw new InvalidOperationException("The previous startup still owns resources.");
-            }
+        /// <summary>取消本例等待，先等业务结束和 Scope 真正关闭，再停止本例拥有的 Root 服务；失败可原 owner 重试。</summary>
+        public Task StopExampleAsync() => _session == null ? Task.CompletedTask : CloseSessionAsync(_session);
 
-            // 冻结本轮项目与可选接入，避免运行中修改 Inspector 改变已开始的业务。
-            var projectId = this.projectId;
-            var useCore = bindCore;
-            var useAudio = this.useAudio;
-            _isBusinessCompleted = false;
-            Result = "Running";
-            Startup = new ResourceStartup(configuration, useCore, useAudio ? new[] { projectId } : null);
-            try
-            {
-                _initializing = Startup.StartAsync();
-                yield return _initializing;
-                _initializing.TakeResult();
-                _initializing.Dispose();
-                _initializing = null;
-                _scope = Startup.Resources.CreateScope();
-                var data = _scope.AcquireAsync<ResourceStartupExampleData>(new ResourceAddress(projectId, "data"));
-                yield return data;
-                var caption = _scope.TakeResult(data).Asset.text;
-                if (useCore)
-                {
-                    var text = _scope.Own(Startup.CoreProvider.ReadTextAsync(projectId, "message"));
-                    yield return text;
-                    _message = text.TakeResult() + " / " + caption;
-                }
-                else
-                {
-                    var text = _scope.AcquireAsync<TextAsset>(new ResourceAddress(projectId, "message"));
-                    yield return text;
-                    _message = _scope.TakeResult(text).Asset.text + " / " + caption;
-                }
-                if (useAudio)
-                {
-                    var sound = _scope.Own(AudioKit.PlaySoundAsync(new AudioClipAddress(Startup.AudioProviders[projectId], "tone")));
-                    // 只等播放开始，避免共享音效设置拒绝请求时把本例误判为成功。
-                    var until = Time.realtimeSinceStartup + 10;
-                    while (!sound.HasStarted && !sound.IsDone && Time.realtimeSinceStartup < until)
-                    {
-                        yield return null;
-                    }
+        /// <summary>显式重试已销毁组件留下的真实关闭责任，不丢 owner、不强制释放外部租约。</summary>
+        public static Task RetryPendingShutdownsAsync() => Task.WhenAll(_pendingShutdowns.ToArray().Select(CloseSessionAsync));
 
-                    if (!sound.HasStarted)
-                    {
-                        throw sound.Error ?? new InvalidOperationException(
-                        "The sample Audio request did not start: " + sound.EndReason +
-                        ". Check application Sound settings/admission, or disable UseAudio; this example does not override shared Audio preferences.");
-                    }
-                }
-                _isBusinessCompleted = true;
-            }
-            finally
-            {
-                CloseOwnedResponsibilities();
-            }
-            while (_isClosing)
-            {
-                yield return null;
-            }
-        }
+        [ContextMenu("Start Addressables Example (Play Only)")]
+        public void Begin() => Observe(StartExampleAsync(), _session);
 
-        /// <summary>停止本组件托管的协程并尝试结算样例责任；关闭失败后可再次显式调用以重试。</summary>
         [ContextMenu("Stop Or Retry Example Shutdown")]
-        public void StopExample()
-        {
-            if (_running != null)
-            {
-                var current = _running;
-                _running = null;
-                StopCoroutine(current);
-            }
-            // Unity停协程不保证执行iterator finally；字段中的Scope仍由显式关闭接点结算。
-            CloseOwnedResponsibilities();
-        }
+        public void StopExample() => Observe(StopExampleAsync(), _session);
 
-        /// <summary>归还本例的初始化等待和资源域，再请求启动入口结算并记录异步关闭结果。</summary>
-        private void CloseOwnedResponsibilities()
+        [ContextMenu("Retry Retained Shutdown Owners")]
+        private void RetryShutdowns() => Observe(RetryPendingShutdownsAsync());
+
+        private static async Task<string> LoadBusinessAsync(Session session, string messageKey, string dataKey,
+            string prefabKey, string sceneKey, bool reuse, (string Project, string Catalog, string Preview, bool Cue) options)
         {
-            _running = null;
-            _initializing?.Dispose();
-            _initializing = null;
-            try
+            // 先发布 Business Task，再允许用户组件回调重入 Stop/OnDestroy；所有 await 保留 Unity 主线程上下文。
+            await Task.Yield();
+            var token = session.Cancellation.Token;
+            token.ThrowIfCancellationRequested();
+            await session.Startup.StartAsync();
+            token.ThrowIfCancellationRequested();
+            var resources = session.Startup.Resources;
+            if (options.Catalog != null)
             {
-                // 先归还样例的租约和播放，避免自身持有责任挡住资源会话关闭。
-                _scope?.Dispose();
-            }
-            finally
-            {
-                _scope = null;
-                if (!_isClosing && Startup != null)
+                var available = await resources.CheckForCatalogUpdatesAsync(token);
+                if (available.Contains(options.Catalog, StringComparer.Ordinal))
                 {
-                    _isClosing = true;
-                    var shutdown = Startup.StopAsync();
-                    shutdown.Completed += done =>
-                    {
-                        _isClosing = false;
-                        Result = done.Status == ResourceRequestStatus.Succeeded
-                            ? _isBusinessCompleted ? "Passed: " + _message : "Stopped or failed; inspect the original error."
-                            : "Shutdown requires retry: " + done.Error;
-                        done.Dispose();
-                    };
+                    await resources.ApplyCatalogUpdatesAsync(new[] { options.Catalog }, token);
                 }
             }
+            token.ThrowIfCancellationRequested();
+            session.Scope = resources.CreateScope(session.Label).BindToDestroy(session.Owner);
+            var text = await session.Scope.LoadAsync<TextAsset>(messageKey, token);
+            var sameText = await session.Scope.LoadAsync<TextAsset>(messageKey, token);
+            if (!ReferenceEquals(text, sameText)) throw new InvalidOperationException("The example scope did not reuse its borrowed text.");
+            token.ThrowIfCancellationRequested();
+            var configuration = await session.Scope.LoadAsync<ResourceStartupExampleData>(dataKey, token);
+            token.ThrowIfCancellationRequested();
+            var destination = default(Scene);
+            if (sceneKey != null)
+            {
+                destination = await session.Scope.LoadSceneAsync(sceneKey, cancellation: token);
+                token.ThrowIfCancellationRequested();
+            }
+            var instance = reuse
+                ? await RentPrewarmedAsync(session, prefabKey, destination, token)
+                : await session.Scope.InstantiateAsync(prefabKey, scene: destination, cancellation: token);
+            token.ThrowIfCancellationRequested();
+
+            // 默认借用不需要租约。只有另一段独立业务需要越出当前借用时才 Acquire/Retain，并各自归还。
+            using var independent = await resources.AcquireAsync<TextAsset>(messageKey, token);
+            using var retained = independent.Retain(session.Label + "/independent-read");
+            independent.Dispose();
+            token.ThrowIfCancellationRequested();
+            var core = "off";
+            if (options.Project != null && session.Startup.CoreProvider != null)
+            {
+                using var read = session.Startup.CoreProvider.ReadTextAsync(options.Project, "message");
+                while (read.keepWaiting)
+                {
+                    token.ThrowIfCancellationRequested();
+                    await Task.Yield();
+                }
+                if (read.TakeResult() != text.text) throw new InvalidOperationException("Core did not read the authored message.");
+                core = "ok";
+            }
+            token.ThrowIfCancellationRequested();
+            if (options.Preview != null || options.Cue) await PresentAsync(session, options.Project, options.Preview, options.Cue, token);
+            token.ThrowIfCancellationRequested();
+            var result = text.text + " / " + configuration.text + " / " + instance.name + " / retained=" + retained.Asset.text.Length +
+                " / core=" + core + " / audio=" + (options.Cue ? "ok" : "off") + " / image=" + (options.Preview != null ? "ok" : "off") +
+                " / instance=" + (reuse ? "prewarmed, reset and reused" : "fresh");
+            session.Result = "Running: " + result + ". Await StopExampleAsync before destroying the owner.";
+            return result;
         }
 
-        /// <summary>组件在运行中停用时发起样例清理，不接管应用其他业务的生命周期。</summary>
-        private void OnDisable()
+        private static async Task<GameObject> RentPrewarmedAsync(Session session, string key, Scene destination, CancellationToken token)
         {
-            if (Application.isPlaying)
+            var resources = session.Startup.Resources;
+            using var prefabLease = await resources.AcquireAsync<GameObject>(key, token);
+            token.ThrowIfCancellationRequested();
+            var pool = resources.GetInstanceCache(prefabLease, scene: destination);
+            pool.Prewarm(1);
+            GameObject previous;
+            string name;
+            using (var first = pool.Rent())
             {
-                StopExample();
+                previous = first.GameObject;
+                name = previous.name;
+                // Application-owned per-borrow state is reset before the checkout returns to the pool.
+                previous.name = "Sample first checkout";
+                previous.name = name;
             }
+            var next = pool.Rent();
+            try
+            {
+                if (next.GameObject != previous || next.GameObject.name != name) throw new InvalidOperationException("Prewarmed instance was not reset and reused.");
+                return session.Scope.Own(next).GameObject;
+            }
+            catch
+            {
+                next.Discard();
+                throw;
+            }
+        }
+
+        private static async Task PresentAsync(Session session, string projectId, string previewKey, bool hasCue, CancellationToken token)
+        {
+            session.View = new GameObject("Resource Startup Preview");
+            session.View.transform.SetParent(session.Owner.transform, false);
+            if (previewKey != null)
+            {
+                var canvas = new GameObject("Preview Canvas", typeof(Canvas));
+                canvas.transform.SetParent(session.View.transform, false);
+                canvas.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
+                var image = new GameObject("Addressable Preview", typeof(RawImage));
+                image.transform.SetParent(canvas.transform, false);
+                var target = image.GetComponent<RawImage>();
+                target.raycastTarget = false;
+                target.rectTransform.sizeDelta = new Vector2(96, 96);
+                var binding = session.Image = image.AddComponent<ResourceImage>();
+                binding.SetAddress(previewKey);
+                while (binding && binding.Status == ResourceRequestStatus.Pending)
+                {
+                    token.ThrowIfCancellationRequested();
+                    await Task.Yield();
+                }
+                token.ThrowIfCancellationRequested();
+                if (!binding || binding.Status != ResourceRequestStatus.Succeeded || !target.texture)
+                    throw binding?.Error ?? new ResourceException(ResourceError.LoadFailed, "The example image was not displayed.");
+            }
+            if (hasCue)
+            {
+                // Warm the exact address, then borrow an independent Clip from the Audio bridge. No global Audio ownership.
+                var clip = await session.Scope.LoadAsync<AudioClip>(projectId + "/cue", token);
+                token.ThrowIfCancellationRequested();
+                session.Cue = session.Startup.Resources.GetAudioClipProvider(projectId).Load("cue");
+                if (session.Cue.Clip != clip) throw new InvalidOperationException("Audio did not borrow the warmed clip.");
+                var source = session.Audio = session.View.AddComponent<AudioSource>();
+                source.playOnAwake = false;
+                source.clip = session.Cue.Clip;
+                source.Play();
+            }
+        }
+
+        private static async Task<string> ObserveStartAsync(Session session)
+        {
+            try
+            {
+                return await session.Business;
+            }
+            catch (Exception error)
+            {
+                session.BusinessError = error;
+                try
+                {
+                    await CloseSessionAsync(session);
+                }
+                catch (Exception cleanup)
+                {
+                    throw new AggregateException("Business failed and shutdown remains incomplete. Retry the original owner.", error, cleanup);
+                }
+                throw;
+            }
+        }
+
+        private static Task CloseSessionAsync(Session session)
+        {
+            if (session.Shutdown == null || session.Shutdown.IsFaulted || session.Shutdown.IsCanceled)
+            {
+                session.Shutdown = CloseCoreAsync(session);
+                session.Cancellation.Cancel();
+            }
+            return session.Shutdown;
+        }
+
+        private static async Task CloseCoreAsync(Session session)
+        {
+            await Task.Yield();
+            session.Result = "Closing; native cleanup is not yet complete.";
+            session.CleanupError = null;
+            try
+            {
+                try
+                {
+                    await session.Business;
+                }
+                catch (Exception error)
+                {
+                    // 原业务 Task 仍向 StartExampleAsync 的调用方交付原异常；关闭只结算所有权，不改写失败为成功。
+                    session.BusinessError = error;
+                }
+                if (session.Audio)
+                {
+                    session.Audio.Stop();
+                    session.Audio.clip = null;
+                    session.Audio = null;
+                }
+                session.Cue?.Dispose();
+                session.Cue = null;
+                if (session.Image) session.Image.Clear();
+                session.Image = null;
+                if (session.View) Destroy(session.View);
+                session.View = null;
+                if (session.Scope != null)
+                {
+                    await session.Scope.CloseAsync();
+                    session.Scope = null;
+                }
+                // 真实应用也应在这里之前完成全部业务 Module/Audio 播放的退出，而不是由 Root 抢先强关。
+                await session.Startup.StopAsync();
+                session.Closed = true;
+                session.Cancellation.Dispose();
+                _pendingShutdowns.Remove(session);
+                session.Result = "Stopped: owned cleanup completed." + (session.BusinessError == null ? "" : "\nBusiness outcome: " + session.BusinessError);
+            }
+            catch (Exception error)
+            {
+                session.CleanupError = error;
+                session.Result = "Shutdown incomplete; retain this owner and retry after returning the listed responsibilities.\n" +
+                    error + (session.BusinessError == null ? "" : "\nBusiness outcome: " + session.BusinessError) +
+                    "\n" + Responsibilities(session.Startup.Resources);
+                throw;
+            }
+        }
+
+        private static string Responsibilities(ResourceSystem resources)
+        {
+            if (resources == null)
+            {
+                return "No published ResourceSystem; the original error above remains authoritative.";
+            }
+            var report = resources.GetDiagnostics();
+            return "YL state=" + report.State + ", requests=" + report.RequestCount + ", work=" + report.PendingWorkCount +
+                ", draining=" + report.DrainingHandleCount + "\n" +
+                string.Join("\n", report.Leases.Select(lease => lease.Kind + " key=" + lease.Key + " owner=" + lease.Owner +
+                    " internal=" + lease.Internal + " settled=" + lease.Settled)) + "\n" +
+                string.Join("\n", report.Scopes.Select(scope => "Scope owner=" + scope.Owner + " closing=" + scope.Closing + " error=" + scope.Error)) +
+                "\n" + string.Join("\n", report.Errors);
+        }
+
+        private static string Key(AssetReference reference, string name, bool optional = false)
+        {
+            if (optional && (reference == null || string.IsNullOrEmpty(reference.AssetGUID)))
+            {
+                return null;
+            }
+            if (reference == null || !reference.RuntimeKeyIsValid() || !(reference.RuntimeKey is string key) || string.IsNullOrWhiteSpace(key))
+            {
+                throw new ArgumentException("Select an explicit official AssetReference: " + name, name);
+            }
+            return key;
+        }
+
+        private bool ValidateNamedInputs()
+        {
+            var cue = Key(audioCue, nameof(audioCue), true);
+            if (!string.IsNullOrEmpty(contentProjectId) || cue != null) _ = new ResourceAddress(contentProjectId, "cue");
+            if (!string.IsNullOrEmpty(startupCatalogId) && string.IsNullOrWhiteSpace(startupCatalogId))
+                throw new ArgumentException("Select an exact Catalog ID or leave it empty.", nameof(startupCatalogId));
+            return cue != null;
+        }
+
+        private void OnDestroy()
+        {
+            var session = _session;
+            if (session == null || session.Closed)
+            {
+                return;
+            }
+            // 纯托管 owner 和 Task 不依赖已销毁组件的协程。失败时保留供下一位应用 owner 显式重试。
+            _pendingShutdowns.Add(session);
+            Observe(CloseSessionAsync(session), session);
+        }
+
+        private static async void Observe(Task task, Session session = null)
+        {
+            try
+            {
+                await task;
+            }
+            catch (OperationCanceledException)
+            {
+                Debug.Log("Resource startup example wait canceled. Cleanup state: " + session?.Result + "\n" + PendingShutdownDetails);
+            }
+            catch (Exception error)
+            {
+                Debug.LogError("Resource startup example did not complete: " + error + "\n" + session?.Result +
+                    "\nRetained shutdown owners: " + PendingShutdownDetails);
+            }
+        }
+
+        private sealed class Session
+        {
+            public ResourceStartup Startup;
+            public ResourceScope Scope;
+            public GameObject Owner;
+            public GameObject View;
+            public ResourceImage Image;
+            public AudioSource Audio;
+            public AudioClipLease Cue;
+            public CancellationTokenSource Cancellation;
+            public Task<string> Business;
+            public Task Shutdown;
+            public Exception BusinessError;
+            public Exception CleanupError;
+            public string Label;
+            public string Result = "Starting";
+            public bool Closed;
         }
     }
 }

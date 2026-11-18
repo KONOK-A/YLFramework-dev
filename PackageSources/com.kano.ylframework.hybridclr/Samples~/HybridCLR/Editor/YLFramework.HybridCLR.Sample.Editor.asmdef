@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.HybridCLR.Sample.Editor",
     "rootNamespace": "YLFramework.Samples.HybridCLR.Editor",
-    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "YLFramework.HybridCLR.Editor"],
+    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "YLFramework.HybridCLR.Editor", "Unity.Addressables.Editor"],
     "includePlatforms": ["Editor"], "excludePlatforms": [], "allowUnsafeCode": false,
     "overrideReferences": true, "precompiledReferences": [], "autoReferenced": false,
     "defineConstraints": ["YL_HYBRIDCLR_9_0_3"],

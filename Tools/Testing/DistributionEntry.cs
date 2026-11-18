@@ -56,11 +56,12 @@ namespace YLFramework.Testing
                         references = assembly.assemblyReferences.Select(reference => reference.name)
                             .Concat(assembly.compiledAssemblyReferences.Select(Path.GetFileName)).ToArray()
                     }).ToArray();
-                    if (graph.Any(assembly => Regex.IsMatch(assembly.name, "TestRunner|nunit|Tests|Acceptance", RegexOptions.IgnoreCase) ||
-                        assembly.sourceFiles.Any(path => Regex.IsMatch(path.Replace('\\', '/'), @"(?:^|/)Assets/(?:Tests|YLFramework)/"))))
+                    if (player.Any(assembly => Regex.IsMatch(assembly.name, @"TestRunner|nunit|Tests|Acceptance|(?:^|\.)Editor(?:\.|$)", RegexOptions.IgnoreCase)) ||
+                        graph.Any(assembly => assembly.sourceFiles.Any(path => Regex.IsMatch(path.Replace('\\', '/'), @"(?:^|/)Assets/(?:Tests|YLFramework)/"))))
                     {
                         throw new InvalidOperationException("The UPM consumer contains tests or a duplicate legacy product source.");
                     }
+                    var officialEditorSdk = new JArray(editor.Where(assembly => Regex.IsMatch(assembly.name, "TestRunner|nunit|Tests|Acceptance", RegexOptions.IgnoreCase)).Select(CaptureOfficialEditorSdkNode));
                     var runtime = player.Single(assembly => assembly.name == "YLFramework.Runtime");
                     var references = runtime.assemblyReferences.Select(reference => reference.name)
                         .Concat(runtime.compiledAssemblyReferences.Select(Path.GetFileName)).ToArray();
@@ -107,9 +108,9 @@ namespace YLFramework.Testing
                             throw new InvalidOperationException("The installed package omitted a required runtime resource: " + required);
                         }
                     }
-                    result = new { status = "Passed", graph, requiredAssemblies, runtimeReferences = references, prefabCount = prefabs.Length, missingScripts = 0 };
+                    result = new { status = "Passed", graph, requiredAssemblies, officialEditorSdk, runtimeReferences = references, prefabCount = prefabs.Length, missingScripts = 0 };
                 }
-                else if (phase == "HybridConfigure" || phase == "HybridBuild")
+                else if (phase == "HybridConfigure" || phase == "HybridBuild" || phase == "HybridPatch")
                 {
                     var type = Type.GetType("YLFramework.Testing.HybridCLREntry, YLTesting.HybridCLR.Editor", true);
                     result = type.GetMethod("Execute").Invoke(null, new object[] { request });
@@ -138,7 +139,14 @@ namespace YLFramework.Testing
                         PlayerSettings.SetIl2CppCompilerConfiguration(NamedBuildTarget.Standalone, Il2CppCompilerConfiguration.Release);
                         PlayerSettings.SetManagedStrippingLevel(NamedBuildTarget.Standalone, ManagedStrippingLevel.Low);
                     }
+                    var content = PrepareAddressablesSmoke();
+                    // SBP restores saved scenes and replaces pathless scenes; create this identity only after it returns.
                     var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                    var active = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+                    if (!scene.IsValid() || !scene.isLoaded || (int)active.handle != (int)scene.handle || !string.IsNullOrEmpty(scene.path))
+                        throw new InvalidOperationException("The new owned scene identity is not active/loaded/unsaved: " +
+                            new JObject { ["handle"] = (int)scene.handle, ["valid"] = scene.IsValid(), ["loaded"] = scene.isLoaded,
+                                ["path"] = scene.path, ["activeHandle"] = (int)active.handle, ["activePath"] = active.path }.ToString(Formatting.None));
                     bool smoke = (bool?)request["smoke"] == true;
                     if (smoke)
                     {
@@ -146,12 +154,13 @@ namespace YLFramework.Testing
                         var probe = new GameObject("YL.PlayerSmoke").AddComponent(type);
                         type.GetField("resultId").SetValue(probe, (string)request["resultId"]);
                         type.GetField("hostId").SetValue(probe, (string)request["hostId"]);
+                        type.GetField("resultRoot").SetValue(probe, (string)request["resultRoot"]);
+                        type.GetField("inputHash").SetValue(probe, (string)request["inputHash"]);
+                        type.GetField("contentHash").SetValue(probe, (string)content["contentHash"]);
+                        type.GetField("addressablesVersion").SetValue(probe, (string)content["addressablesVersion"]);
                     }
                     const string scenePath = "Assets/YLTestingDistribution/DistributionScene.unity";
-                    if (!EditorSceneManager.SaveScene(scene, scenePath))
-                    {
-                        throw new IOException("The owned build scene was not saved.");
-                    }
+                    var ownedBuildScene = SaveOwnedBuildScene(scene);
                     var build = BuildPipeline.BuildPlayer(new BuildPlayerOptions
                     {
                         scenes = new[] { scenePath },
@@ -182,9 +191,12 @@ namespace YLFramework.Testing
                     {
                         throw new InvalidOperationException("The explicit Player smoke assembly is missing from the actual build.");
                     }
+                    if (FingerprintDirectory(Path.Combine(output, "Player/YLDistribution_Data/StreamingAssets/aa")) != (string)content["contentHash"])
+                        throw new InvalidOperationException("Official AA content was not deployed byte-for-byte into Player StreamingAssets/aa.");
                     result = new { status = "Passed", backend, buildOptions = "None", smoke, managed,
                         executable = Path.Combine(output, "Player", "YLDistribution.exe"),
-                        errors = build.summary.totalErrors, warnings = build.summary.totalWarnings, files, runtimeReferences = references };
+                        errors = build.summary.totalErrors, warnings = build.summary.totalWarnings, files, runtimeReferences = references,
+                        contentHash = (string)content["contentHash"], addressablesVersion = (string)content["addressablesVersion"], ownedBuildScene };
                 }
                 else
                 {
@@ -199,13 +211,255 @@ namespace YLFramework.Testing
                 {
                     throw;
                 }
-                try { WriteReport(request, new { status = "Failed", error = error.ToString() }); }
+                try { WriteReport(request, new { status = "Failed", error = error.ToString(), officialEditorSdkFailure = error.Data["officialEditorSdkFailure"] as JObject }); }
                 finally
                 {
                     Debug.LogException(error);
                     EditorApplication.Exit(1);
                 }
             }
+        }
+
+        // Official APIs only; reflection keeps the audit-only NoUnity fixture from masquerading as an AA builder.
+        private static JObject SaveOwnedBuildScene(UnityEngine.SceneManagement.Scene scene)
+        {
+            const string target = "Assets/YLTestingDistribution/DistributionScene.unity";
+            string physical = Path.Combine(Project(), target);
+            int expectedHandle = (int)scene.handle;
+            bool SlotExists(string path)
+            {
+                try { _ = File.GetAttributes(path); return true; }
+                catch (FileNotFoundException) { return false; }
+                catch (DirectoryNotFoundException) { return false; }
+            }
+            JObject Snapshot()
+            {
+                var active = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+                bool valid = scene.IsValid();
+                bool activeValid = active.IsValid();
+                return new JObject
+                {
+                    ["scene"] = new JObject { ["handle"] = (int)scene.handle, ["valid"] = valid, ["loaded"] = valid && scene.isLoaded,
+                        ["path"] = valid ? scene.path : null, ["dirty"] = valid && scene.isDirty },
+                    ["active"] = new JObject { ["handle"] = (int)active.handle, ["valid"] = activeValid,
+                        ["loaded"] = activeValid && active.isLoaded, ["path"] = activeValid ? active.path : null },
+                    ["targetExists"] = File.Exists(physical), ["targetMetaExists"] = File.Exists(physical + ".meta"),
+                    ["targetSlotExists"] = SlotExists(physical), ["targetMetaSlotExists"] = SlotExists(physical + ".meta"),
+                    ["targetDirectoryExists"] = Directory.Exists(physical), ["targetGuid"] = AssetDatabase.AssetPathToGUID(target)
+                };
+            }
+            var evidence = new JObject { ["target"] = target, ["physical"] = physical, ["expectedHandle"] = expectedHandle };
+            try
+            {
+                var before = Snapshot();
+                evidence["beforeSave"] = before;
+                string parent = Path.GetDirectoryName(physical);
+                if (!Directory.Exists(parent)) throw new IOException("The owned scene output directory is missing.");
+                RejectLinks(parent);
+                if (!(bool)before["scene"]["valid"] || !(bool)before["scene"]["loaded"] || !(bool)before["active"]["valid"] ||
+                    !(bool)before["active"]["loaded"] || (int)before["active"]["handle"] != expectedHandle || !string.IsNullOrEmpty(scene.path))
+                    throw new InvalidOperationException("Only the newly created active, loaded, unsaved owned scene may be saved.");
+                if ((bool)before["targetSlotExists"] || (bool)before["targetMetaSlotExists"] ||
+                    !string.IsNullOrEmpty((string)before["targetGuid"]))
+                    throw new IOException("Unknown scene output or metadata already exists; it will not be replaced.");
+                bool saved;
+                try { saved = EditorSceneManager.SaveScene(scene, target); }
+                finally { evidence["afterSave"] = Snapshot(); }
+                evidence["saved"] = saved;
+                if (!saved) throw new IOException("The owned build scene was not saved.");
+                var after = (JObject)evidence["afterSave"];
+                if (!(bool)after["scene"]["valid"] || !(bool)after["scene"]["loaded"] || !(bool)after["active"]["valid"] ||
+                    !(bool)after["active"]["loaded"] || (int)after["scene"]["handle"] != expectedHandle || (int)after["active"]["handle"] != expectedHandle ||
+                    (string)after["scene"]["path"] != target || (bool)after["scene"]["dirty"] || !(bool)after["targetExists"])
+                    throw new IOException("SaveScene did not persist the same owned active scene at its declared path.");
+                return evidence;
+            }
+            catch (Exception error)
+            {
+                var failure = new IOException("Owned build scene validation/save failed. Evidence: " + evidence.ToString(Formatting.None), error);
+                failure.Data["ownedBuildScene"] = evidence;
+                throw failure;
+            }
+        }
+
+        private static string OfficialEditorPackage(string name) => name switch
+        {
+            "Unity.Addressables.DocExampleCode.Editor.Tests" => "com.unity.addressables",
+            "UnityEditor.TestRunner" => "com.unity.test-framework",
+            "UnityEngine.TestRunner" => "com.unity.test-framework",
+            _ => throw new InvalidOperationException("Forbidden or unknown Editor test assembly: " + name)
+        };
+
+        private static JObject CaptureOfficialEditorSdkNode(Assembly assembly)
+        {
+            var packages = PackageInfo.GetAllRegisteredPackages();
+            var contents = (string)typeof(EditorApplication).GetProperty("applicationContentsPath", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);
+            return CaptureOfficialEditorSdkNodeCore(assembly, packages, Project(), contents);
+        }
+
+        private static JObject CaptureOfficialEditorSdkNodeCore(Assembly assembly, PackageInfo[] packages, string project, string editorContents)
+        {
+            var evidence = new JObject { ["assembly"] = assembly.name, ["source"] = null, ["isDirectDependency"] = null,
+                ["assetPath"] = null, ["resolvedPath"] = null, ["version"] = null, ["errors"] = null, ["lock"] = null,
+                ["project"] = project, ["editorRoot"] = Path.Combine(editorContents, "Resources/PackageManager/BuiltInPackages/com.unity.test-framework") };
+            try
+            {
+                string packageName = OfficialEditorPackage(assembly.name);
+                var package = packages.Single(value => value.name == packageName);
+                evidence["package"] = packageName;
+                evidence["source"] = package.source.ToString();
+                evidence["isDirectDependency"] = package.isDirectDependency;
+                evidence["assetPath"] = package.assetPath;
+                evidence["resolvedPath"] = package.resolvedPath;
+                evidence["version"] = package.version;
+                evidence["errors"] = package.errors == null ? null : new JArray(package.errors.Select(error => error.message));
+                evidence["registryUrl"] = package.registry?.url;
+                var manifest = ReadJson(Path.Combine(project, "Packages/manifest.json"));
+                var locked = ReadJson(Path.Combine(project, "Packages/packages-lock.json"))["dependencies"]?[packageName] as JObject;
+                evidence["lock"] = locked?.DeepClone();
+                string root = Path.GetFullPath(package.resolvedPath).TrimEnd('\\', '/');
+                bool builtin = packageName == "com.unity.test-framework" && package.source == PackageSource.BuiltIn;
+                string installedRoot = builtin ? Path.GetFullPath((string)evidence["editorRoot"]).TrimEnd('\\', '/') : null;
+                bool sourceMatches = builtin ? (string)locked?["source"] == "builtin" :
+                    package.source == PackageSource.Registry && (string)locked?["source"] == "registry" &&
+                    package.registry?.url == "https://packages.unity.com" && (string)locked?["url"] == package.registry.url;
+                if (!sourceMatches || package.isDirectDependency || (string)locked?["version"] != package.version || locked?["depth"]?.Type != JTokenType.Integer || (int)locked["depth"] <= 0 ||
+                    manifest["dependencies"]?[packageName] != null || package.assetPath != "Packages/" + packageName || package.errors == null || package.errors.Length != 0)
+                    throw new InvalidOperationException("The exact Editor-only SDK node is not the verified indirect official installation: " + assembly.name);
+                var addressables = packages.Single(value => value.name == "com.unity.addressables");
+                if (addressables.dependencies == null || !addressables.dependencies.Any(dependency => dependency.name == "com.unity.test-framework") ||
+                    addressables.source != PackageSource.Registry || addressables.registry?.url != "https://packages.unity.com")
+                    throw new InvalidOperationException("The official AA dependency edge to its Editor test infrastructure is absent.");
+                RejectLinks(root);
+                string packageManifest = Path.Combine(root, "package.json");
+                RejectLinks(packageManifest);
+                var materialized = ReadJson(packageManifest);
+                evidence["packageManifestSha256"] = HashFile(packageManifest);
+                if ((string)materialized["name"] != packageName || (string)materialized["version"] != package.version)
+                    throw new InvalidOperationException("The SDK package manifest identity differs from its actual installation.");
+                if (builtin)
+                {
+                    RejectLinks(installedRoot);
+                    string installedManifest = Path.Combine(installedRoot, "package.json");
+                    RejectLinks(installedManifest);
+                    var installed = ReadJson(installedManifest);
+                    evidence["installedManifestSha256"] = HashFile(installedManifest);
+                    if ((string)installed["name"] != packageName || (string)installed["version"] != package.version)
+                        throw new InvalidOperationException("The current Editor BuiltIn source has another package identity.");
+                    string resolutionPath = Path.Combine(project, "Library/PackageManager/projectResolution.json");
+                    RejectLinks(resolutionPath);
+                    var resolution = ReadJson(resolutionPath);
+                    evidence["projectResolutionPath"] = resolutionPath;
+                    evidence["projectResolutionSha256"] = HashFile(resolutionPath);
+                    evidence["resolutionContext"] = resolution["context"]?.DeepClone();
+                    var rows = (resolution["outputs"] as JObject)?.Properties().Where(row => row.Value is JObject && (string)row.Value["name"] == packageName).ToArray();
+                    if (rows == null || rows.Length != 1 || rows[0].Name != packageName + "@" + package.version)
+                        throw new InvalidOperationException("The native UPM resolution must contain exactly this BuiltIn package version.");
+                    var row = (JObject)rows[0].Value;
+                    evidence["resolution"] = row.DeepClone();
+                    if (!string.Equals(Path.GetFullPath(Text((JObject)resolution["context"], "projectPath")).TrimEnd('\\', '/'),
+                        Path.GetFullPath(Path.Combine(project, "Packages")).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase) ||
+                        (string)resolution["context"]?["unityVersion"] != Application.unityVersion ||
+                        (string)row["source"] != "builtin" || (string)row["version"] != package.version || row["testable"]?.Type != JTokenType.Boolean || (bool)row["testable"])
+                        throw new InvalidOperationException("The native UPM BuiltIn context/source/version/testability differs from this host.");
+                    string fingerprint = Text(row, "fingerprint");
+                    if (!Regex.IsMatch(fingerprint, "^[0-9a-f]{40}$") || (string)materialized["_fingerprint"] != fingerprint)
+                        throw new InvalidOperationException("The native UPM fingerprint differs from its materialized package manifest.");
+                    string expectedRoot = Path.GetFullPath(Path.Combine(project, "Library/PackageCache", packageName + "@" + fingerprint.Substring(0, 12))).TrimEnd('\\', '/');
+                    evidence["expectedResolvedPath"] = expectedRoot;
+                    if (!string.Equals(root, expectedRoot, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(Path.GetFullPath(Text(row, "resolvedPath")).TrimEnd('\\', '/'), root, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("The BuiltIn package is not at its exact native UPM fingerprint leaf.");
+                    evidence["sourceProofMode"] = "BuiltinMaterialized";
+                    evidence["fingerprint"] = fingerprint;
+                }
+                else evidence["sourceProofMode"] = "OfficialRegistry";
+                if (assembly.sourceFiles == null || assembly.sourceFiles.Length == 0) throw new InvalidOperationException("The SDK Editor node has no verifiable sources.");
+                var sources = new JArray();
+                evidence["sources"] = sources;
+                foreach (var source in assembly.sourceFiles)
+                {
+                    string prefix = package.assetPath + "/";
+                    string normalized = source.Replace('\\', '/');
+                    string path = Path.GetFullPath(normalized.StartsWith(prefix, StringComparison.Ordinal) ? Path.Combine(root, normalized.Substring(prefix.Length)) :
+                        Path.IsPathRooted(source) ? source : Path.Combine(project, source));
+                    RejectLinks(path);
+                    if (!Inside(path, root) || !File.Exists(path)) throw new InvalidOperationException("An SDK Editor node contains foreign sources.");
+                    string relative = path.Substring(root.Length + 1).Replace('\\', '/');
+                    var proof = new JObject { ["path"] = path, ["relativePath"] = relative, ["sha256"] = HashFile(path) };
+                    sources.Add(proof);
+                    if (builtin)
+                    {
+                        string installedPath = Path.GetFullPath(Path.Combine(installedRoot, relative));
+                        RejectLinks(installedPath);
+                        if (!Inside(installedPath, installedRoot) || !File.Exists(installedPath))
+                            throw new InvalidOperationException("A compiled BuiltIn source has no corresponding current Editor installation source.");
+                        proof["installedPath"] = installedPath;
+                        proof["installedSha256"] = HashFile(installedPath);
+                        if ((string)proof["sha256"] != (string)proof["installedSha256"])
+                            throw new InvalidOperationException("Actual compiled BuiltIn source bytes differ from the current Editor installation.");
+                    }
+                }
+                return evidence;
+            }
+            catch (Exception error)
+            {
+                evidence["validationError"] = error.Message;
+                error.Data["officialEditorSdkFailure"] = evidence;
+                throw;
+            }
+        }
+
+        private static JObject PrepareAddressablesSmoke()
+        {
+            var settingsType = Type.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettings, Unity.Addressables.Editor", true);
+            var defaults = Type.GetType("UnityEditor.AddressableAssets.AddressableAssetSettingsDefaultObject, Unity.Addressables.Editor", true);
+            if ((bool)defaults.GetProperty("SettingsExists").GetValue(null) || Directory.Exists("Assets/AddressableAssetsData"))
+                throw new InvalidOperationException("The bare consumer requires fresh owned Addressables settings.");
+            typeof(AssetDatabase).GetMethod("CreateFolder").Invoke(null, new object[] { "Assets", "AddressableAssetsData" });
+            dynamic settings = settingsType.GetMethod("Create").Invoke(null, new object[] { "Assets/AddressableAssetsData", "Settings", true, true });
+            defaults.GetProperty("Settings").SetValue(null, settings);
+            var option = settingsType.GetProperty("BuildAddressablesWithPlayerBuild");
+            option.SetValue(settings, Enum.Parse(option.PropertyType, "DoNotBuildWithPlayer"));
+            var schemaType = Type.GetType("UnityEditor.AddressableAssets.Settings.GroupSchemas.BundledAssetGroupSchema, Unity.Addressables.Editor", true);
+            dynamic group = settings.DefaultGroup;
+            dynamic schema = group.GetSchema(schemaType);
+            schema.UseDefaultSchemaSettings = false;
+            schema.BuildPath.SetVariableByName(settings, "Local.BuildPath");
+            schema.LoadPath.SetVariableByName(settings, "Local.LoadPath");
+            const string path = "Assets/YLTestingDistribution/Message.txt";
+            File.WriteAllText(path, "YLFramework distribution AA smoke", new UTF8Encoding(false));
+            typeof(AssetDatabase).GetMethod("ImportAsset", new[] { typeof(string) }).Invoke(null, new object[] { path });
+            dynamic entry = settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(path), group, false, true);
+            entry.address = "distribution/message";
+            typeof(AssetDatabase).GetMethod("SaveAssets").Invoke(null, null);
+            var arguments = new object[] { null };
+            settingsType.GetMethods().Single(method => method.Name == "BuildPlayerContent" && method.GetParameters().Length == 1 && method.GetParameters()[0].IsOut).Invoke(null, arguments);
+            dynamic built = arguments[0];
+            if (built == null || !string.IsNullOrEmpty((string)built.Error)) throw new InvalidOperationException("Official AA BuildPlayerContent failed.");
+            var addressables = Type.GetType("UnityEngine.AddressableAssets.Addressables, Unity.Addressables", true);
+            var root = (string)addressables.InvokeMember("BuildPath", System.Reflection.BindingFlags.GetField | System.Reflection.BindingFlags.GetProperty |
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, null, null, null);
+            if (!Directory.GetFiles(root, "settings.json", SearchOption.AllDirectories).Any()) throw new InvalidOperationException("Official AA runtime settings were not built.");
+            var package = PackageInfo.GetAllRegisteredPackages().Single(value => value.name == "com.unity.addressables");
+            return new JObject { ["contentHash"] = FingerprintDirectory(root), ["addressablesVersion"] = package.version };
+        }
+
+        public static string FingerprintDirectory(string root)
+        {
+            var rows = Directory.GetFiles(root, "*", SearchOption.AllDirectories).Select(path => new
+            {
+                path = path.Substring(root.TrimEnd('\\', '/').Length + 1).Replace('\\', '/'), hash = FileHash(path)
+            }).OrderBy(row => row.path, StringComparer.Ordinal);
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(string.Concat(rows.Select(row => row.path + "\0" + row.hash + "\n"))))).Replace("-", "").ToLowerInvariant();
+        }
+
+        private static string FileHash(string path)
+        {
+            using var stream = File.OpenRead(path);
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
         }
 
         private static JArray CaptureCatalogAssemblies(JObject request, JArray packages, Assembly[] editor, Assembly[] player)
@@ -362,7 +616,7 @@ namespace YLFramework.Testing
             if (request["schemaVersion"]?.Type != JTokenType.Integer || (long)request["schemaVersion"] != 2 ||
                 request["smoke"]?.Type != JTokenType.Boolean || request["hybridCLR"]?.Type != JTokenType.Boolean ||
                 request["packages"] is not JArray selected || selected.Count == 0 ||
-                !new[] { "Inspect", "Build", "HybridConfigure", "HybridBuild" }.Contains(Text(request, "phase")) ||
+                !new[] { "Inspect", "Build", "HybridConfigure", "HybridBuild", "HybridPatch" }.Contains(Text(request, "phase")) ||
                 !new[] { "File", "GitFixture", "GitRemote", "Registry", "LocalTarball" }.Contains(Text(request, "packageOrigin")) ||
                 !new[] { "Mono", "IL2CPP" }.Contains(Text(request, "backend")))
             {
@@ -399,6 +653,8 @@ namespace YLFramework.Testing
             {
                 throw new InvalidOperationException("Invalid manifest identity or explicit HybridCLR mode.");
             }
+            if (Text(request, "phase") == "HybridPatch" && !Regex.IsMatch(Text(request, "patchInputHash"), "^[0-9a-f]{64}$"))
+                throw new InvalidOperationException("The exact recorded native patch input hash is required.");
             var project = Path.GetFullPath(Path.GetDirectoryName(Application.dataPath));
             var workspace = Directory.GetParent(project)?.Parent?.FullName;
             var resultRoot = Path.GetFullPath(Text(request, "resultRoot"));
@@ -894,7 +1150,7 @@ namespace YLFramework.Testing
         private static void RejectReferences(string[] references)
         {
             var rejectedReferences = references.Where(reference => !Regex.IsMatch(reference,
-                @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)(?:\.dll)?$") ||
+                @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Unity\.Addressables|Unity\.ResourceManager|Unity\.Profiling\.Core|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json)(?:\.dll)?$") ||
                 Regex.IsMatch(reference, "TestRunner|Tests|Editor|Analyzer", RegexOptions.IgnoreCase)).ToArray();
             if (rejectedReferences.Length != 0)
             {

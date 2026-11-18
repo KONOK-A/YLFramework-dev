@@ -13,7 +13,7 @@ namespace YLFramework.Editor.Resource
         internal const string DirectoryPath = "Assets/YLFrameworkData/Generated/ResourceReferences";
         internal const string AssemblyName = "YLFramework.Generated.ResourceNames";
         internal const string SourceName = "YLResourceReferences.cs";
-        private const string Header = "// YL Catalog references v1 SHA256: ";
+        private const string Header = "// YL Addressables references v2 SHA256: ";
         internal const string AssemblyDefinition = "{\n  \"name\": \"" + AssemblyName + "\",\n  \"references\": [],\n  \"autoReferenced\": true,\n  \"overrideReferences\": true,\n  \"precompiledReferences\": [],\n  \"noEngineReferences\": true\n}\n";
 
         /// <summary>

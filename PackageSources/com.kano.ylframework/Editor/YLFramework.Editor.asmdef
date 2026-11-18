@@ -3,7 +3,10 @@
     "rootNamespace": "YLFramework.Editor",
     "references": [
         "YLFramework.Runtime",
-        "UnityEngine.UI"
+        "UnityEngine.UI",
+        "Unity.Addressables",
+        "Unity.Addressables.Editor",
+        "Unity.ResourceManager"
     ],
     "includePlatforms": [
         "Editor"

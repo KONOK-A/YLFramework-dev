@@ -129,6 +129,15 @@ try {
         Check ($set.Count -eq (Get-YLRegistryPackageIds).Count) 'Expected the complete catalog package batch.'
         Check (@($set | Where-Object version -CNE '0.1.0-preview.1').Count -eq 0) 'The first preview changed.'
     }
+    Case 'Retired content crypto cannot re-enter the registry payload even with metadata' {
+        $relative = 'Plugins/BouncyCastle/BouncyCastle.Cryptography.dll'
+        $path = Join-Path $sources ('com.kano.ylframework/' + $relative)
+        Check (-not [IO.Path]::Exists($path) -and -not [IO.Path]::Exists($path + '.meta')) 'The retired crypto DLL or its metadata is still in the main package.'
+        With-FixtureAsset $relative {
+            [IO.File]::Copy((Join-Path $sources 'com.kano.ylframework.excel/Editor/Plugins/MiniExcel.dll'), $path, $true)
+            Reject { Get-YLRegistryPackageSet -Root $sources } 'Unapproved bundled DLL/SDK: com\.kano\.ylframework/Plugins/BouncyCastle/BouncyCastle\.Cryptography\.dll'
+        }
+    }
     Case 'Independent fixed-commit checkout never copies the current dirty source tree' {
         $git = (Get-Command -Name git.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
         $commit = (& $git -C $repository rev-parse HEAD).Trim()

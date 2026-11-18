@@ -92,16 +92,10 @@ namespace YLFramework.Tests.Actions
                 var name = reference.Name;
                 Assert.That(name.StartsWith("Sirenix", StringComparison.Ordinal), Is.False, "Odin dependency must not return: " + name);
                 var allowed = name == "Newtonsoft.Json" || name == "UnityEditor.CoreModule" || name == "UnityEditor.UI" || name == "UnityEngine.UI" ||
+                              name == "Unity.Addressables" || name == "Unity.ResourceManager" || name == "Unity.Profiling.Core" ||
                               name == "mscorlib" || name == "netstandard" || name == "System" ||
                               name.StartsWith("System.", StringComparison.Ordinal) ||
                                name == "UnityEngine" || name.StartsWith("UnityEngine.", StringComparison.Ordinal);
-                if (name == "BouncyCastle.Cryptography")
-                {
-                    var runtime = UnityEditor.Compilation.CompilationPipeline.GetAssemblies()
-                        .Single(item => item.name == assembly.GetName().Name);
-                    var crypto = runtime.compiledAssemblyReferences.Single(path => System.IO.Path.GetFileName(path) == "BouncyCastle.Cryptography.dll");
-                    allowed = TestDependencyGuard.IsApprovedBouncyCastleReference(crypto);
-                }
                 Assert.That(allowed, Is.True, "Unexpected runtime dependency: " + name);
             }
         }

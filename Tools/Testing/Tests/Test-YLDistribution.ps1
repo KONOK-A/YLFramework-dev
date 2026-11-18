@@ -46,6 +46,7 @@ $catalogPath = Join-Path $repository 'Tools/Packaging/PackageCatalog.json'
 $catalog = Read-YLPackageCatalog -Path $catalogPath
 $catalogSha256 = (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $entryPackage = if ($HybridCLR) { 'com.kano.ylframework.hybridclr' } else { 'com.kano.ylframework' }
+$patchInputHash = $null
 $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($Unity)
 $editor = Get-YLTestEditorProfile -Editors $configuration.editors -VersionInfo $version
 $packageInputs = if ($artifact) { @() } else { @(Get-YLUnityPackageInputs -EditorProfile $editor) }
@@ -116,15 +117,18 @@ function Get-DistributionHostPackages([string] $Repository, [object] $EditorProf
 }
 
 $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $repository
-$key = "Tooling-Distribution-$($version.ProductVersion)-$packageOrigin-$Backend"
-if ($HybridCLR) { $key += '-HybridCLR' }
-if ($RunPlayer) { $key += '-Smoke' }
-$run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key $key
+$resultDescriptor = "Tooling-Distribution-$($version.ProductVersion)-$packageOrigin-$Backend"
+if ($HybridCLR) { $resultDescriptor += '-HybridCLR' }
+if ($RunPlayer) { $resultDescriptor += '-Smoke' }
+# Native Mono file APIs retain a short-path budget even when Windows/.NET can enumerate a longer output.
+$resultKey = 'D' + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($resultDescriptor))).ToLowerInvariant().Substring(0, 16)
+$run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key $resultKey
 $lease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
 # The shared retention envelope is v1; distribution requests/reports and package evidence are v2.
 $summary = [ordered]@{ schemaVersion = 1; distributionSchemaVersion = 2; ownerId = $run.id; action = 'Run'; suite = 'Tooling'; module = 'Distribution'; profile = $version.ProductVersion
     status = 'Failed'; reason = $null; endUtc = $null; processes = @(); checks = 0; player = 'NotRun'; playerRun = @{ status = 'NotRun' }; playerRuns = @(); backend = $Backend
-    unity = @{ executable = $Unity; version = $editor.version; productVersion = $version.ProductVersion }; packageOrigin = $packageOrigin; packages = @(); resolvedDependencies = @() }
+    unity = @{ executable = $Unity; version = $editor.version; productVersion = $version.ProductVersion }; packageOrigin = $packageOrigin; packages = @(); resolvedDependencies = @()
+    resultKey = $run.key; resultKeyDescriptor = $resultDescriptor }
 if ($artifact) {
     $summary['acceptanceKind'] = if ($PackageSource -ceq 'LocalTarball') { 'ArtifactPreflight' } else { 'RegistryInstallation' }
     $summary['release'] = @{ sourceCommit = $registrySource.release.sourceCommit; manifestSha256 = $registrySource.release.sha256; producer = $registrySource.release.producer }
@@ -147,7 +151,7 @@ function Invoke-DistributionProcess([object] $HostRecord, [string] $Phase) {
         smoke = [bool]$RunPlayer; backend = $Backend; hybridCLR = [bool]$HybridCLR; nativeSource = $NativeSource; nativeVariant = $nativeVariant
         baseline = $baselineRoot; runtimeCache = $runtimeCache; cacheOwnerId = $cacheOwnerId; playerRoot = $nativePlayerRoot; playerOwnerId = $playerOwnerId
         cacheRoot = $cache.path; registryUrl = $(if ($artifact) { $artifactFields.registryUrl } else { $null }); registryVersion = $(if ($artifact) { $artifactFields.registryVersion } else { $null })
-        entryPackage = $entryPackage; inputHash = $identity.sha256; catalogSha256 = $catalogSha256; releaseManifestSha256 = $(if ($artifact) { $artifactFields.releaseManifestSha256 } else { $null }) }
+        entryPackage = $entryPackage; inputHash = $identity.sha256; patchInputHash = $patchInputHash; catalogSha256 = $catalogSha256; releaseManifestSha256 = $(if ($artifact) { $artifactFields.releaseManifestSha256 } else { $null }) }
     $start = [Diagnostics.ProcessStartInfo]::new($Unity)
     $start.UseShellExecute = $false; $start.WorkingDirectory = $HostRecord.path
     foreach ($key in @($start.Environment.Keys | Where-Object { $_.StartsWith('GIT_', [StringComparison]::OrdinalIgnoreCase) })) { $null = $start.Environment.Remove($key) }
@@ -407,7 +411,7 @@ try {
     $summary.checks++; 'PASS: actual UPM source, pinned package graph, compilation and production asset boundaries'
     if ($RunPlayer) {
         $probeName = if ($HybridCLR) { 'HybridCLRSmoke' } else { 'PlayerSmoke' }
-        $probeReferences = @('YLFramework.Runtime'); if ($HybridCLR) { $probeReferences += @('YLFramework.HybridCLR', 'YLFramework.HybridCLR.Sample.Host') }
+        $probeReferences = @('YLFramework.Runtime', 'Unity.Addressables', 'Unity.ResourceManager', 'Unity.Profiling.Core'); if ($HybridCLR) { $probeReferences += @('YLFramework.HybridCLR', 'YLFramework.HybridCLR.Sample.Host') }
         $probeFiles = [ordered]@{
             "Assets/YLTestingDistribution/Smoke/$probeName.cs" = [IO.File]::ReadAllBytes((Join-Path $repository "Tools/Testing/$probeName.cs"))
             'Assets/YLTestingDistribution/Smoke/YLTesting.PlayerSmoke.asmdef' = [Text.Encoding]::UTF8.GetBytes((@{ name = 'YLTesting.PlayerSmoke'; references = $probeReferences; autoReferenced = $false } | ConvertTo-Json -Depth 5) + "`n")
@@ -418,10 +422,11 @@ try {
             $probeFiles['Assets/YLTestingDistribution/HybridEditor/HybridCLREntry.cs'] = [IO.File]::ReadAllBytes((Join-Path $repository 'Tools/Testing/HybridCLREntry.cs'))
             $probeFiles['Assets/YLTestingDistribution/HybridEditor/YLTesting.HybridCLR.Editor.asmdef'] = [Text.Encoding]::UTF8.GetBytes((@{
                 name = 'YLTesting.HybridCLR.Editor'; includePlatforms = @('Editor'); autoReferenced = $false
-                references = @('YLFramework.Runtime', 'YLFramework.Editor', 'YLFramework.HybridCLR', 'YLFramework.HybridCLR.Editor', 'YLFramework.HybridCLR.Sample.Editor', 'HybridCLR.Editor', 'HybridCLR.Runtime')
+                references = @('YLFramework.Runtime', 'YLFramework.Editor', 'YLFramework.HybridCLR', 'YLFramework.HybridCLR.Editor', 'YLFramework.HybridCLR.Sample.Editor', 'HybridCLR.Editor', 'HybridCLR.Runtime',
+                    'Unity.Addressables', 'Unity.ResourceManager', 'Unity.Profiling.Core', 'Unity.Addressables.Editor', 'Unity.ScriptableBuildPipeline.Editor')
                 overrideReferences = $true; precompiledReferences = @('Newtonsoft.Json.dll')
             } | ConvertTo-Json -Depth 5) + "`n")
-        } else { $probeFiles['Assets/YLTestingDistribution/Smoke/Resources/YLPlayerSmoke/Message.txt'] = [Text.Encoding]::UTF8.GetBytes("yl-player-smoke-v1`n") }
+        }
         foreach ($entry in $probeFiles.GetEnumerator()) {
             $target = Get-YLHostManagedPath $hostRecord $entry.Key
             if ([IO.Path]::Exists($target) -or [IO.Path]::Exists($target + '.meta')) { throw "Do not replace existing Player smoke inputs: $($entry.Key)" }
@@ -448,21 +453,46 @@ try {
         $artifacts = @(Get-YLTestTreeFiles $artifactRoot | ForEach-Object { @{ path = $_; sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash } }); $summary['playerArtifacts'] = $artifacts
         $baseline = if ($HybridCLR) { @(Get-YLTestTreeFiles $build.result.baseline | ForEach-Object { @{ path = $_; sha256 = (Get-FileHash -LiteralPath $_).Hash } }) } else { @() }
         foreach ($phase in @('PlayerRun', 'PlayerRepeat')) {
+            $activeBuild = $build
+            if ($HybridCLR -and $phase -ceq 'PlayerRepeat') {
+                Assert-YLUnityHostIdle $hostRecord
+                $source = Get-YLHostManagedPath $hostRecord 'Assets/Samples/YLFramework.HybridCLR/HotSupport/VersionInfo.cs'
+                $before = @($summary.probeInputs | Where-Object path -CEQ $source)
+                if ($before.Count -ne 1 -or (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -cne $before[0].sha256) { throw 'Do not overwrite unknown patch source changes.' }
+                $text = [IO.File]::ReadAllText($source)
+                $old = 'public static string Version => "v1";'; $new = 'public static string Version => "v2";'
+                if (($text.Length - $text.Replace($old, '').Length) / $old.Length -ne 1) { throw 'The exact v1 support source was not found once.' }
+                [IO.File]::WriteAllText($source, $text.Replace($old, $new), [Text.UTF8Encoding]::new($false))
+                $summary['patchInput'] = @{ path = $source; before = $before[0].sha256; after = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash }
+                $patchBinding = [ordered]@{ baseInputHash = $identity.sha256; patchInput = $summary.patchInput; baseline = $baseline; playerArtifacts = $artifacts
+                    baseReceiptSha256 = (Get-FileHash -LiteralPath $build.result.receipt -Algorithm SHA256).Hash }
+                $patchInputHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $patchBinding -Depth 12 -Compress)))).ToLowerInvariant()
+                $summary['patchInputHash'] = $patchInputHash
+                $activeBuild = Invoke-DistributionProcess -HostRecord $hostRecord -Phase HybridPatch
+                if ($activeBuild.result.publication -cne 'PublishPatch' -or $activeBuild.result.hybridClr.sampleVersion -cne 'v2' -or
+                    $activeBuild.result.hybridClr.codePackageId -ceq $build.result.hybridClr.codePackageId -or
+                    $activeBuild.result.hybridClr.inputHash -cne $patchInputHash) { throw 'The actual PublishPatch did not produce distinct v2 bytes/input identity.' }
+                $summary['hybridPatch'] = $activeBuild.result
+            }
             $output = Join-Path $run.path $phase; $null = [IO.Directory]::CreateDirectory($output)
             $start = [Diagnostics.ProcessStartInfo]::new($executable); $start.UseShellExecute = $false; $start.WorkingDirectory = $artifactRoot
             $arguments = @('-batchmode', '-logFile', (Join-Path $output 'player.log'), '-ylSmokeOutput', $output); $expectedHybrid = $null
-            if ($HybridCLR) { $arguments += @('-ylHybridCLRReceipt', $build.result.receipt, '-force-d3d11', '-screen-width', '640', '-screen-height', '360'); $expectedHybrid = $build.result.hybridClr }
+            if ($HybridCLR) { $arguments += @('-ylHybridCLRReceipt', $activeBuild.result.receipt, '-force-d3d11', '-screen-width', '640', '-screen-height', '360'); $expectedHybrid = $activeBuild.result.hybridClr }
             else { $arguments += '-nographics' }
             foreach ($argument in $arguments) { $start.ArgumentList.Add($argument) }
             $fact = Invoke-YLTestProcess -StartInfo $start -Log (Join-Path $output 'process.log') -TimeoutMilliseconds ([long]$PlayerTimeoutSeconds * 1000); $summary.processes += $fact
-            $summary.playerRun = Read-YLPlayerSmoke -Path (Join-Path $output 'result.json') -ResultId $run.id -HostId $hostRecord.id -UnityVersion $editor.version -Backend $Backend -HybridCLR $expectedHybrid -ProcessResult $fact
+            $summary.playerRun = Read-YLPlayerSmoke -Path (Join-Path $output 'result.json') -ResultId $run.id -HostId $hostRecord.id -UnityVersion $editor.version -Backend $Backend -HybridCLR $expectedHybrid -ProcessResult $fact `
+                -InputHash $(if ($HybridCLR) { $expectedHybrid.inputHash } else { $identity.sha256 }) -ContentHash $activeBuild.result.contentHash -AddressablesVersion $activeBuild.result.addressablesVersion
             $summary.playerRuns += $summary.playerRun
             $playerLog = [IO.File]::ReadAllText((Join-Path $output 'player.log'))
             if (-not $playerLog.Contains('[YLPlayerSmoke] PASS ' + $run.id) -or $playerLog -match '(?m)^.*(?:Exception:|Assertion failed|\[YLPlayerSmoke\] FAIL)') { throw 'Player log does not close the matching successful smoke run.' }
             foreach ($playerArtifact in @($artifacts) + @($baseline)) { if ((Get-FileHash -LiteralPath $playerArtifact.path -Algorithm SHA256).Hash -cne $playerArtifact.sha256) { throw 'Player artifacts or frozen baseline changed during execution.' } }
             $summary.checks++; 'PASS: actual Player resource/workflow/release evidence and normal process exit close'
         }
-        foreach ($inputFile in $summary.probeInputs) { if ((Get-FileHash -LiteralPath $inputFile.path -Algorithm SHA256).Hash -cne $inputFile.sha256) { throw 'Smoke inputs changed during build/execution.' } }
+        foreach ($inputFile in $summary.probeInputs) {
+            $expected = if ($HybridCLR -and $inputFile.path -ceq $summary.patchInput.path) { $summary.patchInput.after } else { $inputFile.sha256 }
+            if ((Get-FileHash -LiteralPath $inputFile.path -Algorithm SHA256).Hash -cne $expected) { throw 'Smoke inputs changed outside the exact recorded patch delta.' }
+        }
     }
     if ($artifact) {
         . (Join-Path $PSScriptRoot '../Common/RegistryAuthoring.ps1')

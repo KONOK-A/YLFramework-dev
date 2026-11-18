@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_yl-workbench-ux2to5-20261017__atlases
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_yl-workbench-ux2to5-20261017__atlases
+  m_GUID: 60bae55b38289204dbf8441e98c5f70e
+  m_SerializeEntries:
+  - m_GUID: 477ab1a7c44148d4eb47ccf52d16fb49
+    m_Address: yl-workbench-ux2to5-20261017/atlases/icons
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-workbench-ux2to5-20261017/atlases
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 6c04505aa9c326548a6afcb129e10de9
+    m_Address: yl-workbench-ux2to5-20261017/atlases/menu
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-workbench-ux2to5-20261017/atlases
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 93723fc48dfe6e148b67ef1d7c985000
+    m_Address: yl-workbench-ux2to5-20261017/Manual.spriteatlas
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-workbench-ux2to5-20261017/atlases
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: 78ebfc2eb8c85f640be88df06dc07b16, type: 2}
+    - {fileID: 11400000, guid: acc8919d0b6f28948a8a8cd95001b4a9, type: 2}

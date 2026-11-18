@@ -31,7 +31,7 @@ namespace YLFramework.Resource
         {
             get;
         }
-        /// <summary>本地/URL图片异步producer的并发上限；同图等待者不额外占槽。</summary>
+        /// <summary>本 Provider 图片 IO 的并发上限；同图官方 operation 不额外占槽，不改变全局下载并发。</summary>
         public int MaximumConcurrentLoads
         {
             get;

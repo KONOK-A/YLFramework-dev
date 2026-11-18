@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Equipment",
     "rootNamespace": "YLFramework.Equipment",
-    "references": ["YLFramework.Runtime"],
+    "references": ["YLFramework.Runtime", "Unity.Addressables"],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

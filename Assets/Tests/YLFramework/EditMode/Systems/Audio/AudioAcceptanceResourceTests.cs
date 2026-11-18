@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -11,57 +13,57 @@ using UnityEngine;
 using UnityEngine.TestTools;
 using YLFramework.Audio;
 using YLFramework.Resource;
-using YLFramework.Tests.Resource;
 
 namespace YLFramework.Tests.Audio
 {
     [Category("YL.Special.AudioSession")]
     public class AudioAcceptanceResourceTests
     {
-        private const string Key = "YL.Audio86b.Acceptance.";
+        private const string Key = "YL.AudioAA.Acceptance.";
 
         [OneTimeSetUp]
         public void CreateOwnedFixture()
         {
-            if (SessionState.GetString(Key + "folder", "") != "")
+            if (SessionState.GetBool(Key + "owned", false))
             {
+                AudioNativeFixture.VerifyFolder(Key);
                 return;
             }
-
-            ResourceSessionTests.EnsureRestorableScenes();
-            var folder = "Assets/Tests/YLFramework/Fixtures/Audio/Acceptance-" + Guid.NewGuid().ToString("N");
-            AssetDatabase.CreateFolder("Assets/Tests/YLFramework/Fixtures/Audio", Path.GetFileName(folder));
-            AssetDatabase.CreateFolder(folder, "Resources");
-            var name = "acceptance86b-" + Guid.NewGuid().ToString("N");
-            AudioResourceBundleTests.WriteWave(folder + "/Resources/" + name + ".wav");
-            AssetDatabase.ImportAsset(folder + "/Resources/" + name + ".wav", ImportAssetOptions.ForceSynchronousImport);
-            SessionState.SetString(Key + "folder", folder);
-            SessionState.SetString(Key + "name", name);
+            AudioNativeFixture.RequireBuildEnvironment();
+            SessionState.SetString(Key + "protected", AudioNativeFixture.ProtectedDigest());
+            var folder = AudioNativeFixture.CreateFolder("__YLAudioAcceptance", Key);
+            var path = folder + "/Signal.wav";
+            AudioResourceBundleTests.WriteWave(path);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            var group = AudioNativeFixture.AddGroup("audio-acceptance-" + Guid.NewGuid().ToString("N"),
+                new Dictionary<string, string> { [path] = AudioNativeFixture.AcceptanceAddress });
+            SessionState.SetString(Key + "groups", group);
+            var built = AudioNativeFixture.Build();
+            SessionState.SetString(Key + "state", built.ContentStatePath);
+            SessionState.SetBool(Key + "owned", true);
         }
 
         [OneTimeTearDown]
         public void DeleteOwnedFixture()
         {
-            AssetDatabase.DeleteAsset(SessionState.GetString(Key + "folder", ""));
-            SessionState.EraseString(Key + "folder");
-            SessionState.EraseString(Key + "name");
+            if (SessionState.GetString(Key + "folder", "") == "")
+            {
+                return;
+            }
+            Assert.That(AudioNativeFixture.ProtectedDigest(), Is.EqualTo(SessionState.GetString(Key + "protected", "")));
+            AudioNativeFixture.DeleteFolderAndGroups(Key);
+            SessionState.EraseBool(Key + "owned");
+            SessionState.EraseString(Key + "state");
+            SessionState.EraseString(Key + "protected");
         }
 
         [UnityTearDown]
-        public IEnumerator RestoreSession()
-        {
-            AudioKit.Shutdown();
-            var cleanup = new ResourceSessionTests().TearDown();
-            while (cleanup.MoveNext())
-            {
-                yield return cleanup.Current;
-            }
-        }
+        public IEnumerator RestoreSession() => AudioNativeFixture.RestorePlay();
 
         [UnityTest]
         public IEnumerator AcceptanceInitializesTheOnlyAuthorityBeforeFirstNamedGroupSubmission()
         {
-            new ResourceSessionTests().SetUp();
+            AudioNativeFixture.PreparePlay();
             yield return new EnterPlayMode();
             yield return Body(false);
         }
@@ -69,7 +71,7 @@ namespace YLFramework.Tests.Audio
         [UnityTest]
         public IEnumerator InterruptedAcceptanceRestoresPreferencesAndClosesAudioBeforeResource()
         {
-            new ResourceSessionTests().SetUp();
+            AudioNativeFixture.PreparePlay();
             yield return new EnterPlayMode();
             yield return Body(true);
         }
@@ -91,12 +93,16 @@ namespace YLFramework.Tests.Audio
                 serialized.ApplyModifiedPropertiesWithoutUndo();
             }
             var direct = AudioClip.Create("AcceptanceDirect", 44100, 1, 44100, false);
-            IEnumerator run = null;
+            var stack = new Stack<IEnumerator>();
+            Component entry = null;
+            Type type = null;
+            ResourceSystem system = null;
+            var observed = false;
             try
             {
-                var type = AppDomain.CurrentDomain.GetAssemblies().Select(x => x.GetType("YLFramework.Core.Tests.AudioAcceptanceEntry")).First(x => x != null);
-                var entry = (MonoBehaviour)root.AddComponent(type);
-                entry.enabled = false;
+                type = AppDomain.CurrentDomain.GetAssemblies().Select(x => x.GetType("YLFramework.Core.Tests.AudioAcceptanceEntry")).First(x => x != null);
+                entry = root.AddComponent(type);
+                ((MonoBehaviour)entry).enabled = false;
                 var group = groupRoot.AddComponent<AudioGroupPlayer>();
                 library.groups.Add(new AudioClipGroup
                 {
@@ -117,12 +123,31 @@ namespace YLFramework.Tests.Audio
                 type.GetField("signal").SetValue(entry, direct);
                 type.GetField("secondSignal").SetValue(entry, direct);
                 type.GetField("mixerConfig").SetValue(entry, mixer);
-                type.GetField("resourceKey").SetValue(entry, SessionState.GetString(Key + "name", ""));
-                run = (IEnumerator)type.GetMethod("RunAudio", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(entry, null);
-                Assert.That(run.MoveNext(), Is.True);
-                Assert.That(ResourceSystem.Current, Is.Not.Null, "The first named Group submission must already have an initialized Resource authority.");
-                Assert.That(ResourceSystem.Current.IsAvailable, Is.True);
+                type.GetField("resourceKey").SetValue(entry, AudioNativeFixture.AcceptanceAddress);
+                stack.Push((IEnumerator)type.GetMethod("RunAudio", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(entry, null));
+                var deadline = Time.realtimeSinceStartupAsDouble + 30;
+                while (!group.LastHandle.IsPlaying && Time.realtimeSinceStartupAsDouble < deadline)
+                {
+                    Assert.That(stack, Is.Not.Empty, "The acceptance routine ended before its first real Group submission.");
+                    if (!stack.Peek().MoveNext())
+                    {
+                        (stack.Pop() as IDisposable)?.Dispose();
+                    }
+                    else if (stack.Peek().Current is IEnumerator nested)
+                    {
+                        stack.Push(nested);
+                    }
+                    else
+                    {
+                        yield return stack.Peek().Current;
+                    }
+                }
+                system = ResourceSystem.Current;
+                Assert.That(system, Is.Not.Null, "Wait for real startup and preload, not merely the first MoveNext.");
+                Assert.That(system.IsAvailable, Is.True);
+                Assert.That(group.LastHandle.IsPlaying, Is.True);
                 Assert.That(group.LastHandle.IsValid, Is.True);
+                AudioNativeFixture.Location<AudioClip>(AudioNativeFixture.AcceptanceAddress);
                 if (!interruptWithActiveGroup)
                 {
                     group.Stop();
@@ -132,16 +157,16 @@ namespace YLFramework.Tests.Audio
                     Time.timeScale = .125f;
                 }
 
-                Assert.DoesNotThrow(() => ((IDisposable)run).Dispose(), "Owner exit must not replace an original failure with Busy or skip restoration.");
-                run = null;
+                Assert.DoesNotThrow(() => DisposeFrames(stack), "Owner exit must not replace an original failure with Busy or skip restoration.");
                 Assert.That(Time.timeScale, Is.EqualTo(originalScale));
                 Assert.That(PlayerPrefs.GetInt("KEY_AUDIO_MANAGER_MUSIC_ON"), Is.Zero);
-                var until = Time.realtimeSinceStartupAsDouble + 5;
-                while (ResourceSystem.Current != null && Time.realtimeSinceStartupAsDouble < until)
-                {
-                    yield return null;
-                }
-
+                var shutdown = (Task)type.GetProperty("ShutdownCompletion").GetValue(entry);
+                AudioNativeFixture.ObserveShutdown(shutdown, system);
+                observed = true;
+                yield return AudioNativeFixture.Wait(() => shutdown.IsCompleted, "the original acceptance owner actually closed");
+                shutdown.GetAwaiter().GetResult();
+                AudioNativeFixture.AssertEmpty(system);
+                Assert.That(system.State, Is.EqualTo(ResourceSystemState.Closed));
                 Assert.That(ResourceSystem.Current, Is.Null);
                 Assert.That(group.LastHandle.IsValid, Is.False);
             }
@@ -149,7 +174,11 @@ namespace YLFramework.Tests.Audio
             {
                 try
                 {
-                    (run as IDisposable)?.Dispose();
+                    DisposeFrames(stack);
+                    if (!observed && entry != null)
+                    {
+                        AudioNativeFixture.ObserveShutdown((Task)type.GetProperty("ShutdownCompletion").GetValue(entry), system ?? ResourceSystem.Current);
+                    }
                 }
                 finally
                 {
@@ -163,6 +192,26 @@ namespace YLFramework.Tests.Audio
                 }
             }
         }
+
+        private static void DisposeFrames(Stack<IEnumerator> stack)
+        {
+            var failures = new List<Exception>();
+            while (stack.Count != 0)
+            {
+                try
+                {
+                    (stack.Pop() as IDisposable)?.Dispose();
+                }
+                catch (Exception failure)
+                {
+                    failures.Add(failure);
+                }
+            }
+            if (failures.Count != 0)
+            {
+                throw new AggregateException(failures);
+            }
+        }
     }
 
     [Category("YL.Special.AudioNative")]
@@ -171,7 +220,7 @@ namespace YLFramework.Tests.Audio
         [Test]
         public void CurrentSavedAudioInputsExecuteOriginalDspAcceptanceInTwoNativeMonoPlayers()
         {
-            global::YLFramework.Tests.Resource.ResourceSessionTests.EnsureRestorableScenes();
+            AudioNativeFixture.RequireBuildEnvironment();
             Assert.That(EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling, Is.False);
             var previous = EditorSceneManager.GetSceneManagerSetup();
             var output = global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput();
@@ -184,6 +233,9 @@ namespace YLFramework.Tests.Audio
             var guid = AssetDatabase.CreateFolder(Parent, "__YLAudioCurrent-" + token);
             Assert.That(guid, Is.Not.Empty);
             var completed = false;
+            var fixtureKey = "YL.AudioAA.Player." + token + ".";
+            SessionState.SetString(fixtureKey + "folder", folder);
+            SessionState.SetString(fixtureKey + "guid", guid);
             try
             {
                 var mixerPath = folder + "/Current.mixer";
@@ -203,9 +255,8 @@ namespace YLFramework.Tests.Audio
                 }
                 var configPath = folder + "/CurrentMixerConfig.asset";
                 AssetDatabase.CreateAsset(config, configPath);
-                var resourceKey = "AudioCurrentSignal-" + token;
-                Assert.That(AssetDatabase.CreateFolder(folder, "Resources"), Is.Not.Empty);
-                var signalPath = folder + "/Resources/" + resourceKey + ".wav";
+                Assert.That(AssetDatabase.CreateFolder(folder, "Content"), Is.Not.Empty);
+                var signalPath = folder + "/Content/Signal.wav";
                 AudioResourceBundleTests.WriteWave(signalPath);
                 AssetDatabase.ImportAsset(signalPath, ImportAssetOptions.ForceSynchronousImport);
                 var signal = AssetDatabase.LoadAssetAtPath<AudioClip>(signalPath);
@@ -224,8 +275,18 @@ namespace YLFramework.Tests.Audio
                 var libraryPath = folder + "/CurrentLibrary.asset";
                 AssetDatabase.CreateAsset(library, libraryPath);
                 var identities = new[] { libraryPath, configPath, mixerPath, signalPath, secondSignalPath }.ToDictionary(path => path, AssetDatabase.AssetPathToGUID);
+                var originalHashes = identities.Keys.Concat(identities.Keys.Select(path => path + ".meta"))
+                    .ToDictionary(path => path, AudioNativeFixture.Hash);
+                var groupGuid = AudioNativeFixture.AddGroup("audio-player-" + token, new Dictionary<string, string>
+                {
+                    [signalPath] = AudioNativeFixture.AcceptanceAddress,
+                    [secondSignalPath] = "yl-audio-acceptance/second"
+                });
+                SessionState.SetString(fixtureKey + "groups", groupGuid);
+                var content = AudioNativeFixture.Build(Path.Combine(output, "Audio-content-state-" + token + ".bin"));
+                var fingerprint = global::YLFramework.Testing.EditorFixtures.StandaloneFixturePlayer.ContentHash(content);
                 global::YLFramework.Testing.EditorFixtures.StandaloneFixturePlayer.BuildAndRun(
-                    output, folder, typeof(AudioKit).Assembly.GetName().Name, null, scene =>
+                    output, folder, typeof(AudioKit).Assembly.GetName().Name, content, scene =>
                     {
                         library = AssetDatabase.LoadAssetAtPath<AudioClipLibrary>(libraryPath);
                         config = AssetDatabase.LoadAssetAtPath<AudioMixerConfig>(configPath);
@@ -274,7 +335,8 @@ namespace YLFramework.Tests.Audio
                         entryType.GetField("secondSignal").SetValue(entry, secondSignal);
                         entryType.GetField("group").SetValue(entry, group);
                         entryType.GetField("mixerConfig").SetValue(entry, config);
-                        entryType.GetField("resourceKey").SetValue(entry, resourceKey);
+                        entryType.GetField("resourceKey").SetValue(entry, AudioNativeFixture.AcceptanceAddress);
+                        entryType.GetField("contentHash").SetValue(entry, fingerprint);
                         entryType.GetField("emitter").SetValue(entry, emitter);
                         entryType.GetField("musicPlayer").SetValue(entry, music);
                         entryType.GetField("runToken").SetValue(entry, token);
@@ -284,6 +346,8 @@ namespace YLFramework.Tests.Audio
                         var scenePath = folder + "/Player.unity";
                         Assert.That(EditorSceneManager.SaveScene(scene, scenePath), Is.True);
                         identities.Add(scenePath, AssetDatabase.AssetPathToGUID(scenePath));
+                        originalHashes.Add(scenePath, AudioNativeFixture.Hash(scenePath));
+                        originalHashes.Add(scenePath + ".meta", AudioNativeFixture.Hash(scenePath + ".meta"));
                         foreach (var pair in identities)
                         {
                             Assert.That(AssetDatabase.AssetPathToGUID(pair.Key), Is.EqualTo(pair.Value));
@@ -291,7 +355,28 @@ namespace YLFramework.Tests.Audio
                             System.IO.File.Copy(global::YLFramework.Testing.PackageTestPaths.Physical(pair.Key), target, false);
                             System.IO.File.Copy(global::YLFramework.Testing.PackageTestPaths.Physical(pair.Key + ".meta"), target + ".meta", false);
                         }
-                    }, graphics: true);
+                    }, extraScriptingDefines: new[] { "YL_UI_ACCEPTANCE" }, graphics: true);
+                foreach (var pair in originalHashes)
+                {
+                    Assert.That(AudioNativeFixture.Hash(pair.Key), Is.EqualTo(pair.Value), "Saved Audio input bytes changed: " + pair.Key);
+                }
+                foreach (var pair in identities)
+                {
+                    Assert.That(AssetDatabase.AssetPathToGUID(pair.Key), Is.EqualTo(pair.Value));
+                }
+                for (var run = 1; run <= 2; run++)
+                {
+                    var result = JObject.Parse(File.ReadAllText(Path.Combine(output, "StandalonePlayer-" + run + ".json")));
+                    Assert.That((string)result["token"], Is.EqualTo(token));
+                    Assert.That((string)result["status"], Is.EqualTo("Passed"), "The original quit verifier owns the successful report write.");
+                    Assert.That((string)result["contentHash"], Is.EqualTo(fingerprint));
+                    var measurements = (JObject)result["measurements"];
+                    foreach (var label in new[] { "group-signal", "half-volume", "muted", "paused", "resumed", "faded-out", "faded-in",
+                        "stopped", "mixer-full", "mixer-half", "crossfade", "spatial-near", "spatial-far" })
+                    {
+                        Assert.That(measurements[label], Is.Not.Null, "Retain each actual DSP/PCM observation: " + label);
+                    }
+                }
                 completed = true;
             }
             finally
@@ -301,7 +386,7 @@ namespace YLFramework.Tests.Audio
                 {
                     Assert.That(AssetDatabase.GUIDToAssetPath(guid), Is.EqualTo(folder));
                     Assert.That(AssetDatabase.AssetPathToGUID(folder), Is.EqualTo(guid));
-                    Assert.That(AssetDatabase.DeleteAsset(folder), Is.True);
+                    AudioNativeFixture.DeleteFolderAndGroups(fixtureKey);
                 }
             }
         }

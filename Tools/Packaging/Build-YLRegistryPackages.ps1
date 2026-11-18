@@ -110,7 +110,7 @@ function Get-YLRegistryPayload {
         $samples = @($manifest['samples'] | ForEach-Object { $_['path'] })
         foreach ($sample in $definition['samples']) { if (@($samples | Where-Object { $_ -is [string] -and $_ -ceq $sample }).Count -ne 1) { throw 'Required explicit Sample declaration is missing/duplicated.' } }
     } elseif ($manifest.Contains('samples')) { throw 'Unexpected package Samples declaration.' }
-    $dlls = @('com.kano.ylframework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll', 'com.kano.ylframework/Runtime/Core/Analyzers/YLFramework.Analyzers.dll', 'com.kano.ylframework.excel/Editor/Plugins/MiniExcel.dll')
+    $dlls = @('com.kano.ylframework/Runtime/Core/Analyzers/YLFramework.Analyzers.dll', 'com.kano.ylframework.excel/Editor/Plugins/MiniExcel.dll')
     $files = [Collections.Generic.SortedDictionary[string, object]]::new([StringComparer]::Ordinal)
     $guids = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
     $directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -173,9 +173,8 @@ function Get-YLRegistryPayload {
                 [Text.Encoding]::UTF8.GetString($Contents[$path]) -cnotmatch '(?m)^folderAsset: yes\s*$') { throw "Orphan asset meta: $id/$path" }
         }
     }
-    foreach ($pair in @(@('com.kano.ylframework', 'Plugins/BouncyCastle/BouncyCastle.Cryptography.dll', 'd61c1f2ba929a230a58e101ccd850e21f2675fa6b9814ec279633e8a089c3495'),
-        @('com.kano.ylframework.excel', 'Editor/Plugins/MiniExcel.dll', '0a49b66224bef9fdcec12800e4660267a993b1ece87727d9fe15c7dabf58ba1e'))) {
-        if ($id -ceq $pair[0] -and $files[$pair[1]].sha256 -cne $pair[2]) { throw "Approved vendor DLL byte identity differs: $id/$($pair[1])" }
+    if ($id -ceq 'com.kano.ylframework.excel' -and $files['Editor/Plugins/MiniExcel.dll'].sha256 -cne '0a49b66224bef9fdcec12800e4660267a993b1ece87727d9fe15c7dabf58ba1e') {
+        throw "Approved vendor DLL byte identity differs: $id/Editor/Plugins/MiniExcel.dll"
     }
     $text = [Text.StringBuilder]::new()
     foreach ($row in $files.Values) { $null = $text.Append($row.path).Append([char]0).Append($row.contentSha256).Append("`n") }
