@@ -12,6 +12,8 @@
 4. 显式关闭自动启动 Catalog 更新检查，即启用 `Disable Catalog Update On Startup`；使用正式 packed content builder，保存自己已确认的设置、Group、schema 和场景。
 5. 打开 `YLFramework/Resource/Workbench` 校验、定位官方配置、生成常量或执行正式内容构建。浏览窗口不初始化 Runtime，不自动切 Profile/平台或保存脏场景。
 
+编辑器脚本打开同一窗口时使用 `ResourceWorkbenchWindow.OpenWorkbench()`。若仍引用旧工作台类型，改用 `ResourceWorkbenchWindow` / `ResourceWorkbenchAssetsMenu`；菜单路径不变。
+
 `ResourceAddressablesAuthoring.Validate` 只读报告前置与地址冲突。单资产键与 GUID 不能歧义；大小写和路径不被静默标准化。`FindUniqueEntry` 读取官方条目，缺失或多结果拒绝，不选第一项补缺。
 
 官方支持的 Folder、AssetReference 子对象、共享依赖、分包和 Analyze/Build Report 按实际安装版本使用。子对象不能靠旧框架 localId 拼接猜名称；名称重名或身份无法表达时必须修正真实引用。

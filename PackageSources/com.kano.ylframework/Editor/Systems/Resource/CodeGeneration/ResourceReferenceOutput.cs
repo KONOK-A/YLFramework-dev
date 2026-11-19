@@ -26,7 +26,7 @@ namespace YLFramework.Editor.Resource
             var content = Header + Hash(source) + "\n" + source;
             var path = Path.Combine(directory, SourceName);
             var asmdef = Path.Combine(directory, AssemblyName + ".asmdef");
-            ResourceBuildOperation.ValidateAssetPath(directory);
+            ResourcePathValidation.ValidateAssetPath(directory);
             // 根级 asmdef/asmref 会改变新目录的身份；不能静默改为本工具的子程序集。
             var parent = Path.GetDirectoryName(Path.GetFullPath(directory));
             while (parent != null && parent.Length >= Path.GetFullPath("Assets").Length)
@@ -40,7 +40,8 @@ namespace YLFramework.Editor.Resource
                     foreach (var configuration in Directory.EnumerateFiles(parent).Where(file =>
                         file.EndsWith(".asmdef", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".asmref", StringComparison.OrdinalIgnoreCase)))
                     {
-                        if (configuration.EndsWith(".asmdef", StringComparison.OrdinalIgnoreCase) && JsonUtilityName(File.ReadAllText(configuration)) == AssemblyName)
+                        if (configuration.EndsWith(".asmdef", StringComparison.OrdinalIgnoreCase) &&
+                            ReadAssemblyName(File.ReadAllText(configuration)) == AssemblyName)
                         {
                             throw new InvalidOperationException("生成程序集 " + AssemblyName + " 已存在于其他位置：" + configuration +
                                 "\n保留原生成物及 .meta；请按 Documentation~/Modules/Resource.md 人工迁移，不能创建第二份同名 asmdef。");
@@ -109,7 +110,7 @@ namespace YLFramework.Editor.Resource
                     throw new InvalidOperationException("程序集资产不可读取：" + other);
                 }
 
-                if (JsonUtilityName(asset.text) == AssemblyName)
+                if (ReadAssemblyName(asset.text) == AssemblyName)
                 {
                     throw new InvalidOperationException("生成程序集 " + AssemblyName + " 已存在于其他位置：" + other +
                         "\n保留原生成物及 .meta；请按 Documentation~/Modules/Resource.md 人工迁移，不能创建第二份同名 asmdef。");
@@ -189,6 +190,7 @@ namespace YLFramework.Editor.Resource
             public string name;
         }
         /// <summary>从程序集 JSON 中提取名称以检测其他位置的身份占用。</summary>
-        private static string JsonUtilityName(string json) => UnityEngine.JsonUtility.FromJson<AssemblyIdentity>(json)?.name;
+        private static string ReadAssemblyName(string json) =>
+            UnityEngine.JsonUtility.FromJson<AssemblyIdentity>(json)?.name;
     }
 }

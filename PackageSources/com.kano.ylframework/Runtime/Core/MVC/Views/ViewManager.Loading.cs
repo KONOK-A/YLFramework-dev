@@ -89,7 +89,7 @@ namespace YLFramework.Core
                 transaction = true;
                 var scene = parent ? parent.gameObject.scene : SceneManager.GetActiveScene();
                 // Prefab 租约只负责资源借用；取得的实例租约在初始化时交给根 View，会独立存活到退出。
-                instanceLease = named ? prefabLease.Instantiate(parent, scene) : AcquireDirectInstance(prefab, parent, scene);
+                instanceLease = named ? prefabLease.Rent(parent, scene) : AcquireDirectInstance(prefab, parent, scene);
                 instance = instanceLease.Instance;
                 if (!instance)
                 {
@@ -354,7 +354,9 @@ namespace YLFramework.Core
             {
                 validate();
                 FindBackendRoot(module, parent);
-                instanceLease = prefabLease != null ? prefabLease.Instantiate(parent, scene) : AcquireDirectInstance(prefab, parent, scene, panelOperation != null);
+                instanceLease = prefabLease != null
+                    ? prefabLease.Rent(parent, scene)
+                    : AcquireDirectInstance(prefab, parent, scene, panelOperation != null);
                 instance = instanceLease.Instance;
                 if (!instance)
                 {

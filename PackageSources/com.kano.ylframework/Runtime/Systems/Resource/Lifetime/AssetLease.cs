@@ -101,7 +101,10 @@ namespace YLFramework.Resource
                 {
                     owner.Dispose();
                 }
-                finally { System.UnregisterLease(this); }
+                finally
+                {
+                    System.UnregisterLease(this);
+                }
             }
         }
 
@@ -112,7 +115,10 @@ namespace YLFramework.Resource
                 Dispose();
                 return ResourceSystem.Success(true);
             }
-            catch (Exception error) { return ResourceSystem.Failure<bool>(error); }
+            catch (Exception error)
+            {
+                return ResourceSystem.Failure<bool>(error);
+            }
         }
     }
 }

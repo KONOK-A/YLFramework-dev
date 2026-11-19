@@ -25,8 +25,8 @@ namespace YLFramework.Tests.Resource
 
             Assert.That(IsCompleted(awaiter), Is.False);
             request.SetSuccess(value);
-            request.Notify();
-            request.Notify();
+            request.NotifyCompletion();
+            request.NotifyCompletion();
 
             Assert.That(continued, Is.EqualTo(1));
             Assert.That(Result<object>(awaiter), Is.SameAs(value));
@@ -120,7 +120,7 @@ namespace YLFramework.Tests.Resource
             var waiting = Wait(request);
             Assert.That(waiting.IsCompleted, Is.False);
             request.SetSuccess("compiler continuation");
-            request.Notify();
+            request.NotifyCompletion();
 
             Assert.That(await waiting, Is.EqualTo("compiler continuation"));
             Assert.That(request.IsDisposed, Is.True);

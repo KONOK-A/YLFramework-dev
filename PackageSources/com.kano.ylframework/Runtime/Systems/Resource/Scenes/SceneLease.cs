@@ -61,8 +61,8 @@ namespace YLFramework.Resource
             get => Scope; set => Scope = value;
         }
 
-        /// <summary>The exact requested address; it is not normalized or used to find a replacement scene.</summary>
-        public string Address
+        /// <summary>The requested Addressables key, preserved as supplied and not used to find a replacement scene.</summary>
+        public string Key
         {
             get;
         }
@@ -142,7 +142,7 @@ namespace YLFramework.Resource
             var loaded = _hasScene && _scene.IsValid() && _scene.isLoaded;
             var status = IsSettled ? "Settled" : LastError != null ? "Failed" : _closeRequested ? "Closing" :
                 loaded && _activated ? "Loaded" : _activationStarted ? "Activating" : _loadReady ? "Awaiting activation" : "Loading";
-            return new ResourceSceneDiagnostics(LoadSequence, Address, Scope?.OwnerLabel, status,
+            return new ResourceSceneDiagnostics(LoadSequence, Key, Scope?.OwnerLabel, status,
                 _hasScene && _scene.IsValid() ? _scene.name : null, loaded, LastError?.ToString());
         }
 
@@ -156,13 +156,13 @@ namespace YLFramework.Resource
             BeginClose();
         }
 
-        internal SceneLease(ResourceSystem system, ResourceRequest<SceneLease> request, string address,
+        internal SceneLease(ResourceSystem system, ResourceRequest<SceneLease> request, string key,
             LoadSceneMode mode, bool activateOnLoad, int priority, float activationTimeoutSeconds,
             CancellationToken cancellation, long sequence)
         {
             System = system;
             _loadRequest = request;
-            Address = address;
+            Key = key;
             Mode = mode;
             LoadSequence = sequence;
             _activateOnLoad = activateOnLoad;
@@ -179,7 +179,7 @@ namespace YLFramework.Resource
             _tick = System.AddTick(Pump);
             try
             {
-                _locations = Addressables.LoadResourceLocationsAsync(Address, typeof(SceneInstance));
+                _locations = Addressables.LoadResourceLocationsAsync(Key, typeof(SceneInstance));
                 _ownsLocations = true;
             }
             catch (Exception error)
@@ -431,7 +431,7 @@ namespace YLFramework.Resource
                 _loadRequest = null;
                 System.MakeExternal(this);
                 request.SetSuccess(this);
-                request.Notify();
+                request.NotifyCompletion();
             }
             else
             {
@@ -550,7 +550,7 @@ namespace YLFramework.Resource
             if (request == null || request.IsDone)
                 return;
             request.SetFailure(status, error);
-            request.Notify();
+            request.NotifyCompletion();
         }
 
         private void FailRound(ResourceException error)
@@ -564,9 +564,9 @@ namespace YLFramework.Resource
             SetWaiters(activation, error);
             SetWaiters(unload, error);
             foreach (var request in activation)
-                request.Notify();
+                request.NotifyCompletion();
             foreach (var request in unload)
-                request.Notify();
+                request.NotifyCompletion();
         }
 
         private void Settle()
@@ -607,7 +607,7 @@ namespace YLFramework.Resource
             waiters.Clear();
             SetWaiters(snapshot, error);
             foreach (var request in snapshot)
-                request.Notify();
+                request.NotifyCompletion();
         }
 
         private static void SetWaiters(ResourceRequest<bool>[] requests, ResourceException error)
@@ -622,6 +622,6 @@ namespace YLFramework.Resource
         }
 
         private ResourceException Error(ResourceError kind, string message, Exception cause = null) =>
-            new(kind, message + " Address: " + Address, cause);
+            new(kind, message + " Key: " + Key, cause);
     }
 }

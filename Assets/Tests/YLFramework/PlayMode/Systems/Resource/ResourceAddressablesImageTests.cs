@@ -135,7 +135,7 @@ namespace YLFramework.Tests.Resource
                 Assert.That(texture.isReadable, Is.False);
                 Assert.That(texture.mipmapCount, Is.EqualTo(1));
                 Assert.That(Volatile.Read(ref entered), Is.EqualTo(1), "Sharing belongs to the official operation cache.");
-                _startup.Resources.ClearImageCache();
+                _startup.Resources.ClearIdleImageCache();
                 Assert.That(lease.IsValid, Is.True);
                 lease.Dispose();
                 yield return null;
@@ -215,7 +215,7 @@ namespace YLFramework.Tests.Resource
                 var frames = completionFrames.Skip(10).OrderBy(value => value).ToArray();
                 TestContext.WriteLine($"Official image fan-out: 100 consumers, 10 canceled, 1 successful GET; P50={frames[44]} frames, P95={frames[85]} frames.");
                 hit.Dispose();
-                system.ClearImageCache();
+                system.ClearIdleImageCache();
                 yield return Until(() => texture == null);
                 Assert.That(system.GetDiagnostics().LeaseCount, Is.Zero);
             }
@@ -359,7 +359,7 @@ namespace YLFramework.Tests.Resource
             yield return warmRequest;
             var warm = Own(warmRequest.TakeResult());
             Assert.That(warm.Asset, Is.SameAs(texture), "TTL begins at the last return, not at completion.");
-            _startup.Resources.ClearImageCache();
+            _startup.Resources.ClearIdleImageCache();
             Assert.That(warm.IsValid, Is.True);
             warm.Dispose();
             yield return Until(() => texture == null);

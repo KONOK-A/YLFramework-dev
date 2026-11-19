@@ -140,7 +140,7 @@ namespace YLFramework.Resource
             }
             foreach (var request in closing)
             {
-                request.Notify();
+                request.NotifyCompletion();
             }
         }
     }

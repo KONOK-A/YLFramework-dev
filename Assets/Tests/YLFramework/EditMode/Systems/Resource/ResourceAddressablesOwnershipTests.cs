@@ -221,7 +221,7 @@ namespace YLFramework.Tests.Resource
             var start = startup.StartAsync(); yield return Wait(start); start.TakeResult();
             var first = startup.Resources.CreateScope("first business");
             var second = startup.Resources.CreateScope("second business");
-            var a = first.LoadAsync<TextAsset>("ownership/message");
+            var a = first.LoadAsync<TextAsset>(key: "ownership/message");
             var b = second.LoadAsync<TextAsset>("ownership/message");
             yield return Wait(a); yield return Wait(b);
             Assert.That(a.TakeResult(), Is.SameAs(b.TakeResult()));

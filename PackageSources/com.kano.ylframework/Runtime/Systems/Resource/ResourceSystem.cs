@@ -41,7 +41,7 @@ namespace YLFramework.Resource
         private static ResourceSystem _authority;
         private static int _mainThreadId;
         private static bool _businessStarted;
-        private static readonly List<ResourceSystem> DrainingSessions = new();
+        private static readonly List<ResourceSystem> _drainingSessions = new();
         private readonly object _executionSession = SingletonSessionState.ExecutionSession;
         private readonly HashSet<IResourceLease> _leases = new();
         private readonly HashSet<IResourceLease> _internalLeases = new();
@@ -89,9 +89,18 @@ namespace YLFramework.Resource
 #if UNITY_EDITOR
             EditorApplication.playModeStateChanged += state =>
             {
-                if (state == PlayModeStateChange.ExitingPlayMode) EndSession();
+                if (state == PlayModeStateChange.ExitingPlayMode)
+                {
+                    EndSession();
+                }
             };
-            EditorApplication.update += () => { if (!Application.isPlaying) TickDrainingSessions(); };
+            EditorApplication.update += () =>
+            {
+                if (!Application.isPlaying)
+                {
+                    TickDrainingSessions();
+                }
+            };
 #endif
         }
 
@@ -143,7 +152,8 @@ namespace YLFramework.Resource
             if (State != ResourceSystemState.Initializing || !IsSessionActive)
                 throw new ResourceException(ResourceError.Canceled, "Startup was stopped before official initialization began.");
             var handle = Addressables.InitializeAsync(true);
-            var pin = AddressablesHandleOwner<UnityEngine.AddressableAssets.ResourceLocators.IResourceLocator>.Observe(Addressables.ResourceManager, handle);
+            var pin = AddressablesHandleOwner<UnityEngine.AddressableAssets.ResourceLocators.IResourceLocator>
+                .AcquireReference(Addressables.ResourceManager, handle);
             try
             {
                 while (!handle.IsDone)
@@ -155,13 +165,16 @@ namespace YLFramework.Resource
                 InitializeImageProvider();
                 State = ResourceSystemState.Ready;
             }
-            finally { DisposeOwner(pin); }
+            finally
+            {
+                DisposeOwner(pin);
+            }
             var waiters = _starting.ToArray();
             _starting.Clear();
             foreach (var request in waiters)
             {
                 request.SetSuccess(this);
-                request.Notify();
+                request.NotifyCompletion();
             }
         }
 
@@ -174,7 +187,7 @@ namespace YLFramework.Resource
             foreach (var request in waiters)
             {
                 request.SetFailure(ResourceRequestStatus.Failed, Wrap(error));
-                request.Notify();
+                request.NotifyCompletion();
             }
         }
 
@@ -189,26 +202,26 @@ namespace YLFramework.Resource
             return scope;
         }
 
-        /// <summary>以官方唯一地址异步取得独立租约，取消只影响本次消费者。</summary>
-        public ResourceRequest<AssetLease<T>> AcquireAsync<T>(string address, CancellationToken cancellation = default) where T : UnityEngine.Object =>
-            AcquireAssetAsync<T>(address, cancellation);
+        /// <summary>以解析到唯一位置的 Addressables 键取得独立租约；取消只影响本次消费者。</summary>
+        public ResourceRequest<AssetLease<T>> AcquireAsync<T>(string key, CancellationToken cancellation = default)
+            where T : UnityEngine.Object => AcquireAssetAsync<T>(key, cancellation);
 
-        internal ResourceRequest<AssetLease<T>> AcquireAssetAsync<T>(string address, CancellationToken cancellation,
+        internal ResourceRequest<AssetLease<T>> AcquireAssetAsync<T>(string key, CancellationToken cancellation,
             ResourceScope scope = null) where T : UnityEngine.Object
         {
             CheckThread();
             var request = new ResourceRequest<AssetLease<T>>(lease => lease.Dispose());
             if (!IsAvailable)
                 return Fail(request, AdmissionError());
-            Track(request, address, operation: nameof(AcquireAsync));
-            if (string.IsNullOrWhiteSpace(address))
+            Track(request, key, operation: nameof(AcquireAsync));
+            if (string.IsNullOrWhiteSpace(key))
                 return Fail(request, new ResourceException(ResourceError.InvalidAddress, "An exact Addressables key is required."));
             _businessStarted = true;
             BindCancellation(request, cancellation);
             if (!request.IsDone)
             {
                 scope?.BeginAssetWork();
-                Run(AcquireRoutine(address, request, scope), error => Fail(request, error));
+                Run(AcquireRoutine(key, request, scope), error => Fail(request, error));
             }
             return request;
         }
@@ -229,7 +242,7 @@ namespace YLFramework.Resource
                 if (request.IsDone)
                     yield break;
                 var handle = Addressables.LoadResourceLocationsAsync(key, typeof(T));
-                owner = AddressablesHandleOwner<IList<IResourceLocation>>.Take(Addressables.ResourceManager, handle);
+                owner = AddressablesHandleOwner<IList<IResourceLocation>>.TakeOwnership(Addressables.ResourceManager, handle);
                 while (!handle.IsDone && !request.IsDone)
                     yield return null;
                 if (request.IsDone)
@@ -247,7 +260,10 @@ namespace YLFramework.Resource
                 {
                     DisposeOwner(owner, request.DiagnosticIdentity, scope);
                 }
-                finally { scope?.EndAssetWork(); }
+                finally
+                {
+                    scope?.EndAssetWork();
+                }
             }
         }
 
@@ -255,7 +271,7 @@ namespace YLFramework.Resource
             ResourceScope scope = null) where T : UnityEngine.Object
         {
             var handle = Addressables.ResourceManager.ProvideResource<T>(location);
-            AddressablesHandleOwner<T> owner = AddressablesHandleOwner<T>.Take(Addressables.ResourceManager, handle);
+            var owner = AddressablesHandleOwner<T>.TakeOwnership(Addressables.ResourceManager, handle);
             try
             {
                 request.SetProgressReader(() => handle.IsValid() ? handle.PercentComplete : 0);
@@ -271,9 +287,12 @@ namespace YLFramework.Resource
                 var lease = new AssetLease<T>(this, key, owner, location);
                 owner = null;
                 request.SetSuccess(lease);
-                request.Notify();
+                request.NotifyCompletion();
             }
-            finally { DisposeOwner(owner, request.DiagnosticIdentity, scope); }
+            finally
+            {
+                DisposeOwner(owner, request.DiagnosticIdentity, scope);
+            }
         }
 
         /// <summary>只从 YL 已持有的就绪引用增持；不会阻塞、加载或查询官方私有缓存。</summary>
@@ -320,7 +339,13 @@ namespace YLFramework.Resource
             }
             if (!token.CanBeCanceled)
                 return;
-            var registration = token.Register(() => Post(() => { if (!request.IsDone) request.Cancel(); }));
+            var registration = token.Register(() => Post(() =>
+            {
+                if (!request.IsDone)
+                {
+                    request.Cancel();
+                }
+            }));
             request.Terminal += registration.Dispose;
         }
 
@@ -412,8 +437,24 @@ namespace YLFramework.Resource
                     if (job.MoveNext())
                         continue;
                 }
-                catch (Exception error) { if (job.Failed != null) job.Failed(error); else RecordCleanupError(error); }
-                finally { if (job.Finished) _work.Remove(job); }
+                catch (Exception error)
+                {
+                    if (job.Failed != null)
+                    {
+                        job.Failed(error);
+                    }
+                    else
+                    {
+                        RecordCleanupError(error);
+                    }
+                }
+                finally
+                {
+                    if (job.Finished)
+                    {
+                        _work.Remove(job);
+                    }
+                }
             }
             foreach (var tick in _ticks.ToArray())
                 InvokeCleanup(tick);
@@ -426,7 +467,10 @@ namespace YLFramework.Resource
             {
                 action();
             }
-            catch (Exception error) { RecordCleanupError(error); }
+            catch (Exception error)
+            {
+                RecordCleanupError(error);
+            }
         }
 
         private void RecordCleanupError(Exception error)
@@ -496,7 +540,7 @@ namespace YLFramework.Resource
                     RetrySceneCleanup();
                     foreach (var scope in _scopes.ToArray())
                         scope.Dispose();
-                    RetireInstances();
+                    RetireInstanceCaches();
                     RetireImages();
                 }
                 var failure = _scopes.Select(scope => scope.CloseError).FirstOrDefault(error => error != null) ?? SceneCleanupError;
@@ -523,13 +567,16 @@ namespace YLFramework.Resource
                 _startup.OnServiceStopped(this);
                 CompleteStops(null);
             }
-            finally { _checkingStop = false; }
+            finally
+            {
+                _checkingStop = false;
+            }
         }
 
         private void CompleteStops(Exception error)
         {
             foreach (var request in SetStopResults(error))
-                request.Notify();
+                request.NotifyCompletion();
         }
 
         private ResourceRequest<bool>[] SetStopResults(Exception error, ResourceRequestStatus status = ResourceRequestStatus.Failed)
@@ -562,7 +609,10 @@ namespace YLFramework.Resource
                 foreach (var request in requests)
                     request.NotifyInvalidation();
             }
-            finally { _freezingRequests = false; }
+            finally
+            {
+                _freezingRequests = false;
+            }
         }
 
         private void Invalidate()
@@ -579,17 +629,19 @@ namespace YLFramework.Resource
             foreach (var lease in _leases.ToArray())
                 if (!IsInstancePin(lease))
                     InvokeCleanup(lease.Dispose);
-            RetireInstances();
+            RetireInstanceCaches();
             RetireImages();
             UnbindCoreResourceProvider();
             _update?.Unregister();
             _update = null;
-            if (!DrainingSessions.Contains(this))
-                DrainingSessions.Add(this);
+            if (!_drainingSessions.Contains(this))
+            {
+                _drainingSessions.Add(this);
+            }
             if (ReferenceEquals(_authority, this))
                 _authority = null;
             foreach (var request in stopping)
-                request.Notify();
+                request.NotifyCompletion();
         }
 
         private static void ResetSession()
@@ -603,12 +655,12 @@ namespace YLFramework.Resource
         }
         private static void TickDrainingSessions()
         {
-            foreach (var system in DrainingSessions.ToArray())
+            foreach (var system in _drainingSessions.ToArray())
             {
                 system.AdvanceCleanup();
                 if (system._leases.Count == 0 && system._work.Count == 0 && system._drains.Count == 0 && !system.HasInstanceWork && !system.HasImageWork)
                 {
-                    DrainingSessions.Remove(system);
+                    _drainingSessions.Remove(system);
                     system._startup.OnServiceStopped(system);
                 }
             }
@@ -648,7 +700,7 @@ namespace YLFramework.Resource
             if (!request.IsDone)
             {
                 request.SetFailure(ResourceRequestStatus.Failed, Wrap(error));
-                request.Notify();
+                request.NotifyCompletion();
             }
             return request;
         }
@@ -713,7 +765,11 @@ namespace YLFramework.Resource
                     Finished = true;
                     return false;
                 }
-                catch { Dispose(); throw; }
+                catch
+                {
+                    Dispose();
+                    throw;
+                }
             }
             public void Dispose()
             {

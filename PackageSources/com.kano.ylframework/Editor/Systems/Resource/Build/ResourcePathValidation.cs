@@ -5,7 +5,7 @@ using UnityEngine;
 namespace YLFramework.Editor.Resource
 {
     /// <summary>正式构建、发布与生成共用的窄路径/链接校验，不提供另一个构建入口。</summary>
-    internal static class ResourceBuildOperation
+    internal static class ResourcePathValidation
     {
         /// <summary>取得去掉末尾分隔符的绝对路径，供边界比较使用。</summary>
         private static string FullPath(string path) => Path.GetFullPath(path).TrimEnd('\\', '/');

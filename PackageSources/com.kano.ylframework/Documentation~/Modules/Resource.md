@@ -55,7 +55,7 @@ public static class ScreenResources
 
 - `LoadAsync<T>` 支持字符串和 `AssetReferenceT<T>`；后者冻结官方 RuntimeKey，不占用 AssetReference 实例上的单一 operation 槽。
 - 不同 Scope 各持自己的引用，底层共享工作交给 Addressables。同 Scope 的等待者独立取消；`CloseAsync` 等待本 Scope 迟到的官方引用归还，不等待无关所有者的请求或独立 Lease。
-- 单资产 key 必须解析到恰好一个符合类型的 location。缺失和歧义不取第一项作回退。Labels 用于多资产组织或预下载，不把官方 Group 当 Runtime 集合。
+- `address` 是作者在 Addressables Entry 中配置的地址；`key` 是运行时解析输入，可来自地址或 `AssetReference.RuntimeKey`。单资产或场景 key 必须解析到恰好一个符合类型的 location；缺失和歧义不取第一项。Labels 用于多资产组织或预下载，不把官方 Group 当 Runtime 集合。
 - 失败项允许重试。关闭后拒绝新投递；成功完成到领取之间 Scope 已关闭，也不能交付失效对象。
 - `TryGetLoaded<T>` 只借读当前 Scope 的就绪内容，不加载或增持。借用不能越过 Scope 生命周期。
 
@@ -95,6 +95,7 @@ foreach (var text in batch.Assets)
 - await 为唯一领取者预约结果，`GetResult` 领取并结束请求跟踪；不能重复 await，也不能再手动争抢同一结果。
 - `yield return request` 只等待；协程随后检查状态或 `TakeResult()`，并用 `using`/`Dispose` 结束请求。已领取的独立 Lease 不由请求再次释放。
 - 未领取的拥有型结果由请求关闭归还。取消等待不是杀死官方共享加载；晚到结果有本方排空责任。
+- `Completed` 只表示请求进入终态，不代表结果已领取，也不代表底层操作已排空。
 - await 取消抛 `OperationCanceledException`，保留调用 token；失败保留原始资源异常。进度不是完成或交割凭证。
 
 ```csharp
@@ -115,7 +116,7 @@ Debug.Log(lease.Asset.text);
 
 两条路径都通过 Addressables 取得 Prefab 并保活依赖。只有池借出才复用状态，框架不自动重置任意脚本、事件、动画或物理状态。实例在创建前预约，登记后才激活；`Awake`/`OnEnable`/归还重入关闭时拒绝交付，真正死亡后才释放 pin。
 
-池复用 Foundation 机制，默认 SceneScoped、idle 上限 32；退休后的晚归还只销毁。池的 active/idle/destroy-pending 保活会显示在诊断中。已有 Prefab Lease 的同步 `Instantiate/Rent` 不执行 IO，但仍有 Unity 实例化 CPU 成本。
+池复用 Foundation 机制，默认 SceneScoped、空闲上限 32。`GetOrCreateInstanceCache(prefabLease)` 取得或创建共享池，新建时独立增持 Prefab，空池也保留。`RetireInstanceCaches()` 清除当前池的空闲实例，不强制销毁借出中的实例；后者在归还时销毁。已有 Prefab 租约的同步 `Instantiate` / `Rent` 不执行 IO。
 
 ## 场景与关闭
 
@@ -138,11 +139,11 @@ Core 的默认 Module 场景与 SceneController 默认仍为 Single，不等于 
 
 ## 图片与系统接入
 
-`AcquireImageAsync` 通过受限官方 Provider 加载完整 HTTP(S) URL 或绝对本地 PNG/JPEG，仍使用同一 Handle/Lease。默认编码上限 32 MiB、16M 像素、并发 4；idle 为 128 项、32 MiB RGBA 估计、30 秒 TTL。活跃输入不淘汰，不改全局下载并发/证书策略；换代用版本 URL，不保证同 URL 强制刷新。
+`AcquireImageAsync` 通过受限官方 Provider 加载完整 HTTP(S) URL 或绝对本地 PNG/JPEG，仍使用同一 Handle/Lease。默认编码上限 32 MiB、16M 像素、并发 4；空闲缓存为 128 项、32 MiB RGBA 估计、30 秒 TTL。`ClearIdleImageCache()` 只归还空闲缓存引用，保留活跃租约。加载不改全局下载并发/证书策略；换代用版本 URL，不保证同 URL 强制刷新。
 
 `ResourceImage` 隔离替换、停用、销毁与晚回调；placeholder 借用，自建 Sprite 克隆自己销毁，不能销毁共享 Texture。直接指定图集及 Sprite 名时，先销毁组件自建的克隆，再归还 Atlas Lease。`AssetReferenceAtlasedSprite` 按 `Sprite` 查询，图集子对象由官方 Provider 持有和释放。
 
-Core 保留 `ICoreResourceProvider` 窄合同，不反向引入 Addressables 类型。Audio 播放、缓存和交叉淡化尾轨各持独立 Clip 责任。DataAssets/Gameplay 的配置根由各 Manager 持有，条目只借读；Scope 不能替代业务登记注销。Localization 仍走官方包，与 YL 共享官方设施而不共享释放权。详见 [Audio](Audio.md) 及各选装包手册。
+Core 保留 `ICoreResourceProvider` 窄合同，不反向引入 Addressables 类型。`CorePrefabLease.Rent` 允许后端复用实例，不消费 Prefab 租约。Audio 播放、缓存和交叉淡化尾轨各持独立 Clip 责任。DataAssets/Gameplay 的配置根由各 Manager 持有，条目只借读；Scope 不能替代业务登记注销。Localization 仍走官方包，与 YL 共享官方设施而不共享释放权。详见 [Audio](Audio.md) 及各选装包手册。
 
 ## 停止与诊断
 
@@ -153,3 +154,10 @@ Core 保留 `ICoreResourceProvider` 窄合同，不反向引入 Addressables 类
 `GetDiagnostics()` 返回 YL lease、owner/key、Scope、请求、工作和排空的值快照，不保活资源，不是官方总引用数/native 内存。默认无历史；配置非零 `diagnosticHistoryCapacity` 后仅将显式查询的快照记录到有界历史，使用 `GetDiagnosticsHistory/ClearDiagnosticsHistory` 读取/清除。不开窗口不自动扫描全图或采样。
 
 缺失 key 检查官方 Entry/类型；歧义明确修配置；`ConfigurationConflict` 检查唯一 Startup 与外部绑定；`Busy` 找真实持有者；`SessionUnavailable` 结算旧会话而不是把旧请求挂新会话。性能以相同内容、分包、平台与正确生命周期测量，不能由包装层代码量推断优于裸 Addressables。
+
+## API 改名迁移
+
+- 将 `CorePrefabLease.Instantiate` 的调用和覆写改为 `Rent`。Resource 的 `Instantiate` / `InstantiateAsync` 仍保证新建。
+- 将 `GetInstanceCache`、`ClearInstanceCaches`、`ClearImageCache` 分别改为 `GetOrCreateInstanceCache`、`RetireInstanceCaches`、`ClearIdleImageCache`。
+- 读取资源来源 ID 改用 `ResourceException.SourceId`，构造时使用 `sourceId:`。`Source` 仍可编译，但现在读取的是 .NET 异常诊断字符串。
+- 以字符串调用 `ResourceScope.LoadAsync`、`ResourceSystem.AcquireAsync` 或 `ResourceSystem.LoadSceneAsync` 时，具名实参从 `address:` 改为 `key:`；`SceneLease.Address` 改为 `Key`。不需要修改已配置的地址、标签或序列化字段。

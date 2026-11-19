@@ -127,7 +127,10 @@ namespace YLFramework.Samples.Resource
             session.Scope = resources.CreateScope(session.Label).BindToDestroy(session.Owner);
             var text = await session.Scope.LoadAsync<TextAsset>(messageKey, token);
             var sameText = await session.Scope.LoadAsync<TextAsset>(messageKey, token);
-            if (!ReferenceEquals(text, sameText)) throw new InvalidOperationException("The example scope did not reuse its borrowed text.");
+            if (!ReferenceEquals(text, sameText))
+            {
+                throw new InvalidOperationException("The example scope did not reuse its borrowed text.");
+            }
             token.ThrowIfCancellationRequested();
             var configuration = await session.Scope.LoadAsync<ResourceStartupExampleData>(dataKey, token);
             token.ThrowIfCancellationRequested();
@@ -156,11 +159,17 @@ namespace YLFramework.Samples.Resource
                     token.ThrowIfCancellationRequested();
                     await Task.Yield();
                 }
-                if (read.TakeResult() != text.text) throw new InvalidOperationException("Core did not read the authored message.");
+                if (read.TakeResult() != text.text)
+                {
+                    throw new InvalidOperationException("Core did not read the authored message.");
+                }
                 core = "ok";
             }
             token.ThrowIfCancellationRequested();
-            if (options.Preview != null || options.Cue) await PresentAsync(session, options.Project, options.Preview, options.Cue, token);
+            if (options.Preview != null || options.Cue)
+            {
+                await PresentAsync(session, options.Project, options.Preview, options.Cue, token);
+            }
             token.ThrowIfCancellationRequested();
             var result = text.text + " / " + configuration.text + " / " + instance.name + " / retained=" + retained.Asset.text.Length +
                 " / core=" + core + " / audio=" + (options.Cue ? "ok" : "off") + " / image=" + (options.Preview != null ? "ok" : "off") +
@@ -174,7 +183,7 @@ namespace YLFramework.Samples.Resource
             var resources = session.Startup.Resources;
             using var prefabLease = await resources.AcquireAsync<GameObject>(key, token);
             token.ThrowIfCancellationRequested();
-            var pool = resources.GetInstanceCache(prefabLease, scene: destination);
+            var pool = resources.GetOrCreateInstanceCache(prefabLease, scene: destination);
             pool.Prewarm(1);
             GameObject previous;
             string name;
@@ -189,7 +198,10 @@ namespace YLFramework.Samples.Resource
             var next = pool.Rent();
             try
             {
-                if (next.GameObject != previous || next.GameObject.name != name) throw new InvalidOperationException("Prewarmed instance was not reset and reused.");
+                if (next.GameObject != previous || next.GameObject.name != name)
+                {
+                    throw new InvalidOperationException("Prewarmed instance was not reset and reused.");
+                }
                 return session.Scope.Own(next).GameObject;
             }
             catch
@@ -222,7 +234,9 @@ namespace YLFramework.Samples.Resource
                 }
                 token.ThrowIfCancellationRequested();
                 if (!binding || binding.Status != ResourceRequestStatus.Succeeded || !target.texture)
+                {
                     throw binding?.Error ?? new ResourceException(ResourceError.LoadFailed, "The example image was not displayed.");
+                }
             }
             if (hasCue)
             {
@@ -230,7 +244,10 @@ namespace YLFramework.Samples.Resource
                 var clip = await session.Scope.LoadAsync<AudioClip>(projectId + "/cue", token);
                 token.ThrowIfCancellationRequested();
                 session.Cue = session.Startup.Resources.GetAudioClipProvider(projectId).Load("cue");
-                if (session.Cue.Clip != clip) throw new InvalidOperationException("Audio did not borrow the warmed clip.");
+                if (session.Cue.Clip != clip)
+                {
+                    throw new InvalidOperationException("Audio did not borrow the warmed clip.");
+                }
                 var source = session.Audio = session.View.AddComponent<AudioSource>();
                 source.playOnAwake = false;
                 source.clip = session.Cue.Clip;
@@ -293,9 +310,15 @@ namespace YLFramework.Samples.Resource
                 }
                 session.Cue?.Dispose();
                 session.Cue = null;
-                if (session.Image) session.Image.Clear();
+                if (session.Image)
+                {
+                    session.Image.Clear();
+                }
                 session.Image = null;
-                if (session.View) Destroy(session.View);
+                if (session.View)
+                {
+                    Destroy(session.View);
+                }
                 session.View = null;
                 if (session.Scope != null)
                 {
@@ -350,9 +373,14 @@ namespace YLFramework.Samples.Resource
         private bool ValidateNamedInputs()
         {
             var cue = Key(audioCue, nameof(audioCue), true);
-            if (!string.IsNullOrEmpty(contentProjectId) || cue != null) _ = new ResourceAddress(contentProjectId, "cue");
+            if (!string.IsNullOrEmpty(contentProjectId) || cue != null)
+            {
+                _ = new ResourceAddress(contentProjectId, "cue");
+            }
             if (!string.IsNullOrEmpty(startupCatalogId) && string.IsNullOrWhiteSpace(startupCatalogId))
+            {
                 throw new ArgumentException("Select an exact Catalog ID or leave it empty.", nameof(startupCatalogId));
+            }
             return cue != null;
         }
 

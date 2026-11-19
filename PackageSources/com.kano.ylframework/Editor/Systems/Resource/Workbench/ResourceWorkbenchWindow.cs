@@ -9,14 +9,14 @@ using YLFramework.Resource;
 namespace YLFramework.Editor.Resource
 {
     /// <summary>官方配置的校验与导航增强；打开或绘制窗口不会创建、修复或保存配置。</summary>
-    public sealed class ResServiceEditorWindow : EditorWindow
+    public sealed class ResourceWorkbenchWindow : EditorWindow
     {
         [SerializeField] private AddressableAssetSettings settings;
         [SerializeField] private string referenceDirectory = ResourceReferenceOutput.DirectoryPath;
         private string _message;
         private MessageType _messageType;
         private Vector2 _scroll;
-        private int _tab;
+        private int _selectedTab;
         private Vector2 _diagnosticsScroll;
         private string _diagnosticsFilter = "";
         private ResourceDiagnosticsReport _snapshot;
@@ -24,9 +24,9 @@ namespace YLFramework.Editor.Resource
         private bool _showHistory;
 
         [MenuItem("YLFramework/Resource/Workbench %#r")]
-        public static void OpenResServiceWindow()
+        public static void OpenWorkbench()
         {
-            var window = GetWindow<ResServiceEditorWindow>("YL Addressables");
+            var window = GetWindow<ResourceWorkbenchWindow>("YL Addressables");
             window.minSize = new Vector2(540, 360);
             window.settings = Selection.activeObject as AddressableAssetSettings ?? AddressableAssetSettingsDefaultObject.GetSettings(false);
             window.Show();
@@ -34,8 +34,8 @@ namespace YLFramework.Editor.Resource
 
         private void OnGUI()
         {
-            _tab = GUILayout.Toolbar(_tab, new[] { "Authoring", "Runtime Diagnostics" });
-            if (_tab == 1)
+            _selectedTab = GUILayout.Toolbar(_selectedTab, new[] { "Authoring", "Runtime Diagnostics" });
+            if (_selectedTab == 1)
             {
                 DrawDiagnostics();
                 return;
@@ -113,7 +113,10 @@ namespace YLFramework.Editor.Resource
                     Run(() =>
                     {
                         var resources = ResourceSystem.Current;
-                        if (resources == null) return;
+                        if (resources == null)
+                        {
+                            return;
+                        }
                         _snapshot = resources.GetDiagnostics();
                         _history = resources.GetDiagnosticsHistory();
                         _message = null;
@@ -124,8 +127,14 @@ namespace YLFramework.Editor.Resource
             {
                 EditorGUILayout.LabelField("No active YL resource session. A previous capture remains a historical snapshot.", EditorStyles.wordWrappedLabel);
             }
-            if (!string.IsNullOrEmpty(_message)) EditorGUILayout.HelpBox(_message, _messageType);
-            if (_snapshot == null) return;
+            if (!string.IsNullOrEmpty(_message))
+            {
+                EditorGUILayout.HelpBox(_message, _messageType);
+            }
+            if (_snapshot == null)
+            {
+                return;
+            }
 
             _diagnosticsFilter = EditorGUILayout.TextField("Owner / Scope / Key", _diagnosticsFilter);
             EditorGUILayout.LabelField(_snapshot.CapturedAtUtc.ToString("u") + "   " + Summary(_snapshot), EditorStyles.wordWrappedLabel);
@@ -173,9 +182,15 @@ namespace YLFramework.Editor.Resource
                 }
                 shown++;
                 EditorGUILayout.LabelField(new GUIContent(text, text), EditorStyles.wordWrappedLabel);
-                if (!string.IsNullOrEmpty(cause)) EditorGUILayout.HelpBox(cause, MessageType.Error);
+                if (!string.IsNullOrEmpty(cause))
+                {
+                    EditorGUILayout.HelpBox(cause, MessageType.Error);
+                }
             }
-            if (shown == 0) EditorGUILayout.LabelField("No matching responsibilities.");
+            if (shown == 0)
+            {
+                EditorGUILayout.LabelField("No matching responsibilities.");
+            }
         }
 
         private void Show(ResourceEditorBuildReport report)

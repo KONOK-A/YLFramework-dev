@@ -65,7 +65,7 @@ namespace YLFramework.Tests.Resource
                 }
             }
             _objects.Clear();
-            _system?.ClearInstanceCaches();
+            _system?.RetireInstanceCaches();
             yield return null;
             if (_startup != null)
             {
@@ -293,10 +293,11 @@ namespace YLFramework.Tests.Resource
         [UnityTest]
         public IEnumerator Discard_NeverEntersIdle()
         {
-            using var acquiring = _system.AcquireAsync<GameObject>(PrefabKey);
+            using var acquiring = _system.AcquireAsync<GameObject>(key: PrefabKey);
             yield return Wait(acquiring);
             using var prefab = acquiring.TakeResult();
-            using var cache = _system.GetInstanceCache(prefab);
+            using var cache = _system.GetOrCreateInstanceCache(prefab);
+            Assert.That(_system.GetOrCreateInstanceCache(prefab), Is.SameAs(cache));
             var first = Keep(_system.Rent(prefab));
             var obj = first.GameObject;
             first.Discard();
@@ -384,7 +385,7 @@ namespace YLFramework.Tests.Resource
             yield return Wait(renting);
             var lease = Keep(renting.TakeResult());
             var obj = lease.GameObject;
-            _system.ClearInstanceCaches();
+            _system.RetireInstanceCaches();
             Assert.That(lease.IsValid, Is.True, "Retirement must not revoke an independent checkout.");
             lease.Return();
             Assert.That(obj != null, Is.True);
@@ -432,7 +433,7 @@ namespace YLFramework.Tests.Resource
                 if (ReferenceEquals(value, obj))
                 {
                     lease.Return();
-                    _system.ClearInstanceCaches();
+                    _system.RetireInstanceCaches();
                     AssertPrefabHeld(true);
                     callbacks++;
                 }
@@ -528,7 +529,7 @@ namespace YLFramework.Tests.Resource
             using var acquiring = _system.AcquireAsync<GameObject>(PrefabKey);
             yield return Wait(acquiring);
             using var prefab = acquiring.TakeResult();
-            using var oldCache = _system.GetInstanceCache(prefab);
+            using var oldCache = _system.GetOrCreateInstanceCache(prefab);
             var first = Keep(oldCache.Rent());
             var oldObject = first.GameObject;
             InstanceLease nested = null;
@@ -550,7 +551,7 @@ namespace YLFramework.Tests.Resource
             Assert.That(nested.GameObject == replacement && replacement.activeSelf, Is.True,
                 "Finishing an old checkout must not retire or destroy the replacement pool's live checkout.");
             nested.Discard();
-            _system.ClearInstanceCaches();
+            _system.RetireInstanceCaches();
             prefab.Dispose();
             yield return Until(() => !replacement && !HasPrefab());
         }
@@ -754,7 +755,7 @@ namespace YLFramework.Tests.Resource
             using var prefab = acquiring.TakeResult();
             var scene = SceneManager.CreateScene("instance scene " + Guid.NewGuid().ToString("N"));
             _scenes.Add(scene);
-            using var cache = _system.GetInstanceCache(prefab, InstanceCachePolicy.SceneScoped, scene);
+            using var cache = _system.GetOrCreateInstanceCache(prefab, InstanceCachePolicy.SceneScoped, scene);
             var enabled = 0;
             InstanceLifecycleProbe.OnEnabled = _ => enabled++;
             Assert.That(cache.Prewarm(2), Is.EqualTo(2));
@@ -776,8 +777,8 @@ namespace YLFramework.Tests.Resource
             using var prefab = acquiring.TakeResult();
             var scene = SceneManager.CreateScene("retiring instance scene " + Guid.NewGuid().ToString("N"));
             _scenes.Add(scene);
-            using var sceneCache = _system.GetInstanceCache(prefab, InstanceCachePolicy.SceneScoped, scene);
-            using var persistent = _system.GetInstanceCache(prefab, InstanceCachePolicy.Persistent);
+            using var sceneCache = _system.GetOrCreateInstanceCache(prefab, InstanceCachePolicy.SceneScoped, scene);
+            using var persistent = _system.GetOrCreateInstanceCache(prefab, InstanceCachePolicy.Persistent);
             Assert.That(sceneCache.Prewarm(2), Is.EqualTo(2));
             Assert.That(persistent.Prewarm(1), Is.EqualTo(1));
             var moved = Keep(sceneCache.Rent());

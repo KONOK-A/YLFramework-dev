@@ -30,7 +30,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             }
             if (GUILayout.Button("Addressables Workbench"))
             {
-                ResServiceEditorWindow.OpenResServiceWindow();
+                ResourceWorkbenchWindow.OpenWorkbench();
             }
             profile = (HybridCLRBuildProfile)EditorGUILayout.ObjectField("Profile", profile, typeof(HybridCLRBuildProfile), false);
             if (GUILayout.Button("Create New Addressables Profile"))

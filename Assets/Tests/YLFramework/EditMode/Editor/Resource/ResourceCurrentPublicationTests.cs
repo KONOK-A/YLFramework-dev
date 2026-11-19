@@ -96,12 +96,12 @@ namespace YLFramework.Tests.ResourceBuild
         public void ResourceAuthorWindowUsesOfficialSettingsWithoutPrivateBuildRecipeFields()
         {
             AssertOwnedHost();
-            var fields = typeof(ResServiceEditorWindow).GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            var fields = typeof(ResourceWorkbenchWindow).GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             Assert.That(fields.Single(field => field.Name == "settings").FieldType, Is.EqualTo(typeof(AddressableAssetSettings)));
             Assert.That(fields.Any(field => field.FieldType == typeof(ResourceProject) || field.FieldType == typeof(ResourceBuildRecipe)), Is.False);
             ResourceAddressablesTestContent.BuildForConsumers();
-            var window = ScriptableObject.CreateInstance<ResServiceEditorWindow>();
-            var copy = ScriptableObject.CreateInstance<ResServiceEditorWindow>();
+            var window = ScriptableObject.CreateInstance<ResourceWorkbenchWindow>();
+            var copy = ScriptableObject.CreateInstance<ResourceWorkbenchWindow>();
             try
             {
                 using var serialized = new SerializedObject(window);

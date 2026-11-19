@@ -85,7 +85,7 @@ namespace YLFramework.Tests.Extensions.Equipment
                 yield return AddressablesDomainResourceFixture.Wait(() => request.IsDone, "equipment prefab preload");
                 Assert.That(request.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), request.Error?.ToString());
                 using var lease = request.TakeResult();
-                _cache = Resources.GetInstanceCache(lease);
+                _cache = Resources.GetOrCreateInstanceCache(lease);
             }
         }
 
@@ -120,7 +120,7 @@ namespace YLFramework.Tests.Extensions.Equipment
             Assert.That(first.EquipmentData, Is.SameAs(_root.Equipments[0]), "Equipment borrows its row from the owned root.");
             Assert.That(Resources.TryAcquireLoaded<GameObject>(_fixture.Key("prefab"), out var prefab), Is.True);
             using (prefab)
-                _cache = Resources.GetInstanceCache(prefab);
+                _cache = Resources.GetOrCreateInstanceCache(prefab);
             EquipmentManager.DestroyEquipment(first);
             Assert.That(_cache.CachedCount, Is.EqualTo(1));
             Assert.That(first.EquipmentData, Is.Null);

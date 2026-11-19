@@ -21,7 +21,7 @@ namespace YLFramework.Tests.Resource
             var owner = new Owner();
             var request = new ResourceRequest<Owner>(value => value.Dispose());
             request.SetSuccess(owner);
-            request.Notify();
+            request.NotifyCompletion();
             Assert.That(request.keepWaiting, Is.False);
             request.Dispose();
             request.Dispose();
@@ -59,7 +59,7 @@ namespace YLFramework.Tests.Resource
             };
             LogAssert.Expect(LogType.Exception, "InvalidOperationException: resource-observer-test");
             request.SetSuccess(owner);
-            request.Notify();
+            request.NotifyCompletion();
             Assert.That(observed, Is.EqualTo(2));
             Assert.That(owner.Releases, Is.EqualTo(1));
         }

@@ -69,8 +69,15 @@ namespace YLFramework.Resource
                     AudioProviders = audioProviders;
                     _started = true;
                 }
-                catch (Exception failure) { error = failure; }
-                finally { done.Dispose(); _starting = false; }
+                catch (Exception failure)
+                {
+                    error = failure;
+                }
+                finally
+                {
+                    done.Dispose();
+                    _starting = false;
+                }
                 var waiters = _waiters.ToArray();
                 _waiters.Clear();
                 foreach (var waiter in waiters)
@@ -79,7 +86,7 @@ namespace YLFramework.Resource
                         waiter.SetSuccess(this);
                     else
                         waiter.SetFailure(ResourceRequestStatus.Failed, ResourceSystem.Wrap(error));
-                    waiter.Notify();
+                    waiter.NotifyCompletion();
                 }
             };
             return request;

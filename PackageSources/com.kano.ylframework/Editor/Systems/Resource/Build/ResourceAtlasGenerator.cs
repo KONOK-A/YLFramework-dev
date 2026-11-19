@@ -21,7 +21,7 @@ namespace YLFramework.Editor.Resource
             {
                 throw new InvalidOperationException("Use a settled Editor and an explicit writable official group.");
             }
-            ResourceBuildOperation.ValidateAssetPath(assetPath);
+            ResourcePathValidation.ValidateAssetPath(assetPath);
             if (!assetPath.StartsWith("Assets/", StringComparison.Ordinal) || !assetPath.EndsWith(".spriteatlasv2", StringComparison.Ordinal) ||
                 !AssetDatabase.IsValidFolder(Path.GetDirectoryName(assetPath)?.Replace('\\', '/')) ||
                 File.Exists(assetPath) || File.Exists(assetPath + ".meta") || Directory.Exists(assetPath))
@@ -107,8 +107,14 @@ namespace YLFramework.Editor.Resource
 
             void CheckPath(string path)
             {
-                if (!visitedPaths.Add(path)) return;
-                foreach (var sprite in AssetDatabase.LoadAllAssetsAtPath(path).OfType<Sprite>()) CheckName(sprite);
+                if (!visitedPaths.Add(path))
+                {
+                    return;
+                }
+                foreach (var sprite in AssetDatabase.LoadAllAssetsAtPath(path).OfType<Sprite>())
+                {
+                    CheckName(sprite);
+                }
             }
 
             void CheckName(Sprite sprite)

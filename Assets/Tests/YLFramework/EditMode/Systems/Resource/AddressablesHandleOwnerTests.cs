@@ -31,7 +31,7 @@ namespace YLFramework.Tests.Resource
             IDisposable owner = null;
             try
             {
-                owner = Create("Take", manager, handle);
+                owner = Create("TakeOwnership", manager, handle);
                 owner.Dispose();
                 owner.Dispose();
                 Assert.That(operation.Destroyed, Is.EqualTo(1));
@@ -51,8 +51,8 @@ namespace YLFramework.Tests.Resource
             var operation = new ManualOperation();
             var handle = manager.StartOperation(operation, default);
             operation.Finish();
-            using var first = Create("Observe", manager, handle);
-            using var second = Create("Observe", manager, handle);
+            using var first = Create("AcquireReference", manager, handle);
+            using var second = Create("AcquireReference", manager, handle);
             first.Dispose();
             second.Dispose();
 
@@ -72,7 +72,7 @@ namespace YLFramework.Tests.Resource
             IDisposable owner = null;
             try
             {
-                owner = Create("Take", manager, handle);
+                owner = Create("TakeOwnership", manager, handle);
                 owner.Dispose();
                 Assert.That(handle.IsValid(), Is.True);
                 Assert.That(operation.Destroyed, Is.Zero);
@@ -99,7 +99,7 @@ namespace YLFramework.Tests.Resource
             var operation = new ManualOperation();
             var handle = manager.StartOperation(operation, default);
             handle.Completed += completed => manager.Release(completed);
-            using var owner = Create("Observe", manager, handle);
+            using var owner = Create("AcquireReference", manager, handle);
 
             operation.Finish();
             Assert.That(Read<AsyncOperationHandle<string>>(owner, "BorrowedHandle").Result, Is.EqualTo("official operation"));
@@ -112,8 +112,8 @@ namespace YLFramework.Tests.Resource
         public void InvalidHandlesAreRejectedBeforeAnyReferenceIsAcquired()
         {
             using var manager = new ResourceManager();
-            Assert.Throws<ArgumentException>(() => Create("Take", manager, default));
-            Assert.Throws<ArgumentException>(() => Create("Observe", manager, default));
+            Assert.Throws<ArgumentException>(() => Create("TakeOwnership", manager, default));
+            Assert.Throws<ArgumentException>(() => Create("AcquireReference", manager, default));
         }
 
         [Test]
@@ -123,7 +123,7 @@ namespace YLFramework.Tests.Resource
             var operation = new ManualOperation();
             var handle = manager.StartOperation(operation, default);
             operation.Finish();
-            using var owner = Create("Take", manager, handle);
+            using var owner = Create("TakeOwnership", manager, handle);
 
             Exception error = Task.Run(() =>
             {

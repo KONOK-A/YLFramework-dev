@@ -19,19 +19,19 @@ namespace YLFramework.Resource
         // Only the native submission is replaceable by lifecycle regression tests.
         internal Func<Scene, UnloadSceneOptions, AsyncOperation> SceneUnloader;
 
-        /// <summary>Load one uniquely addressed scene with the official default SceneProvider.</summary>
+        /// <summary>Load one scene resolved by an Addressables key with the official default SceneProvider.</summary>
         /// <remarks>
         /// Each call owns a separate load handle. Cancellation ends only this wait; an already started
         /// scene is activated and drained asynchronously. Single replacement cannot be rolled back.
         /// Custom scene providers are not supported and no global Addressables provider is replaced.
         /// </remarks>
-        /// <param name="address">An exact official address resolving to one SceneInstance location.</param>
+        /// <param name="key">An Addressables key resolving to exactly one SceneInstance location.</param>
         /// <param name="mode">Additive by default; Single can replace existing scenes.</param>
         /// <param name="activateOnLoad">False returns a lease at the native activation gate.</param>
         /// <param name="priority">The native scene load priority.</param>
         /// <param name="cancellation">Cancels result delivery, not the native load or its cleanup.</param>
         /// <param name="activationTimeoutSeconds">Finite deferred-activation limit from submission, in (0, 300].</param>
-        public ResourceRequest<SceneLease> LoadSceneAsync(string address, LoadSceneMode mode = LoadSceneMode.Additive,
+        public ResourceRequest<SceneLease> LoadSceneAsync(string key, LoadSceneMode mode = LoadSceneMode.Additive,
             bool activateOnLoad = true, int priority = 100, CancellationToken cancellation = default,
             float activationTimeoutSeconds = 30)
         {
@@ -39,9 +39,9 @@ namespace YLFramework.Resource
             try
             {
                 RequireAvailable();
-                if (string.IsNullOrEmpty(address))
+                if (string.IsNullOrEmpty(key))
                 {
-                    throw new ResourceException(ResourceError.InvalidAddress, "A scene address is required.");
+                    throw new ResourceException(ResourceError.InvalidAddress, "A scene key is required.");
                 }
                 if ((mode != LoadSceneMode.Single && mode != LoadSceneMode.Additive) ||
                     float.IsNaN(activationTimeoutSeconds) || activationTimeoutSeconds <= 0 || activationTimeoutSeconds > 300)
@@ -54,7 +54,7 @@ namespace YLFramework.Resource
                 return Failure<SceneLease>(error);
             }
 
-            var request = Track(new ResourceRequest<SceneLease>(lease => lease.Dispose()), address);
+            var request = Track(new ResourceRequest<SceneLease>(lease => lease.Dispose()), key);
             _businessStarted = true;
             request.Cancellation = cancellation;
             if (cancellation.IsCancellationRequested)
@@ -63,17 +63,18 @@ namespace YLFramework.Resource
                 return request;
             }
 
-            var owner = new SceneLease(this, request, address, mode, activateOnLoad, priority,
+            var owner = new SceneLease(this, request, key, mode, activateOnLoad, priority,
                 activationTimeoutSeconds, cancellation, ++_nextSceneSequence);
-            request.BeforeTake = () =>
+            request.ValidateBeforeTake = () =>
             {
                 if (!owner.IsValid)
                 {
-                    throw new ResourceException(ResourceError.SceneUnloaded, "The scene ended before its lease could be taken: " + address);
+                    throw new ResourceException(ResourceError.SceneUnloaded,
+                        "The scene ended before its lease could be taken: " + key);
                 }
             };
             _sceneLeases.Add(owner);
-            RegisterLease(owner, address, "SceneLease #" + owner.LoadSequence);
+            RegisterLease(owner, key, "SceneLease #" + owner.LoadSequence);
             MakeInternal(owner);
             owner.Start();
             return request;

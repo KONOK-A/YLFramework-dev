@@ -185,7 +185,7 @@ namespace YLFramework.Resource
         }
 
         /// <summary>只归还本方 idle Handle；不会撤销活跃 Lease 或销毁外部 Texture。</summary>
-        public void ClearImageCache()
+        public void ClearIdleImageCache()
         {
             CheckThread();
             while (_idleImages.First != null)
@@ -243,7 +243,7 @@ namespace YLFramework.Resource
         private void RetireImages()
         {
             _imagesRetired = true;
-            ClearImageCache();
+            ClearIdleImageCache();
         }
 
         private bool HasImageWork => _imageContext != null && _imageContext.WorkCount != 0;

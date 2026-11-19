@@ -113,14 +113,14 @@ namespace YLFramework.Tests.Resource
             yield return Wait(() => request.Status != CoreResourceStatus.Pending, "reusable prefab");
             Assert.That(request.Status, Is.EqualTo(CoreResourceStatus.Succeeded), request.Error?.ToString());
             var prefab = Hold(request.TakeResult());
-            var first = Hold(prefab.Instantiate(null, SceneManager.GetActiveScene()));
+            var first = Hold(prefab.Rent(null, SceneManager.GetActiveScene()));
             var instance = first.Instance;
             first.Return();
             prefab.Dispose();
             Assert.That(first.IsValid, Is.False);
 
             var retained = Hold(_core.AcquirePrefab("ownership", "prefab"));
-            var second = Hold(retained.Instantiate(null, SceneManager.GetActiveScene()));
+            var second = Hold(retained.Rent(null, SceneManager.GetActiveScene()));
             Assert.That(second.Instance, Is.SameAs(instance), "Core checkout must use ResourceSystem.Rent, not fresh Instantiate.");
             retained.Dispose();
             Assert.That(second.IsValid, Is.True, "The instance owns its pin independently of the Core prefab lease.");

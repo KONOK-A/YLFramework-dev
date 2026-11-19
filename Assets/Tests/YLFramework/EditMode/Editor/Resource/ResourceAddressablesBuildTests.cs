@@ -157,9 +157,9 @@ namespace YLFramework.Tests.Resource
         public void FormalBuildAndAuthoringUseOneEditorAssemblyWithoutLegacyExecutors()
         {
             const string package = "Packages/com.kano.ylframework/Editor/Systems/Resource/";
-            foreach (var file in new[] { "ResourceEditorOperations.cs", "ResourceAddressablesAuthoring.cs", "Build/ResourceBuildOperation.cs",
+            foreach (var file in new[] { "ResourceEditorOperations.cs", "ResourceAddressablesAuthoring.cs", "Build/ResourcePathValidation.cs",
                 "Build/ResourceAtlasGenerator.cs", "CodeGeneration/ResourceCodeGenerator.cs", "CodeGeneration/ResourceReferenceOutput.cs",
-                "Workbench/ResServiceAssetsMenu.cs", "Workbench/ResServiceEditorWindow.cs" })
+                "Workbench/ResourceWorkbenchAssetsMenu.cs", "Workbench/ResourceWorkbenchWindow.cs" })
             {
                 var asset = package + file;
                 Assert.That(File.Exists(PackageTestPaths.Physical(asset)) && File.Exists(PackageTestPaths.Physical(asset + ".meta")), Is.True, file);

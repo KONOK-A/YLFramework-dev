@@ -75,7 +75,10 @@ namespace YLFramework.Resource
             {
                 owner.Dispose();
             }
-            finally { _system.UnregisterLease(this); }
+            finally
+            {
+                _system.UnregisterLease(this);
+            }
         }
 
         ResourceRequest<bool> IResourceLease.CloseAsync()
@@ -85,7 +88,10 @@ namespace YLFramework.Resource
                 Dispose();
                 return ResourceSystem.Success(true);
             }
-            catch (Exception error) { return ResourceSystem.Failure<bool>(error); }
+            catch (Exception error)
+            {
+                return ResourceSystem.Failure<bool>(error);
+            }
         }
     }
 }

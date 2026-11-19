@@ -43,7 +43,7 @@ namespace YLFramework.Resource
         {
             RequireAvailable();
             scene = InstanceCache.TargetScene(parent, scene);
-            var cache = GetInstanceCacheCore(prefab, InstanceCachePolicy.SceneScoped, scene);
+            var cache = GetOrCreateInstanceCacheCore(prefab, InstanceCachePolicy.SceneScoped, scene);
             using var reservation = cache.Reserve(reusable, parent, scene, null);
             return reservation.Deliver();
         }
@@ -74,7 +74,7 @@ namespace YLFramework.Resource
             {
                 ReleasePendingInstanceRequest(request);
                 FailInstanceRequest(request, error);
-                request.Notify();
+                request.NotifyCompletion();
             }
             return request;
         }
@@ -137,7 +137,7 @@ namespace YLFramework.Resource
                     {
                         throw new ArgumentException("The instance parent changed its target scene while loading.");
                     }
-                    var cache = GetInstanceCacheCore(prefab, InstanceCachePolicy.SceneScoped, scene);
+                    var cache = GetOrCreateInstanceCacheCore(prefab, InstanceCachePolicy.SceneScoped, scene);
                     reservation = cache.Reserve(reusable, parent, scene,
                         () => !request.IsDone && !cancellation.IsCancellationRequested, request);
                     prefab.Dispose();
@@ -162,7 +162,7 @@ namespace YLFramework.Resource
                     try
                     {
                         var lease = reservation.Deliver();
-                        request.BeforeTake = () =>
+                        request.ValidateBeforeTake = () =>
                         {
                             if (!IsAvailable || !lease.IsValid)
                             {
@@ -202,7 +202,7 @@ namespace YLFramework.Resource
                         {
                             _instanceOperations--;
                             ReleasePendingInstanceRequest(request);
-                            request.Notify();
+                            request.NotifyCompletion();
                         }
                     }
                 }
@@ -220,16 +220,16 @@ namespace YLFramework.Resource
                 new ResourceException(ResourceError.LoadFailed, "Prefab instance creation failed.", error));
         }
 
-        /// <summary>显式保留共享缓存；默认场景桶、空闲上限 32，可设置 Persistent 和容量。</summary>
-        public InstanceCache GetInstanceCache(AssetLease<GameObject> prefab,
+        /// <summary>取得或创建共享实例缓存并保留空池；新缓存会独立增持 Prefab，不消费传入租约。</summary>
+        public InstanceCache GetOrCreateInstanceCache(AssetLease<GameObject> prefab,
             InstanceCachePolicy policy = InstanceCachePolicy.SceneScoped, Scene scene = default)
         {
-            var cache = GetInstanceCacheCore(prefab, policy, scene);
+            var cache = GetOrCreateInstanceCacheCore(prefab, policy, scene);
             cache.KeepEmpty();
             return cache;
         }
 
-        private InstanceCache GetInstanceCacheCore(AssetLease<GameObject> prefab, InstanceCachePolicy policy, Scene scene)
+        private InstanceCache GetOrCreateInstanceCacheCore(AssetLease<GameObject> prefab, InstanceCachePolicy policy, Scene scene)
         {
             RequireAvailable();
             if (prefab == null)
@@ -304,8 +304,8 @@ namespace YLFramework.Resource
             }
         }
 
-        /// <summary>退休开放桶，不强制销毁独立借出；晚归还销毁，pin 等真实死亡后释放。</summary>
-        public void ClearInstanceCaches()
+        /// <summary>退休当前实例缓存并清除空闲实例；已借出的实例在归还时销毁。</summary>
+        public void RetireInstanceCaches()
         {
             CheckThread();
             List<Exception> errors = null;
@@ -326,7 +326,6 @@ namespace YLFramework.Resource
             }
         }
 
-        internal void RetireInstances() => ClearInstanceCaches();
         internal bool HasInstanceWork => _pendingInstanceRequests.Count != 0 ||
             _instanceOperations != 0 || _instanceCaches.Count != 0;
         internal long InstanceCleanupEpoch => _instanceCleanupEpoch;

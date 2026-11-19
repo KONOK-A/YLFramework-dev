@@ -47,16 +47,16 @@ namespace YLFramework.Resource
         }
 
         /// <summary>加载并借读，Scope 自动持有结果；相同 Scope 内的重复取得不累积租约。</summary>
-        public ResourceRequest<T> LoadAsync<T>(string address, CancellationToken cancellation = default) where T : UnityEngine.Object
+        public ResourceRequest<T> LoadAsync<T>(string key, CancellationToken cancellation = default) where T : UnityEngine.Object
         {
             CheckAvailable();
-            if (string.IsNullOrWhiteSpace(address))
+            if (string.IsNullOrWhiteSpace(key))
                 return ResourceSystem.Failure<T>(new ArgumentException("An exact key is required."));
-            var key = (address, typeof(T));
-            if (!_entries.TryGetValue(key, out var value))
+            var entryKey = (key, typeof(T));
+            if (!_entries.TryGetValue(entryKey, out var value))
             {
-                var entry = new Entry<T>(this, address);
-                _entries.Add(key, entry);
+                var entry = new Entry<T>(this, key);
+                _entries.Add(entryKey, entry);
                 var waiting = entry.Wait(cancellation);
                 entry.Start();
                 return waiting;
@@ -65,8 +65,8 @@ namespace YLFramework.Resource
             if (existing.CanReuse)
                 return existing.Wait(cancellation);
             existing.ReleaseStale();
-            var replacement = new Entry<T>(this, address);
-            _entries[key] = replacement;
+            var replacement = new Entry<T>(this, key);
+            _entries[entryKey] = replacement;
             var result = replacement.Wait(cancellation);
             replacement.Start();
             return result;
@@ -131,93 +131,132 @@ namespace YLFramework.Resource
 
         /// <summary>每次新建并由本 Scope 持有，不隐式复用旧组件状态。</summary>
         public ResourceRequest<GameObject> InstantiateAsync(string key, Transform parent = null, Scene scene = default, CancellationToken cancellation = default) =>
-            InstanceRequest(key, nameof(InstantiateAsync), () => _system.InstantiateAsync(key, parent, scene, cancellation));
+            BorrowInstanceAsync(key, nameof(InstantiateAsync), () => _system.InstantiateAsync(key, parent, scene, cancellation));
 
         /// <summary>显式借用可复用实例；Scope 关闭时归还本次 checkout。</summary>
         public ResourceRequest<GameObject> RentAsync(string key, Transform parent = null, Scene scene = default, CancellationToken cancellation = default) =>
-            InstanceRequest(key, nameof(RentAsync), () => _system.RentAsync(key, parent, scene, cancellation));
+            BorrowInstanceAsync(key, nameof(RentAsync), () => _system.RentAsync(key, parent, scene, cancellation));
 
-        private ResourceRequest<GameObject> InstanceRequest(string key, string operation, Func<ResourceRequest<InstanceLease>> start)
+        private ResourceRequest<GameObject> BorrowInstanceAsync(string key, string operation,
+            Func<ResourceRequest<InstanceLease>> startLeaseRequest)
         {
             CheckAvailable();
-            var output = Track(new ResourceRequest<GameObject>(), key, operation);
-            var input = start();
-            _pendingInstances.Add(input);
+            var borrowRequest = Track(new ResourceRequest<GameObject>(), key, operation);
+            var leaseRequest = startLeaseRequest();
+            _pendingInstances.Add(leaseRequest);
             _pendingInstanceSweep ??= _system.AddTick(PrunePendingInstances);
-            output.Attach(input.Dispose, () => input.Progress);
-            input.Completed += done =>
+            borrowRequest.Attach(leaseRequest.Dispose, () => leaseRequest.Progress);
+            leaseRequest.Completed += completed =>
             {
                 try
                 {
-                    if (output.IsDone || IsDisposed)
-                        return;
-                    if (done.Status != ResourceRequestStatus.Succeeded)
+                    if (borrowRequest.IsDone || IsDisposed)
                     {
-                        output.SetFailure(done.Status, done.Error);
                         return;
                     }
-                    var lease = done.TakeResult();
+                    if (completed.Status != ResourceRequestStatus.Succeeded)
+                    {
+                        borrowRequest.SetFailure(completed.Status, completed.Error);
+                        return;
+                    }
+                    var lease = completed.TakeResult();
                     try
                     {
                         Own(lease);
-                        output.BeforeTake = () =>
+                        borrowRequest.ValidateBeforeTake = () =>
                         {
                             CheckBorrowAvailable();
                             if (!lease.IsValid)
-                                throw new ResourceException(ResourceError.SessionUnavailable, "The scoped instance checkout ended before delivery: " + key);
+                            {
+                                throw new ResourceException(ResourceError.SessionUnavailable,
+                                    "The scoped instance checkout ended before delivery: " + key);
+                            }
                         };
-                        output.SetSuccess(lease.GameObject);
+                        borrowRequest.SetSuccess(lease.GameObject);
                     }
-                    catch { lease.Discard(); throw; }
+                    catch
+                    {
+                        lease.Discard();
+                        throw;
+                    }
                 }
-                catch (Exception error) { ResourceSystem.Fail(output, error); }
-                finally { done.Dispose(); output.Notify(); }
+                catch (Exception error)
+                {
+                    ResourceSystem.Fail(borrowRequest, error);
+                }
+                finally
+                {
+                    completed.Dispose();
+                    borrowRequest.NotifyCompletion();
+                }
             };
-            return output;
+            return borrowRequest;
         }
 
         /// <summary>加载并激活本 Scope 拥有的场景；分阶段激活应使用显式 SceneLease。</summary>
         public ResourceRequest<Scene> LoadSceneAsync(string key, LoadSceneMode mode = LoadSceneMode.Additive, CancellationToken cancellation = default)
         {
             CheckAvailable();
-            var output = Track(new ResourceRequest<Scene>(), key, nameof(LoadSceneAsync));
-            var input = _system.LoadSceneAsync(key, mode, true, 100, cancellation);
-            var pending = _system.GetPendingSceneLease(input);
-            if (pending != null)
-                Own(pending);
-            output.Attach(input.Dispose, () => input.Progress);
-            input.Completed += done =>
+            var borrowRequest = Track(new ResourceRequest<Scene>(), key, nameof(LoadSceneAsync));
+            var leaseRequest = _system.LoadSceneAsync(key, mode, true, 100, cancellation);
+            var pendingLease = _system.GetPendingSceneLease(leaseRequest);
+            if (pendingLease != null)
+            {
+                Own(pendingLease);
+            }
+            borrowRequest.Attach(leaseRequest.Dispose, () => leaseRequest.Progress);
+            leaseRequest.Completed += completed =>
             {
                 try
                 {
-                    if (output.IsDone || IsDisposed)
-                        return;
-                    if (done.Status != ResourceRequestStatus.Succeeded)
+                    if (borrowRequest.IsDone || IsDisposed)
                     {
-                        output.SetFailure(done.Status, done.Error);
                         return;
                     }
-                    var lease = done.TakeResult();
+                    if (completed.Status != ResourceRequestStatus.Succeeded)
+                    {
+                        borrowRequest.SetFailure(completed.Status, completed.Error);
+                        return;
+                    }
+                    var lease = completed.TakeResult();
                     try
                     {
                         if (((IResourceLease)lease).Scope == null)
+                        {
                             Own(lease);
+                        }
                         else if (!ReferenceEquals(((IResourceLease)lease).Scope, this))
+                        {
                             throw new InvalidOperationException("Scene responsibility was transferred to another scope.");
-                        output.BeforeTake = () =>
+                        }
+                        borrowRequest.ValidateBeforeTake = () =>
                         {
                             CheckBorrowAvailable();
                             if (!lease.IsValid)
-                                throw new ResourceException(ResourceError.SceneUnloaded, "The scoped scene ended before delivery: " + key);
+                            {
+                                throw new ResourceException(ResourceError.SceneUnloaded,
+                                    "The scoped scene ended before delivery: " + key);
+                            }
                         };
-                        output.SetSuccess(lease.Scene);
+                        borrowRequest.SetSuccess(lease.Scene);
                     }
-                    catch { lease.Dispose(); throw; }
+                    catch
+                    {
+                        lease.Dispose();
+                        throw;
+                    }
                 }
-                catch (Exception error) { ResourceSystem.Fail(output, error); }
-                finally { done.Dispose(); output.Notify(); }
+                catch (Exception error)
+                {
+                    ResourceSystem.Fail(borrowRequest, error);
+                }
+                finally
+                {
+                    completed.Dispose();
+                    borrowRequest.NotifyCompletion();
+                }
             };
-            return output;
+            return borrowRequest;
         }
 
         /// <summary>可选地随真实场景 GameObject 销毁关闭；不随隐藏/停用关闭，也覆盖从未激活的对象。</summary>
@@ -237,7 +276,13 @@ namespace YLFramework.Resource
                 return this;
             _bound = true;
             _boundObject = owner;
-            _destroyBinding = _system.AddTick(() => { if (!IsDisposed && !_boundObject) Dispose(); });
+            _destroyBinding = _system.AddTick(() =>
+            {
+                if (!IsDisposed && !_boundObject)
+                {
+                    Dispose();
+                }
+            });
             return this;
         }
 
@@ -341,7 +386,7 @@ namespace YLFramework.Resource
                     request.SetFailure(ResourceRequestStatus.Failed, cause);
             }
             foreach (var request in waiters)
-                request.Notify();
+                request.NotifyCompletion();
         }
 
         private ResourceRequest<T> Track<T>(ResourceRequest<T> request, string key, string operation)
@@ -349,7 +394,7 @@ namespace YLFramework.Resource
             _system.Track(request, key, OwnerLabel, operation);
             _requests.Add(request);
             request.OwnershipEnded += () => _requests.Remove(request);
-            request.BeforeTake = CheckAvailable;
+            request.ValidateBeforeTake = CheckAvailable;
             return request;
         }
 
@@ -392,14 +437,14 @@ namespace YLFramework.Resource
             internal ResourceRequest<T> Wait(CancellationToken token)
             {
                 var request = _scope.Track(new ResourceRequest<T>(), _key, nameof(LoadAsync));
-                request.BeforeTake = CheckBorrow;
+                request.ValidateBeforeTake = CheckBorrow;
                 if (Ready)
                 {
                     _scope._system.BindCancellation(request, token);
                     if (!request.IsDone)
                     {
                         request.SetSuccess(Value);
-                        request.Notify();
+                        request.NotifyCompletion();
                     }
                     return request;
                 }
@@ -437,7 +482,7 @@ namespace YLFramework.Resource
                             foreach (var request in _waiting.ToArray())
                             {
                                 request.SetFailure(done.Status, done.Error);
-                                request.Notify();
+                                request.NotifyCompletion();
                             }
                             return;
                         }
@@ -446,13 +491,17 @@ namespace YLFramework.Resource
                         {
                             _lease = _scope.Own(lease);
                         }
-                        catch { lease.Dispose(); throw; }
+                        catch
+                        {
+                            lease.Dispose();
+                            throw;
+                        }
                         foreach (var request in _waiting.ToArray())
                         {
                             if (_scope.IsDisposed || request.IsDone)
                                 continue;
                             request.SetSuccess(Value);
-                            request.Notify();
+                            request.NotifyCompletion();
                         }
                     }
                     catch (Exception error)
@@ -461,7 +510,11 @@ namespace YLFramework.Resource
                         foreach (var request in _waiting.ToArray())
                             ResourceSystem.Fail(request, error);
                     }
-                    finally { _waiting.Clear(); done.Dispose(); }
+                    finally
+                    {
+                        _waiting.Clear();
+                        done.Dispose();
+                    }
                 };
             }
 

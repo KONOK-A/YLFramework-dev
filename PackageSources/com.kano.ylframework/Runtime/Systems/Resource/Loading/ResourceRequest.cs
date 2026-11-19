@@ -55,7 +55,7 @@ namespace YLFramework.Resource
         private float _progress;
         internal Action OwnershipEnded;
         internal Action Terminal;
-        internal Action BeforeTake;
+        internal Action ValidateBeforeTake;
         internal CancellationToken Cancellation;
         internal int DiagnosticId;
         internal (string Operation, string Key, string Owner) DiagnosticIdentity;
@@ -183,7 +183,7 @@ namespace YLFramework.Resource
         }
 
         /// <summary>移走当前观察者快照后逐个通知，避免重入重复派发。</summary>
-        internal void Notify()
+        internal void NotifyCompletion()
         {
             var snapshot = _observers;
             _observers = null;
@@ -331,8 +331,8 @@ namespace YLFramework.Resource
                 throw new InvalidOperationException("The resource result was already taken.");
             }
 
-            BeforeTake?.Invoke();
-            BeforeTake = null;
+            ValidateBeforeTake?.Invoke();
+            ValidateBeforeTake = null;
             _isClaimed = true;
             var value = _result;
             _result = default;
@@ -352,7 +352,7 @@ namespace YLFramework.Resource
             var detach = _cancel;
             SetTerminal(ResourceRequestStatus.Canceled, new ResourceException(ResourceError.Canceled, "The resource consumer canceled its wait."));
             detach?.Invoke();
-            Notify();
+            NotifyCompletion();
         }
 
         /// <summary>先冻结本请求，防止退出回调重入改写同批请求的结束原因。</summary>
@@ -394,7 +394,7 @@ namespace YLFramework.Resource
         {
             var snapshot = _invalidationObservers;
             _invalidationObservers = null;
-            BeforeTake = null;
+            ValidateBeforeTake = null;
             NotifyObservers(snapshot);
         }
 
@@ -423,7 +423,7 @@ namespace YLFramework.Resource
             }
             finally
             {
-                BeforeTake = null;
+                ValidateBeforeTake = null;
                 _observers = null;
                 EndOwnership();
             }

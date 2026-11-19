@@ -257,7 +257,7 @@ namespace YLFramework.Acceptance
                 {
                     yield return Wait(prefabRequest);
                     using var prefab = prefabRequest.TakeResult();
-                    using var pool = _system.GetInstanceCache(prefab);
+                    using var pool = _system.GetOrCreateInstanceCache(prefab);
                     Require(pool.MaxCapacity == 32 && pool.Prewarm(1) == 1, "The real scene pool default/prewarm differs.");
                     using var rented = pool.Rent();
                     var pooledObject = rented.GameObject;
@@ -818,7 +818,7 @@ namespace YLFramework.Acceptance
                     using var acquiring = _system.AcquireAsync<GameObject>(PrefabKey);
                     yield return Wait(acquiring);
                     prefab = acquiring.TakeResult();
-                    if (reuse) cache = _system.GetInstanceCache(prefab);
+                    if (reuse) cache = _system.GetOrCreateInstanceCache(prefab);
                 }
                 row.AcquireOwner();
                 for (int i = 0; i < row.iterations; i++)
@@ -915,7 +915,7 @@ namespace YLFramework.Acceptance
             if (caching)
             {
                 Require(row.imageCacheHits == row.iterations - 1, "A cached image was decoded into a different texture.");
-                _system.ClearImageCache();
+                _system.ClearIdleImageCache();
                 yield return Until(() => !previous);
             }
         }

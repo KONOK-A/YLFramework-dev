@@ -269,7 +269,7 @@ namespace YLFramework.Equipment.Acceptance
             }
             Check(prefabLease.Asset.GetComponents<MonoBehaviour>().OfType<IEquipment>().Count() == 1 && prefab is PrefabEquipmentProbe,
                 "real-prefab-root-component");
-            var cache = _resources.GetInstanceCache(prefabLease);
+            var cache = _resources.GetOrCreateInstanceCache(prefabLease);
             ((IAcceptanceState)prefab).State = 77;
             EquipmentManager.DestroyEquipment(prefab);
             var prefabReused = EquipmentManager.CreateEquipment(1002);
@@ -325,7 +325,7 @@ namespace YLFramework.Equipment.Acceptance
             }
             _independent?.Dispose();
             _independent = null;
-            _resources?.ClearInstanceCaches();
+            _resources?.RetireInstanceCaches();
             if (_prefabScope != null)
             {
                 using var close = _prefabScope.CloseAsync();

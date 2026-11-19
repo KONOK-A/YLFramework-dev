@@ -56,7 +56,7 @@ namespace YLFramework.Resource
             foreach (var key in keys)
             {
                 var query = Addressables.LoadResourceLocationsAsync(key, typeof(T));
-                var queryOwner = AddressablesHandleOwner<IList<IResourceLocation>>.Take(manager, query);
+                var queryOwner = AddressablesHandleOwner<IList<IResourceLocation>>.TakeOwnership(manager, query);
                 try
                 {
                     while (!query.IsDone && !request.IsDone)
@@ -97,7 +97,10 @@ namespace YLFramework.Resource
                         locations.Add(location);
                     }
                 }
-                finally { DisposeOwner(queryOwner, request.DiagnosticIdentity); }
+                finally
+                {
+                    DisposeOwner(queryOwner, request.DiagnosticIdentity);
+                }
                 if (request.IsDone)
                     yield break;
                 RequireAvailable();
@@ -105,7 +108,7 @@ namespace YLFramework.Resource
 
             // 本方总是归还组引用，包括官方返回部分结果的失败；本层禁止领取该部分结果。
             var handle = manager.ProvideResources<T>(locations, false);
-            var owner = AddressablesHandleOwner<IList<T>>.Take(manager, handle);
+            var owner = AddressablesHandleOwner<IList<T>>.TakeOwnership(manager, handle);
             try
             {
                 request.SetProgressReader(() => handle.IsValid() ? handle.PercentComplete : 0);
@@ -128,11 +131,14 @@ namespace YLFramework.Resource
                 }
                 var lease = new AssetBatchLease<T>(this, keys, owner, assets);
                 owner = null;
-                request.BeforeTake = () => _ = lease.Assets;
+                request.ValidateBeforeTake = () => _ = lease.Assets;
                 request.SetSuccess(lease);
-                request.Notify();
+                request.NotifyCompletion();
             }
-            finally { DisposeOwner(owner, request.DiagnosticIdentity); }
+            finally
+            {
+                DisposeOwner(owner, request.DiagnosticIdentity);
+            }
         }
 
         private sealed class BatchLocationIdentity : IEqualityComparer<IResourceLocation>

@@ -14,9 +14,11 @@ namespace YLFramework.Tests.Resource
         {
             var address = new ResourceAddress("fixture", "Text/Message");
             var cause = new InvalidOperationException("Original failure");
-            var error = new ResourceException(ResourceError.LoadFailed, "Resource failure", cause, address, ResourceSourceId.Resources);
+            var error = new ResourceException(ResourceError.LoadFailed, "Resource failure", cause, address,
+                sourceId: ResourceSourceId.Resources);
             ((Exception)error).Source = "Caller.Component";
-            Assert.That(error.Source, Is.EqualTo(ResourceSourceId.Resources));
+            Assert.That(error.SourceId, Is.EqualTo(ResourceSourceId.Resources));
+            Assert.That(error.Source, Is.EqualTo("Caller.Component"));
             Assert.That(((Exception)error).Source, Is.EqualTo("Caller.Component"));
             Assert.That(error.Address, Is.EqualTo(address));
             Assert.That(error.InnerException, Is.SameAs(cause));

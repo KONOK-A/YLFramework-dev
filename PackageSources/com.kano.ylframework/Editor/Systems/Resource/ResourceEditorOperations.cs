@@ -115,8 +115,8 @@ namespace YLFramework.Editor.Resource
                 {
                     throw new InvalidDataException("The official build did not produce addressables_content_state.bin; no baseline was archived.");
                 }
-                ResourceBuildOperation.RejectLinks(state);
-                ResourceBuildOperation.RejectLinks(archive);
+                ResourcePathValidation.RejectLinks(state);
+                ResourcePathValidation.RejectLinks(archive);
                 File.Copy(state, archive, false);
                 if (!File.ReadAllBytes(state).SequenceEqual(File.ReadAllBytes(archive)))
                 {
@@ -146,7 +146,7 @@ namespace YLFramework.Editor.Resource
             {
                 throw new FileNotFoundException("Select the official content state archived with the target Player.", previousContentStatePath);
             }
-            ResourceBuildOperation.RejectLinks(previousContentStatePath);
+            ResourcePathValidation.RejectLinks(previousContentStatePath);
             var path = Path.GetFullPath(previousContentStatePath);
             var bytes = File.ReadAllBytes(path);
             var state = ContentUpdateScript.LoadContentState(path);
@@ -189,7 +189,7 @@ namespace YLFramework.Editor.Resource
                 throw new ArgumentException("Choose an explicit new local .bin content state archive.", nameof(path));
             }
             var full = Path.GetFullPath(path);
-            ResourceBuildOperation.RejectLinks(full);
+            ResourcePathValidation.RejectLinks(full);
             if (File.Exists(full) || Directory.Exists(full) || File.Exists(full + ".meta"))
             {
                 throw new IOException("The content state archive already exists and will not be overwritten: " + full);

@@ -171,7 +171,7 @@ namespace YLFramework.Core.Tests
             _assetLeases.Clear();
             if (_resources != null)
             {
-                Attempt(_resources.ClearInstanceCaches);
+                Attempt(_resources.RetireInstanceCaches);
             }
 
             if (_isSingleSceneTest && (!_previousActive.IsValid() || !_previousActive.isLoaded))
@@ -325,7 +325,7 @@ namespace YLFramework.Core.Tests
                 }
                 public override GameObject Prefab => _inner.Prefab;
                 public override bool IsValid => _inner.IsValid;
-                public override CoreInstanceLease Instantiate(Transform parent, Scene scene) => _inner.Instantiate(parent, scene);
+                public override CoreInstanceLease Rent(Transform parent, Scene scene) => _inner.Rent(parent, scene);
                 public override void Dispose()
                 {
                     var notify = _beforeDispose;
@@ -350,7 +350,8 @@ namespace YLFramework.Core.Tests
             internal RevocablePrefabLease(CorePrefabLease inner) => this._inner = inner;
             public override GameObject Prefab => _inner.Prefab;
             public override bool IsValid => !Revoked && _inner.IsValid;
-            public override CoreInstanceLease Instantiate(Transform parent, Scene scene) => Created = new RevocableInstanceLease(_inner.Instantiate(parent, scene));
+            public override CoreInstanceLease Rent(Transform parent, Scene scene) =>
+                Created = new RevocableInstanceLease(_inner.Rent(parent, scene));
             public override void Dispose() => _inner.Dispose();
         }
         private sealed class RevocableInstanceLease : CoreInstanceLease
@@ -1797,7 +1798,7 @@ namespace YLFramework.Core.Tests
                 Assert.That(panel.gameObject.activeSelf, Is.False);
                 Assert.That(probe.PrefabDisposals, Is.EqualTo(1));
                 Assert.That(FixtureInstanceCount(prefab), Is.EqualTo(1), "Healthy provider instances remain eligible for their backend cache.");
-                _resources.ClearInstanceCaches();
+                _resources.RetireInstanceCaches();
                 yield return null;
                 Assert.That(panel == null, Is.True);
                 Assert.That(ConsumerLeaseCount(), Is.EqualTo(independentLeases));

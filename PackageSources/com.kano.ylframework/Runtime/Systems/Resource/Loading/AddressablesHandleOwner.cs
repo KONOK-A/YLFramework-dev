@@ -5,7 +5,7 @@ using UnityEngine.ResourceManagement.AsyncOperations;
 
 namespace YLFramework.Resource
 {
-    /// <summary>只持有一份明确取得的官方引用；共享操作的返回值必须通过 Observe 独立增持。</summary>
+    /// <summary>只持有一份明确取得的官方引用；共享操作必须通过 AcquireReference 独立增持。</summary>
     internal sealed class AddressablesHandleOwner<T> : IDisposable
     {
         private readonly ResourceManager _manager;
@@ -23,13 +23,13 @@ namespace YLFramework.Resource
         }
 
         /// <summary>接管调用者已经独立取得的一份引用；该调用者不能再归还同一责任。</summary>
-        internal static AddressablesHandleOwner<T> Take(ResourceManager manager, AsyncOperationHandle<T> handle)
+        internal static AddressablesHandleOwner<T> TakeOwnership(ResourceManager manager, AsyncOperationHandle<T> handle)
         {
             return new AddressablesHandleOwner<T>(manager, handle);
         }
 
         /// <summary>对外部或自动释放的共享操作独立增持，不接管返回值本身的释放责任。</summary>
-        internal static AddressablesHandleOwner<T> Observe(ResourceManager manager, AsyncOperationHandle<T> handle)
+        internal static AddressablesHandleOwner<T> AcquireReference(ResourceManager manager, AsyncOperationHandle<T> handle)
         {
             Validate(manager, handle);
             return new AddressablesHandleOwner<T>(manager, manager.Acquire(handle));
@@ -53,7 +53,7 @@ namespace YLFramework.Resource
         internal bool IsDraining => _disposed && !_released;
 
         /// <summary>仅增持自己的活跃引用，不复制任何业务所有者身份。</summary>
-        internal AddressablesHandleOwner<T> Retain() => Observe(_manager, BorrowedHandle);
+        internal AddressablesHandleOwner<T> Retain() => AcquireReference(_manager, BorrowedHandle);
 
         public void Dispose()
         {

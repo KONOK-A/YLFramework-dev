@@ -145,7 +145,7 @@ namespace YLFramework.Tests.Resource
             using var acquiring = system.AcquireAsync<GameObject>("ownership/prefab");
             yield return acquiring;
             using var prefab = acquiring.TakeResult();
-            using var pool = system.GetInstanceCache(prefab);
+            using var pool = system.GetOrCreateInstanceCache(prefab);
             Assert.That(pool.Prewarm(2), Is.EqualTo(2));
             using var instance = pool.Rent();
             using var loading = scope.LoadSceneAsync("ownership/scene");

@@ -51,7 +51,7 @@ namespace YLFramework.Resource
                 var handle = manager.ProvideResource<ResourceManagerRuntimeData>(location);
                 try
                 {
-                    pin = AddressablesHandleOwner<ResourceManagerRuntimeData>.Observe(manager, handle);
+                    pin = AddressablesHandleOwner<ResourceManagerRuntimeData>.AcquireReference(manager, handle);
                 }
                 finally
                 {
@@ -329,7 +329,7 @@ namespace YLFramework.Resource
                 try
                 {
                     // Check/Update 可能返回官方共享别名，必须立即独立 Acquire，不能 Take 掉别人的原引用。
-                    pin = AddressablesHandleOwner<TValue>.Observe(manager, handle);
+                    pin = AddressablesHandleOwner<TValue>.AcquireReference(manager, handle);
                 }
                 finally
                 {
@@ -354,7 +354,7 @@ namespace YLFramework.Resource
                 if (appliesCatalog)
                     _catalogApplyInFlight = false;
                 request.SetSuccess(result);
-                request.Notify();
+                request.NotifyCompletion();
             }
             finally
             {

@@ -172,9 +172,10 @@ namespace YLFramework.Tests.Resource
         [UnityTest]
         public IEnumerator ExplicitSceneLease_ActivatesAndUnloads()
         {
-            using var load = _system.LoadSceneAsync(SceneAddress, activateOnLoad: false);
+            using var load = _system.LoadSceneAsync(key: SceneAddress, activateOnLoad: false);
             yield return Wait(() => load.IsDone);
             var lease = Take(load);
+            Assert.That(lease.Key, Is.EqualTo(SceneAddress));
             var scene = lease.Scene;
             var handle = LoadHandle(lease);
             var bundle = SceneBundle(handle);

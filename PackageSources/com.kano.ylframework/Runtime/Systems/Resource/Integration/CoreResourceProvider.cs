@@ -149,7 +149,7 @@ namespace YLFramework.Resource
                     {
                         done.Dispose();
                     }
-                    output.Notify();
+                    output.NotifyCompletion();
                 };
             }
             catch (Exception error)
@@ -160,7 +160,7 @@ namespace YLFramework.Resource
                     output.SetFailure(ResourceRequestStatus.Failed, Failure(error));
                 }
 
-                output.Notify();
+                output.NotifyCompletion();
             }
             return core;
         }
@@ -322,7 +322,7 @@ namespace YLFramework.Resource
             /// <summary>透传资产租约、会话与 Unity 对象的联合有效性。</summary>
             public override bool IsValid => _lease.IsValid;
             /// <summary>沿用 Core checkout 的复用语义，取得独立实例租约而不消费当前 Prefab 租约。</summary>
-            public override CoreInstanceLease Instantiate(Transform parent, Scene scene)
+            public override CoreInstanceLease Rent(Transform parent, Scene scene)
             {
                 try
                 {
