@@ -152,6 +152,12 @@ namespace YLFramework.Tests.Resource
         public IEnumerator ScopeClosesItsDeferredGateBeforeUnloadingAnEarlierOwnedScene()
         {
             using var scope = _system.CreateScope("two owned scene identities");
+            using var loadingText = _system.AcquireAsync<TextAsset>("ownership/message");
+            yield return Wait(() => loadingText.IsDone);
+            var text = scope.Own(loadingText.TakeResult());
+            using var creating = scope.InstantiateAsync("ownership/prefab");
+            yield return Wait(() => creating.IsDone);
+            var instance = creating.TakeResult();
             using var earlier = scope.LoadSceneAsync(SceneAddress);
             yield return Wait(() => earlier.IsDone);
             var first = earlier.TakeResult();
@@ -161,10 +167,29 @@ namespace YLFramework.Tests.Resource
             var second = secondLease.Scene;
             Assert.That(first.isLoaded, Is.True);
             Assert.That(second.isLoaded, Is.False);
-            using var close = scope.CloseAsync();
-            yield return Wait(() => close.IsDone);
-            Assert.That(close.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), close.Error?.ToString());
-            Assert.That(close.TakeResult(), Is.True);
+            var unloads = new List<(bool InstanceGone, bool TextHeld)>();
+            void ObserveUnload(Scene scene)
+            {
+                if (scene == first || scene == second)
+                {
+                    unloads.Add((!instance, text.IsValid));
+                }
+            }
+            SceneManager.sceneUnloaded += ObserveUnload;
+            try
+            {
+                using var close = scope.CloseAsync();
+                yield return Wait(() => close.IsDone);
+                Assert.That(close.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), close.Error?.ToString());
+                Assert.That(close.TakeResult(), Is.True);
+            }
+            finally
+            {
+                SceneManager.sceneUnloaded -= ObserveUnload;
+            }
+            Assert.That(unloads, Is.EqualTo(new[] { (true, true), (true, true) }),
+                "Both native unloads must happen after instance destruction and before ordinary asset release.");
+            Assert.That(text.IsDisposed, Is.True);
             Assert.That(first.isLoaded || second.isLoaded, Is.False);
             Assert.That(Owners(), Is.Empty);
         }

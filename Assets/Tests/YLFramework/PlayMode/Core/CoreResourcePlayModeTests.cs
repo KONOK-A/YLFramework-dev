@@ -10,6 +10,8 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
@@ -1442,6 +1444,53 @@ namespace YLFramework.Core.Tests
                 resourceModule.AllowClose = true;
                 resourceModule.Close();
                 _classPool.Restore(new YLFramework.Core.Module[] { consumer, resourceModule });
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AColdExistingViewAheadOfAHotFallbackIsResolvedByTheAsyncPath()
+        {
+            yield return StartModule();
+            var consumer = new YLCoreDirectViewModule { ProjectName = "cold-first-" + Guid.NewGuid().ToString("N") };
+            var resourceModule = new YLCoreBaseProbeModule { ProjectName = YLCoreSmokeModule.Project };
+            var name = nameof(YLCoreSmokeView);
+            var coldKey = consumer.ProjectName + "/" + name;
+            var query = Addressables.LoadResourceLocationsAsync(Key(name), typeof(GameObject));
+            yield return Await(() => query.IsDone, "base view's official location");
+            var locator = new ResourceLocationMap(consumer.ProjectName);
+            try
+            {
+                locator.Add(coldKey, query.Result.Single());
+                Addressables.AddResourceLocator(locator);
+                var starting = YLFramework.Core.ModuleManager.StartUpModule(resourceModule);
+                yield return Await(() => starting.IsDone, "hot fallback module startup");
+                Assert.That(starting.Error, Is.Null.Or.Empty);
+                starting = YLFramework.Core.ModuleManager.StartUpModule(consumer);
+                yield return Await(() => starting.IsDone, "cold first module startup");
+                Assert.That(starting.Error, Is.Null.Or.Empty);
+                var error = Assert.Throws<CoreResourceException>(() => consumer.LoadView<YLCoreSmokeView>(name));
+                Assert.That(error.Kind, Is.EqualTo(CoreResourceError.InProgress));
+                Assert.That(consumer.GetViews<View>(), Is.Empty);
+
+                var load = consumer.LoadViewAsync<YLCoreSmokeView>(name);
+                yield return Await(() => load.IsDone, "existing higher-priority official location");
+                AssertTerminal(load, LoadViewStatus.Succeeded);
+                var view = Track(load.View);
+                Assert.That(view.Module, Is.SameAs(consumer));
+                var ready = _resources.TryAcquireLoaded<GameObject>(coldKey, out var preferred);
+                using (preferred)
+                {
+                    Assert.That(ready, Is.True, "Async uses the existing first key rather than the preloaded fallback.");
+                }
+                view.Close();
+            }
+            finally
+            {
+                consumer.Close();
+                resourceModule.AllowClose = true;
+                resourceModule.Close();
+                Addressables.RemoveResourceLocator(locator);
+                Addressables.Release(query);
             }
         }
 

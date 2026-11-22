@@ -81,7 +81,7 @@ namespace YLFramework.Samples.Resource.Editor
             }
         }
 
-        /// <summary>只读检查样例真实引用、官方 GUID 登记与类型，不创建或修复配置。</summary>
+        /// <summary>按样例实际使用的 GUID、命名地址和预热 Label 只读检查官方配置。</summary>
         public static void Validate(ResourceStartupExample example, AddressableAssetSettings settings)
         {
             if (!example)
@@ -95,13 +95,13 @@ namespace YLFramework.Samples.Resource.Editor
                 throw new InvalidOperationException(string.Join("\n", errors));
             }
             var entries = new List<AddressableAssetEntry>();
-            settings.GetAllAssets(entries, false);
-            Check(example.message, typeof(TextAsset));
+            settings.GetAllAssets(entries, false, group => group.GetSchema<BundledAssetGroupSchema>() is { IncludeInBuild: true });
+            var message = Check(example.message, typeof(TextAsset));
             Check(example.data, typeof(ResourceStartupExampleData));
             Check(example.prefab, typeof(GameObject));
-            if (!string.IsNullOrEmpty(example.contentProjectId))
+            if (example.bindCoreResourceProvider && !string.IsNullOrEmpty(example.contentProjectId))
             {
-                CheckNamed(example.message, example.contentProjectId + "/message");
+                CheckNamed(message, example.contentProjectId + "/message");
             }
             if (example.preview != null && !string.IsNullOrEmpty(example.preview.AssetGUID))
             {
@@ -109,8 +109,16 @@ namespace YLFramework.Samples.Resource.Editor
             }
             if (example.audioCue != null && !string.IsNullOrEmpty(example.audioCue.AssetGUID))
             {
-                Check(example.audioCue, typeof(AudioClip));
-                CheckNamed(example.audioCue, example.contentProjectId + "/cue");
+                var cue = Check(example.audioCue, typeof(AudioClip), requiresGuid: false);
+                CheckNamed(cue, example.contentProjectId + "/cue");
+                if (!string.IsNullOrEmpty(example.audioPreloadLabel))
+                {
+                    if (!cue.parentGroup.GetSchema<BundledAssetGroupSchema>().IncludeLabelsInCatalog ||
+                        !settings.GetLabels().Contains(example.audioPreloadLabel) || !cue.labels.Contains(example.audioPreloadLabel))
+                    {
+                        throw new InvalidOperationException("Publish and assign the cue's exact preload Label: " + example.audioPreloadLabel);
+                    }
+                }
             }
             if (example.scene != null && !string.IsNullOrEmpty(example.scene.AssetGUID))
             {
@@ -121,27 +129,28 @@ namespace YLFramework.Samples.Resource.Editor
                 }
             }
 
-            void Check(AssetReference reference, Type expected)
+            AddressableAssetEntry Check(AssetReference reference, Type expected, bool requiresGuid = true)
             {
                 var path = AssetDatabase.GUIDToAssetPath(reference.AssetGUID);
                 var actual = AssetDatabase.GetMainAssetTypeAtPath(path);
                 var matches = entries.Where(entry => entry.guid == reference.AssetGUID).ToArray();
-                var bundled = matches.Length == 1 ? matches[0].parentGroup.GetSchema<BundledAssetGroupSchema>() : null;
-                if (actual == null || !expected.IsAssignableFrom(actual) || bundled == null ||
-                    !bundled.IncludeInBuild || !bundled.IncludeGUIDInCatalog ||
-                    entries.Any(entry => entry.guid != reference.AssetGUID && (entry.address == reference.AssetGUID || entry.labels.Contains(reference.AssetGUID))))
+                if (actual == null || !expected.IsAssignableFrom(actual) || matches.Length != 1)
                 {
-                    throw new InvalidOperationException("The official AssetReference must resolve to one included GUID entry of type " + expected.Name + ": " + path);
+                    throw new InvalidOperationException("Select one included official entry of type " + expected.Name + ": " + path);
                 }
+                if (requiresGuid && !matches[0].parentGroup.GetSchema<BundledAssetGroupSchema>().IncludeGUIDInCatalog)
+                {
+                    throw new InvalidOperationException("Publish the GUID used by this AssetReference: " + path);
+                }
+                return matches[0];
             }
 
-            void CheckNamed(AssetReference reference, string address)
+            static void CheckNamed(AddressableAssetEntry entry, string address)
             {
-                var entry = entries.Single(item => item.guid == reference.AssetGUID);
-                if (entry.address != address || !entry.parentGroup.GetSchema<BundledAssetGroupSchema>().IncludeAddressInCatalog ||
-                    entries.Any(item => item.labels.Contains(address)))
+                // 跨条目的已发布键冲突由上面的通用校验处理；本条目的同名 Label 不构成第二个位置。
+                if (entry.address != address || !entry.parentGroup.GetSchema<BundledAssetGroupSchema>().IncludeAddressInCatalog)
                 {
-                    throw new InvalidOperationException("The example's named bridge requires an unambiguous official address: " + address);
+                    throw new InvalidOperationException("Publish this entry with the exact address used by the bridge: " + address);
                 }
             }
         }
@@ -232,11 +241,18 @@ namespace YLFramework.Samples.Resource.Editor
             bundles.IncludeInBuild = true;
             bundles.IncludeAddressInCatalog = true;
             bundles.IncludeGUIDInCatalog = true;
+            bundles.IncludeLabelsInCatalog = true;
             group.GetSchema<ContentUpdateGroupSchema>().StaticContent = false;
+            var cueLabel = id + "/audio-warmup";
             foreach (var item in new[] { (messagePath, "message"), (dataPath, "data"), (prefabPath, "prefab"), (businessPath, "scene"),
                 (previewPath, "preview"), (cuePath, "cue") })
             {
-                settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(item.Item1), group).SetAddress(id + "/" + item.Item2);
+                var entry = settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(item.Item1), group);
+                entry.SetAddress(id + "/" + item.Item2);
+                if (item.Item2 == "cue")
+                {
+                    entry.SetLabel(cueLabel, true, true);
+                }
             }
             foreach (var schema in group.Schemas)
             {
@@ -255,6 +271,7 @@ namespace YLFramework.Samples.Resource.Editor
             example.scene = new AssetReference(AssetDatabase.AssetPathToGUID(businessPath));
             example.preview = new AssetReferenceT<Texture2D>(AssetDatabase.AssetPathToGUID(previewPath));
             example.audioCue = new AssetReferenceT<AudioClip>(AssetDatabase.AssetPathToGUID(cuePath));
+            example.audioPreloadLabel = cueLabel;
             example.contentProjectId = id;
             Validate(example, settings);
             if (!EditorSceneManager.SaveScene(bootstrap, folder + "/Bootstrap.unity"))

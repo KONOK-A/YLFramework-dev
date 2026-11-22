@@ -8,6 +8,7 @@ using System.Text;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEngine;
 
 namespace YLFramework.Tests.ResourceEditor
@@ -31,7 +32,7 @@ namespace YLFramework.Tests.ResourceEditor
                 Assert.That(AssetDatabase.CreateFolder(root, "Settings"), Is.Not.Empty);
             }
             Settings = AddressableAssetSettings.Create(persisted ? root + "/Settings" : "", "GeneratorSettings", false, persisted);
-            var group = Settings.CreateGroup("GeneratorInputs", true, false, false, null);
+            var group = Settings.CreateGroup("GeneratorInputs", true, false, false, null, typeof(BundledAssetGroupSchema));
             for (int index = 0; index < addresses.Length; index++)
             {
                 var path = InputPath(root, index);

@@ -12,7 +12,7 @@ function Assert-YLResourceAddressablesPlayerReport {
         [Parameter(Mandatory)][Collections.IDictionary] $Build,
         [Parameter(Mandatory)][object] $Process,
         [Parameter(Mandatory)][Collections.IDictionary] $Quit,
-        [Parameter(Mandatory)][ValidateRange(1, 4)][int] $Round
+        [Parameter(Mandatory)][ValidateRange(1, 7)][int] $Round
     )
     Assert-YLTestProcessSucceeded $Process
     foreach ($field in @('schemaVersion', 'pid', 'round', 'pointerBits', 'leaseCount', 'scopeCount',
@@ -48,14 +48,34 @@ function Assert-YLResourceAddressablesPlayerReport {
     foreach ($field in @('buildToken', 'inputHash', 'contentHash')) {
         if ($Quit[$field] -cne $Build[$field]) { throw "The quit receipt has a different build/input identity: $field" }
     }
+    $publicationHash = $Build['publishedSourceSha256']
+    if ($null -ne $publicationHash -and ($publicationHash -cnotmatch '^[0-9a-f]{64}$' -or
+        $Report['publishedSourceSha256'] -cne $publicationHash)) { throw 'The generated publication source reported by the Player does not match its build.' }
+    if ($Round -gt 4) {
+        if ($Build['scopeCloseBenchmark'] -isnot [bool] -or -not $Build.scopeCloseBenchmark -or
+            $Build.buildFlavor -cne 'Release' -or -not $Build.graphics -or $Report.finalState -cne 'Closed' -or
+            $Report.checks -isnot [Array] -or $Report.checks.Count -ne 0 -or
+            $Report.cacheBefore -or $Report.cacheAfter -or $Report.downloadBytesBefore -ne 0 -or $Report.downloadBytesAfter -ne 0) {
+            throw 'Scope close evidence requires a dedicated Release Player round with no download or unrelated workload.'
+        }
+        foreach ($field in @('leaseCount', 'scopeCount', 'requestCount', 'pendingWorkCount', 'drainingHandleCount')) {
+            if ($Report[$field] -ne 0) { throw "Scope close retained ownership: $field" }
+        }
+        Assert-YLResourceScopeCloseMeasurement $Report['scopeClose']
+        return
+    }
     if ($Round -gt 2) {
         Assert-YLResourceAddressablesPerformance -Report $Report -Round $Round
         return
     }
     $required = @('ScopeReadOnce', 'IndependentLease', 'StopBusy', 'FreshVsRent', 'AdditiveSceneClosed', 'OfficialCache', 'FinalOwnershipZero')
+    if ($null -ne $publicationHash) { $required += 'PackedPublishedKeys' }
+    $hasSprite = $Build.Contains('packedSpriteGuid') -or $Build.Contains('packedSpriteFixture')
+    if ($hasSprite) { $required += 'PackedSpriteTypedOwnership', 'PackedSpriteBroadAmbiguity' }
     if ($Report.checks -isnot [Array] -or $Report.checks.Count -ne $required.Count -or
         @($Report.checks | Select-Object -Unique).Count -ne $required.Count -or
         @($required | Where-Object { $_ -cnotin $Report.checks }).Count) { throw 'The Player did not execute every required assertion group.' }
+    if ($hasSprite) { Assert-YLPackedSpriteEvidence -Report $Report -Build $Build }
     if ($Report.cacheBefore -ne ($Round -eq 2) -or -not $Report.cacheAfter -or
         ($Round -eq 1 -and $Report.downloadBytesBefore -le 0) -or ($Round -eq 2 -and $Report.downloadBytesBefore -ne 0) -or
         $Report.downloadBytesAfter -ne 0 -or [string]::IsNullOrWhiteSpace($Report.cachedBundleName) -or
@@ -65,6 +85,115 @@ function Assert-YLResourceAddressablesPlayerReport {
     }
     foreach ($field in @('leaseCount', 'scopeCount', 'requestCount', 'pendingWorkCount', 'drainingHandleCount')) {
         if ($Report[$field] -ne 0) { throw "The Player retained YL ownership after StopAsync: $field" }
+    }
+}
+
+function Assert-YLPackedSpriteEvidence {
+    param([Collections.IDictionary] $Report, [Collections.IDictionary] $Build)
+    $row = $Report['packedSprite']; $fixture = $Build['packedSpriteFixture']; $guid = $Build['packedSpriteGuid']
+    if ($row -isnot [Collections.IDictionary] -or $fixture -isnot [Collections.IDictionary] -or
+        $guid -isnot [string] -or $guid -cnotmatch '^[0-9a-f]{32}$' -or $row.guid -cne $guid -or $fixture.guid -cne $guid -or
+        $fixture.address -cne 'acceptance/published/packed-sprite' -or $fixture.assetName -cne 'PackedSprite13x7' -or
+        $row.address -cne $fixture.address -or $row.assetName -cne $fixture.assetName -or
+        $row.unityVersion -cne $Build.unityVersion -or $row.addressablesVersion -cne $Build.addressablesVersion -or
+        $row.namedSpriteKey -cne "$guid[$($fixture.assetName)]") { throw 'Packed Sprite build/run identity differs.' }
+
+    if ($row.queries -isnot [array] -or $row.queries.Count -ne 7) { throw 'Packed Sprite requires seven official location queries.' }
+    $textureType = 'UnityEngine.Texture2D'; $spriteType = 'UnityEngine.Sprite'; $objectType = 'UnityEngine.Object'
+    foreach ($key in @($row.address, $guid, $row.namedSpriteKey)) {
+        $types = if ($key -ceq $row.namedSpriteKey) { $spriteType } else { $textureType, $spriteType, $objectType }
+        foreach ($type in $types) {
+            $query = @($row.queries | Where-Object { $_.key -ceq $key -and $_.requestedType -ceq $type })
+            $expected = @(if ($type -ceq $objectType) { $textureType; $spriteType } else { $type })
+            if ($query.Count -ne 1 -or $query[0].status -cne 'Succeeded' -or $query[0].count -ne $expected.Count -or
+                $query[0].distinctLocations -ne $expected.Count -or $query[0].locations -isnot [array] -or
+                $query[0].locations.Count -ne $expected.Count -or
+                @($expected | Where-Object { $_ -cnotin $query[0].locations.resourceType }).Count -ne 0) {
+                throw "Packed Sprite official locations differ: $key ($type)."
+            }
+        }
+    }
+
+    $owners = 0
+    foreach ($name in @('texture', 'sprite', 'namedSprite')) {
+        $asset = $row[$name]; $owners++
+        $type = if ($name -ceq 'texture') { $textureType } else { $spriteType }
+        $key = if ($name -ceq 'namedSprite') { $row.namedSpriteKey } else { $row.address }
+        if ($asset.status -cne 'Succeeded' -or $asset.key -cne $key -or $asset.requestedType -cne $type -or
+            $asset.assetType -cne $type -or $asset.assetName -cne $row.assetName -or $asset.instanceId -eq 0 -or
+            $asset.width -ne $fixture.width -or $asset.height -ne $fixture.height -or
+            ($type -ceq $spriteType -and $asset.pixelsPerUnit -ne $fixture.pixelsPerUnit) -or
+            $asset.leaseValid -isnot [bool] -or -not $asset.leaseValid -or $asset.leasesOnClaim -ne $owners) {
+            throw "Packed Sprite typed acquisition differs: $name."
+        }
+    }
+    if ($row.sprite.instanceId -eq $row.texture.instanceId -or $row.namedSprite.instanceId -ne $row.sprite.instanceId -or
+        $row.sprite.textureInstanceId -ne $row.texture.instanceId -or $row.namedSprite.textureInstanceId -ne $row.texture.instanceId -or
+        $row.retainedSpriteSurvives -isnot [bool] -or -not $row.retainedSpriteSurvives) { throw 'Packed Sprite identity or retained owner differs.' }
+    foreach ($counter in @('leasesBefore', 'leasesAfter', 'requestsAfter', 'pendingWorkAfter', 'drainingHandlesAfter')) {
+        if (($row[$counter] -isnot [int] -and $row[$counter] -isnot [long]) -or $row[$counter] -ne 0) {
+            throw "Packed Sprite ownership did not drain: $counter."
+        }
+    }
+    $broad = $row.broad
+    # The probe records Exception.Message. Older receipts can have ToString(); never count stack frames as advice.
+    $message = ($broad.error -split '\r?\n\s+at\s', 2)[0]
+    if ($broad.key -cne $row.address -or $broad.requestedType -cne $objectType -or $broad.status -cne 'Failed' -or
+        $broad.errorKind -cne 'InvalidAddress' -or $broad.leasesOnClaim -ne -1 -or
+        $message -cnotmatch '\bObject\b' -or $message -cnotmatch '\bSprite\b' -or $message -cnotmatch '\bTexture2D\b' -or
+        $message -notmatch '\b(?:use|request|specify|choose|select|try)\b[^.!?\r\n]*\b(?:narrower|specific|concrete)\b[^.!?\r\n]*\btype\b') {
+        throw 'Packed Sprite broad acquisition lacks actionable InvalidAddress guidance.'
+    }
+}
+
+function Assert-YLResourceScopeCloseMeasurement {
+    param([Collections.IDictionary] $Measurement)
+    if ($null -eq $Measurement -or $Measurement['cases'] -isnot [Array] -or $Measurement.cases.Count -ne 3 -or
+        ($Measurement['stopwatchFrequency'] -isnot [int] -and $Measurement['stopwatchFrequency'] -isnot [long]) -or
+        $Measurement.stopwatchFrequency -le 0 -or $Measurement['vSyncCount'] -ne 0 -or $Measurement['targetFrameRate'] -ne -1 -or
+        $Measurement['processor'] -isnot [string] -or [string]::IsNullOrWhiteSpace($Measurement.processor) -or
+        $Measurement['graphicsDevice'] -isnot [string] -or [string]::IsNullOrWhiteSpace($Measurement.graphicsDevice)) {
+        throw 'Missing scope close workload, monotonic clock, or device identity.'
+    }
+    $budgetTicks = [Math]::Max(1L, [long][Math]::Floor([decimal]$Measurement.stopwatchFrequency / 1000))
+    $index = 0
+    foreach ($count in @(1, 100, 1000)) {
+        $row = $Measurement.cases[$index++]
+        if ($row -isnot [Collections.IDictionary]) { throw "Invalid scope close case: $count" }
+        foreach ($field in @('leases', 'distinctAssets', 'closeWallTicks', 'maxSliceReleaseTicks')) {
+            if ($row[$field] -isnot [int] -and $row[$field] -isnot [long]) { throw "Invalid scope close integer: $count/$field" }
+        }
+        if ($row.leases -ne $count -or $row.distinctAssets -ne $count -or
+            $row.closeWallTicks -le 0 -or $row.closeWallTicks -ge (45 * [decimal]$Measurement.stopwatchFrequency) -or
+            $row['slices'] -isnot [Array] -or $row.slices.Count -lt 1 -or $row.slices.Count -gt $count) {
+            throw "Incomplete scope close samples: $count"
+        }
+        [long]$unspentWallTicks = $row.closeWallTicks
+        [long]$maxReleaseTicks = 0
+        $remaining = $count
+        $previousFrame = -1
+        foreach ($slice in $row.slices) {
+            if ($slice -isnot [Collections.IDictionary]) { throw "Invalid scope close slice: $count" }
+            $frame = $slice['frame']; $ticks = $slice['releaseTicks']; $releases = $slice['released']
+            if (($frame -isnot [int] -and $frame -isnot [long]) -or $frame -lt 0 -or $frame -gt [int]::MaxValue -or
+                ($previousFrame -ge 0 -and $frame -ne (1L + $previousFrame)) -or
+                ($ticks -isnot [int] -and $ticks -isnot [long]) -or $ticks -lt 0 -or $ticks -gt $unspentWallTicks -or
+                ($releases -isnot [int] -and $releases -isnot [long]) -or $releases -le 0 -or $releases -gt $remaining) {
+                throw "Invalid scope close slice: $count/$frame"
+            }
+            if ($releases -gt 32) { throw "The scope close exceeded 32 releases in one slice: $count/$frame" }
+            $previousFrame = $frame
+            $unspentWallTicks -= $ticks
+            $maxReleaseTicks = [Math]::Max($maxReleaseTicks, [long]$ticks)
+            $remaining -= $releases
+            # Only a measured release-time cutoff excuses a short nonfinal slice. The last release may cross it.
+            if ($remaining -gt 0 -and $releases -lt 32 -and $ticks -lt $budgetTicks) {
+                throw "The scope close yielded before using either budget: $count/$frame"
+            }
+        }
+        if ($remaining -ne 0 -or $maxReleaseTicks -ne $row.maxSliceReleaseTicks) {
+            throw "Inconsistent scope close release durations or counts: $count"
+        }
     }
 }
 
@@ -226,7 +355,7 @@ function Invoke-YLResourceAddressablesPlayerRuns {
     $summary = [ordered]@{
         schemaVersion = 1; purpose = 'YLResource.Addressables.PlayerAcceptance'; status = 'Failed'
         inputIdentity = $InputIdentity; buildReport = $BuildReport; buildProcess = $BuildProcess
-        runs = @(); measurements = @(); error = $null; serverCleanupError = $null
+        runs = @(); measurements = @(); scopeCloseRuns = @(); error = $null; serverCleanupError = $null
     }
     $server = $null
     try {
@@ -262,14 +391,26 @@ function Invoke-YLResourceAddressablesPlayerRuns {
         $request = Get-YLTestPath $build.requestPath
         if (-not $request.StartsWith($resultPrefix, [StringComparison]::OrdinalIgnoreCase) -or
             (Get-FileHash -LiteralPath $request -Algorithm SHA256).Hash.ToLowerInvariant() -cne $build.requestSha256) { throw 'The original owned build request changed.' }
+        $buildRequest = Read-YLPackageEvidenceJson $request
+        if ($build['scopeCloseBenchmark'] -isnot [bool] -or
+            $build.scopeCloseBenchmark -ne ($buildRequest['scopeCloseBenchmark'] -eq $true)) { throw 'Scope close workload differs from its build request.' }
         $binaryFiles = @(
             @{ path = $build.player; hash = $build.playerSha256 },
             @{ path = (Join-Path $build.playerRoot 'GameAssembly.dll'); hash = $build.gameAssemblySha256 },
             @{ path = (Join-Path $build.playerRoot 'P_Data/il2cpp_data/Metadata/global-metadata.dat'); hash = $build.metadataSha256 }
         )
         $manifest = Read-YLPackageEvidenceJson (Join-Path $build.playerRoot '.yl-resource-addressables-player.json')
-        foreach ($field in @('buildToken', 'inputHash', 'contentHash', 'unityVersion', 'addressablesVersion', 'stripping', 'buildFlavor')) {
+        foreach ($field in @('buildToken', 'inputHash', 'contentHash', 'unityVersion', 'addressablesVersion', 'stripping', 'buildFlavor',
+                'publishedSourceSha256', 'guidOnlyKey', 'suppressedGuidKey', 'packedSpriteGuid')) {
             if ($manifest[$field] -cne $build[$field]) { throw "The actual Player identity differs from its build report: $field" }
+        }
+        $publishedSource = Get-YLTestPath (Join-Path $HostRecord.path 'Assets/Acceptance/Runtime/PublishedResourceNames.cs')
+        if ($build['publishedSourceSha256'] -cnotmatch '^[0-9a-f]{64}$' -or
+            (Get-FileHash -LiteralPath $publishedSource -Algorithm SHA256).Hash.ToLowerInvariant() -cne $build.publishedSourceSha256) {
+            throw 'The generated publication source is missing or no longer matches the Player build.'
+        }
+        if ($manifest['scopeCloseBenchmark'] -isnot [bool] -or $manifest.scopeCloseBenchmark -ne $build.scopeCloseBenchmark) {
+            throw 'The actual Player identity differs from the requested scope close workload.'
         }
         if (-not ('YLFramework.Testing.ResourceAddressablesContentServer' -as [type])) {
             Add-Type -Path (Join-Path $PSScriptRoot '../ResourceAddressablesContentServer.cs')
@@ -280,7 +421,8 @@ function Invoke-YLResourceAddressablesPlayerRuns {
         $server = [YLFramework.Testing.ResourceAddressablesContentServer]::new($build.remoteRoot, $build.buildToken, $files)
         $first = $null
         $cacheRequests = 0
-        for ($round = 1; $round -le 4; $round++) {
+        $rounds = if ($build.scopeCloseBenchmark) { 7 } else { 4 }
+        for ($round = 1; $round -le $rounds; $round++) {
             Assert-YLUnityHostIdle $HostRecord
             $null = Get-YLResourceAddressablesContentIdentity -Build $build
             foreach ($binary in $binaryFiles) {
@@ -301,6 +443,9 @@ function Invoke-YLResourceAddressablesPlayerRuns {
                 '-ylResourceAddressablesContentBaseUrl', $server.BaseUrl, '-logFile', $log)) { $start.ArgumentList.Add($argument) }
             $outcome = Invoke-YLTestProcess -StartInfo $start -Log (Join-Path $Result.path "player-$round-process.log") -TimeoutMilliseconds ($TimeoutSeconds * 1000)
             if ($round -le 2) { $summary.runs += @{ round = $round; process = $outcome } }
+            elseif ($round -gt 4) {
+                $summary.scopeCloseRuns += @{ round = $round; process = $outcome; report = (Join-Path $Result.path "player-$round.json") }
+            }
             else {
                 $summary.measurements += @{ round = $round; variant = $(if ($round -eq 3) { 'Bare' } else { 'YL' })
                     process = $outcome; report = (Join-Path $Result.path "player-$round.json") }

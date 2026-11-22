@@ -346,12 +346,43 @@ namespace YLFramework.Resource
                     }
                     gatesOpened = true;
                 }
-                using var close = lease.CloseAsync();
-                yield return close;
-                if (close.Status != ResourceRequestStatus.Succeeded)
-                    throw close.Error ?? new ResourceException(ResourceError.LoadFailed, "Lease cleanup did not succeed.");
-                if (!lease.IsSettled)
-                    throw new ResourceException(ResourceError.Busy, "Cleanup has not ended the owned responsibility.");
+                ResourceRequest<bool> close;
+                var synchronous = lease as ISynchronousResourceLease;
+                if (synchronous != null)
+                {
+                    while (!_system.TryCloseSynchronousLease(synchronous, out close))
+                    {
+                        yield return null;
+                        if (lease.IsSettled)
+                        {
+                            break;
+                        }
+                    }
+                    if (close == null)
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    close = lease.CloseAsync();
+                }
+
+                using (close)
+                {
+                    if (synchronous == null || !close.IsDone)
+                    {
+                        yield return close;
+                    }
+                    if (close.Status != ResourceRequestStatus.Succeeded)
+                    {
+                        throw close.Error ?? new ResourceException(ResourceError.LoadFailed, "Lease cleanup did not succeed.");
+                    }
+                    if (!lease.IsSettled)
+                    {
+                        throw new ResourceException(ResourceError.Busy, "Cleanup has not ended the owned responsibility.");
+                    }
+                }
             }
             while (_pendingAssetWork != 0)
                 yield return null;

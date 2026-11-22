@@ -2,18 +2,23 @@ using System;
 using System.Collections;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.Initialization;
 using UnityEngine.AddressableAssets.ResourceLocators;
+using UnityEngine.ResourceManagement;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceLocations;
 using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
+using YLFramework.Core;
 using YLFramework.Resource;
 
 namespace YLFramework.Tests.Resource
@@ -51,6 +56,14 @@ namespace YLFramework.Tests.Resource
         private static ResourceRequestStatus[] _exitNotifications;
         private static ResourceRequest<bool> _stoppingAtExit;
         private static int _stopNotifications;
+        private static ShutdownReleaseProbe _exitReleaseProbe;
+        private static InitializationDataGate _initializationGate;
+        private static AsyncOperationHandle<IResourceLocator> _officialStartup;
+        private static ResourceRequest<ResourceStartup> _startupAtExit;
+        private static Task<Exception> _startupAwaitAtExit;
+        private static int _startupNotifications;
+        private static int _startupResumes;
+        private static Task<Exception> _assetAwaitAtExit;
 
         [SetUp]
         public void SetUp()
@@ -105,6 +118,8 @@ namespace YLFramework.Tests.Resource
 
             if (EditorApplication.isPlaying)
             {
+                // If a prerequisite failed in Play, open the gate before destroying the official callback host.
+                _initializationGate?.Unblock();
                 yield return new ExitPlayMode();
             }
 
@@ -116,6 +131,14 @@ namespace YLFramework.Tests.Resource
                 _unclaimed?.Dispose();
                 _stoppingAtExit?.Dispose();
                 _stoppingAtExit = null;
+                _exitReleaseProbe = null;
+                _startupAtExit?.Dispose();
+                _startupAtExit = null;
+                _startupAwaitAtExit = null;
+                _assetAwaitAtExit = null;
+                _initializationGate?.Dispose();
+                _initializationGate = null;
+                _officialStartup = default;
                 if (_externalHandle.IsValid())
                     Addressables.Release(_externalHandle);
                 _externalHandle = default;
@@ -234,6 +257,567 @@ namespace YLFramework.Tests.Resource
         }
 
         [UnityTest]
+        public IEnumerator ActualExitStillNotifiesAndDrainsWhenReturningAResultThrows()
+        {
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
+            EditorSettings.enterPlayModeOptionsEnabled = true;
+            SessionState.SetString(Key + "domain", DomainLifetime);
+            yield return new EnterPlayMode(false);
+            yield return BeginExitDrain(bindCoreResourceProvider: true);
+            Assert.That(CoreResourceAccess.Provider, Is.SameAs(_startup.CoreProvider));
+            _exitReleaseProbe = new ShutdownReleaseProbe(_system);
+            _exitReleaseProbe.ExpectFaultLog();
+            yield return new ExitPlayMode();
+
+            AssertDomainSurvives();
+            _exitReleaseProbe.AssertSettled(_system);
+            Assert.That(ResourceSystem.Current, Is.Null);
+            Assert.That(CoreResourceAccess.Provider, Is.Null);
+            Assert.That(_lease.IsValid, Is.False);
+            Assert.That(_exitNotifications, Is.All.EqualTo(ResourceRequestStatus.Invalidated));
+            Assert.That(_exitProvider.Releases, Is.Zero);
+            _lateText = new TextAsset("late result after other release failed");
+            _exitProvider.Complete(_lateText);
+            yield return Wait(() => _exitProvider.Releases == 1 && !_startup.OwnsResourceSystem,
+                "physical drain after a different result failed to return");
+            var report = _system.GetDiagnostics();
+            Assert.That(report.LeaseCount + report.ScopeCount + report.RequestCount +
+                report.PendingWorkCount + report.DrainingHandleCount, Is.Zero);
+            ClearExitProvider();
+            yield return new EnterPlayMode(false);
+            yield return LoadInNewSession();
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
+        public IEnumerator StopReportsLastProviderReleaseFaultAfterOfficialCompletionBeforeDelivery()
+        {
+            yield return new EnterPlayMode();
+            yield return StopAfterOfficialCompletion();
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator StopAfterOfficialCompletion()
+        {
+            using var startup = new ResourceStartup();
+            yield return Start(startup);
+            var system = startup.Resources;
+            using var healthy = new GatedTextProvider();
+            using var faulting = new GatedTextProvider();
+            var scope = system.CreateScope("healthy asset during stop");
+            using var scoped = scope.LoadAsync<TextAsset>(healthy.Address);
+            yield return Wait(() => healthy.IsBlocked, "healthy provider entered Provide");
+            healthy.Complete();
+            yield return Wait(() => scoped.IsDone, "healthy scope holds the asset");
+            Assert.That(scoped.TakeResult(), Is.SameAs(healthy.Value));
+
+            using var load = system.AcquireAsync<TextAsset>(faulting.Address);
+            int loadNotifications = 0;
+            load.Completed += _ => loadNotifications++;
+            yield return Wait(() => faulting.IsBlocked, "faulting provider entered Provide");
+            using var other = system.AcquireAsync<TextAsset>(MessageKey);
+            int otherNotifications = 0;
+            other.Completed += _ => otherNotifications++;
+            var fault = new InvalidOperationException("last provider release failed before YL delivery");
+            faulting.ReleaseFault = fault;
+            faulting.Complete();
+            // Complete has returned, so Addressables' own in-flight reference is already gone.
+            // No yield before Stop: the producer has not yet transferred its only reference to a lease.
+            Assert.That(load.Status, Is.EqualTo(ResourceRequestStatus.Pending));
+            Assert.That(other.Status, Is.EqualTo(ResourceRequestStatus.Pending));
+            Assert.That(faulting.Releases, Is.Zero);
+            Assert.That(healthy.Releases, Is.Zero);
+            LogAssert.Expect(LogType.Exception, new Regex(Regex.Escape(fault.Message)));
+            using var stop = startup.StopAsync();
+            yield return Wait(() => stop.IsDone, "stop after the last official provider release throws");
+
+            Assert.That(load.Status, Is.EqualTo(ResourceRequestStatus.Invalidated));
+            Assert.That(other.Status, Is.EqualTo(ResourceRequestStatus.Invalidated));
+            Assert.That(load.Error.Kind, Is.EqualTo(ResourceError.SessionUnavailable));
+            Assert.That(other.Error.Kind, Is.EqualTo(ResourceError.SessionUnavailable));
+            Assert.That(loadNotifications, Is.EqualTo(1));
+            Assert.That(otherNotifications, Is.EqualTo(1));
+            Assert.That(healthy.Releases, Is.EqualTo(1));
+            Assert.That(faulting.Releases, Is.EqualTo(1), "A throwing release cannot be retried.");
+            var report = system.GetDiagnostics();
+            Assert.That(report.LeaseCount + report.ScopeCount + report.RequestCount +
+                report.PendingWorkCount + report.DrainingHandleCount, Is.Zero);
+            Assert.That(stop.Status, Is.EqualTo(ResourceRequestStatus.Failed));
+            Assert.That(stop.Error.Kind, Is.EqualTo(ResourceError.LoadFailed));
+            Assert.That(stop.Error.InnerException, Is.TypeOf<AggregateException>());
+            Assert.That(((AggregateException)stop.Error.InnerException).Flatten().InnerExceptions.Single(), Is.SameAs(fault));
+            Assert.That(report.Errors.Any(error => error.Contains(fault.Message)), Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator PendingAcquireAwaitReceivesSessionErrorWhenCompletedObserverStopsOnSuccess()
+        {
+            yield return new EnterPlayMode();
+            yield return AwaitAfterReentrantStop();
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator AwaitAfterReentrantStop()
+        {
+            using var startup = new ResourceStartup();
+            yield return Start(startup);
+            var system = startup.Resources;
+            using var provider = new GatedTextProvider();
+            using var load = system.AcquireAsync<TextAsset>(provider.Address);
+            ResourceRequest<bool> stop = null;
+            int notifications = 0;
+            int resumes = 0;
+            bool stoppedBeforeResume = false;
+            load.Completed += request =>
+            {
+                notifications++;
+                if (request.Status == ResourceRequestStatus.Succeeded)
+                {
+                    stop = startup.StopAsync();
+                    stoppedBeforeResume = resumes == 0 && request.IsDisposed;
+                }
+            };
+            var awaiting = AwaitResult();
+            try
+            {
+                Assert.That(load.Status, Is.EqualTo(ResourceRequestStatus.Pending));
+                Assert.That(awaiting.IsCompleted, Is.False);
+                Assert.Throws<InvalidOperationException>(() => load.GetAwaiter());
+                Assert.Throws<InvalidOperationException>(() => load.TakeResult());
+                yield return Wait(() => provider.IsBlocked, "awaited asset entered Provide");
+                provider.Complete();
+                yield return Wait(() => awaiting.IsCompleted && stop?.IsDone == true, "reentrant stop and reserved await");
+
+                Assert.That(stop.TakeResult(), Is.True);
+                Assert.That(stoppedBeforeResume, Is.True);
+                Assert.That(load.Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
+                Assert.That(load.IsDisposed, Is.True);
+                Assert.That(notifications, Is.EqualTo(1));
+                Assert.That(resumes, Is.EqualTo(1));
+                Assert.That(provider.Releases, Is.EqualTo(1));
+                Assert.That(system.GetDiagnostics().LeaseCount, Is.Zero);
+                Assert.Throws<ObjectDisposedException>(() => load.GetAwaiter());
+                Assert.That(() => load.TakeResult(), Throws.InstanceOf<InvalidOperationException>());
+                Assert.That(awaiting.Result, Is.TypeOf<ResourceException>());
+                Assert.That(((ResourceException)awaiting.Result).Kind, Is.EqualTo(ResourceError.SessionUnavailable));
+            }
+            finally
+            {
+                stop?.Dispose();
+            }
+
+            async Task<Exception> AwaitResult()
+            {
+                try
+                {
+                    using var result = await load;
+                    return null;
+                }
+                catch (Exception error)
+                {
+                    return error;
+                }
+                finally
+                {
+                    resumes++;
+                }
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ExitDuringOfficialInitializationSettlesTheObserverBeforeTheLoadFinishes()
+        {
+            DisableDomainReload();
+            yield return ObserveEditorDelayCall();
+            yield return new EnterPlayMode(false);
+            yield return BeginDelayedInitialization();
+            yield return new ExitPlayMode();
+
+            Assert.That(Application.isPlaying, Is.False);
+            AssertInitializationInvalidatedBeforeUnblock();
+            _initializationGate.Unblock();
+            yield return WaitForRetiredInitialization();
+            Assert.That(Application.isPlaying, Is.False, "The retired operation must drain without entering Play again.");
+            Assert.That(ResourceSystem.Current, Is.Null);
+            Assert.That(_startup.Resources, Is.Null);
+            Assert.That(_startup.AudioProviders, Is.Empty);
+            Assert.That(CoreResourceAccess.Provider, Is.Null);
+        }
+
+        [UnityTest]
+        public IEnumerator NextPlayWithTheSameStartupSurvivesCompletionOfItsRetiredOfficialInitialization()
+        {
+            DisableDomainReload();
+            yield return ObserveEditorDelayCall();
+            yield return new EnterPlayMode(false);
+            yield return BeginDelayedInitialization();
+            yield return new ExitPlayMode();
+
+            AssertInitializationInvalidatedBeforeUnblock();
+            yield return ObserveEditorDelayCall();
+            yield return new EnterPlayMode(false);
+            yield return OverlapRetiredInitializationWithNextPlay(requireDistinctManager: true);
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
+        public IEnumerator ImmediateNextPlayCanStartWhileRetiredOfficialInitializationIsStillPending()
+        {
+            DisableDomainReload();
+            yield return ObserveEditorDelayCall();
+            yield return new EnterPlayMode(false);
+            yield return BeginDelayedInitialization();
+            yield return new ExitPlayMode();
+
+            AssertInitializationInvalidatedBeforeUnblock();
+            yield return new EnterPlayMode(false);
+            yield return OverlapRetiredInitializationWithNextPlay(requireDistinctManager: false);
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator ObserveEditorDelayCall()
+        {
+            // Allow Addressables' own pending exit notification to run; the fixture only observes this boundary.
+            var observed = false;
+            EditorApplication.CallbackFunction mark = () => observed = true;
+            EditorApplication.delayCall += mark;
+            try
+            {
+                yield return Wait(() => observed, "editor delayCall before entering Play");
+            }
+            finally
+            {
+                EditorApplication.delayCall -= mark;
+            }
+        }
+
+        private static void DisableDomainReload()
+        {
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
+            EditorSettings.enterPlayModeOptionsEnabled = true;
+            SessionState.SetString(Key + "domain", DomainLifetime);
+        }
+
+        private static IEnumerator BeginDelayedInitialization()
+        {
+            AssertDomainSurvives();
+            _initializationGate = new InitializationDataGate(Addressables.ResourceManager);
+            _startup = new ResourceStartup(audioProjects: new[] { "ownership" });
+            _startupAtExit = _startup.StartAsync();
+            _startupNotifications = 0;
+            _startupResumes = 0;
+            _startupAtExit.Completed += _ => _startupNotifications++;
+            _startupAwaitAtExit = ObserveAwaitError(_startupAtExit, () => _startupResumes++);
+            _system = ResourceSystem.GetOwnedSystem(_startup);
+            yield return Wait(() => _initializationGate.IsBlocked, "official initialization requests its packed runtime data");
+            // An initialization already in flight is returned as a borrowed handle by Addressables.
+            _officialStartup = Addressables.InitializeAsync(false);
+            Assert.That(_startupAtExit.IsDone, Is.False);
+            Assert.That(_officialStartup.IsValid() && !_officialStartup.IsDone, Is.True);
+            Assert.That(_initializationGate.Releases, Is.Zero);
+        }
+
+        private static void AssertInitializationInvalidatedBeforeUnblock()
+        {
+            AssertDomainSurvives();
+            Assert.That(_system.State, Is.EqualTo(ResourceSystemState.Invalidated));
+            Assert.That(ResourceSystem.Current, Is.Null);
+            Assert.That(_startup.Resources, Is.Null);
+            Assert.That(_startup.CoreProvider, Is.Null);
+            Assert.That(_startup.AudioProviders, Is.Empty);
+            Assert.That(CoreResourceAccess.Provider, Is.Null);
+            Assert.That(_startupAtExit.Status, Is.EqualTo(ResourceRequestStatus.Invalidated));
+            Assert.That(_startupAwaitAtExit.IsCompletedSuccessfully, Is.True);
+            Assert.That(_startupAwaitAtExit.Result, Is.SameAs(_startupAtExit.Error));
+            Assert.That(_startupAtExit.Error.Kind, Is.EqualTo(ResourceError.SessionUnavailable));
+            Assert.That(_startupNotifications, Is.EqualTo(1));
+            Assert.That(_startupResumes, Is.EqualTo(1));
+            AssertRetiredOfficialInitializationIsStillPending();
+        }
+
+        private static void AssertRetiredOfficialInitializationIsStillPending()
+        {
+            Assert.That(_initializationGate.IsBlocked, Is.True);
+            Assert.That(_officialStartup.IsValid() && !_officialStartup.IsDone, Is.True);
+            Assert.That(_initializationGate.Releases, Is.Zero);
+            Assert.That(_system.GetDiagnostics().PendingWorkCount, Is.Positive);
+        }
+
+        private static IEnumerator WaitForRetiredInitialization()
+        {
+            yield return Wait(() => !_officialStartup.IsValid() && _system.GetDiagnostics().PendingWorkCount == 0 &&
+                _system.GetDiagnostics().DrainingHandleCount == 0, "retired official initialization drained without a test pump");
+            Assert.That(_initializationGate.Releases, Is.EqualTo(1), "The official runtime data was returned once.");
+            Assert.That(_system.State, Is.EqualTo(ResourceSystemState.Invalidated));
+            Assert.That(_startupAtExit.Status, Is.EqualTo(ResourceRequestStatus.Invalidated));
+            Assert.That(_startupNotifications, Is.EqualTo(1));
+            Assert.That(_startupResumes, Is.EqualTo(1));
+        }
+
+        private static IEnumerator OverlapRetiredInitializationWithNextPlay(bool requireDistinctManager)
+        {
+            AssertDomainSurvives();
+            AssertRetiredOfficialInitializationIsStillPending();
+            using var starting = _startup.StartAsync();
+            var next = ResourceSystem.GetOwnedSystem(_startup);
+            Assert.That(next, Is.Not.Null.And.Not.SameAs(_system));
+            Assert.That(next.State, Is.EqualTo(ResourceSystemState.Initializing));
+            Assert.That(starting.Status, Is.EqualTo(ResourceRequestStatus.Pending));
+            var managerOnEntry = Addressables.ResourceManager;
+            var ticked = false;
+            using (next.AddTick(() => ticked = true))
+            {
+                yield return Wait(() => ticked, "first next-Play YL startup tick");
+            }
+
+            var managerAfterTick = Addressables.ResourceManager;
+            if (requireDistinctManager)
+            {
+                Assert.That(managerOnEntry, Is.Not.SameAs(_initializationGate.Manager));
+                Assert.That(managerAfterTick, Is.SameAs(managerOnEntry));
+            }
+            else if (ReferenceEquals(managerOnEntry, _initializationGate.Manager))
+            {
+                // Registry 1.25 may reuse the in-flight initialization before its delayed reset.
+                if (ReferenceEquals(managerAfterTick, managerOnEntry))
+                {
+                    Assert.That(Addressables.InitializeAsync(false), Is.EqualTo(_officialStartup));
+                    Assert.That(starting.Status, Is.EqualTo(ResourceRequestStatus.Pending));
+                    Assert.That(next.GetDiagnostics().PendingWorkCount, Is.Positive);
+                }
+
+                AssertRetiredOfficialInitializationIsStillPending();
+                _initializationGate.Unblock();
+            }
+
+            yield return Wait(() => starting.IsDone, "next Play official Resource startup");
+            Assert.That(starting.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), starting.Error?.ToString());
+            Assert.That(starting.TakeResult(), Is.SameAs(_startup));
+            Assert.That(_startup.Resources, Is.SameAs(next));
+            var core = _startup.CoreProvider;
+            var audio = _startup.AudioProviders["ownership"];
+            Assert.That(core, Is.Not.Null);
+            Assert.That(CoreResourceAccess.Provider, Is.SameAs(core));
+            using var request = next.AcquireAsync<TextAsset>(MessageKey);
+            Assert.That(request.Status, Is.EqualTo(ResourceRequestStatus.Pending));
+            if (_initializationGate.IsBlocked)
+            {
+                AssertRetiredOfficialInitializationIsStillPending();
+                _initializationGate.Unblock();
+            }
+            yield return WaitForRetiredInitialization();
+            yield return Wait(() => request.IsDone, "new Play request overlapping the retired official initialization");
+            using (var lease = request.TakeResult())
+            {
+                Assert.That(lease.Asset.text, Is.EqualTo(MessageText));
+                Assert.That(next.IsAvailable, Is.True);
+                Assert.That(ResourceSystem.Current, Is.SameAs(next));
+                Assert.That(_startup.Resources, Is.SameAs(next));
+                Assert.That(_startup.CoreProvider, Is.SameAs(core));
+                Assert.That(CoreResourceAccess.Provider, Is.SameAs(core));
+                Assert.That(_startup.AudioProviders["ownership"], Is.SameAs(audio));
+            }
+            yield return Stop(_startup);
+        }
+
+        internal static async Task<Exception> ObserveAwaitError<T>(ResourceRequest<T> request, Action resumed = null)
+        {
+            try
+            {
+                await request;
+                return null;
+            }
+            catch (Exception error)
+            {
+                return error;
+            }
+            finally
+            {
+                resumed?.Invoke();
+            }
+        }
+
+        private sealed class InitializationDataGate : JsonAssetProvider, IDisposable
+        {
+            private readonly ResourceManager _manager;
+            private ProvideHandle _pending;
+            internal ResourceManager Manager => _manager;
+            internal bool IsBlocked
+            {
+                get; private set;
+            }
+            internal int Releases
+            {
+                get; private set;
+            }
+
+            internal InitializationDataGate(ResourceManager manager)
+            {
+                _manager = manager;
+                m_ProviderId = typeof(JsonAssetProvider).FullName;
+                _manager.ResourceProviders.Insert(0, this);
+            }
+
+            public override bool CanProvide(Type type, IResourceLocation location) => type == typeof(ResourceManagerRuntimeData);
+
+            public override void Provide(ProvideHandle handle)
+            {
+                Assert.That(IsBlocked, Is.False);
+                _pending = handle;
+                IsBlocked = true;
+            }
+
+            internal void Unblock()
+            {
+                if (IsBlocked)
+                {
+                    var pending = _pending;
+                    IsBlocked = false;
+                    _pending = default;
+                    base.Provide(pending);
+                }
+            }
+
+            public override void Release(IResourceLocation location, object asset)
+            {
+                Releases++;
+                base.Release(location, asset);
+            }
+
+            public void Dispose()
+            {
+                try
+                {
+                    Unblock();
+                }
+                finally
+                {
+                    _manager.ResourceProviders.Remove(this);
+                }
+            }
+        }
+
+        private sealed class GatedTextProvider : ResourceProviderBase, IDisposable
+        {
+            private readonly ResourceManager _manager;
+            private readonly ResourceLocationMap _locator;
+            private ProvideHandle _pending;
+            internal string Address => ProviderId;
+            internal TextAsset Value
+            {
+                get;
+            }
+            internal bool IsBlocked
+            {
+                get; private set;
+            }
+            internal int Releases
+            {
+                get; private set;
+            }
+            internal Exception ReleaseFault
+            {
+                get; set;
+            }
+
+            internal GatedTextProvider()
+            {
+                m_ProviderId = "ownership/gated-text-" + Guid.NewGuid().ToString("N");
+                _manager = Addressables.ResourceManager;
+                _locator = new ResourceLocationMap(ProviderId);
+                _locator.Add(Address, new ResourceLocationBase(Address, Address, ProviderId, typeof(TextAsset)));
+                Value = new TextAsset(Address);
+                _manager.ResourceProviders.Add(this);
+                Addressables.AddResourceLocator(_locator);
+            }
+
+            public override void Provide(ProvideHandle handle)
+            {
+                _pending = handle;
+                IsBlocked = true;
+            }
+
+            internal void Complete()
+            {
+                Assert.That(IsBlocked, Is.True);
+                var pending = _pending;
+                _pending = default;
+                IsBlocked = false;
+                pending.Complete(Value, true, null);
+            }
+
+            public override void Release(IResourceLocation location, object asset)
+            {
+                Releases++;
+                if (ReleaseFault != null)
+                {
+                    throw ReleaseFault;
+                }
+            }
+
+            public void Dispose()
+            {
+                ReleaseFault = null;
+                try
+                {
+                    if (IsBlocked)
+                    {
+                        Complete();
+                    }
+                }
+                finally
+                {
+                    Addressables.RemoveResourceLocator(_locator);
+                    _manager.ResourceProviders.Remove(this);
+                    UnityEngine.Object.DestroyImmediate(Value);
+                }
+            }
+        }
+
+        // Whichever result is visited first throws, so the test never depends on HashSet ordering.
+        internal sealed class ShutdownReleaseProbe
+        {
+            internal readonly InvalidOperationException Fault = new("synthetic provider release failed");
+            private readonly ResourceRequest<int> _pending;
+            private readonly int[] _returned = new int[2];
+            private int _totalReturns;
+            private int _successNotifications;
+            private int _pendingNotifications;
+
+            internal ShutdownReleaseProbe(ResourceSystem system)
+            {
+                for (int i = 0; i < _returned.Length; i++)
+                {
+                    var request = system.Track(new ResourceRequest<int>(value =>
+                    {
+                        _returned[value]++;
+                        if (++_totalReturns == 1)
+                        {
+                            throw Fault;
+                        }
+                    }));
+                    request.Completed += _ => _successNotifications++;
+                    request.SetSuccess(i);
+                    request.NotifyCompletion();
+                }
+                _pending = system.Track(new ResourceRequest<int>());
+                _pending.Completed += _ => _pendingNotifications++;
+            }
+
+            internal void ExpectFaultLog() => LogAssert.Expect(LogType.Exception, new Regex(Regex.Escape(Fault.Message)));
+
+            internal void AssertSettled(ResourceSystem system)
+            {
+                Assert.That(_returned, Is.All.EqualTo(1), "The fault must not skip another release or retry itself.");
+                Assert.That(_successNotifications, Is.EqualTo(2), "Already delivered notifications must not be repeated.");
+                Assert.That(_pendingNotifications, Is.EqualTo(1));
+                Assert.That(_pending.Status, Is.EqualTo(ResourceRequestStatus.Invalidated));
+                Assert.That(_pending.Error.Kind, Is.EqualTo(ResourceError.SessionUnavailable));
+                Assert.That(system.GetDiagnostics().Errors.Any(error => error.Contains(Fault.Message)), Is.True);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator ExitInvalidatesAWaitingStopObserverBeforeLateCleanupCompletes()
         {
             EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
@@ -271,10 +855,10 @@ namespace YLFramework.Tests.Resource
             yield return new ExitPlayMode();
         }
 
-        private static IEnumerator BeginExitDrain()
+        private static IEnumerator BeginExitDrain(bool bindCoreResourceProvider = false)
         {
             AssertDomainSurvives();
-            _startup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: false);
+            _startup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider);
             yield return Start(_startup);
             _system = _startup.Resources;
             using var acquired = _system.AcquireAsync<TextAsset>(MessageKey);
@@ -290,6 +874,7 @@ namespace YLFramework.Tests.Resource
             var scope = _system.CreateScope("exit-drain");
             var scoped = scope.LoadAsync<TextAsset>(Address);
             var independent = _system.AcquireAsync<TextAsset>(Address);
+            _assetAwaitAtExit = ObserveAwaitError(independent);
             _exitNotifications = new ResourceRequestStatus[4];
             scoped.Completed += value =>
             {
@@ -316,6 +901,8 @@ namespace YLFramework.Tests.Resource
             Assert.That(_system.State, Is.EqualTo(ResourceSystemState.Invalidated));
             Assert.That(_lease.IsValid, Is.False);
             Assert.That(_exitNotifications, Is.All.EqualTo(ResourceRequestStatus.Invalidated));
+            Assert.That(_assetAwaitAtExit.IsCompletedSuccessfully, Is.True);
+            Assert.That((_assetAwaitAtExit.Result as ResourceException)?.Kind, Is.EqualTo(ResourceError.SessionUnavailable));
             Assert.That(_system.GetDiagnostics().PendingWorkCount + _system.GetDiagnostics().DrainingHandleCount, Is.Positive);
             Assert.That(_exitProvider.Releases, Is.Zero);
             _lateText = new TextAsset("old session late result");

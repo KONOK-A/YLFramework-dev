@@ -22,6 +22,8 @@ namespace YLFramework.Samples.Resource
         public AssetReferenceGameObject prefab;
         public AssetReferenceT<Texture2D> preview;
         public AssetReferenceT<AudioClip> audioCue;
+        [Tooltip("Optional authored Label containing the cue. Leave empty to demonstrate exact-key warmup only.")]
+        public string audioPreloadLabel;
         [Tooltip("可选的业务场景；以 Additive 加载并自动激活，不替换中立启动场景。")]
         public AssetReference scene;
         [Tooltip("False creates a fresh instance. True prewarms and resets an instance before reusing it.")]
@@ -71,6 +73,7 @@ namespace YLFramework.Samples.Resource
             var sceneKey = Key(scene, nameof(scene), true);
             var previewKey = Key(preview, nameof(preview), true);
             var hasCue = ValidateNamedInputs();
+            var cueLabel = string.IsNullOrEmpty(audioPreloadLabel) ? null : audioPreloadLabel;
             var projectId = string.IsNullOrEmpty(contentProjectId) ? null : contentProjectId;
             var catalogId = string.IsNullOrEmpty(startupCatalogId) ? null : startupCatalogId;
             var projects = (audioProjects ?? Array.Empty<string>()).ToArray();
@@ -86,7 +89,8 @@ namespace YLFramework.Samples.Resource
                 Label = "ResourceStartupExample/" + GetInstanceID()
             };
             _session = session;
-            session.Business = LoadBusinessAsync(session, messageKey, dataKey, prefabKey, sceneKey, reusePrefab, (projectId, catalogId, previewKey, hasCue));
+            session.Business = LoadBusinessAsync(session, messageKey, dataKey, prefabKey, sceneKey, reusePrefab,
+                (projectId, catalogId, previewKey, hasCue, cueLabel));
             return ObserveStartAsync(session);
         }
 
@@ -106,7 +110,8 @@ namespace YLFramework.Samples.Resource
         private void RetryShutdowns() => Observe(RetryPendingShutdownsAsync());
 
         private static async Task<string> LoadBusinessAsync(Session session, string messageKey, string dataKey,
-            string prefabKey, string sceneKey, bool reuse, (string Project, string Catalog, string Preview, bool Cue) options)
+            string prefabKey, string sceneKey, bool reuse,
+            (string Project, string Catalog, string Preview, bool Cue, string CueLabel) options)
         {
             // 先发布 Business Task，再允许用户组件回调重入 Stop/OnDestroy；所有 await 保留 Unity 主线程上下文。
             await Task.Yield();
@@ -166,14 +171,16 @@ namespace YLFramework.Samples.Resource
                 core = "ok";
             }
             token.ThrowIfCancellationRequested();
+            var image = "off";
             if (options.Preview != null || options.Cue)
             {
-                await PresentAsync(session, options.Project, options.Preview, options.Cue, token);
+                image = await PresentAsync(session, options.Project, options.Preview, options.Cue, options.CueLabel, token);
             }
             token.ThrowIfCancellationRequested();
             var result = text.text + " / " + configuration.text + " / " + instance.name + " / retained=" + retained.Asset.text.Length +
-                " / core=" + core + " / audio=" + (options.Cue ? "ok" : "off") + " / image=" + (options.Preview != null ? "ok" : "off") +
-                " / instance=" + (reuse ? "prewarmed, reset and reused" : "fresh");
+                " / core=" + core + " / audio=" + (options.Cue ? "ok" : "off") + " / image=" + image +
+                " / instance=" + (reuse ? "prewarmed, reset and reused" : "fresh") +
+                (options.CueLabel != null ? " / audio-preload=dependencies, batch, exact key" : "");
             session.Result = "Running: " + result + ". Await StopExampleAsync before destroying the owner.";
             return result;
         }
@@ -211,10 +218,12 @@ namespace YLFramework.Samples.Resource
             }
         }
 
-        private static async Task PresentAsync(Session session, string projectId, string previewKey, bool hasCue, CancellationToken token)
+        private static async Task<string> PresentAsync(Session session, string projectId, string previewKey, bool hasCue,
+            string cueLabel, CancellationToken token)
         {
             session.View = new GameObject("Resource Startup Preview");
             session.View.transform.SetParent(session.Owner.transform, false);
+            var imageResult = "off";
             if (previewKey != null)
             {
                 var canvas = new GameObject("Preview Canvas", typeof(Canvas));
@@ -235,15 +244,49 @@ namespace YLFramework.Samples.Resource
                 token.ThrowIfCancellationRequested();
                 if (!binding || binding.Status != ResourceRequestStatus.Succeeded || !target.texture)
                 {
-                    throw binding?.Error ?? new ResourceException(ResourceError.LoadFailed, "The example image was not displayed.");
+                    var error = binding ? binding.Error : null;
+                    if (error == null || (error.Kind != ResourceError.AddressNotFound && error.Kind != ResourceError.InvalidAddress &&
+                        error.Kind != ResourceError.TypeMismatch && error.Kind != ResourceError.LoadFailed))
+                    {
+                        throw error ?? new ResourceException(ResourceError.LoadFailed, "The example image was not displayed.");
+                    }
+                    // Clear 会清空 Error；保留完整诊断，包括 Provider 或显示恢复的内部异常。
+                    imageResult = $"skipped ({previewKey}: {error.Kind})\n{error}";
+                    try
+                    {
+                        binding.Clear();
+                    }
+                    catch (Exception cleanupError)
+                    {
+                        throw new AggregateException("The optional preview could not be cleared: " + previewKey, error, cleanupError);
+                    }
+                    session.Image = null;
+                    Destroy(canvas);
+                }
+                else
+                {
+                    imageResult = "ok";
                 }
             }
             if (hasCue)
             {
-                // Warm the exact address, then borrow an independent Clip from the Audio bridge. No global Audio ownership.
-                var clip = await session.Scope.LoadAsync<AudioClip>(projectId + "/cue", token);
+                var resources = session.Startup.Resources;
+                var labels = cueLabel == null ? null : new[] { cueLabel };
+                if (labels != null)
+                {
+                    // Download prepares bundle bytes, not an AudioClip. A batch lease also does not publish a single-key entry.
+                    await resources.DownloadDependenciesAsync(labels, token);
+                }
+                using var batch = labels == null ? null : await resources.AcquireBatchAsync<AudioClip>(labels, token);
+                var cueKey = projectId + "/cue";
+                var clip = await session.Scope.LoadAsync<AudioClip>(cueKey, token);
                 token.ThrowIfCancellationRequested();
-                session.Cue = session.Startup.Resources.GetAudioClipProvider(projectId).Load("cue");
+                if (batch != null && !batch.Assets.Contains(clip))
+                {
+                    throw new InvalidOperationException($"The sample label '{cueLabel}' does not contain '{cueKey}'.");
+                }
+                // The bridge owns its own lease after this synchronous read.
+                session.Cue = resources.GetAudioClipProvider(projectId).Load("cue");
                 if (session.Cue.Clip != clip)
                 {
                     throw new InvalidOperationException("Audio did not borrow the warmed clip.");
@@ -253,6 +296,7 @@ namespace YLFramework.Samples.Resource
                 source.clip = session.Cue.Clip;
                 source.Play();
             }
+            return imageResult;
         }
 
         private static async Task<string> ObserveStartAsync(Session session)
@@ -373,6 +417,10 @@ namespace YLFramework.Samples.Resource
         private bool ValidateNamedInputs()
         {
             var cue = Key(audioCue, nameof(audioCue), true);
+            if (!string.IsNullOrEmpty(audioPreloadLabel) && (cue == null || string.IsNullOrWhiteSpace(audioPreloadLabel)))
+            {
+                throw new ArgumentException("A preload Label requires an audio cue and a nonblank exact Label.", nameof(audioPreloadLabel));
+            }
             if (!string.IsNullOrEmpty(contentProjectId) || cue != null)
             {
                 _ = new ResourceAddress(contentProjectId, "cue");

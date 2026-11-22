@@ -5,7 +5,7 @@ using Object = UnityEngine.Object;
 namespace YLFramework.Resource
 {
     /// <summary>一份官方批量引用；整批资源只在租约有效期间借读。</summary>
-    public sealed class AssetBatchLease<T> : IDisposable, IResourceLease where T : Object
+    public sealed class AssetBatchLease<T> : IDisposable, ISynchronousResourceLease where T : Object
     {
         private readonly ResourceSystem _system;
         private IReadOnlyList<T> _assets;

@@ -22,6 +22,7 @@ using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.SceneManagement;
 using YLFramework.Acceptance;
+using YLFramework.Editor.Resource;
 using YLFramework.Resource;
 
 namespace YLFramework.Testing
@@ -134,9 +135,16 @@ namespace YLFramework.Testing
                 AssetDatabase.ImportAsset(assets + "/Cached.txt", ImportAssetOptions.ForceSynchronousImport);
                 AssetDatabase.ImportAsset(assets + "/Parallel.txt", ImportAssetOptions.ForceSynchronousImport);
                 settings.AddLabel(ResourceAddressablesPlayerProbe.BatchLabel);
-                Add(settings, local, assets + "/Local.txt", ResourceAddressablesPlayerProbe.TextKey).SetLabel(ResourceAddressablesPlayerProbe.BatchLabel, true);
+                var text = Add(settings, local, assets + "/Local.txt", ResourceAddressablesPlayerProbe.TextKey);
+                text.SetLabel(ResourceAddressablesPlayerProbe.BatchLabel, true);
+                text.SetLabel(text.address, true, true);
                 Add(settings, local, assets + "/Parallel.txt", ResourceAddressablesPlayerProbe.ParallelKey).SetLabel(ResourceAddressablesPlayerProbe.BatchLabel, true);
                 Add(settings, remote, assets + "/Cached.txt", ResourceAddressablesPlayerProbe.CachedKey);
+                var benchmarkClose = (bool?)request["scopeCloseBenchmark"] == true;
+                if (benchmarkClose)
+                {
+                    AddScopeCloseContent(settings, assets);
+                }
                 var clean = new GameObject("Acceptance clean Prefab");
                 try
                 {
@@ -149,7 +157,11 @@ namespace YLFramework.Testing
                 new GameObject("Official AA additive marker");
                 Require(EditorSceneManager.SaveScene(additive, assets + "/Additive.unity"), "Additive scene save failed.");
                 Add(settings, local, assets + "/Additive.unity", ResourceAddressablesPlayerProbe.SceneKey);
+                var (guidOnly, addressOnly) = AddPublishedKeyContent(settings, assets, token);
+                var packedSprite = AddPackedSprite(settings, assets, report);
+                settings.AddLabel("unassigned-publication-label");
                 AssetDatabase.SaveAssets();
+                var names = ResourceCodeGenerator.GenerateSource(settings, "YLFramework.Acceptance.Published");
                 AddressableAssetSettings.BuildPlayerContent(out AddressablesPlayerBuildResult content);
                 Require(content != null && string.IsNullOrEmpty(content.Error), "Official BuildPlayerContent failed: " + content?.Error);
                 var files = Inventory(localRoot, remoteRoot);
@@ -161,12 +173,20 @@ namespace YLFramework.Testing
                 var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(Addressables).Assembly);
                 Require(package != null && package.version == Text(request, "addressablesVersion") && package.source == PackageSource.Registry,
                     "The loaded official registry Addressables package does not match the requested profile.");
+                // Only the isolated test assembly consumes this generated source. Editor compilation does not reference it.
+                const string GeneratedNames = "Assets/Acceptance/Runtime/PublishedResourceNames.cs";
+                var generatedPath = Path.Combine(project, GeneratedNames);
+                Require(!File.Exists(generatedPath + ".meta"), "Refusing an unknown generated source meta.");
+                WriteNew(generatedPath, names);
+                AssetDatabase.ImportAsset(GeneratedNames, ImportAssetOptions.ForceSynchronousImport);
                 var identity = new ResourceAddressablesPlayerProbe.BuildIdentity
                 {
                     buildToken = token, inputHash = Text(request, "inputHash"), contentHash = fingerprint,
                     unityVersion = Application.unityVersion, addressablesVersion = package.version, stripping = Text(request, "stripping"),
                     playerRoot = playerRoot, graphics = (bool)request["graphics"], hostId = Text(request, "hostId"),
-                    resultId = Text(request, "resultId"), workspaceId = Text(request, "workspaceId"), buildFlavor = BuildFlavor(request)
+                    resultId = Text(request, "resultId"), workspaceId = Text(request, "workspaceId"), buildFlavor = BuildFlavor(request),
+                    scopeCloseBenchmark = benchmarkClose, publishedSourceSha256 = Hash(generatedPath),
+                    guidOnlyKey = guidOnly.guid, suppressedGuidKey = addressOnly.guid, packedSpriteGuid = packedSprite.guid
                 };
                 var boot = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
                 new GameObject("Resource Addressables IL2CPP acceptance").AddComponent<ResourceAddressablesPlayerProbe>().Configure(identity);
@@ -214,6 +234,7 @@ namespace YLFramework.Testing
                     .Where(message => message.type == LogType.Error || message.type == LogType.Exception).Select(message => message.content));
                 Require(build.summary.result == BuildResult.Succeeded && build.summary.totalErrors == 0,
                     "Actual IL2CPP BuildPlayer failed; native SDK/compiler/license prerequisites must be resolved, never bypassed.");
+                Require(Hash(generatedPath) == identity.publishedSourceSha256, "The generated consumer source changed during the build.");
                 string streaming = Path.Combine(playerRoot, "P_Data", "StreamingAssets", "aa");
                 foreach (var file in files.Where(file => (string)file["area"] == "aa"))
                 {
@@ -248,6 +269,100 @@ namespace YLFramework.Testing
                 AssetDatabase.SaveAssets();
             }
             VerifyHostInputs(request);
+        }
+
+        private static void AddScopeCloseContent(AddressableAssetSettings settings, string assets)
+        {
+            var folder = assets + "/ScopeClose";
+            AssetDatabase.CreateFolder(assets, "ScopeClose");
+            var group = settings.CreateGroup("AcceptanceScopeClose", false, false, false, null, typeof(BundledAssetGroupSchema));
+            ConfigureGroup(settings, group, AddressableAssetSettings.kLocalBuildPath, AddressableAssetSettings.kLocalLoadPath);
+            group.GetSchema<BundledAssetGroupSchema>().BundleMode = BundledAssetGroupSchema.BundlePackingMode.PackTogether;
+            for (int index = 0; index < ResourceAddressablesPlayerProbe.ScopeCloseAssetCount; index++)
+            {
+                string path = folder + "/" + ResourceAddressablesPlayerProbe.ScopeCloseAssetName(index) + ".txt";
+                WriteNew(Path.GetFullPath(path), ResourceAddressablesPlayerProbe.ScopeCloseKey(index));
+            }
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            for (int index = 0; index < ResourceAddressablesPlayerProbe.ScopeCloseAssetCount; index++)
+            {
+                string path = folder + "/" + ResourceAddressablesPlayerProbe.ScopeCloseAssetName(index) + ".txt";
+                Add(settings, group, path, ResourceAddressablesPlayerProbe.ScopeCloseKey(index));
+            }
+        }
+
+        private static AddressableAssetEntry AddPackedSprite(AddressableAssetSettings settings, string assets, JObject report)
+        {
+            const string Name = ResourceAddressablesPlayerProbe.PackedSpriteName;
+            string path = assets + "/" + Name + ".png";
+            string fullPath = Path.GetFullPath(path);
+            // Deterministic RGBA gradient PNG; no dependence on the batch Editor's graphics device.
+            var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAA0AAAAHCAYAAADTcMcaAAAAjUlEQVR42hXLMQ0DIQAAQCzUApWABVIHWCCpAlIHDDWABZYKwALTG/oew40XQvjcDyKJTKHS6Awmi00IT4lIIlOoNDqDyWI/T3pJRBKZQqXRGUwW+3XSWyKSyBQqjc5gstjvk74SkUSmUGl0BpPF/p70k4gkMoVKozOYLPbvpEsiksgUKo3OYLLY1+f+Az/Uzz7AaIJtAAAAAElFTkSuQmCC");
+            RejectLinks(fullPath);
+            using (var stream = new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                stream.Write(png, 0, png.Length);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            var importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Require(importer != null, "Packed Sprite fixture must have a real PNG TextureImporter.");
+            importer.textureType = TextureImporterType.Sprite;
+            importer.spriteImportMode = SpriteImportMode.Single;
+            importer.spritePixelsPerUnit = ResourceAddressablesPlayerProbe.PackedSpritePixelsPerUnit;
+            importer.npotScale = TextureImporterNPOTScale.None;
+            importer.textureCompression = TextureImporterCompression.Uncompressed;
+            importer.mipmapEnabled = false;
+            importer.SaveAndReimport();
+
+            var imported = AssetDatabase.LoadAllAssetsAtPath(path);
+            var texture = imported.OfType<Texture2D>().Single();
+            var sprite = imported.OfType<Sprite>().Single();
+            Require(texture && sprite && texture.name == Name && sprite.name == Name && sprite.texture == texture &&
+                texture.width == ResourceAddressablesPlayerProbe.PackedSpriteWidth && texture.height == ResourceAddressablesPlayerProbe.PackedSpriteHeight &&
+                sprite.pixelsPerUnit == ResourceAddressablesPlayerProbe.PackedSpritePixelsPerUnit,
+                "Packed PNG did not import as the intended single Sprite with its Texture2D.");
+
+            // Keep the fixture out of the text label and the existing benchmark bundles.
+            var group = settings.CreateGroup("AcceptancePackedSprite", false, false, false, null, typeof(BundledAssetGroupSchema));
+            ConfigureGroup(settings, group, AddressableAssetSettings.kLocalBuildPath, AddressableAssetSettings.kLocalLoadPath);
+            var schema = group.GetSchema<BundledAssetGroupSchema>();
+            schema.IncludeAddressInCatalog = true;
+            schema.IncludeGUIDInCatalog = true;
+            var entry = Add(settings, group, path, ResourceAddressablesPlayerProbe.PackedSpriteAddress);
+            report["packedSpriteFixture"] = new JObject
+            {
+                ["assetPath"] = path, ["assetName"] = Name, ["address"] = entry.address, ["guid"] = entry.guid,
+                ["pngSha256"] = Hash(fullPath), ["mainAssetType"] = AssetDatabase.GetMainAssetTypeAtPath(path).FullName,
+                ["importedTypes"] = JArray.FromObject(imported.Select(asset => asset.GetType().FullName)),
+                ["width"] = texture.width, ["height"] = texture.height, ["pixelsPerUnit"] = sprite.pixelsPerUnit
+            };
+            return entry;
+        }
+
+        private static (AddressableAssetEntry GuidOnly, AddressableAssetEntry AddressOnly) AddPublishedKeyContent(
+            AddressableAssetSettings settings, string assets, string token)
+        {
+            BundledAssetGroupSchema Schema(AddressableAssetEntry entry) => entry.parentGroup.GetSchema<BundledAssetGroupSchema>();
+
+            var guidOnly = AddText("GuidOnly", ResourceAddressablesPlayerProbe.SuppressedAddress, "guid-only:");
+            Schema(guidOnly).IncludeAddressInCatalog = false;
+            var addressOnly = AddText("AddressOnly", "acceptance/published/address-only", "address-only:");
+            Schema(addressOnly).IncludeGUIDInCatalog = false;
+            var noLabels = AddText("NoLabels", "acceptance/published/no-labels", "no-labels:");
+            Schema(noLabels).IncludeLabelsInCatalog = false;
+            noLabels.SetLabel(ResourceAddressablesPlayerProbe.BatchLabel, true);
+            noLabels.SetLabel(ResourceAddressablesPlayerProbe.SuppressedLabel, true, true);
+            var excluded = AddText("Excluded", ResourceAddressablesPlayerProbe.ExcludedAddress, "excluded:");
+            Schema(excluded).IncludeInBuild = false;
+            return (guidOnly, addressOnly);
+
+            AddressableAssetEntry AddText(string name, string key, string payload)
+            {
+                var group = settings.CreateGroup("Acceptance" + name, false, false, false, null, typeof(BundledAssetGroupSchema));
+                ConfigureGroup(settings, group, AddressableAssetSettings.kLocalBuildPath, AddressableAssetSettings.kLocalLoadPath);
+                var path = assets + "/" + name + ".txt";
+                WriteNew(Path.GetFullPath(path), payload + token);
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+                return Add(settings, group, path, key);
+            }
         }
 
         private static void ConfigureGroup(AddressableAssetSettings settings, AddressableAssetGroup group, string build, string load)
@@ -309,6 +424,10 @@ namespace YLFramework.Testing
                 Regex.IsMatch(Text(request, "inputHash"), "^[0-9a-f]{64}$") &&
                 new[] { "Minimal", "Low", "Medium", "High" }.Contains(Text(request, "stripping")) &&
                 (BuildFlavor(request) == "Release" || BuildFlavor(request) == "Development"), "Invalid explicit IL2CPP Player request.");
+            Require(request["scopeCloseBenchmark"] == null || request["scopeCloseBenchmark"].Type == JTokenType.Boolean,
+                "Scope close measurement requires an explicit Boolean option.");
+            Require((bool?)request["scopeCloseBenchmark"] != true || (BuildFlavor(request) == "Release" && (bool)request["graphics"]),
+                "Scope close measurement uses the Release Player with an actual graphics device.");
             string project = Project();
             string result = Path.GetFullPath(Text(request, "resultRoot"));
             string output = Path.GetFullPath(Text(request, "output"));

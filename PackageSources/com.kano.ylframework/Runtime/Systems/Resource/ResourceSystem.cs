@@ -7,11 +7,14 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.ResourceLocators;
+using UnityEngine.ResourceManagement;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceLocations;
 using YLFramework.Events;
 using YLFramework.Singletons;
 using YLFramework.Update;
+using Stopwatch = System.Diagnostics.Stopwatch;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -38,10 +41,18 @@ namespace YLFramework.Resource
     /// <summary>Addressables 上的业务所有权服务，不维护 Bundle 图、私有目录或第二个 ResourceManager。</summary>
     public sealed partial class ResourceSystem
     {
+        private const int SynchronousClosesPerTick = 32;
+        private static readonly long _synchronousCloseBudgetTicks = Math.Max(1, Stopwatch.Frequency / 1000);
         private static ResourceSystem _authority;
         private static int _mainThreadId;
         private static bool _businessStarted;
         private static readonly List<ResourceSystem> _drainingSessions = new();
+#if UNITY_EDITOR
+        private static bool _isEditorPlayTransition;
+        private static bool _isTickingEditorDrains;
+        private ResourceManager _startupManager;
+        private AsyncOperationHandle<bool> _startupCallbackStep;
+#endif
         private readonly object _executionSession = SingletonSessionState.ExecutionSession;
         private readonly HashSet<IResourceLease> _leases = new();
         private readonly HashSet<IResourceLease> _internalLeases = new();
@@ -64,6 +75,8 @@ namespace YLFramework.Resource
         private bool _closingScopes;
         private bool _checkingStop;
         private bool _freezingRequests;
+        private int _synchronousClosesThisTick;
+        private long _synchronousCloseTicks;
 
         /// <summary>只借读当前会话；读取本身不初始化。</summary>
         public static ResourceSystem Current => _authority != null &&
@@ -80,6 +93,12 @@ namespace YLFramework.Resource
         /// <summary>原执行会话仍有效；不等同于服务正在接受新工作。</summary>
         public bool IsSessionActive => !_ended && SingletonSessionState.CanRunExecution && ReferenceEquals(_executionSession, SingletonSessionState.ExecutionSession);
         internal int ActiveLeaseCount => _leases.Count;
+#if UNITY_EDITOR
+        internal Func<long> SynchronousCloseTimestamp { get; set; }
+#endif
+#if YL_RESOURCE_ADDRESSABLES_ACCEPTANCE
+        internal long SynchronousCloseTicks => _synchronousCloseTicks;
+#endif
         internal bool StartupUpdateWindowOpen => IsAvailable && !_businessStarted;
 
         static ResourceSystem()
@@ -89,18 +108,14 @@ namespace YLFramework.Resource
 #if UNITY_EDITOR
             EditorApplication.playModeStateChanged += state =>
             {
+                _isEditorPlayTransition = state == PlayModeStateChange.ExitingPlayMode ||
+                    state == PlayModeStateChange.ExitingEditMode;
                 if (state == PlayModeStateChange.ExitingPlayMode)
                 {
                     EndSession();
                 }
             };
-            EditorApplication.update += () =>
-            {
-                if (!Application.isPlaying)
-                {
-                    TickDrainingSessions();
-                }
-            };
+            EditorApplication.update += TickEditorDrainingSessions;
 #endif
         }
 
@@ -148,14 +163,22 @@ namespace YLFramework.Resource
         {
             if (State != ResourceSystemState.Initializing)
                 throw new ResourceException(ResourceError.Canceled, "Startup was stopped before initialization began.");
-            yield return PrepareCatalogUpdatePolicy();
-            if (State != ResourceSystemState.Initializing || !IsSessionActive)
-                throw new ResourceException(ResourceError.Canceled, "Startup was stopped before official initialization began.");
-            var handle = Addressables.InitializeAsync(true);
-            var pin = AddressablesHandleOwner<UnityEngine.AddressableAssets.ResourceLocators.IResourceLocator>
-                .AcquireReference(Addressables.ResourceManager, handle);
+            var manager = Addressables.ResourceManager;
+#if UNITY_EDITOR
+            if (EditorSettings.enterPlayModeOptionsEnabled &&
+                (EditorSettings.enterPlayModeOptions & EnterPlayModeOptions.DisableDomainReload) != 0)
+            {
+                _startupManager = manager;
+            }
+#endif
+            AddressablesHandleOwner<IResourceLocator> pin = null;
             try
             {
+                yield return PrepareCatalogUpdatePolicy(manager);
+                if (State != ResourceSystemState.Initializing || !IsSessionActive)
+                    throw new ResourceException(ResourceError.Canceled, "Startup was stopped before official initialization began.");
+                var handle = Addressables.InitializeAsync(true);
+                pin = AddressablesHandleOwner<IResourceLocator>.AcquireReference(manager, handle);
                 while (!handle.IsDone)
                     yield return null;
                 if (handle.Status != AsyncOperationStatus.Succeeded)
@@ -167,6 +190,9 @@ namespace YLFramework.Resource
             }
             finally
             {
+#if UNITY_EDITOR
+                ClearStartupCallbackStep();
+#endif
                 DisposeOwner(pin);
             }
             var waiters = _starting.ToArray();
@@ -249,10 +275,14 @@ namespace YLFramework.Resource
                     yield break;
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                     throw handle.OperationException ?? new InvalidOperationException("Location resolution failed: " + key);
-                if (handle.Result.Count != 1)
-                    throw new ResourceException(handle.Result.Count == 0 ? ResourceError.AddressNotFound : ResourceError.InvalidAddress,
-                        "An asset key must resolve to exactly one location: " + key);
-                yield return AcquireLocationRoutine(handle.Result[0], key, request, scope);
+                var locations = handle.Result;
+                if (!HasOneDistinctLocation(locations))
+                {
+                    if (locations == null || locations.Count == 0)
+                        throw new ResourceException(ResourceError.AddressNotFound, "An asset key must resolve to exactly one location: " + key);
+                    throw CreateAmbiguousAssetError(key, typeof(T), locations);
+                }
+                yield return AcquireLocationRoutine(locations[0], key, request, scope);
             }
             finally
             {
@@ -265,6 +295,66 @@ namespace YLFramework.Resource
                     scope?.EndAssetWork();
                 }
             }
+        }
+
+        private static ResourceException CreateAmbiguousAssetError(string key, Type requestedType, IList<IResourceLocation> locations)
+        {
+            const int MaxTypes = 8;
+            const int MaxKeyLength = 160;
+            var candidates = new Dictionary<Type, IResourceLocation>(MaxTypes);
+            bool isTruncated = false;
+            for (int i = 0; i < locations.Count; i++)
+            {
+                var location = locations[i];
+                var type = location?.ResourceType;
+                if (type == null)
+                    continue;
+                if (candidates.TryGetValue(type, out var first))
+                {
+                    // 同一个 location 可以重复；仅把不同引用视为该类型下的多个候选。
+                    if (first != null && !ReferenceEquals(first, location))
+                        candidates[type] = null;
+                }
+                else if (candidates.Count < MaxTypes)
+                    candidates.Add(type, location);
+                else
+                {
+                    isTruncated = true;
+                    break;
+                }
+            }
+
+            bool canNarrow = !isTruncated && candidates.Any(candidate => candidate.Value != null &&
+                candidate.Key != requestedType && !candidate.Key.IsAbstract && requestedType.IsAssignableFrom(candidate.Key) &&
+                !candidates.Keys.Any(other => other != candidate.Key && candidate.Key.IsAssignableFrom(other)));
+            string guidance = canNarrow
+                ? "Request a more specific query type that matches one location."
+                : "Use a unique address, fix the key or Label, or use AcquireBatchAsync if multiple assets are intended.";
+            string names = string.Join(", ", candidates.Keys.Select(type => type.FullName ?? type.Name)
+                .Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal));
+            if (isTruncated)
+                names += ", ... (truncated)";
+            string displayKey = key.Length <= MaxKeyLength ? key : key.Substring(0, MaxKeyLength) + "...";
+            return new ResourceException(ResourceError.InvalidAddress,
+                $"Asset key '{displayKey}' does not resolve to exactly one location for requested type '{requestedType.FullName ?? requestedType.Name}'. " +
+                $"Candidate types: {(names.Length == 0 ? "<unknown>" : names)}. {guidance}");
+        }
+
+        internal static bool HasOneDistinctLocation(IList<IResourceLocation> locations)
+        {
+            if (locations == null || locations.Count == 0 || locations[0] == null)
+            {
+                return false;
+            }
+            // Packed catalogs can repeat the same location when an entry uses a key as both address and label.
+            for (var index = 1; index < locations.Count; index++)
+            {
+                if (!ReferenceEquals(locations[0], locations[index]))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private IEnumerator AcquireLocationRoutine<T>(IResourceLocation location, string key, ResourceRequest<AssetLease<T>> request,
@@ -416,17 +506,52 @@ namespace YLFramework.Resource
             _work.Add(new Job(routine, failed));
         }
 
+        internal bool TryCloseSynchronousLease(ISynchronousResourceLease lease, out ResourceRequest<bool> close)
+        {
+            if (_synchronousClosesThisTick >= SynchronousClosesPerTick || _synchronousCloseTicks >= _synchronousCloseBudgetTicks)
+            {
+                close = null;
+                return false;
+            }
+
+            // Book the slot before invoking a release, which can reenter user code.
+            _synchronousClosesThisTick++;
+            var started = ReadSynchronousCloseTimestamp();
+            try
+            {
+                close = lease.CloseAsync();
+                return true;
+            }
+            finally
+            {
+                _synchronousCloseTicks += ReadSynchronousCloseTimestamp() - started;
+            }
+        }
+
+        private long ReadSynchronousCloseTimestamp()
+        {
+#if UNITY_EDITOR
+            if (SynchronousCloseTimestamp != null)
+                return SynchronousCloseTimestamp();
+#endif
+            return Stopwatch.GetTimestamp();
+        }
+
         private void Tick()
         {
             if (!IsSessionActive && !_ended)
                 Invalidate();
             AdvanceCleanup();
             CheckStop();
+#if !UNITY_EDITOR
             TickDrainingSessions();
+#endif
         }
 
         private void AdvanceCleanup()
         {
+            _synchronousClosesThisTick = 0;
+            _synchronousCloseTicks = 0;
             int count = _posted.Count;
             while (count-- > 0 && _posted.TryDequeue(out var action))
                 InvokeCleanup(action);
@@ -484,9 +609,19 @@ namespace YLFramework.Resource
         {
             if (owner == null)
                 return;
-            owner.Dispose();
+            try
+            {
+                owner.Dispose();
+            }
+            catch (Exception error)
+            {
+                // 请求可能已失效，不能依赖其失败回调替服务保留释放错误。
+                RecordCleanupError(error);
+                throw;
+            }
             if (!owner.IsDraining)
                 return;
+            owner.DrainReleaseFailed = RecordCleanupError;
             // Resolve/provide 工作退出前，把尚未归还的同一份引用计入来源 Scope 的排空。
             scope?.BeginAssetWork();
             _drains.Add((() =>
@@ -601,11 +736,14 @@ namespace YLFramework.Resource
             _freezingRequests = true;
             try
             {
-                var requests = _requests.ToArray();
+                // The retired initialization job keeps its official reference until it can drain.
+                var requests = State == ResourceSystemState.Invalidated
+                    ? _requests.Concat(_starting).ToArray()
+                    : _requests.ToArray();
                 foreach (var request in requests)
                     request.PrepareInvalidation();
                 foreach (var request in requests)
-                    request.ReleaseInvalidatedResult();
+                    InvokeCleanup(request.ReleaseInvalidatedResult);
                 foreach (var request in requests)
                     request.NotifyInvalidation();
             }
@@ -653,18 +791,93 @@ namespace YLFramework.Resource
         {
             _authority?.Invalidate();
         }
-        private static void TickDrainingSessions()
+        private void AdvanceDrainingSession()
         {
-            foreach (var system in _drainingSessions.ToArray())
+            AdvanceCleanup();
+            if (_leases.Count == 0 && _work.Count == 0 && _drains.Count == 0 && !HasInstanceWork && !HasImageWork)
             {
-                system.AdvanceCleanup();
-                if (system._leases.Count == 0 && system._work.Count == 0 && system._drains.Count == 0 && !system.HasInstanceWork && !system.HasImageWork)
-                {
-                    _drainingSessions.Remove(system);
-                    system._startup.OnServiceStopped(system);
-                }
+                _drainingSessions.Remove(this);
+                _startup.OnServiceStopped(this);
             }
         }
+
+#if UNITY_EDITOR
+        private static void TickEditorDrainingSessions()
+        {
+            if (_drainingSessions.Count == 0 || _isEditorPlayTransition || _isTickingEditorDrains)
+            {
+                return;
+            }
+
+            _isTickingEditorDrains = true;
+            HashSet<ResourceManager> steppedManagers = null;
+            try
+            {
+                foreach (var system in _drainingSessions.ToArray())
+                {
+                    var manager = system._startupManager;
+                    if (manager != null && (steppedManagers ??= new HashSet<ResourceManager>()).Add(manager))
+                    {
+                        system.StepRetiredStartupCallbacks(manager);
+                    }
+
+                    system.AdvanceDrainingSession();
+                }
+            }
+            finally
+            {
+                _isTickingEditorDrains = false;
+            }
+        }
+
+        private void StepRetiredStartupCallbacks(ResourceManager manager)
+        {
+            try
+            {
+                if (!_startupCallbackStep.IsValid())
+                {
+                    _startupCallbackStep = manager.CreateCompletedOperation(true, null);
+                }
+                if (!_startupCallbackStep.IsDone)
+                {
+                    throw new InvalidOperationException("The retired Addressables callback step must already be complete.");
+                }
+                // 旧回调宿主已销毁。对已完成的独立句柄只推进一次原 Manager，不等待初始化或 IO。
+                _startupCallbackStep.WaitForCompletion();
+            }
+            catch (Exception error)
+            {
+                // Manager 的回调可能来自其他所有者，不把其异常归为本方归还失败，也不递归重试。
+                Debug.LogException(error);
+                ClearStartupCallbackStep();
+            }
+        }
+
+        private void ClearStartupCallbackStep()
+        {
+            var manager = _startupManager;
+            _startupManager = null;
+            var step = _startupCallbackStep;
+            _startupCallbackStep = default;
+            if (step.IsValid())
+            {
+                InvokeCleanup(() => manager.Release(step));
+            }
+        }
+#else
+        private static void TickDrainingSessions()
+        {
+            if (_drainingSessions.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var system in _drainingSessions.ToArray())
+            {
+                system.AdvanceDrainingSession();
+            }
+        }
+#endif
 
         internal void RequireAvailable()
         {

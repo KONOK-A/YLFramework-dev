@@ -8,6 +8,7 @@ using UnityEngine.AddressableAssets;
 using UnityEngine.AddressableAssets.Initialization;
 using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.AddressableAssets.ResourceProviders;
+using UnityEngine.ResourceManagement;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceLocations;
 using UnityEngine.ResourceManagement.ResourceProviders;
@@ -26,7 +27,7 @@ namespace YLFramework.Resource
         /// 显式启用代表应用组合根承诺本方最先组织初始化，并协调外部 Init/Check/Update；
         /// 公开 API 无法证明外部尚未完成的初始化不存在，本方法不反射或猜测全局引用计数。
         /// </remarks>
-        internal IEnumerator PrepareCatalogUpdatePolicy()
+        private IEnumerator PrepareCatalogUpdatePolicy(ResourceManager manager)
         {
             CheckThread();
             _startupCatalogUpdatesPrepared = false;
@@ -39,7 +40,6 @@ namespace YLFramework.Resource
 
             RequireVerifiableRuntimeDataSource();
             var path = CatalogRuntimeDataPath();
-            var manager = Addressables.ResourceManager;
             var provider = new JsonAssetProvider();
             provider.Initialize("YLFramework.Resource.RuntimeDataPolicy." + Guid.NewGuid().ToString("N"), null);
             var location = new ResourceLocationBase("YL runtime catalog policy", path, provider.ProviderId, typeof(ResourceManagerRuntimeData));
@@ -61,6 +61,11 @@ namespace YLFramework.Resource
                 handle.Completed += _ => completionObserved = true;
                 while (!completionObserved)
                     yield return null;
+                if (State != ResourceSystemState.Initializing || !IsSessionActive)
+                {
+                    yield break;
+                }
+
                 var completed = pin.BorrowedHandle;
                 if (completed.Status != AsyncOperationStatus.Succeeded || completed.Result == null)
                     throw new ResourceException(ResourceError.InvalidConfiguration, "The official Addressables runtime data could not be verified for controlled startup updates.", completed.OperationException);

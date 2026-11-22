@@ -153,6 +153,68 @@ try {
             $response.addressablesVersion = '1.25.0'
             Assert-Rejected { Assert-YLUnityAddressablesVersion -ExpectedVersion '2.10.3' -Lock $locked -Response $response } 'Addressables|version'
         }
+        Test-Case 'Packed catalog is an explicit, isolated three-case matrix' {
+            $config = Read-YLPackageEvidenceJson ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../TestSuites.json')))
+            $editors = @($config.editors | ForEach-Object { [pscustomobject]$_ })
+            $unity2022 = $editors | Where-Object version -CEQ '2022.3.62f3'
+            $unity6 = $editors | Where-Object version -CEQ '6000.3.27f1'
+            foreach ($name in @('ResourcePackedCatalog', 'ResourcePackedCatalogBinary')) {
+                $entry = @($config.modules | Where-Object name -CEQ $name)
+                Assert-That ($entry.Count -eq 1 -and ($entry[0].suites -join ',') -ceq 'Special' -and
+                    $entry[0].specialCategory -ceq 'YL.Resource.Addressables.PackedContract') 'Packed catalog must be opt-in with the real test category.'
+            }
+            $json = Get-YLPackedCatalogProfile -Module ResourcePackedCatalog -EditorProfile $unity2022
+            $binary = Get-YLPackedCatalogProfile -Module ResourcePackedCatalogBinary -EditorProfile $unity2022
+            $modern = Get-YLPackedCatalogProfile -Module ResourcePackedCatalog -EditorProfile $unity6
+            Assert-That ($json.expectedEncoding -ceq 'json' -and $json.define -ceq '' -and
+                $binary.expectedEncoding -ceq 'binary' -and $binary.define -ceq 'ENABLE_BINARY_CATALOG' -and
+                $modern.expectedEncoding -ceq 'binary' -and $modern.define -ceq '') 'The modern package must never masquerade as legacy binary evidence.'
+            Assert-That ($binary.keySuffix -cne $json.keySuffix -and $binary.keySuffix.Contains('ENABLE_BINARY_CATALOG')) 'The binary compile symbol must distinguish owned host and input identities.'
+            Assert-Rejected { Get-YLPackedCatalogProfile -Module ResourcePackedCatalogBinary -EditorProfile $unity6 } '1\.25\.0'
+            Assert-That ($null -eq (Get-YLPackedCatalogProfile -Module ResourceAddressables -EditorProfile $unity2022)) 'The ordinary module must not acquire a new compile profile.'
+        }
+        Test-Case 'Packed catalog definitions accept the native Special dispatcher projection' {
+            $configuration = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../TestSuites.json')) | ConvertFrom-Json -DateKind String
+            foreach ($name in @('ResourcePackedCatalog', 'ResourcePackedCatalogBinary')) {
+                $definition = $configuration.modules | Where-Object name -CEQ $name
+                $definition.category = $definition.specialCategory
+                $definition.assemblies = @()
+                $definition.excludedCategories = @()
+                Assert-That ($definition.category -ceq 'YL.Resource.Addressables.PackedContract' -and
+                    $definition.assemblies.Count -eq 0 -and $definition.excludedCategories.Count -eq 0) "Special projection failed for $name."
+            }
+        }
+        Test-Case 'Packed binary seeds only a cold owned host and never repairs drift' {
+            $hostRecord = @{ path = Join-Path $sandbox 'PackedHost' }
+            $null = [IO.Directory]::CreateDirectory((Join-Path $hostRecord.path 'ProjectSettings'))
+            $settings = Initialize-YLPackedBinarySettings -HostRecord $hostRecord
+            $original = [IO.File]::ReadAllText($settings)
+            Assert-That ($original -cmatch '(?m)^  scriptingDefineSymbols:\r?\n    Standalone: ENABLE_BINARY_CATALOG\r?$') 'Expected Standalone symbol before the first compiler launch.'
+            $null = [IO.Directory]::CreateDirectory((Join-Path $hostRecord.path 'Library'))
+            $null = Initialize-YLPackedBinarySettings -HostRecord $hostRecord
+            [IO.File]::WriteAllText($settings, $original.Replace('ENABLE_BINARY_CATALOG', 'OTHER'))
+            Assert-Rejected { Initialize-YLPackedBinarySettings -HostRecord $hostRecord } 'ENABLE_BINARY_CATALOG'
+            Assert-That ([IO.File]::ReadAllText($settings).Contains('Standalone: OTHER')) 'A reused host must not be rewritten to repair drift.'
+            [IO.File]::Delete($settings)
+            Assert-Rejected { Initialize-YLPackedBinarySettings -HostRecord $hostRecord } 'compiled host'
+            Assert-That (-not [IO.File]::Exists($settings)) 'Do not silently reseed a compiled host.'
+        }
+        Test-Case 'Packed catalog evidence rejects missing, wrong or contradictory log markers' {
+            $log = Join-Path $sandbox 'packed-unity.log'
+            $packed = @{ expectedEncoding = 'binary'; define = 'ENABLE_BINARY_CATALOG' }
+            $marker = '[PackedContract] Addressables 1.25.0, ENABLE_BINARY_CATALOG=True, ENABLE_JSON_CATALOG=False, runtime catalog=Library/aa/Windows/catalog.bin'
+            [IO.File]::WriteAllText($log, "Unity build`r`n$marker`r`nstack trace`r`n")
+            $evidence = Read-YLPackedCatalogEncoding -Log $log -Packed $packed -AddressablesVersion '1.25.0'
+            Assert-That ($evidence.encoding -ceq 'binary' -and $evidence.log -ceq $log -and
+                $evidence.logSha256 -ceq (Get-FileHash -LiteralPath $log).Hash.ToLowerInvariant()) 'Evidence must point to the exact Unity log.'
+            Assert-Rejected { Read-YLPackedCatalogEncoding -Log $log -Packed $packed -AddressablesVersion '2.10.3' } 'encoding'
+            [IO.File]::AppendAllText($log, $marker.Replace('.bin', '.json') + "`n")
+            Assert-Rejected { Read-YLPackedCatalogEncoding -Log $log -Packed $packed -AddressablesVersion '1.25.0' } 'encoding'
+            [IO.File]::WriteAllText($log, $marker.Replace('CATALOG=True', 'CATALOG=False'))
+            Assert-Rejected { Read-YLPackedCatalogEncoding -Log $log -Packed $packed -AddressablesVersion '1.25.0' } 'symbols'
+            [IO.File]::WriteAllText($log, "Expected $marker")
+            Assert-Rejected { Read-YLPackedCatalogEncoding -Log $log -Packed $packed -AddressablesVersion '1.25.0' } 'encoding'
+        }
         Test-Case 'Action automatic session gates never open an interactive visual window' {
             . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
@@ -859,6 +921,27 @@ try {
             Assert-Rejected { Get-YLTestEditorProfile -Editors $editors -VersionInfo $info } 'Unsupported|ambiguous'
             $info.ProductVersion = '2022.3.62f3_96770f904ca7'
             Assert-Rejected { Get-YLTestEditorProfile -Editors ($editors + $editors[1]) -VersionInfo $info } 'Unsupported|ambiguous'
+        }
+        Test-Case 'Resource Addressables Player rejects invalid entry requests before creating a workspace' {
+            $entry = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../Invoke-YLResourceAddressablesPlayer.ps1'))
+            Assert-That ([IO.File]::Exists($entry)) 'The maintained Resource Addressables Player entry is missing.'
+            $root = Join-Path $sandbox 'Resource Player [invalid]'
+            $fakeUnity = Join-Path $sandbox 'Unity.exe'
+            [IO.File]::WriteAllBytes($fakeUnity, [IO.File]::ReadAllBytes((Join-Path $PSHOME 'pwsh.exe')))
+            $options = @{ Unity = $fakeUnity; Profile = 'Unity6'; WorkspaceRoot = $root }
+            Assert-Rejected { & $entry @options -ScopeCloseBenchmark } 'Scope close measurement requires .*Release.*Graphics'
+            Assert-Rejected { & $entry @options -ScopeCloseBenchmark -BuildFlavor Development -Graphics } 'Scope close measurement requires .*Release.*Graphics'
+            Assert-Rejected { & $entry @options } 'Unsupported or ambiguous Unity build'
+            Assert-That (-not [IO.Path]::Exists($root)) 'Invalid Resource Addressables Player requests must not write test outputs.'
+        }
+        Test-Case 'Player profile dependencies must come from the fingerprinted JSON bytes' {
+            . (Join-Path $common 'Packages.ps1')
+            $lockPath = Join-Path $sandbox 'player-profile-lock.json'
+            [IO.File]::WriteAllText($lockPath, '{"dependencies":{"pin":"1.0.0"}}')
+            $hash = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash
+            Assert-That ((Read-YLPackageEvidenceJson $lockPath -ExpectedSha256 $hash).dependencies.pin -ceq '1.0.0') 'The frozen pin was not read.'
+            [IO.File]::WriteAllText($lockPath, '{"dependencies":{"pin":"2.0.0"}}')
+            Assert-Rejected { Read-YLPackageEvidenceJson $lockPath -ExpectedSha256 $hash } 'SHA-256 mismatch'
         }
         Test-Case 'workspace initialization is explicit, reusable and preserves repository identity' {
             $unicode = [string][char]0x6D4B + [char]0x8BD5

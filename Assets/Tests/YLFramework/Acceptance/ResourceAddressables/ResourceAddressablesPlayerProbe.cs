@@ -2,9 +2,11 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Unity.Profiling;
 using Unity.Profiling.LowLevel;
 using Unity.Profiling.LowLevel.Unsafe;
@@ -16,6 +18,7 @@ using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.SceneManagement;
 using UnityEngine.Scripting;
 using YLFramework.Resource;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace YLFramework.Acceptance
 {
@@ -31,6 +34,15 @@ namespace YLFramework.Acceptance
         public const string CachedKey = "acceptance/cached";
         public const string ParallelKey = "acceptance/parallel";
         public const string BatchLabel = "acceptance-performance-texts";
+        public const string SuppressedAddress = "acceptance/published/guid-only";
+        public const string SuppressedLabel = "unpublished-fixture-label";
+        public const string ExcludedAddress = "acceptance/published/excluded";
+        public const string PackedSpriteAddress = "acceptance/published/packed-sprite";
+        public const string PackedSpriteName = "PackedSprite13x7";
+        public const int PackedSpriteWidth = 13, PackedSpriteHeight = 7, PackedSpritePixelsPerUnit = 37;
+        public const int ScopeCloseAssetCount = 1000;
+        public static string ScopeCloseAssetName(int index) => index.ToString("D4", CultureInfo.InvariantCulture);
+        public static string ScopeCloseKey(int index) => "acceptance/scope-close/" + ScopeCloseAssetName(index);
         private const int MaximumFrameSamples = 32768;
         private const int ImageSize = 32;
 
@@ -41,7 +53,8 @@ namespace YLFramework.Acceptance
             public string purpose = "YLResource.Addressables.PlayerIdentity";
             public string buildToken, inputHash, contentHash, unityVersion, addressablesVersion;
             public string stripping, playerRoot, hostId, resultId, workspaceId, buildFlavor;
-            public bool graphics;
+            public string publishedSourceSha256, guidOnlyKey, suppressedGuidKey, packedSpriteGuid;
+            public bool graphics, scopeCloseBenchmark;
         }
 
         [Serializable]
@@ -58,7 +71,73 @@ namespace YLFramework.Acceptance
             public long downloadBytesBefore, downloadBytesAfter;
             public bool isEditor, isBatchMode, cacheBefore, cacheAfter;
             public string buildFlavor;
+            public string publishedSourceSha256;
             public Performance performance;
+            public ScopeCloseMeasurement scopeClose;
+            public PackedSpriteEvidence packedSprite;
+        }
+
+        [Serializable]
+        private sealed class PackedSpriteEvidence
+        {
+            public string unityVersion, addressablesVersion, address, guid, assetName, namedSpriteKey, expectedContract;
+            public PackedSpriteQuery[] queries;
+            public PackedSpriteAcquisition texture, sprite, broad, namedSprite;
+            public bool spriteUsesAcquiredTexture, namedSpriteMatches, retainedSpriteSurvives;
+            public int leasesBefore, leasesAfter = -1, requestsAfter = -1, pendingWorkAfter = -1, drainingHandlesAfter = -1;
+        }
+
+        [Serializable]
+        private sealed class PackedSpriteQuery
+        {
+            public string key, requestedType, status, error;
+            public int count = -1, distinctLocations;
+            public PackedSpriteLocation[] locations;
+        }
+
+        [Serializable]
+        private sealed class PackedSpriteLocation
+        {
+            public string resourceType, primaryKey, internalId, providerId;
+            public string[] dependencyIds;
+            public int referenceIndex = -1;
+        }
+
+        [Serializable]
+        private sealed class PackedSpriteAcquisition
+        {
+            public string key, requestedType, status, errorKind, error, assetType, assetName;
+            public int instanceId, textureInstanceId, leasesOnClaim = -1;
+            public float width, height, pixelsPerUnit;
+            public bool leaseValid;
+        }
+
+        [Serializable]
+        private sealed class ScopeCloseMeasurement
+        {
+            public long stopwatchFrequency;
+            public int vSyncCount, targetFrameRate;
+            public string processor, graphicsDevice;
+            public ScopeCloseSample[] cases;
+        }
+
+        [Serializable]
+        private sealed class ScopeCloseSample
+        {
+            public int leases;
+            public int distinctAssets;
+            public long closeWallTicks;
+            public long maxSliceReleaseTicks;
+            public ScopeCloseSlice[] slices;
+        }
+
+        [Serializable]
+        private struct ScopeCloseSlice
+        {
+            public int frame;
+            public int released;
+            // The sum charged by this service tick, not the whole Unity frame or the coroutine poll interval.
+            public long releaseTicks;
         }
 
         [Serializable]
@@ -186,6 +265,11 @@ namespace YLFramework.Acceptance
 #endif
             Require(!Application.isEditor && Application.platform == RuntimePlatform.WindowsPlayer && IntPtr.Size == 8,
                 "The acceptance must execute in Windows x64 Player.");
+            if (_report.round > 4)
+            {
+                yield return MeasureScopeClose();
+                yield break;
+            }
             if (_report.round > 2)
             {
                 yield return MeasurePerformance(_report.round == 3);
@@ -225,6 +309,7 @@ namespace YLFramework.Acceptance
                 _system = _startup.Resources;
                 Require(_system != null && _system.IsAvailable && Caching.currentCacheForWriting.path == cache.path,
                     "Startup must preserve the selected official cache.");
+                yield return VerifyPublishedKeys();
                 using var a = _system.CreateScope("player scope A");
                 using var b = _system.CreateScope("player scope B");
                 TextAsset first = null;
@@ -384,6 +469,309 @@ namespace YLFramework.Acceptance
                 _checks.Add("FinalOwnershipZero");
             }
             finally { Addressables.InternalIdTransformFunc = previousTransform; }
+        }
+
+        private IEnumerator VerifyPublishedKeys()
+        {
+#if YL_RESOURCE_ADDRESSABLES_ACCEPTANCE && !UNITY_EDITOR
+            yield return VerifyPackedSprite(Published.ResourceNames.Addresses.AcceptancePublishedPackedSprite);
+
+            using var exact = _system.AcquireAsync<UnityEngine.Object>(Published.ResourceNames.Addresses.AcceptanceText);
+            yield return Wait(exact);
+            using var main = exact.TakeResult();
+            Require(main.Asset is TextAsset text && text.text == "local:" + _build.buildToken,
+                "The generated address must resolve one exact TextAsset even when the entry also uses it as a label.");
+
+            using var loadingBatch = _system.AcquireBatchAsync<TextAsset>(new[] { Published.ResourceNames.Labels.AcceptancePerformanceTexts });
+            yield return Wait(loadingBatch);
+            using var batch = loadingBatch.TakeResult();
+            Require(batch.Assets.Count == 2 && batch.Assets.Any(asset => asset == main.Asset) &&
+                batch.Assets.Any(asset => asset.text == "parallel:" + _build.buildToken),
+                "The generated label must load both authored objects, excluding the disabled label output.");
+
+            var reference = new AssetReferenceT<TextAsset>(_build.guidOnlyKey);
+            using var loadingGuid = _system.AcquireAsync(reference);
+            yield return Wait(loadingGuid);
+            using var guidOnly = loadingGuid.TakeResult();
+            Require(guidOnly.Asset.text == "guid-only:" + _build.buildToken, "The published AssetReference key resolved the wrong asset.");
+
+            using var loadingAddress = _system.AcquireAsync<TextAsset>(Published.ResourceNames.Addresses.AcceptancePublishedAddressOnly);
+            yield return Wait(loadingAddress);
+            using var addressOnly = loadingAddress.TakeResult();
+            Require(addressOnly.Asset.text == "address-only:" + _build.buildToken, "Suppressing a GUID must not suppress its published address.");
+
+            foreach (var key in new[] { SuppressedAddress, new AssetReferenceT<TextAsset>(_build.suppressedGuidKey).RuntimeKey.ToString(),
+                SuppressedLabel, ExcludedAddress, "unassigned-publication-label" })
+            {
+                using var missing = _system.AcquireAsync<TextAsset>(key);
+                yield return Wait(missing);
+                Require(missing.Status == ResourceRequestStatus.Failed && missing.Error?.Kind == ResourceError.AddressNotFound,
+                    "A disabled or unused key must be absent from the packed Player: " + key);
+            }
+            _checks.Add("PackedPublishedKeys");
+#else
+            throw new InvalidOperationException("Generated publication keys are only compiled in the isolated acceptance Player.");
+#endif
+        }
+
+        private IEnumerator VerifyPackedSprite(string address)
+        {
+            var evidence = _report.packedSprite = new PackedSpriteEvidence
+            {
+                unityVersion = _report.unityVersion, addressablesVersion = _report.addressablesVersion,
+                address = address, guid = _build.packedSpriteGuid, assetName = PackedSpriteName,
+                expectedContract = "Single imported PNG: address and GUID each resolve one Texture2D and one Sprite at distinct " +
+                    "official locations; typed leases succeed; Object fails InvalidAddress; the named Sprite is the same imported object."
+            };
+            var named = new AssetReferenceT<Sprite>(evidence.guid) { SubObjectName = PackedSpriteName };
+            evidence.namedSpriteKey = named.RuntimeKey as string;
+            var types = new[] { typeof(Texture2D), typeof(Sprite), typeof(UnityEngine.Object) };
+            var querySpecs = new[] { address, evidence.guid }.SelectMany(key => types.Select(type => (key, type)))
+                .Append((evidence.namedSpriteKey, typeof(Sprite))).ToArray();
+            var queries = evidence.queries = new PackedSpriteQuery[querySpecs.Length];
+            for (int i = 0; i < querySpecs.Length; i++)
+            {
+                var (key, type) = querySpecs[i];
+                yield return ObservePackedSpriteLocations(queries[i] = new PackedSpriteQuery { key = key, requestedType = type.FullName }, type);
+            }
+
+            var before = _system.GetDiagnostics();
+            evidence.leasesBefore = before.LeaseCount;
+            AssetLease<Texture2D> texture = null;
+            AssetLease<Sprite> sprite = null, namedSprite = null;
+            AssetLease<UnityEngine.Object> broad = null;
+            try
+            {
+                yield return ObservePackedSpriteAcquisition(_system.AcquireAsync<Texture2D>(address),
+                    evidence.texture = new PackedSpriteAcquisition { key = address }, lease => texture = lease);
+                yield return ObservePackedSpriteAcquisition(_system.AcquireAsync<Sprite>(address),
+                    evidence.sprite = new PackedSpriteAcquisition { key = address }, lease => sprite = lease);
+                yield return ObservePackedSpriteAcquisition(_system.AcquireAsync<UnityEngine.Object>(address),
+                    evidence.broad = new PackedSpriteAcquisition { key = address }, lease => broad = lease);
+                yield return ObservePackedSpriteAcquisition(_system.AcquireAsync(named),
+                    evidence.namedSprite = new PackedSpriteAcquisition { key = evidence.namedSpriteKey }, lease => namedSprite = lease);
+
+                evidence.spriteUsesAcquiredTexture = sprite != null && texture != null && sprite.Asset.texture == texture.Asset;
+                evidence.namedSpriteMatches = sprite != null && namedSprite != null && sprite.Asset == namedSprite.Asset;
+                if (sprite != null)
+                {
+                    using var retained = sprite.Retain("packed Sprite retained pin");
+                    var imported = retained.Asset;
+                    // Return all other owners, including the named alias; it must be the retained Sprite that keeps the asset live.
+                    ReleaseOriginals();
+                    yield return null;
+                    evidence.retainedSpriteSurvives = sprite.IsDisposed && retained.IsValid && retained.Asset == imported &&
+                        retained.Asset.texture && _system.GetDiagnostics().LeaseCount == before.LeaseCount + 1;
+                }
+            }
+            finally { ReleaseOriginals(); }
+
+            void ReleaseOriginals()
+            {
+                namedSprite?.Dispose();
+                broad?.Dispose();
+                sprite?.Dispose();
+                texture?.Dispose();
+            }
+
+            var after = _system.GetDiagnostics();
+            evidence.leasesAfter = after.LeaseCount;
+            evidence.requestsAfter = after.RequestCount;
+            evidence.pendingWorkAfter = after.PendingWorkCount;
+            evidence.drainingHandlesAfter = after.DrainingHandleCount;
+
+            // First observed in the Win64 IL2CPP Unity 6000.3.27f1 / Addressables 2.10.3 baseline.
+            Require(address == PackedSpriteAddress && evidence.namedSpriteKey == evidence.guid + "[" + PackedSpriteName + "]",
+                "Packed PNG has a different generated address or official AssetReference RuntimeKey.");
+            for (int i = 0; i < 6; i += 3)
+            {
+                var textureType = types[0].FullName;
+                var spriteType = types[1].FullName;
+                Require(HasPackedSpriteLocations(queries[i], textureType) && HasPackedSpriteLocations(queries[i + 1], spriteType) &&
+                    HasPackedSpriteLocations(queries[i + 2], textureType, spriteType),
+                    "Unexpected official packed PNG location contract: " + queries[i].key);
+            }
+            Require(HasPackedSpriteLocations(queries[6], types[1].FullName) &&
+                queries[6].locations[0].internalId == queries[4].locations[0].internalId + "[" + PackedSpriteName + "]" &&
+                queries[6].locations[0].providerId == queries[4].locations[0].providerId,
+                "The named Sprite must use the packed subobject route, not an atlas or a built-in Sprite.");
+            Require(IsImportedPackedSpriteAsset(evidence.texture, types[0], before.LeaseCount + 1) &&
+                IsImportedPackedSpriteAsset(evidence.sprite, types[1], before.LeaseCount + 2) &&
+                IsImportedPackedSpriteAsset(evidence.namedSprite, types[1], before.LeaseCount + 3) &&
+                evidence.spriteUsesAcquiredTexture && evidence.namedSpriteMatches && evidence.retainedSpriteSurvives,
+                "Packed PNG acquisitions did not return the same imported Sprite and backing Texture2D with independent ownership.");
+            Require(evidence.broad.status == nameof(ResourceRequestStatus.Failed) &&
+                evidence.broad.errorKind == nameof(ResourceError.InvalidAddress) && evidence.broad.leasesOnClaim == -1,
+                "Broad acquisition must reject truly distinct packed locations rather than choose one by path.");
+            string message = evidence.broad.error ?? string.Empty;
+            Require(Regex.IsMatch(message, @"\bObject\b") && Regex.IsMatch(message, @"\bSprite\b") && Regex.IsMatch(message, @"\bTexture2D\b") &&
+                Regex.IsMatch(message, @"\b(?:use|request|specify|choose|select|try)\b[^.!?\r\n]*\b(?:narrower|specific|concrete)\b[^.!?\r\n]*\btype\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant),
+                "Broad InvalidAddress must identify Object, Sprite and Texture2D and recommend a narrower concrete type.");
+            Require(after.LeaseCount == before.LeaseCount && after.RequestCount == before.RequestCount &&
+                after.PendingWorkCount == before.PendingWorkCount && after.DrainingHandleCount == before.DrainingHandleCount &&
+                after.Errors.SequenceEqual(before.Errors), "Packed PNG acquisition did not return ownership to its starting state.");
+            _checks.Add("PackedSpriteTypedOwnership");
+            _checks.Add("PackedSpriteBroadAmbiguity");
+        }
+
+        private static IEnumerator ObservePackedSpriteLocations(PackedSpriteQuery row, Type type)
+        {
+            var handle = Addressables.LoadResourceLocationsAsync(row.key, type);
+            try
+            {
+                yield return Until(() => handle.IsDone);
+                row.status = handle.Status.ToString();
+                row.error = handle.OperationException?.ToString();
+                var locations = handle.Result;
+                if (locations == null) yield break;
+                row.count = locations.Count;
+                var distinct = new List<IResourceLocation>();
+                row.locations = locations.Select(location =>
+                {
+                    if (location == null) return new PackedSpriteLocation();
+                    // Reference identity is intentional: different locations can use the very same PNG path.
+                    int reference = distinct.FindIndex(other => ReferenceEquals(other, location));
+                    if (reference < 0) { reference = distinct.Count; distinct.Add(location); }
+                    return new PackedSpriteLocation
+                    {
+                        resourceType = location.ResourceType?.FullName, primaryKey = location.PrimaryKey,
+                        internalId = location.InternalId, providerId = location.ProviderId, referenceIndex = reference,
+                        dependencyIds = location.Dependencies?.Select(dependency => dependency.InternalId).ToArray()
+                    };
+                }).ToArray();
+                row.distinctLocations = distinct.Count;
+            }
+            finally { Addressables.Release(handle); }
+        }
+
+        private IEnumerator ObservePackedSpriteAcquisition<T>(ResourceRequest<AssetLease<T>> request, PackedSpriteAcquisition row,
+            Action<AssetLease<T>> claim) where T : UnityEngine.Object
+        {
+            using (request)
+            {
+                row.requestedType = typeof(T).FullName;
+                yield return Wait(request);
+                row.status = request.Status.ToString();
+                row.errorKind = request.Error?.Kind.ToString();
+                row.error = request.Error?.Message;
+                if (request.Status != ResourceRequestStatus.Succeeded) yield break;
+                var lease = request.TakeResult();
+                claim(lease);
+                row.leasesOnClaim = _system.GetDiagnostics().LeaseCount;
+                row.leaseValid = lease.IsValid && lease.Key == row.key;
+                var asset = lease.Asset;
+                row.assetType = asset.GetType().FullName;
+                row.assetName = asset.name;
+                row.instanceId = asset.GetInstanceID();
+                if (asset is Texture2D texture)
+                {
+                    row.width = texture.width;
+                    row.height = texture.height;
+                }
+                else if (asset is Sprite sprite)
+                {
+                    row.width = sprite.rect.width;
+                    row.height = sprite.rect.height;
+                    row.pixelsPerUnit = sprite.pixelsPerUnit;
+                    if (sprite.texture) row.textureInstanceId = sprite.texture.GetInstanceID();
+                }
+            }
+        }
+
+        private static bool HasPackedSpriteLocations(PackedSpriteQuery row, params string[] types) =>
+            row.status == nameof(AsyncOperationStatus.Succeeded) && row.count == types.Length && row.distinctLocations == types.Length &&
+            row.locations.Select(location => location.resourceType).OrderBy(type => type, StringComparer.Ordinal)
+                .SequenceEqual(types.OrderBy(type => type, StringComparer.Ordinal));
+
+        private static bool IsImportedPackedSpriteAsset(PackedSpriteAcquisition row, Type type, int owners) =>
+            row.status == nameof(ResourceRequestStatus.Succeeded) && row.assetType == type.FullName && row.assetName == PackedSpriteName &&
+            row.width == PackedSpriteWidth && row.height == PackedSpriteHeight && row.leaseValid && row.leasesOnClaim == owners &&
+            (type != typeof(Sprite) || row.pixelsPerUnit == PackedSpritePixelsPerUnit);
+
+        private IEnumerator MeasureScopeClose()
+        {
+#if YL_RESOURCE_ADDRESSABLES_ACCEPTANCE
+            QualitySettings.vSyncCount = 0;
+            Application.targetFrameRate = -1;
+            yield return StartMeasurementSystem(new ResourceConfiguration());
+            var cases = new List<ScopeCloseSample>(3);
+            foreach (var count in new[] { 1, 100, ScopeCloseAssetCount })
+            {
+                using var scope = _system.CreateScope("scope-close-" + count);
+                var assets = new HashSet<int>();
+                var requests = Enumerable.Range(0, count).Select(index => scope.LoadAsync<TextAsset>(ScopeCloseKey(index))).ToArray();
+                try
+                {
+                    yield return Until(() => requests.All(request => request.IsDone));
+                    for (var index = 0; index < requests.Length; index++)
+                    {
+                        var text = requests[index].TakeResult();
+                        Require(text && text.text == ScopeCloseKey(index) && assets.Add(text.GetInstanceID()),
+                            "The preloaded keys must resolve to distinct fixture objects with the exact payloads.");
+                    }
+                }
+                finally
+                {
+                    foreach (var request in requests)
+                    {
+                        request.Dispose();
+                    }
+                }
+
+                yield return Until(() => _system.GetDiagnostics().PendingWorkCount == 0);
+                var ready = _system.GetDiagnostics();
+                Require(ready.ScopeCount == 1 && ready.LeaseCount == count && ready.RequestCount == 0 &&
+                    ready.DrainingHandleCount == 0 && ready.Errors.Count == 0 && ready.Leases.All(item => item.Owner == scope.OwnerLabel),
+                    "Only the preloaded Scope's settled inputs may enter the close window.");
+                var slices = new List<ScopeCloseSlice>(count);
+                yield return null;
+                var requestFrame = Time.frameCount;
+                var remaining = _system.ActiveLeaseCount;
+                var started = Stopwatch.GetTimestamp();
+                using var close = scope.CloseAsync();
+                var sampledCompletion = false;
+                using (_system.AddTick(() =>
+                {
+                    if (sampledCompletion)
+                    {
+                        return;
+                    }
+                    var current = _system.ActiveLeaseCount;
+                    slices.Add(new ScopeCloseSlice
+                    {
+                        frame = Time.frameCount, released = remaining - current, releaseTicks = _system.SynchronousCloseTicks
+                    });
+                    remaining = current;
+                    sampledCompletion = close.IsDone;
+                }))
+                {
+                    while (!sampledCompletion)
+                    {
+                        yield return null;
+                        Require(Stopwatch.GetTimestamp() - started < 45 * Stopwatch.Frequency && slices.Count <= count,
+                            "Scope close did not complete within the observation window.");
+                    }
+                }
+                var closeWallTicks = Stopwatch.GetTimestamp() - started;
+                Require(close.TakeResult() && slices.Count > 0 && slices[0].frame == requestFrame + 1 &&
+                    remaining == 0 && IsMeasurementDrained(_system.GetDiagnostics()),
+                    "Scope close did not settle every preloaded lease.");
+                cases.Add(new ScopeCloseSample
+                {
+                    leases = count, distinctAssets = assets.Count, closeWallTicks = closeWallTicks,
+                    maxSliceReleaseTicks = slices.Max(slice => slice.releaseTicks), slices = slices.ToArray()
+                });
+            }
+            yield return StopMeasurementSystem();
+            _report.scopeClose = new ScopeCloseMeasurement
+            {
+                stopwatchFrequency = Stopwatch.Frequency, vSyncCount = QualitySettings.vSyncCount, targetFrameRate = Application.targetFrameRate,
+                processor = SystemInfo.processorType, graphicsDevice = SystemInfo.graphicsDeviceName, cases = cases.ToArray()
+            };
+#else
+            throw new InvalidOperationException("Scope close measurement requires an acceptance Player build.");
+#endif
         }
 
         private IEnumerator MeasurePerformance(bool bare)
@@ -929,7 +1317,11 @@ namespace YLFramework.Acceptance
             var owner = JsonUtility.FromJson<BuildIdentity>(File.ReadAllText(Path.Combine(root, ManifestName)));
             Require(owner.schemaVersion == 1 && owner.purpose == "YLResource.Addressables.PlayerIdentity" &&
                 owner.buildToken == _build.buildToken && owner.inputHash == _build.inputHash && owner.contentHash == _build.contentHash &&
-                owner.buildFlavor == _build.buildFlavor && _build.buildFlavor == (Debug.isDebugBuild ? "Development" : "Release"),
+                owner.buildFlavor == _build.buildFlavor && owner.scopeCloseBenchmark == _build.scopeCloseBenchmark &&
+                !string.IsNullOrEmpty(_build.publishedSourceSha256) && owner.publishedSourceSha256 == _build.publishedSourceSha256 &&
+                owner.guidOnlyKey == _build.guidOnlyKey && owner.suppressedGuidKey == _build.suppressedGuidKey &&
+                !string.IsNullOrEmpty(_build.packedSpriteGuid) && owner.packedSpriteGuid == _build.packedSpriteGuid &&
+                _build.buildFlavor == (Debug.isDebugBuild ? "Development" : "Release"),
                 "The Player identity is not the generated owned build.");
             var argv = Environment.GetCommandLineArgs();
             string Argument(string name)
@@ -939,7 +1331,7 @@ namespace YLFramework.Acceptance
                 return argv[index + 1];
             }
             int round = int.Parse(Argument("-ylResourceAddressablesPlayerRound"));
-            Require(round >= 1 && round <= 4, "The Player round must be a cache gate (1/2) or a measurement (3/4).");
+            Require(round >= 1 && round <= (_build.scopeCloseBenchmark ? 7 : 4), "The Player round is outside this owned build's workload.");
             string result = Path.GetFullPath(Argument("-ylResourceAddressablesPlayerResult"));
             Require(result == Path.Combine(root, "run-" + round + ".json") && !File.Exists(result) && !File.Exists(result + ".quit.json"),
                 "Unknown or already-used Player output is refused.");
@@ -952,6 +1344,7 @@ namespace YLFramework.Acceptance
             _report = new Report
             {
                 buildToken = _build.buildToken, inputHash = _build.inputHash, contentHash = _build.contentHash,
+                publishedSourceSha256 = _build.publishedSourceSha256,
                 unityVersion = Application.unityVersion, addressablesVersion = _build.addressablesVersion,
                 addressablesAssemblyVersion = typeof(Addressables).Assembly.GetName().Version.ToString(), stripping = _build.stripping,
                 graphicsDeviceType = SystemInfo.graphicsDeviceType.ToString(), platform = Application.platform.ToString(),
@@ -993,6 +1386,7 @@ namespace YLFramework.Acceptance
                 _report.checks = _checks.ToArray();
                 _report.loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies().Select(value => value.GetName().Name).OrderBy(value => value, StringComparer.Ordinal).ToArray();
                 _report.finishedUtc = DateTime.UtcNow.ToString("o");
+                if (_report.packedSprite != null) Debug.Log("[YLResource.PackedSprite] " + JsonUtility.ToJson(_report.packedSprite));
                 try { WriteNew(_result, _report); }
                 catch (Exception persistence) { error = error == null ? persistence : new AggregateException(error, persistence); }
             }

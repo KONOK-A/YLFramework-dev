@@ -39,12 +39,10 @@ namespace YLFramework.Editor.Resource
             {
                 throw new ArgumentException("Invalid C# namespace: " + @namespace, nameof(@namespace));
             }
-            var entries = new List<AddressableAssetEntry>();
-            settings.GetAllAssets(entries, false);
-            if (entries.Any(entry => string.IsNullOrWhiteSpace(entry.address)) ||
-                entries.GroupBy(entry => entry.address, StringComparer.Ordinal).Any(group => group.Select(entry => entry.guid).Distinct().Count() != 1))
+            var published = ResourceAddressablesAuthoring.Inspect(settings);
+            if (published.Errors.Count != 0)
             {
-                throw new InvalidOperationException("Official Addressables entries must have nonempty unique exact addresses.");
+                throw new InvalidOperationException(string.Join("\n", published.Errors));
             }
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies().Where(value => value.GetName().Name != ResourceReferenceOutput.AssemblyName))
             {
@@ -55,8 +53,8 @@ namespace YLFramework.Editor.Resource
             }
             var text = new StringBuilder("// Generated from official Addressables Entries and Labels. Do not edit.\nnamespace ")
                 .Append(@namespace).Append("\n{\n    public static class ResourceNames\n    {\n");
-            Append("Addresses", entries.Select(entry => entry.address).Distinct(StringComparer.Ordinal));
-            Append("Labels", settings.GetLabels());
+            Append("Addresses", published.Addresses);
+            Append("Labels", published.Labels);
             return text.Append("    }\n}\n").ToString();
 
             void Append(string name, IEnumerable<string> values)

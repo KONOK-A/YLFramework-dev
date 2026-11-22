@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEditor;
 using UnityEditor.AddressableAssets;
 using UnityEditor.AddressableAssets.Settings;
@@ -59,9 +60,12 @@ namespace YLFramework.Editor.Resource
             {
                 Run(() =>
                 {
-                    var errors = ResourceAddressablesAuthoring.Validate(settings);
-                    _messageType = errors.Length == 0 ? MessageType.Info : MessageType.Error;
-                    _message = errors.Length == 0 ? "Authoring validation passed. Content build and Player validation have not run." : string.Join("\n", errors);
+                    var publication = ResourceAddressablesAuthoring.Inspect(settings, validateStartup: true);
+                    _messageType = publication.Errors.Count != 0 ? MessageType.Error
+                        : publication.Warnings.Count != 0 ? MessageType.Warning : MessageType.Info;
+                    var messages = publication.Errors.Count != 0 ? publication.Errors
+                        : new List<string> { "Authoring validation passed. Content build and Player validation have not run." };
+                    _message = string.Join("\n", messages.Concat(publication.Warnings));
                 });
             }
             referenceDirectory = EditorGUILayout.TextField("Reference Directory", referenceDirectory);

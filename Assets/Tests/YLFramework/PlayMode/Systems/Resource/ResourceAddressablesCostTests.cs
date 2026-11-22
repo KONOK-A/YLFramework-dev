@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using NUnit.Framework;
@@ -93,6 +94,128 @@ namespace YLFramework.Tests.Resource
             yield return stopped;
             stopped.TakeResult();
         }
+
+        [UnityTest]
+        public IEnumerator ConcurrentScopeClosesShareTheReleaseBudgetWithoutWaitingPerAsset()
+        {
+            using var startup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: false);
+            using var start = startup.StartAsync();
+            yield return start;
+            var resources = start.TakeResult().Resources;
+            using var loading = resources.AcquireAsync<TextAsset>("ownership/message");
+            yield return loading;
+            using var anchor = loading.TakeResult();
+            using var first = resources.CreateScope("budget-first");
+            using var second = resources.CreateScope("budget-second");
+            for (int index = 0; index < 40; index++)
+            {
+                first.Own(anchor.Retain());
+                second.Own(anchor.Retain());
+            }
+            using var loadingBatch = resources.AcquireBatchAsync<TextAsset>(new[] { "ownership/batch-texts" });
+            yield return loadingBatch;
+            first.Own(loadingBatch.TakeResult());
+            var before = resources.ActiveLeaseCount;
+            using var firstClose = first.CloseAsync();
+            using var secondClose = second.CloseAsync();
+            var releases = new List<int>();
+            for (int frame = 0; frame < 120 && (!firstClose.IsDone || !secondClose.IsDone); frame++)
+            {
+                yield return null;
+                var remaining = resources.ActiveLeaseCount;
+                releases.Add(before - remaining);
+                before = remaining;
+            }
+            Assert.That(firstClose.IsDone && secondClose.IsDone, Is.True);
+            Assert.That(firstClose.TakeResult() && secondClose.TakeResult(), Is.True);
+            var anchorSurvived = anchor.IsValid && resources.ActiveLeaseCount == 1;
+            anchor.Dispose();
+            using var stop = startup.StopAsync();
+            yield return stop;
+            Assert.That(stop.TakeResult(), Is.True);
+
+            Assert.That(anchorSurvived, Is.True);
+            Assert.That(releases.Sum(), Is.EqualTo(81));
+            Assert.That(releases.Max(), Is.GreaterThan(2), "Closing must not yield once per synchronous lease.");
+            Assert.That(releases.Max(), Is.LessThanOrEqualTo(32), "Both scopes share one limit, including the batch lease.");
+        }
+
+#if UNITY_EDITOR
+        [UnityTest]
+        public IEnumerator ConcurrentAssetAndBatchScopeClosesYieldAtTheSharedElapsedBudget()
+        {
+            using var startup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: false);
+            using var start = startup.StartAsync();
+            yield return start;
+            var resources = start.TakeResult().Resources;
+            using var loadingAsset = resources.AcquireAsync<TextAsset>("ownership/message");
+            yield return loadingAsset;
+            using var anchor = loadingAsset.TakeResult();
+            using var loadingBatch = resources.AcquireBatchAsync<TextAsset>(new[] { "ownership/batch-texts" });
+            yield return loadingBatch;
+            using var batch = loadingBatch.TakeResult();
+            using var batchScope = resources.CreateScope("elapsed-budget-batch");
+            using var assetScope = resources.CreateScope("elapsed-budget-assets");
+            batchScope.Own(batch);
+            for (var index = 0; index < 5; index++)
+            {
+                assetScope.Own(anchor.Retain());
+            }
+
+            var slices = new List<int>();
+            var remaining = resources.ActiveLeaseCount;
+            var firstSliceClosedBatch = false;
+            var observedCompletion = false;
+            // Charge just over half a millisecond per real release, without waiting on the wall clock.
+            var ticksPerRelease = Stopwatch.Frequency / 2000 + 1;
+            var timestamp = 0L;
+            resources.SynchronousCloseTimestamp = () => timestamp += ticksPerRelease;
+            bool bothClosed;
+            try
+            {
+                using var batchClose = batchScope.CloseAsync();
+                using var assetClose = assetScope.CloseAsync();
+                using var sampling = resources.AddTick(() =>
+                {
+                    if (observedCompletion)
+                    {
+                        return;
+                    }
+                    if (slices.Count == 0)
+                    {
+                        firstSliceClosedBatch = batch.IsDisposed;
+                    }
+                    var current = resources.ActiveLeaseCount;
+                    slices.Add(remaining - current);
+                    remaining = current;
+                    observedCompletion = batchClose.IsDone && assetClose.IsDone;
+                });
+
+                for (var frame = 0; frame < 12 && !observedCompletion; frame++)
+                {
+                    yield return null;
+                }
+                bothClosed = batchClose.Status == ResourceRequestStatus.Succeeded &&
+                    assetClose.Status == ResourceRequestStatus.Succeeded && batchClose.TakeResult() && assetClose.TakeResult();
+            }
+            finally
+            {
+                resources.SynchronousCloseTimestamp = null;
+            }
+
+            var anchorSurvived = anchor.IsValid && resources.ActiveLeaseCount == 1;
+            anchor.Dispose();
+            using var stop = startup.StopAsync();
+            yield return stop;
+            Assert.That(stop.TakeResult(), Is.True);
+
+            Assert.That(bothClosed && observedCompletion, Is.True);
+            Assert.That(anchorSurvived, Is.True);
+            Assert.That(firstSliceClosedBatch, Is.True);
+            Assert.That(slices, Is.EqualTo(new[] { 2, 2, 2 }),
+                "The batch and asset releases must spend the same ~1 ms budget across scopes, then resume next tick.");
+        }
+#endif
 
         [UnityTest]
         public IEnumerator DiagnosticsAreDetachedBoundedAndDoNotAddAssetReferences()

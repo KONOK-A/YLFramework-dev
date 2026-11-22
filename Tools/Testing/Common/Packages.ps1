@@ -260,10 +260,14 @@ function Add-YLUpmDependencies {
 }
 
 function Read-YLPackageEvidenceJson {
-    param([string] $Path)
+    param([string] $Path, [ValidatePattern('^[0-9a-fA-F]{64}$')][string] $ExpectedSha256)
     $Path = Get-YLTestPath $Path
     if ([IO.FileInfo]::new($Path).Length -gt 16MB) { throw 'Package evidence JSON exceeds the size limit.' }
-    $text = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($Path))
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    if ($PSBoundParameters.ContainsKey('ExpectedSha256') -and [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ine $ExpectedSha256) {
+        throw "Package evidence JSON SHA-256 mismatch: $Path"
+    }
+    $text = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
     $document = [Text.Json.JsonDocument]::Parse($text)
     function Check-Properties([Text.Json.JsonElement] $Element) {
         if ($Element.ValueKind -eq [Text.Json.JsonValueKind]::Object) {

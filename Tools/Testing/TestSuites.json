@@ -345,7 +345,10 @@
       ],
       "suites": ["Daily"],
       "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
-      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs"],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs",
+        "Assets/Tests/YLFramework/Fixtures/CommonSystem/Scenes/CommonNeutral.unity"
+      ],
       "editTests": [
         "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesAuthoringTests.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceRequestTests.cs",
@@ -362,6 +365,56 @@
         "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
         "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"
       ],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourcePackedCatalog",
+      "shortHostKey": true,
+      "category": "YL.Resource.Addressables.PackedContract",
+      "assemblies": [],
+      "excludedCategories": [],
+      "specialCategory": "YL.Resource.Addressables.PackedContract",
+      "specialModes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "sortingLayer": "",
+      "description": "Opt-in Packed catalog contract with the pinned package's default encoding (2022 JSON; Unity 6 binary).",
+      "nativeFixtureInputs": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"
+      ],
+      "suites": ["Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/CommonSystem/Scenes/CommonNeutral.unity"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesBuildTests.cs"],
+      "playTests": [],
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef"],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourcePackedCatalogBinary",
+      "shortHostKey": true,
+      "category": "YL.Resource.Addressables.PackedContract",
+      "assemblies": [],
+      "excludedCategories": [],
+      "specialCategory": "YL.Resource.Addressables.PackedContract",
+      "specialModes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "sortingLayer": "",
+      "description": "Opt-in Packed catalog contract with ENABLE_BINARY_CATALOG on Unity 2022 and Registry Addressables 1.25.0 only.",
+      "nativeFixtureInputs": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"
+      ],
+      "suites": ["Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/CommonSystem/Scenes/CommonNeutral.unity"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesBuildTests.cs"],
+      "playTests": [],
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef"],
       "packageInputs": ["com.kano.ylframework"],
       "sampleInputs": []
     },

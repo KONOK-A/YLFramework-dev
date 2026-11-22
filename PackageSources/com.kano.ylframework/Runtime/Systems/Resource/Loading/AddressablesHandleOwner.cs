@@ -13,6 +13,7 @@ namespace YLFramework.Resource
         private AsyncOperationHandle<T> _handle;
         private bool _disposed;
         private bool _released;
+        internal Action<Exception> DrainReleaseFailed;
 
         private AddressablesHandleOwner(ResourceManager manager, AsyncOperationHandle<T> handle)
         {
@@ -78,7 +79,16 @@ namespace YLFramework.Resource
             CheckThread();
             if (!_released)
             {
-                Release();
+                var failed = DrainReleaseFailed;
+                DrainReleaseFailed = null;
+                try
+                {
+                    Release();
+                }
+                catch (Exception error) when (failed != null)
+                {
+                    failed(error);
+                }
             }
         }
 

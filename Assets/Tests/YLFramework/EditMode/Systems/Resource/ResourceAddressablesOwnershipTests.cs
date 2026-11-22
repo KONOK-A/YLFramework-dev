@@ -277,10 +277,16 @@ namespace YLFramework.Tests.Resource
             start.TakeResult();
             var missing = startup.Resources.AcquireAsync<TextAsset>("ownership/missing");
             var ambiguous = startup.Resources.AcquireAsync<TextAsset>("ownership/ambiguous");
+            using var exact = startup.Resources.AcquireAsync<TextAsset>("ownership/aliased");
             yield return Wait(missing);
             yield return Wait(ambiguous);
+            yield return Wait(exact);
             Assert.That(missing.Error.Kind, Is.EqualTo(ResourceError.AddressNotFound));
             Assert.That(ambiguous.Status, Is.EqualTo(ResourceRequestStatus.Failed));
+            using (var lease = exact.TakeResult())
+            {
+                Assert.That(lease.Asset.text, Is.EqualTo("same entry uses both key roles"));
+            }
             Assert.That(Count(startup.Resources), Is.Zero);
             var stop = startup.StopAsync();
             yield return Wait(stop);
@@ -731,6 +737,9 @@ namespace YLFramework.Tests.Resource
             {
                 Add(settings, "One", "ownership/ambiguous", "one");
                 Add(settings, "Two", "ownership/ambiguous", "two");
+                Add(settings, "Aliased", "ownership/aliased", "same entry uses both key roles");
+                settings.FindAssetEntry(AssetDatabase.AssetPathToGUID(Root + "/Aliased.txt"))
+                    .SetLabel("ownership/aliased", true, true);
             }
             var prefab = new GameObject("OwnershipPrefab");
             prefab.SetActive(false);

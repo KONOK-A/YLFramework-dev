@@ -49,6 +49,7 @@ namespace YLFramework.Resource
         private Action<ResourceRequest<T>> _observers;
         private Action<ResourceRequest<T>> _invalidationObservers;
         private Action _invalidationDetach;
+        private ResourceException _reservedAwaitError;
         private bool _isClaimed;
         private bool _awaitReserved;
         private bool _awaitContinuationRegistered;
@@ -294,10 +295,21 @@ namespace YLFramework.Resource
                 }
                 try
                 {
+                    var reservedError = _request._reservedAwaitError;
+                    if (reservedError != null)
+                    {
+                        _request._reservedAwaitError = null;
+                        throw reservedError;
+                    }
                     if (_request.Status == ResourceRequestStatus.Canceled && !_request._isClaimed)
                     {
                         _request._isClaimed = true;
                         throw new OperationCanceledException(_request.Error?.Message, _request.Error, _request.Cancellation);
+                    }
+                    if (_request.Status == ResourceRequestStatus.Invalidated && !_request._isClaimed)
+                    {
+                        _request._isClaimed = true;
+                        throw _request.Error;
                     }
                     return _request.ClaimResult();
                 }
@@ -368,6 +380,18 @@ namespace YLFramework.Resource
                 _invalidationDetach = _cancel;
                 SetTerminal(ResourceRequestStatus.Invalidated, new ResourceException(ResourceError.SessionUnavailable, "The resource session ended."));
             }
+            else if (_awaitReserved && !_isClaimed)
+            {
+                // 生产终态不变；更早的观察者可能在已预约的续体领取前结束会话。
+                if (Status == ResourceRequestStatus.Succeeded)
+                {
+                    _reservedAwaitError = new ResourceException(ResourceError.SessionUnavailable, "The resource session ended before the result was delivered.");
+                }
+                else if (Status == ResourceRequestStatus.Failed)
+                {
+                    _reservedAwaitError = Error;
+                }
+            }
             IsDisposed = true;
             _invalidationObservers = _observers;
             _observers = null;
@@ -376,16 +400,22 @@ namespace YLFramework.Resource
         /// <summary>履行会话冻结时暂存的解绑和结果归还责任。</summary>
         void IResourceRequest.ReleaseInvalidatedResult()
         {
+            var detach = _invalidationDetach;
+            _invalidationDetach = null;
             try
             {
-                var detach = _invalidationDetach;
-                _invalidationDetach = null;
                 detach?.Invoke();
-                ReleaseUnclaimedResult();
             }
             finally
             {
-                EndOwnership();
+                try
+                {
+                    ReleaseUnclaimedResult();
+                }
+                finally
+                {
+                    EndOwnership();
+                }
             }
         }
 

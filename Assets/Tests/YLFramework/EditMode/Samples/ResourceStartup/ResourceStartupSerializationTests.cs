@@ -22,7 +22,11 @@ namespace YLFramework.Tests.ResourceBuild
         private string _folder;
         private string _folderGuid;
         private readonly HashSet<string> _owned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private static readonly string[] SampleFields = { "message", "data", "prefab", "preview", "audioCue", "scene", "reusePrefab", "bindCoreResourceProvider", "contentProjectId", "startupCatalogId", "audioProjects" };
+        private static readonly string[] SampleFields =
+        {
+            "message", "data", "prefab", "preview", "audioCue", "audioPreloadLabel", "scene", "reusePrefab",
+            "bindCoreResourceProvider", "contentProjectId", "startupCatalogId", "audioProjects"
+        };
 
         [SetUp]
         public void SetUp()
@@ -52,6 +56,7 @@ namespace YLFramework.Tests.ResourceBuild
         [TestCase(typeof(ResourceStartupExample), "scene")]
         [TestCase(typeof(ResourceStartupExample), "preview")]
         [TestCase(typeof(ResourceStartupExample), "audioCue")]
+        [TestCase(typeof(ResourceStartupExample), "audioPreloadLabel")]
         [TestCase(typeof(ResourceStartupExample), "reusePrefab")]
         [TestCase(typeof(ResourceStartupExample), "bindCoreResourceProvider")]
         [TestCase(typeof(ResourceStartupExample), "contentProjectId")]
@@ -129,6 +134,7 @@ namespace YLFramework.Tests.ResourceBuild
                 sample = root.AddComponent<ResourceStartupExample>();
                 Assert.That(sample.reusePrefab, Is.False);
                 Assert.That(sample.bindCoreResourceProvider, Is.True);
+                Assert.That(sample.audioPreloadLabel, Is.Null.Or.Empty);
                 Assert.That(sample.audioProjects, Is.Empty);
                 sample.message = new AssetReferenceT<TextAsset>(AssetDatabase.AssetPathToGUID(messagePath));
                 sample.data = new AssetReferenceT<ResourceStartupExampleData>(AssetDatabase.AssetPathToGUID(dataPath));
@@ -178,6 +184,7 @@ namespace YLFramework.Tests.ResourceBuild
                 Assert.That(restored.bindCoreResourceProvider, Is.EqualTo(!enabled));
                 Assert.That(restored.contentProjectId, Is.EqualTo(enabled ? "sample-content" : ""));
                 Assert.That(restored.startupCatalogId, Is.EqualTo(enabled ? "sample-catalog" : ""));
+                Assert.That(restored.audioPreloadLabel, Is.Null.Or.Empty, "A sample without a label keeps exact-key warmup by default.");
                 CollectionAssert.AreEqual(projects, restored.audioProjects);
                 Assert.That(restored.Startup, Is.Null);
                 Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(restored))), Is.EqualTo("6efb2386a5492c0449d3f50a48627a32"));

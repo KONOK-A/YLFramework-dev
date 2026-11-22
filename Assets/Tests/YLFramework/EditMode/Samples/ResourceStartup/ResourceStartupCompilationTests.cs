@@ -183,12 +183,24 @@ namespace YLFramework.Tests.ResourceBuild
             {
                 ["Unity.Addressables"] = "com.unity.addressables",
                 ["Unity.ResourceManager"] = "com.unity.addressables",
-                ["Unity.Profiling.Core"] = "com.unity.profiling.core",
                 ["UnityEngine.UI"] = "com.unity.ugui",
                 ["Unity.Addressables.Editor"] = "com.unity.addressables",
                 ["Unity.ScriptableBuildPipeline.Editor"] = "com.unity.scriptablebuildpipeline"
             };
             var locked = JObject.Parse(File.ReadAllText("Packages/packages-lock.json"))["dependencies"];
+            const string ProfilerPackage = "com.unity.profiling.core";
+            const string ProfilerAssembly = "Unity.Profiling.Core";
+            // Profiling Core is optional in 1.25. Never approve an unpinned assembly of the same name.
+            if (locked[ProfilerPackage] != null)
+            {
+                expected.Add(ProfilerAssembly, ProfilerPackage);
+            }
+            else
+            {
+                Assert.That(all.Any(assembly => assembly.name == ProfilerAssembly || assembly.allReferences.Any(path =>
+                    string.Equals(Path.GetFileNameWithoutExtension(path), ProfilerAssembly, StringComparison.OrdinalIgnoreCase))), Is.False,
+                    "The compiler graph must not use an unpinned Profiling Core assembly.");
+            }
             foreach (var pair in expected)
             {
                 var graphs = all.Where(assembly => assembly.name == pair.Key).ToArray();

@@ -72,6 +72,51 @@ function Get-YLHostManagedPath([object] $HostRecord, [string] $Relative) {
     return $path
 }
 
+function Get-YLPackedCatalogProfile([string] $Module, [object] $EditorProfile) {
+    if ($Module -cnotin @('ResourcePackedCatalog', 'ResourcePackedCatalogBinary')) { return }
+    $addressables = Get-YLUnityAddressablesVersion $EditorProfile
+    $legacyBinary = $Module -ceq 'ResourcePackedCatalogBinary'
+    if ($legacyBinary -and $addressables -cne '1.25.0') { throw 'ResourcePackedCatalogBinary requires a pinned Unity 2022 Editor and Registry Addressables 1.25.0.' }
+    $define = if ($legacyBinary) { 'ENABLE_BINARY_CATALOG' } else { '' }
+    $symbolIdentity = if ($legacyBinary) { $define } else { 'None' }
+    $encoding = if ($addressables -ceq '1.25.0' -and -not $legacyBinary) { 'json' } else { 'binary' }
+    return [pscustomobject]@{ define = $define; expectedEncoding = $encoding; keySuffix = "-$Module-Win64-Defines$symbolIdentity-$encoding" }
+}
+
+function Initialize-YLPackedBinarySettings([object] $HostRecord) {
+    $settings = Get-YLHostManagedPath $HostRecord 'ProjectSettings/ProjectSettings.asset'
+    if (-not [IO.File]::Exists($settings)) {
+        if ([IO.Path]::Exists((Get-YLHostManagedPath $HostRecord 'Library'))) { throw 'Refusing to reseed a compiled host without its original ENABLE_BINARY_CATALOG settings.' }
+        # Player settings apply to Editor and runtime assemblies. Unity 2022's csc.rsp does not cover Editor scripts.
+        $seed = [Text.Encoding]::UTF8.GetBytes("%YAML 1.1`n%TAG !u! tag:unity3d.com,2011:`n--- !u!129 &1`nPlayerSettings:`n  m_ObjectHideFlags: 0`n  serializedVersion: 26`n  scriptingDefineSymbols:`n    Standalone: ENABLE_BINARY_CATALOG`n")
+        $stream = [IO.File]::Open($settings, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        try { $stream.Write($seed, 0, $seed.Length) } finally { $stream.Dispose() }
+    }
+    $text = [IO.File]::ReadAllText($settings)
+    if ($text -cnotmatch '(?m)^  scriptingDefineSymbols:\r?\n    Standalone: ENABLE_BINARY_CATALOG\r?$') {
+        throw 'Owned binary host lost its exact Standalone ENABLE_BINARY_CATALOG settings; preserving the existing file.'
+    }
+    return $settings
+}
+
+function Read-YLPackedCatalogEncoding([string] $Log, [object] $Packed, [string] $AddressablesVersion) {
+    $legacyBinary = $Packed.define -ceq 'ENABLE_BINARY_CATALOG'
+    $extension = if ($Packed.expectedEncoding -ceq 'binary') { '.bin' } else { '.json' }
+    $catalogs = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($line in [IO.File]::ReadAllLines($Log)) {
+        if (-not $line.StartsWith('[PackedContract] Addressables ', [StringComparison]::Ordinal)) { continue }
+        if ($line -cnotmatch '^\[PackedContract\] Addressables (?<version>\d+\.\d+\.\d+), ENABLE_BINARY_CATALOG=(?<binary>True|False), ENABLE_JSON_CATALOG=False, runtime catalog=(?<catalog>.+)$' -or
+            $Matches.version -cne $AddressablesVersion -or $Matches.binary -cne $legacyBinary.ToString() -or
+            [IO.Path]::GetExtension($Matches.catalog) -cne $extension) {
+            throw 'Packed catalog encoding or compiled test symbols contradict the pinned profile.'
+        }
+        $null = $catalogs.Add($Matches.catalog)
+    }
+    if ($catalogs.Count -eq 0) { throw 'Missing Packed catalog encoding in the Unity test log.' }
+    return [ordered]@{ encoding = $Packed.expectedEncoding; catalogs = @($catalogs); log = $Log
+        logSha256 = (Get-FileHash -LiteralPath $Log -Algorithm SHA256).Hash.ToLowerInvariant() }
+}
+
 function Assert-YLUnityResponseIdentity {
     param([object] $Response, [object] $Request, [string] $UnityVersion)
     $expectedStatus = switch -CaseSensitive ($Request.action) {
@@ -206,6 +251,7 @@ function Invoke-YLUnitySuite {
         [string] $Unity, [string] $WorkspaceRoot, [string] $Action, [string] $Suite, [string] $Module,
         [int] $TimeoutSeconds, [string] $Selection, [string] $DOTweenArchive, [bool] $KeepArtifacts, [Collections.IDictionary] $Summary
     )
+    $packed = Get-YLPackedCatalogProfile -Module $Module -EditorProfile $EditorProfile
     $sources = Get-SelectedSources -Native -EditorProfile $EditorProfile
     $sessionScene = 'prepareSessionScene' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSessionScene
     $desktop = $Suite -ceq 'Special' -and 'interactiveDesktop' -cin $Definition.PSObject.Properties.Name -and $Definition.interactiveDesktop
@@ -229,6 +275,7 @@ function Invoke-YLUnitySuite {
     $profile = "Unity-$($EditorProfile.version)-UTF$($EditorProfile.testFramework)-UGUI$($EditorProfile.ugui)-$Suite-$($Definition.nativeLayout)-Graphics$($Definition.graphics)-IsolatedModes"
     $addressablesVersion = if ($Definition.nativeLayout -ceq 'Framework') { Get-YLUnityAddressablesVersion $EditorProfile } else { $null }
     if ($addressablesVersion) { $profile += '-AA' + $addressablesVersion }
+    if ($packed) { $profile += $packed.keySuffix }
     if ($sessionScene) { $profile += '-SessionScenes' }
     if ($desktop) { $profile += '-Desktop' }
     if ($dotween) { $profile += '-ApprovedDOTween-InitializeOnce' }
@@ -238,6 +285,7 @@ function Invoke-YLUnitySuite {
     $repositoryKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Repository.ToLowerInvariant()))).Substring(0, 12)
     $hostKey = "Unity-$($EditorProfile.version)-$Suite-$Module-$repositoryKey"
     if ($addressablesVersion) { $hostKey += '-AA' + $addressablesVersion }
+    if ($packed) { $hostKey += $packed.keySuffix }
     if ($dotween) { $hostKey += '-SdkInitializeOnce' }
     if ($hybridClr) { $hostKey += '-HybridClrGitSdk' }
     $hasSamples = 'sampleInputs' -cin $Definition.PSObject.Properties.Name -and @($Definition.sampleInputs).Count -gt 0
@@ -359,6 +407,14 @@ function Invoke-YLUnitySuite {
             foreach ($relative in $sdk.files.Keys) { $files['Assets/Plugins/Demigiant/DOTween/' + $relative] = [IO.File]::ReadAllBytes((Join-Path $sdk.root $relative)) }
         }
         Sync-YLUnityHost -HostRecord $hostRecord -Files $files -Identity $identity -EditorVersion $EditorProfile.version
+        if ($packed) {
+            $Summary.host['fullKey'] = $fullHostKey
+            $Summary['packedCatalog'] = [ordered]@{
+                category = $Definition.category; buildTarget = 'Win64'; expectedEncoding = $packed.expectedEncoding
+                scriptingDefines = @(if ($packed.define) { $packed.define }); settings = $null; evidence = $null
+            }
+            if ($packed.define) { $Summary.packedCatalog.settings = Initialize-YLPackedBinarySettings -HostRecord $hostRecord }
+        }
         if ($dotween) {
             $settings = Get-YLHostManagedPath $hostRecord 'ProjectSettings/ProjectSettings.asset'
             $created = -not [IO.File]::Exists($settings)
@@ -397,6 +453,10 @@ function Invoke-YLUnitySuite {
             try {
                 $arguments = @(if ($desktop) { '-ylTestInteractive' } else { '-batchmode' })
                 if (-not $Definition.graphics) { $arguments += '-nographics' }
+                if ($packed) {
+                    if ($packed.define) { $null = Initialize-YLPackedBinarySettings -HostRecord $hostRecord }
+                    $arguments += @('-buildTarget', 'Win64')
+                }
                 $arguments += @('-projectPath', $hostRecord.path, '-executeMethod', 'YLFramework.Testing.Editor.YLTestEntry.Execute',
                     '-ylTestRequest', $requestPath, '-logFile', $unityLog)
                 $fact = Invoke-TestingProcess -Exe $Unity -Arguments $arguments
@@ -417,7 +477,7 @@ function Invoke-YLUnitySuite {
                     $Summary['excludedTests'] = @($response.excludedTests)
                     $Summary['graphics'] = [bool]$Definition.graphics
                 }
-                return [pscustomobject]@{ response = $response; process = $fact; output = $output }
+                return [pscustomobject]@{ response = $response; process = $fact; output = $output; log = $unityLog }
             } finally {
                 if ($Operation -ceq 'Run') {
                     $Summary['xml'] = @($Summary.xml + @(@('EditMode', 'PlayMode') | ForEach-Object { Join-Path $output "results-$_.xml" } | Where-Object { [IO.File]::Exists($_) }) | Select-Object -Unique)
@@ -485,7 +545,9 @@ function Invoke-YLUnitySuite {
                         toolchain = @(Compare-Object -ReferenceObject @($effective.toolchain | ForEach-Object { [pscustomobject]$_ }) -DifferenceObject @($current.toolchain | ForEach-Object { [pscustomobject]$_ }) -Property path, sha256 -CaseSensitive | Select-Object path, sha256, SideIndicator)
                     }
                 }
-                Read-YLTestXml -Path (Join-Path $execution.output "results-$mode.xml") -Selection $actualSelection -InputIdentity $current -Mode $mode -ProcessResult $execution.process
+                $result = Read-YLTestXml -Path (Join-Path $execution.output "results-$mode.xml") -Selection $actualSelection -InputIdentity $current -Mode $mode -ProcessResult $execution.process
+                if ($packed) { $Summary.packedCatalog.evidence = Read-YLPackedCatalogEncoding -Log $execution.log -Packed $packed -AddressablesVersion $addressablesVersion }
+                $result
             })
             $total = ($modes | Measure-Object -Property total -Sum).Sum
             $Summary['testResult'] = [ordered]@{ status = 'Passed'; total = $total; passed = $total; failed = 0; skipped = 0; modes = @($modes) }

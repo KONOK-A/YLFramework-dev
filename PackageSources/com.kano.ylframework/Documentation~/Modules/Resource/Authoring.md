@@ -14,13 +14,21 @@
 
 编辑器脚本打开同一窗口时使用 `ResourceWorkbenchWindow.OpenWorkbench()`。若仍引用旧工作台类型，改用 `ResourceWorkbenchWindow` / `ResourceWorkbenchAssetsMenu`；菜单路径不变。
 
-`ResourceAddressablesAuthoring.Validate` 只读报告前置与地址冲突。单资产键与 GUID 不能歧义；大小写和路径不被静默标准化。`FindUniqueEntry` 读取官方条目，缺失或多结果拒绝，不选第一项补缺。
+`ResourceAddressablesAuthoring.Validate` 只读检查启动更新前置、参与构建的 Group 中失效的条目，以及正式包单资产键冲突。一个 Label 对应多个资产本身合法，但不能与另一个普通资产的地址或 GUID 撞名：即使具体类型不同，`UnityEngine.Object` 查询也会返回多项。场景按 `SceneInstance` 单独判断；同一条目以同一个字符串发布地址和 Label 不算歧义。`FindUniqueEntry` 是作者导航，不用于证明正式 Catalog 可解析。
+
+工作台、常量生成和构建预检共用同一检查。检查不写入持久资产、不主动改变资产脏状态，也不改变 `.meta` 文件字节；官方目录枚举可以刷新 `IsFolder`、`SubAssets` 等内存缓存，不保证这些列表或其对象实例不变。
+
+安装 Addressables 1.25.0 时，检查按官方 `PlayerDataGroupSchema` 识别启用的 Resources 资产和 Build Settings 场景。如果它们与 Bundle 实际启用的地址、GUID 或已登记 Label 共享同一字符串键，且双方都有匹配 `UnityEngine.Object` 或 `SceneInstance` 的位置，就报告冲突；双方仅共享 Label 不算冲突。内建场景的整数索引不参与比较。一个资产发布多个类型或位置本身不算冲突。Addressables 2.10.3 的官方 Packed 构建不发布这些旧式位置，因此不做此项检查。
+
+**目录格式选择：** 如果使用 `1.25.0` 并依赖 Build Settings 场景键，请保留默认 JSON，不添加 `ENABLE_BINARY_CATALOG`。在 Unity 2022.3 的实建二进制目录中，启用 `IncludeBuildSettingsScenes` 后，官方定位器查询场景键可能抛异常，即使 Bundle 地址与场景键不重名。YL 作者预检通过不代表官方定位器一定能读取它。关闭该选项会停止发布这些内建场景键，并非等价修复；这个非默认组合尚无 Win64 Player 验证。`2.10.3` 默认使用二进制目录，不需要此宏。两版各自的默认目录均已通过 Win64 IL2CPP Player 验证。
 
 官方支持的 Folder、AssetReference 子对象、共享依赖、分包和 Analyze/Build Report 按实际安装版本使用。子对象不能靠旧框架 localId 拼接猜名称；名称重名或身份无法表达时必须修正真实引用。
 
 ## 常量与图集
 
-地址和 Label 常量只从官方 Entries/Labels 生成，名称、输出路径和覆盖范围由调用者明确提供。它们是编译便利入口，不是另一个 Catalog；更改地址后仍须更新真实消费者和内容。
+只为参与 Packed 构建的普通 Bundle Group 生成实际启用的地址、已登记且被使用的 Label。`IncludeInBuild` 关闭、无 Bundle schema、关闭对应 Catalog 键输出的条目不提供这些常量；关闭 `IncludeGUIDInCatalog` 会影响通过 GUID 加载的 `AssetReference`。工作台说明开关的影响，不会自动打开。内建键仅用于冲突检查，不生成常量；不支持推断自定义 schema 发布的键。
+
+修改上述设置后重新生成并检查消费者编译：不再发布的常量会被移除，未变化的键保留原字面值与排序。生成与校验不能替代从实际 Packed Catalog 反查，尤其是自定义 Builder、导入器或复杂子对象。
 
 图集使用 Unity `SpriteAtlas`，准备 Packables 与目标平台设置，登记为官方 Entry。YL 的作者辅助不保留私有 Atlas Runtime 或分包算法。需要读取具体 Sprite 时持有 Atlas Lease，销毁自己得到的 Sprite 克隆后再归还 Atlas。
 

@@ -119,6 +119,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 - `Special/Action` 不开启交互桌面、不抢焦点；正常完成后只退出工具自有的后台 Editor。`ActionVisualTests` 属于 `YL.Manual.ActionVisual` 且标记 Explicit，不在 Daily/Special 自动选集中。原生画面使用下述独立非退出入口，不能改回自动桌面门禁或以模拟点击绕过前置。
 - `AudioSession` 只证明会话，`AudioNative` 才包含真实输出/DSP；设备条件不足应报告未执行，不改测量断言或系统音量。
 - Resource/Audio 的原生 Bundle 与 Player 流程受 Windows Mono 路径预算限制，使用足够短的独立工作根，不能通过路径别名、少复制输入或删产物来规避。
+- Packed Catalog 回归用 `-Action Run -Suite Special -Module ResourcePackedCatalog`：Unity 2022 / Registry Addressables 1.25.0 默认验证 JSON，Unity 6 / Registry 2.10.3 默认验证 binary；仅对前者可改用 `-Module ResourcePackedCatalogBinary`，在首次编译前为独立 Win64 宿主启用 `ENABLE_BINARY_CATALOG`。两项都不改变 Daily；通过需实际 EditMode XML 与匹配版本、编译符号和目录后缀的 Unity 日志，`summary.json` 记录宿主、输入指纹和日志 SHA-256。这不是 Player 验收。
 - DOTween 用 `-DOTweenArchive` 显式提供批准 Standard SDK，测试工具校验完整归档，在自有宿主部署并设置宏，不读取或改写开发宿主 SDK/宏。普通 Action/Help 不安装此 SDK。
 - 连续 Play / SessionScenes 使用工具拥有、已保存的空场景。只在严格确认 UTF 默认布局和测试尚未开始时准备场景，不自动保存未知或脏场景。
 - Player 探针仅在相应 `YL_*_ACCEPTANCE` 构建符号或专用产品外程序集启用，不能进入普通生产编译图。
@@ -127,6 +128,28 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 - 当前Pooling工作负载版本4为76病例，在原72固定输入后追加 `Audio.Pending.0/1/24/128`：真实公开异步请求持续Loading，同址共享一次provider，采样外绑定实际宿主Update；每批64次更新。Audio病例中的 `medianNanosecondsPerPair` 是通用报告字段，此处pairsPerIteration=1，单位为ns/Update；不是声部吞吐或真实帧FPS。取消和late lease释放在采样外断言，不将同帧接纳/List.Remove成本混入等待快照。
 
 需要额外参数和特殊上下文时读取对应模块声明，不把上述条件当作 Skip 白名单。
+
+### Resource Addressables Win64 Player
+
+从仓库根运行 [Invoke-YLResourceAddressablesPlayer.ps1](Invoke-YLResourceAddressablesPlayer.ps1)。入口无需先导入开发工程，只在仓库外的短工作根创建全新的工具自有宿主，使用主包和固定的 Unity 依赖，不安装 HybridCLR 或其他可选 SDK。需要匹配的 Windows Editor、许可证、Win64 IL2CPP/C++ 工具链及可用的 Unity 包来源；不回退到 Mono。
+
+| `-Profile` | 标准 Editor | Registry Addressables |
+| --- | --- | --- |
+| `Unity2022` | `2022.3.62f3` | `1.25.0` |
+| `Unity6`（默认） | `6000.3.27f1` | `2.10.3` |
+
+`-Unity` 必须指向对应的实际 `Unity.exe`，会核对完整 ProductVersion。省略 `-Unity` / `-WorkspaceRoot` 时分别读取 `YL_TEST_UNITY` / `YL_TEST_WORKSPACE`。例如，设 `$unity2022`、`$unity6` 为两个安装路径，并串行运行 Scope 关闭测量：
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLResourceAddressablesPlayer.ps1 -Profile Unity2022 -Unity $unity2022 -WorkspaceRoot $workspace -BuildFlavor Release -Graphics -ScopeCloseBenchmark
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLResourceAddressablesPlayer.ps1 -Profile Unity6 -Unity $unity6 -WorkspaceRoot $workspace -BuildFlavor Release -Graphics -ScopeCloseBenchmark
+```
+
+两种 `-BuildFlavor` 都构建 Windows x64 IL2CPP（`Medium` 裁剪）。默认 `Release`；`Development` 用于采集支持的分配指标，不作为发行耗时依据。默认 Player 无图形，`-Graphics` 要求实际图形设备。常规验收在独立进程中验证首次 HTTP 下载、二次官方缓存，以及 Bare Addressables 与 YL 的本地负载。`-ScopeCloseBenchmark` 仅允许 `Release -Graphics`，并追加三轮独立 Scope 关闭测量。Editor 构建限时 30 分钟，每个 Player 进程限时 180 秒。
+
+每轮分别预载 1、100、1000 个不同的 `TextAsset`，只测 `CloseAsync()`。`slices` 在实际清理步之后记录归还数和释放调用的累计时间。还有租约待还时，一步最多归还 32 份，少于 32 份必须已用到约 1 ms 的同步释放预算。`maxSliceReleaseTicks` 是各步累计释放时间的最大值，`closeWallTicks` 是调用者观察到的关闭总延迟；二者都不是完整 Unity 帧的峰值。一次不可抢占的释放可以越过时间阈值。
+
+本轮摘要为 `<WorkspaceRoot>/Results/ResourceAAIL2CPP/<run-id>/execution.json`，关联 `input-identity.json`、`build.json`、`player-summary.json`、各轮退出回执与日志。通过要求输入和工具指纹、实际内容与二进制、所有报告及普通进程退出均匹配，不能仅据构建完成或 NoUnity 自检判断。宿主和结果都用 `.pinned` 保留，失败不会清除或覆盖历史输入与证据。
 
 ### Action 原生画面
 

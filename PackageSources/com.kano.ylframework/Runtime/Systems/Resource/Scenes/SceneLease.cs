@@ -356,7 +356,7 @@ namespace YLFramework.Resource
                 {
                     throw Error(ResourceError.AddressNotFound, "No scene location exists at this address.");
                 }
-                if (locations.Result.Count != 1)
+                if (!ResourceSystem.HasOneDistinctLocation(locations.Result))
                 {
                     throw Error(ResourceError.SceneIdentityAmbiguous, "The address resolves to multiple scene locations.");
                 }

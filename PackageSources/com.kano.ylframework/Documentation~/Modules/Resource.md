@@ -75,6 +75,8 @@ Debug.Log(anotherOwner.Asset.text);
 
 `AssetLease.Asset` 只借读；归还后不得继续使用。`TryAcquireLoaded<T>` 仅从 YL 已有的就绪责任增持，不反射官方缓存，也不阻塞加载。冷资源全部走异步，不调用 `WaitForCompletion`。
 
+若同一 PNG 的地址在打包目录中同时匹配 `Sprite` 和 `Texture2D`，`AcquireAsync<UnityEngine.Object>` 会返回 `InvalidAddress` 并列出候选类型。按用途改用 `AcquireAsync<Sprite>` 或 `AcquireAsync<Texture2D>`；若同一类型仍有多个位置，改用唯一地址、修正 Label，或在确实需要多项时使用 `AcquireBatchAsync<T>`。
+
 `ResourceAddress(projectId, path)` 仍可表达框架模块的业务命名空间，投影为官方 `projectId/path`，不表示私有 Catalog 挂载。新资产和子对象优先使用官方地址/AssetReference；旧 localId 字符串不能直接充当官方子对象名。
 
 ## 必需资源批量
@@ -88,6 +90,20 @@ foreach (var text in batch.Assets)
 
 显式地址和官方 Labels 按结果并集加载，同一个官方 location 不重复交付，不承诺 Label 内部顺序。Editor Fast Mode 为同一条目创建的等价 location 也会合并；无法证明等价的共享身份视为歧义，不用依赖哈希判断相等。每个 key 必须有符合类型的结果；任一加载失败就不交付部分结果。`AssetBatchLease<T>` 归还一个官方批量引用，也可用 `Scope.Own(batch)` 转交已有责任。取消是本方退出等待；在途官方工作继续排空，不影响其他调用者。
 
+## Audio 与 Core 预热
+
+| 目标 | 调用 | 成功后持有什么 |
+|---|---|---|
+| 只预下载依赖 | `await resources.DownloadDependenciesAsync(new[] { label }, cancellation)` | 官方依赖字节，不持有业务资产，也不承诺离线激活新版 |
+| 按 Label 取得一批资产 | `using var batch = await resources.AcquireBatchAsync<AudioClip>(new[] { label }, cancellation)` | 整批资产，使用 `batch.Assets`；不会自动登记每个地址的单键就绪状态 |
+| 让 Audio/Core 按键同步读取 | `await scope.LoadAsync<AudioClip>(projectId + "/cue", cancellation)` | Scope 持有指定键和类型；Audio 的 `Load("cue")` 随后取得独立租约 |
+
+按键预热后，关闭预热 Scope 不会归还 Audio 或 Core 已取得的独立租约；最后一个同键租约归还后，再同步获取会得到 `InProgress`，即使 Bundle 已下载或某个批量租约仍持有该对象。需要搜索模块和基础模块的候选地址时，使用 `LoadViewAsync`；同步冷未命中不能证明首候选不存在，不应据此跳到基础模块。
+
+[Resource Startup 样例](../../Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs) 串联上述三种用法。音频引用用来选定 `AudioClip`；运行时按 `项目名/cue` 加载，cue 组不必发布 GUID。使用预热 Label 时必须登记、分配给 cue 并发布；仅 cue 自身的 Label 与其地址同名是合法的。message 始终按 GUID 加载，只有启用 Core 命名读取时还需发布 `项目名/message`。
+
+必需项失败会等本次业务 Scope 关闭。可选预览图加载或显示失败时，`StartExampleAsync()` 的返回文本和运行中的 `Result` 保留键、错误类型及完整异常链；清空图片后可继续音频等业务。调用者取消、会话结束或清空图片本身失败不会被当作可忽略的错误。
+
 ## await 与协程
 
 `ResourceRequest<T>` 同时支持 await 和 yield，共用终态与清理逻辑，不依赖部分平台不提供的 `AsyncOperationHandle.Task`。
@@ -97,6 +113,7 @@ foreach (var text in batch.Assets)
 - 未领取的拥有型结果由请求关闭归还。取消等待不是杀死官方共享加载；晚到结果有本方排空责任。
 - `Completed` 只表示请求进入终态，不代表结果已领取，也不代表底层操作已排空。
 - await 取消抛 `OperationCanceledException`，保留调用 token；失败保留原始资源异常。进度不是完成或交割凭证。
+- 已经在等待的业务 `await` 遇到会话失效时收到 `ResourceException(SessionUnavailable)`。如果更早的 `Completed` 回调在续体领取前停止服务，请求可保留 `Succeeded`，但未领取的结果会归还，新发起的 `await` 仍抛出 `ObjectDisposedException`。
 
 ```csharp
 using var request = resources.AcquireAsync<TextAsset>("game/text/welcome");
@@ -150,6 +167,10 @@ Core 保留 `ICoreResourceProvider` 窄合同，不反向引入 Addressables 类
 先结束业务模块、Audio 尾轨/缓存、界面与独立 Lease，再等待 `startup.StopAsync()`。停止冻结新工作，先检查外部独立责任；存在则及时返回 `Busy`，错误消息记录本轮阻塞租约的 ID、键和持有者，不先卸场景或销毁 parent 破坏仍借出的对象。归还后重试原启动 owner；无外部阻塞才关闭自有 Scopes、退休缓存、等待真实排空。
 
 `Scope.Dispose`、`Startup.Dispose` 是无法等待接点的发起操作，不是关闭成功证明。异步失败要保留原 owner、原因和可重试责任。Unity 退出可能不再有下一帧，不能将尚未完成的清理写成通过。
+
+本方归还引用失败，不会阻断其他请求的清理与终态通知。`StopAsync()` 会保留本方归还时抛出的原异常并报告失败，不重试该引用，也不接管 Unity 或其他所有者的最终释放。Scope 共享限额归还普通资产和批量租约，实例和场景仍等待实际销毁或卸载。
+
+编辑器禁用 Domain Reload 时，仅在本方退役启动仍待结算期间推进原 Addressables Manager，每次编辑器更新至多推进同一 Manager 一次，即使已经进入下一轮 Play。独立且已经完成的句柄只触发一次更新，不同步等待初始化、IO 或业务加载；这也可能推进原 Manager 上其他所有者的回调，但不会回滚 Unity 状态、重置全局 Addressables 或接管其他 Provider 的所有权。
 
 `GetDiagnostics()` 返回 YL lease、owner/key、Scope、请求、工作和排空的值快照，不保活资源，不是官方总引用数/native 内存。默认无历史；配置非零 `diagnosticHistoryCapacity` 后仅将显式查询的快照记录到有界历史，使用 `GetDiagnosticsHistory/ClearDiagnosticsHistory` 读取/清除。不开窗口不自动扫描全图或采样。
 

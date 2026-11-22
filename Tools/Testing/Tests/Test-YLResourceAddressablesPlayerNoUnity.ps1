@@ -11,13 +11,14 @@ function Check([bool] $Condition, [string] $Reason) {
     if (-not $Condition) { throw $Reason }
     $script:checks++
 }
-function Reject([scriptblock] $Action) {
+function Reject([scriptblock] $Action, [string] $ExpectedMessage) {
     $rejected = $false
     try { & $Action | Out-Null } catch {
         if ($_.Exception -is [Management.Automation.CommandNotFoundException]) { throw }
+        if ($ExpectedMessage -and -not $_.Exception.Message.Contains($ExpectedMessage, [StringComparison]::OrdinalIgnoreCase)) { throw }
         $rejected = $true
     }
-    Check $rejected 'The Player contract accepted a deliberately invalid fixture.'
+    Check $rejected "The Player contract accepted a deliberately invalid fixture. Expected: $ExpectedMessage"
 }
 function Clone([object] $Value) {
     return ,(ConvertTo-Json -InputObject $Value -Depth 30 | ConvertFrom-Json -AsHashtable -NoEnumerate -DateKind String)
@@ -56,6 +57,86 @@ $quit = @{
     inputHash = $manifest.inputHash; contentHash = $manifest.contentHash; round = 1; pid = $process.pid
     onApplicationQuit = $true; requestedExitCode = 0
 }
+$publicationBuild = Clone $manifest; $publicationBuild.publishedSourceSha256 = ('b' * 64)
+$publicationReport = Clone $report; $publicationReport.publishedSourceSha256 = $publicationBuild.publishedSourceSha256
+Reject { Assert-YLResourceAddressablesPlayerReport -Report $publicationReport -Build $publicationBuild -Process $process -Quit $quit -Round 1 }
+$publicationReport.checks += 'PackedPublishedKeys'
+Assert-YLResourceAddressablesPlayerReport -Report $publicationReport -Build $publicationBuild -Process $process -Quit $quit -Round 1
+$checks++
+$bad = Clone $publicationReport; $bad.publishedSourceSha256 = ('1' * 64)
+Reject { Assert-YLResourceAddressablesPlayerReport -Report $bad -Build $publicationBuild -Process $process -Quit $quit -Round 1 }
+
+# Synthetic report-reader cases only; the imported assets and ownership are measured in the Player.
+$spriteBuild = Clone $publicationBuild
+$spriteBuild.packedSpriteGuid = 'd247671078165aa478503bb19e310b94'
+$spriteBuild.packedSpriteFixture = @{
+    guid = $spriteBuild.packedSpriteGuid; address = 'acceptance/published/packed-sprite'; assetName = 'PackedSprite13x7'
+    width = 13; height = 7; pixelsPerUnit = 37
+}
+$spriteReport = Clone $publicationReport
+$spriteMarkers = @('PackedSpriteTypedOwnership', 'PackedSpriteBroadAmbiguity')
+$spriteReport.checks += $spriteMarkers
+$fixture = $spriteBuild.packedSpriteFixture
+$named = "$($fixture.guid)[$($fixture.assetName)]"
+$spriteReport.packedSprite = @{
+    unityVersion = $spriteBuild.unityVersion; addressablesVersion = $spriteBuild.addressablesVersion
+    guid = $fixture.guid; address = $fixture.address; assetName = $fixture.assetName; namedSpriteKey = $named
+    retainedSpriteSurvives = $true; leasesBefore = 0; leasesAfter = 0; requestsAfter = 0; pendingWorkAfter = 0; drainingHandlesAfter = 0
+    broad = @{
+        key = $fixture.address; requestedType = 'UnityEngine.Object'; status = 'Failed'; errorKind = 'InvalidAddress'; leasesOnClaim = -1
+        error = 'UnityEngine.Object matches UnityEngine.Sprite and UnityEngine.Texture2D. Specify a narrower asset type.'
+    }
+    queries = @(foreach ($key in @($fixture.address, $fixture.guid, $named)) {
+        $types = if ($key -ceq $named) { 'Sprite' } else { 'Texture2D', 'Sprite', 'Object' }
+        foreach ($type in $types) {
+            $locations = if ($type -ceq 'Object') { 'Texture2D', 'Sprite' } else { $type }
+            @{
+                key = $key; requestedType = "UnityEngine.$type"; status = 'Succeeded'; count = @($locations).Count; distinctLocations = @($locations).Count
+                locations = @($locations | ForEach-Object { @{ resourceType = "UnityEngine.$_" } })
+            }
+        }
+    })
+}
+$index = 0
+foreach ($field in @('texture', 'sprite', 'namedSprite')) {
+    $type = if ($field -ceq 'texture') { 'UnityEngine.Texture2D' } else { 'UnityEngine.Sprite' }
+    $spriteReport.packedSprite[$field] = @{
+        key = $(if ($field -ceq 'namedSprite') { $named } else { $fixture.address }); requestedType = $type; assetType = $type
+        status = 'Succeeded'; assetName = $fixture.assetName; leaseValid = $true; leasesOnClaim = ++$index
+        instanceId = $(if ($field -ceq 'texture') { 1520 } else { 1522 }); textureInstanceId = 1520
+        width = 13; height = 7; pixelsPerUnit = 37
+    }
+}
+Assert-YLResourceAddressablesPlayerReport -Report $spriteReport -Build $spriteBuild -Process $process -Quit $quit -Round 1
+$checks++
+$alternate = Clone $spriteReport
+$alternate.packedSprite.broad.error = 'Object is ambiguous (Sprite, Texture2D). Request a more specific type.'
+Assert-YLResourceAddressablesPlayerReport -Report $alternate -Build $spriteBuild -Process $process -Quit $quit -Round 1
+$checks++
+foreach ($change in @(
+    { param($r) $r['packedSprite'] = $null },
+    { param($r) $r.checks = @($r.checks | Where-Object { $_ -cne 'PackedSpriteTypedOwnership' }) },
+    { param($r) $r.checks = @($r.checks | Where-Object { $_ -cne 'PackedSpriteBroadAmbiguity' }) },
+    { param($r) $r.checks = @($r.checks | Where-Object { $_ -cne 'OfficialCache' }) },
+    { param($r) $r.packedSprite.guid = 'a' * 32 },
+    { param($r) $r.packedSprite.texture.assetType = 'UnityEngine.Sprite' },
+    { param($r) $r.packedSprite.queries[2].distinctLocations = 1 },
+    { param($r) $r.packedSprite.queries[5].locations[1].resourceType = 'UnityEngine.Texture2D' },
+    { param($r) $r.packedSprite.queries[5].distinctLocations = 1 },
+    { param($r) $r.packedSprite.namedSprite.instanceId = 777 },
+    { param($r) $r.packedSprite.sprite.textureInstanceId = 777 },
+    { param($r) $r.packedSprite.retainedSpriteSurvives = 'true' },
+    { param($r) $r.packedSprite.leasesAfter = 1 },
+    { param($r) $r.packedSprite.broad.errorKind = 'LoadFailed' },
+    { param($r) $r.packedSprite.broad.error = 'An asset key must resolve to exactly one location: acceptance/published/packed-sprite' },
+    { param($r) $r.packedSprite.broad.error = 'Object matches Sprite and Texture2D.' },
+    { param($r) $r.packedSprite.broad.error = 'Object matches Sprite. Choose a concrete type.' },
+    { param($r) $r.packedSprite.broad.error = "Object matches Sprite and Texture2D.`n  at Choose a concrete type." }
+)) {
+    $bad = Clone $spriteReport; & $change $bad
+    Reject { Assert-YLResourceAddressablesPlayerReport -Report $bad -Build $spriteBuild -Process $process -Quit $quit -Round 1 }
+}
+
 Assert-YLResourceAddressablesPlayerReport -Report $report -Build $manifest -Process $process -Quit $quit -Round 1
 $checks++
 foreach ($change in @(
@@ -188,6 +269,73 @@ $sample.performance.supportsRgba32 = $false
 $sample.performance.imageUnavailableReason = 'Graphics device does not support the fixture.'
 Assert-YLResourceAddressablesPlayerReport -Report $sample -Build $manifest -Process $process -Quit $sampleQuit -Round 4
 $checks++
+
+# Coherent synthetic tick receipts exercise the actual reader, not Unity cleanup or machine timing.
+function New-ScopeCloseSample([int] $Count, [int[]] $Releases, [long[]] $ReleaseTicks) {
+    $slices = @(for ($index = 0; $index -lt $Releases.Count; $index++) {
+        @{ frame = 20 + $index; released = $Releases[$index]; releaseTicks = $ReleaseTicks[$index] }
+    })
+    return @{
+        leases = $Count; distinctAssets = $Count; slices = $slices
+        closeWallTicks = 300000L * $slices.Count; maxSliceReleaseTicks = [long]($ReleaseTicks | Measure-Object -Maximum).Maximum
+    }
+}
+$scopeBuild = Clone $manifest; $scopeBuild.scopeCloseBenchmark = $true; $scopeBuild.graphics = $true
+$scopeReport = Clone $report
+$scopeReport.round = 5; $scopeReport.checks = @(); $scopeReport.finalState = 'Closed'; $scopeReport.graphicsDeviceType = 'Direct3D11'
+$scopeReport.cacheBefore = $false; $scopeReport.cacheAfter = $false; $scopeReport.downloadBytesBefore = 0
+$scopeReport.scopeClose = @{
+    stopwatchFrequency = 10000000; vSyncCount = 0; targetFrameRate = -1
+    processor = 'Fixture CPU'; graphicsDevice = 'Fixture GPU'
+    cases = @(
+        New-ScopeCloseSample 1 @(1) @(0)
+        New-ScopeCloseSample 100 @(32, 32, 32, 4) @(3200, 3200, 3200, 400)
+        New-ScopeCloseSample 1000 (((,32) * 31) + 8) (((,3200) * 31) + 800)
+    )
+}
+$scopeQuit = Clone $quit; $scopeQuit.round = 5
+Assert-YLResourceAddressablesPlayerReport -Report $scopeReport -Build $scopeBuild -Process $process -Quit $scopeQuit -Round 5
+$checks++
+
+# A slice may stop at the time limit before 32; a single release is not preemptible.
+$timed = Clone $scopeReport
+$timed.scopeClose.cases[1] = New-ScopeCloseSample 100 @(1, 3, 32, 32, 32) @(17000, 10000, 3200, 3200, 3200)
+Assert-YLResourceAddressablesPlayerReport -Report $timed -Build $scopeBuild -Process $process -Quit $scopeQuit -Round 5
+$checks++
+
+foreach ($count in @(100, 1000)) {
+    $index = if ($count -eq 100) { 1 } else { 2 }
+    $bad = Clone $scopeReport
+    $bad.scopeClose.cases[$index] = New-ScopeCloseSample $count ((,1) * $count) ((,100) * $count)
+    Reject { Assert-YLResourceAddressablesPlayerReport -Report $bad -Build $scopeBuild -Process $process -Quit $scopeQuit -Round 5 } 'yielded before using either budget'
+    $bad.scopeClose.cases[$index] = New-ScopeCloseSample $count @($count) @(10000)
+    Reject { Assert-YLResourceAddressablesPlayerReport -Report $bad -Build $scopeBuild -Process $process -Quit $scopeQuit -Round 5 } 'exceeded 32 releases in one slice'
+}
+$bad = Clone $scopeReport
+$bad.scopeClose.cases[1] = New-ScopeCloseSample 100 @(33, 32, 32, 3) @(3300, 3200, 3200, 300)
+Reject { Assert-YLResourceAddressablesPlayerReport -Report $bad -Build $scopeBuild -Process $process -Quit $scopeQuit -Round 5 } 'exceeded 32 releases in one slice'
+$bad = Clone $timed; $bad.scopeClose.cases[1].slices[1].releaseTicks = 9999
+Reject { Assert-YLResourceAddressablesPlayerReport -Report $bad -Build $scopeBuild -Process $process -Quit $scopeQuit -Round 5 } 'yielded before using either budget'
+
+foreach ($change in @(
+    { param($r) $r.cases = @($r.cases[0], $r.cases[2]) },
+    { param($r) $r.cases[1].distinctAssets = 1 },
+    { param($r) $r.cases[1].slices[0].released = '32' },
+    { param($r) $r.cases[1].slices[0].released = 0 },
+    { param($r) $r.cases[1].slices[1].frame = $r.cases[1].slices[0].frame },
+    { param($r) $r.cases[1].slices[1].frame++ },
+    { param($r) $r.cases[1].slices[0].releaseTicks = -1 },
+    { param($r) $r.cases[1].slices[3].released-- },
+    { param($r) $r.cases[1].slices[3].released++ },
+    { param($r) $r.cases[1].closeWallTicks = 9999 },
+    { param($r) $r.cases[1].maxSliceReleaseTicks-- },
+    { param($r) $r.cases[1]['slices'] = $null; $r.cases[1].maxFrameTicks = 3200 }
+)) {
+    $bad = Clone $scopeReport; & $change $bad.scopeClose
+    Reject { Assert-YLResourceAddressablesPlayerReport -Report $bad -Build $scopeBuild -Process $process -Quit $scopeQuit -Round 5 } 'scope close'
+}
+$bad = Clone $scopeBuild; $bad.scopeCloseBenchmark = $false
+Reject { Assert-YLResourceAddressablesPlayerReport -Report $scopeReport -Build $bad -Process $process -Quit $scopeQuit -Round 5 }
 
 $serverSource = Join-Path $PSScriptRoot '../ResourceAddressablesContentServer.cs'
 Check ([IO.File]::Exists($serverSource)) 'The owned loopback content fixture is missing.'

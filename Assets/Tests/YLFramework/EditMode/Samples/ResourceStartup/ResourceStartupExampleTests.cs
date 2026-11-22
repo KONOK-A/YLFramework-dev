@@ -13,9 +13,11 @@ using UnityEditor;
 using UnityEditor.AddressableAssets;
 using UnityEditor.AddressableAssets.Build.DataBuilders;
 using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.ResourceManagement.ResourceLocations;
 using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.SceneManagement;
@@ -171,6 +173,7 @@ namespace YLFramework.Tests.ResourceBuild
             Assert.That(restored.reusePrefab, Is.False);
             Assert.That(restored.audioProjects, Is.Empty);
             Assert.That(restored.contentProjectId, Does.StartWith("startup-example-"));
+            Assert.That(restored.audioPreloadLabel, Is.EqualTo(restored.contentProjectId + "/audio-warmup"));
             Assert.That(restored.startupCatalogId, Is.Empty.Or.Null, "A locally authored example must not enable remote update implicitly.");
             Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(restored))), Is.EqualTo(scriptGuid));
             var loadedData = AssetDatabase.LoadAssetAtPath<ResourceStartupExampleData>(Folder + "/Content/Data.asset");
@@ -232,6 +235,66 @@ namespace YLFramework.Tests.ResourceBuild
             }
         }
 
+        [TestCase(true, true, true)]
+        [TestCase(false, false, true)]
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        public void AuthoringRequiresOnlyTheKeysUsedByEachBridge(bool publishCueGuid, bool useCueAddressAsLabel, bool bindCore)
+        {
+            OpenBootstrap();
+            var example = Example();
+            var previousLabel = example.audioPreloadLabel;
+            var previousCore = example.bindCoreResourceProvider;
+            var owner = AssetDatabase.CreateFolder("Assets", "SampleKeys-" + Guid.NewGuid().ToString("N"));
+            var folder = AssetDatabase.GUIDToAssetPath(owner);
+            Assert.That(folder, Does.StartWith("Assets/SampleKeys-"));
+            try
+            {
+                var settings = AddressableAssetSettings.Create(folder, "Publication", true, true);
+                settings.DisableCatalogUpdateOnStartup = true;
+                var ordinary = settings.DefaultGroup;
+                foreach (var reference in new AssetReference[] { example.message, example.data, example.prefab, example.scene, example.preview })
+                {
+                    settings.CreateOrMoveEntry(reference.AssetGUID, ordinary).SetAddress(Settings().FindAssetEntry(reference.AssetGUID).address);
+                }
+                var group = settings.CreateGroup("Cue", false, false, false, null, typeof(BundledAssetGroupSchema));
+                var cue = settings.CreateOrMoveEntry(example.audioCue.AssetGUID, group);
+                cue.SetAddress(example.contentProjectId + "/cue");
+                example.audioPreloadLabel = useCueAddressAsLabel ? cue.address : previousLabel;
+                cue.SetLabel(example.audioPreloadLabel, true, true);
+                var schema = group.GetSchema<BundledAssetGroupSchema>();
+                schema.IncludeGUIDInCatalog = publishCueGuid;
+                example.bindCoreResourceProvider = bindCore;
+                if (!bindCore)
+                {
+                    settings.FindAssetEntry(example.message.AssetGUID).SetAddress("guid-only-message");
+                }
+
+                Assert.DoesNotThrow(() => ResourceStartupExampleEditor.Validate(example, settings));
+                schema.IncludeLabelsInCatalog = false;
+                Assert.That(Invalid(), Does.Contain(example.audioPreloadLabel));
+                schema.IncludeLabelsInCatalog = true;
+                schema.IncludeAddressInCatalog = false;
+                Assert.That(Invalid(), Does.Contain(cue.address));
+                schema.IncludeAddressInCatalog = true;
+                var peer = settings.FindAssetEntry(example.data.AssetGUID);
+                peer.SetLabel(cue.address, true, true);
+                Assert.That(Invalid(), Does.Contain(cue.address).And.Contain(peer.AssetPath));
+                peer.SetLabel(cue.address, false);
+                ordinary.GetSchema<BundledAssetGroupSchema>().IncludeGUIDInCatalog = false;
+                Assert.That(Invalid(), Does.Contain("GUID").And.Contain("Message.txt"));
+
+                string Invalid() => Assert.Throws<InvalidOperationException>(() => ResourceStartupExampleEditor.Validate(example, settings)).Message;
+            }
+            finally
+            {
+                example.audioPreloadLabel = previousLabel;
+                example.bindCoreResourceProvider = previousCore;
+                Assert.That(AssetDatabase.AssetPathToGUID(folder), Is.EqualTo(owner));
+                Assert.That(AssetDatabase.DeleteAsset(folder), Is.True);
+            }
+        }
+
         [Test]
         public void PublicAsyncSurfaceDoesNotSerializeRuntimeOwnersOrCompletionAsConfiguration()
         {
@@ -272,6 +335,7 @@ namespace YLFramework.Tests.ResourceBuild
             var data = example.data;
             var prefab = example.prefab;
             var scene = example.scene;
+            var cueLabel = example.audioPreloadLabel;
             var project = Settings().FindAssetEntry(message.AssetGUID).address.Split('/')[0];
             example.audioProjects = new[] { project };
             var run = example.StartExampleAsync();
@@ -280,6 +344,7 @@ namespace YLFramework.Tests.ResourceBuild
             example.data = null;
             example.prefab = null;
             example.scene = null;
+            example.audioPreloadLabel = "edited-after-start";
             var projectInput = example.contentProjectId;
             example.contentProjectId = "edited-after-start";
             example.bindCoreResourceProvider = false;
@@ -290,6 +355,7 @@ namespace YLFramework.Tests.ResourceBuild
             Assert.That(text, Does.StartWith("Hello from official Addressables / Scope-owned borrowed data / "));
             Assert.That(text, Does.Contain(" / retained="));
             Assert.That(text, Does.Contain(" / core=ok / audio=ok / image=ok / instance=fresh"));
+            Assert.That(text, Does.Contain(" / audio-preload=dependencies, batch, exact key"));
             Assert.That(example.Result, Does.StartWith("Running: "));
             _lastSystem = example.Startup.Resources;
             Assert.That(_lastSystem, Is.SameAs(ResourceSystem.Current));
@@ -306,6 +372,7 @@ namespace YLFramework.Tests.ResourceBuild
             example.data = data;
             example.prefab = prefab;
             example.scene = scene;
+            example.audioPreloadLabel = cueLabel;
             example.contentProjectId = projectInput;
             example.bindCoreResourceProvider = true;
             example.audioProjects = new[] { project };
@@ -328,6 +395,168 @@ namespace YLFramework.Tests.ResourceBuild
             yield return Wait(() => stop.IsCompleted, "actual second sample shutdown");
             stop.GetAwaiter().GetResult();
             AssertClosed(_lastSystem);
+        }
+
+        [UnityTest]
+        public IEnumerator CueDownloadAndBatchDoNotWarmTheExactAudioKey()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return VerifyCueWarmup();
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator VerifyCueWarmup()
+        {
+            var project = Example().contentProjectId;
+            var key = project + "/cue";
+            var keys = new[] { project + "/audio-warmup" };
+            using var startup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: false);
+            using var start = startup.StartAsync();
+            yield return start;
+            var resources = _lastSystem = start.TakeResult().Resources;
+            var provider = resources.GetAudioClipProvider(project);
+            using (var download = resources.DownloadDependenciesAsync(keys))
+            {
+                yield return download;
+                Assert.That(download.TakeResult(), Is.True);
+            }
+            AssertCold();
+
+            using var loadingBatch = resources.AcquireBatchAsync<AudioClip>(keys);
+            yield return loadingBatch;
+            using var batch = loadingBatch.TakeResult();
+            Assert.That(batch.Assets.Count, Is.EqualTo(1));
+            AssertCold();
+
+            using var scope = resources.CreateScope("exact Audio warmup");
+            using var warming = scope.LoadAsync<AudioClip>(key);
+            yield return warming;
+            var clip = warming.TakeResult();
+            Assert.That(clip, Is.SameAs(batch.Assets[0]));
+            using var playing = provider.Load("cue");
+            Assert.That(playing.Clip, Is.SameAs(clip));
+            using var close = scope.CloseAsync();
+            yield return close;
+            Assert.That(close.TakeResult(), Is.True);
+            batch.Dispose();
+            Assert.That(playing.Clip, Is.SameAs(clip));
+            playing.Dispose();
+            AssertCold();
+
+            using var stop = startup.StopAsync();
+            yield return stop;
+            Assert.That(stop.TakeResult(), Is.True);
+            AssertClosed(resources);
+
+            void AssertCold() => Assert.That(Assert.Throws<ResourceException>(() =>
+            {
+                using var unexpected = provider.Load("cue");
+            }).Kind, Is.EqualTo(ResourceError.InProgress));
+        }
+
+        [UnityTest]
+        public IEnumerator OptionalPreviewReportsItsTypeMismatchAndKeepsTheBusinessRunning()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return VerifyPreviewTypeMismatch();
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator VerifyPreviewTypeMismatch()
+        {
+            var example = Example();
+            var key = example.data.AssetGUID;
+            example.preview = new AssetReferenceT<Texture2D>(key);
+            var run = example.StartExampleAsync();
+            yield return Wait(() => run.IsCompleted, "optional preview outcome");
+            var result = run.GetAwaiter().GetResult();
+            Assert.That(result, Does.Contain("image=skipped (" + key + ": TypeMismatch)"));
+            Assert.That(result, Does.Contain("RawImage requires a Texture"));
+            Assert.That(result, Does.Contain("audio=ok"));
+            Assert.That(example.LastFailure, Is.Null);
+            Assert.That(example.Result, Does.StartWith("Running: "));
+            _lastSystem = example.Startup.Resources;
+            var stop = example.StopExampleAsync();
+            yield return Wait(() => stop.IsCompleted, "cleanup after optional preview miss");
+            stop.GetAwaiter().GetResult();
+            AssertClosed(_lastSystem);
+        }
+
+        [UnityTest]
+        public IEnumerator OptionalPreviewRetainsBothProviderCausesAfterClearingTheBinding()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return VerifyPreviewProviderError();
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator VerifyPreviewProviderError()
+        {
+            var example = Example();
+            var key = Guid.NewGuid().ToString("N");
+            example.preview = new AssetReferenceT<Texture2D>(key);
+            var initialized = Addressables.InitializeAsync(false);
+            yield return initialized;
+            var provider = new FailingPreviewProvider();
+            var locator = new ResourceLocationMap(key);
+            locator.Add(key, new ResourceLocationBase(key, key, provider.ProviderId, typeof(Texture2D)));
+            Addressables.ResourceManager.ResourceProviders.Add(provider);
+            Addressables.AddResourceLocator(locator);
+            try
+            {
+                LogAssert.Expect(LogType.Error, new Regex("sample-preview-provider"));
+                var run = example.StartExampleAsync();
+                yield return Wait(() => run.IsCompleted, "optional preview provider failure");
+                var result = run.GetAwaiter().GetResult();
+                Assert.That(result, Does.Contain("image=skipped (" + key + ": LoadFailed)").And.Contain("audio=ok"));
+                Assert.That(result, Does.Contain("sample-preview-provider").And.Contain("sample-preview-restore"));
+                Assert.That(example.LastFailure, Is.Null);
+                _lastSystem = example.Startup.Resources;
+                var stop = example.StopExampleAsync();
+                yield return Wait(() => stop.IsCompleted, "stop after optional provider failure");
+                stop.GetAwaiter().GetResult();
+                AssertClosed(_lastSystem);
+            }
+            finally
+            {
+                Addressables.RemoveResourceLocator(locator);
+                Addressables.ResourceManager.ResourceProviders.Remove(provider);
+                Addressables.Release(initialized);
+            }
+        }
+
+        private sealed class FailingPreviewProvider : ResourceProviderBase
+        {
+            internal readonly AggregateException Failure = new AggregateException("sample-preview-provider",
+                new InvalidOperationException("sample-preview-decode"), new IOException("sample-preview-restore"));
+
+            public override void Provide(ProvideHandle handle) => handle.Complete<Texture2D>(null, false, Failure);
+        }
+
+        [UnityTest]
+        public IEnumerator MissingRequiredMessageClosesTheBusinessAndDoesNotReportRunning()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return VerifyMissingMessage();
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator VerifyMissingMessage()
+        {
+            var example = Example();
+            example.message = new AssetReferenceT<TextAsset>(example.data.AssetGUID);
+            var run = example.StartExampleAsync();
+            yield return Wait(() => run.IsCompleted, "required asset failure and business cleanup");
+            var error = Assert.Throws<ResourceException>(() => run.GetAwaiter().GetResult());
+            Assert.That(error.Kind, Is.EqualTo(ResourceError.AddressNotFound));
+            Assert.That(example.LastFailure, Is.SameAs(error));
+            Assert.That(example.Result, Does.StartWith("Stopped: owned cleanup completed."));
+            Assert.That(ResourceSystem.Current, Is.Null);
+            Assert.That(ResourceStartupExample.PendingShutdownCount, Is.Zero);
         }
 
         [UnityTest]
@@ -593,7 +822,12 @@ namespace YLFramework.Tests.ResourceBuild
             Assert.That(GroupIdentity(group), Is.EqualTo(SessionState.GetString(Key + "groupIdentity", "")), "Never delete changed/foreign schema or entry identities.");
             Assert.That(group.entries.All(item => item.AssetPath.StartsWith(Folder + "/Content/", StringComparison.Ordinal)), Is.True);
             var foreign = Entries(settings, groupGuid);
+            var cueLabel = group.Name + "/audio-warmup";
+            Assert.That(settings.GetLabels(), Does.Contain(cueLabel));
+            Assert.That(settings.groups.Where(other => other && other != group)
+                .SelectMany(other => other.entries).Any(entry => entry.labels.Contains(cueLabel)), Is.False);
             settings.RemoveGroup(group);
+            settings.RemoveLabel(cueLabel);
             AssetDatabase.SaveAssetIfDirty(settings);
             CollectionAssert.AreEqual(foreign, Entries(settings, null));
             Assert.That(AssetDatabase.DeleteAsset(Folder), Is.True);
@@ -735,7 +969,8 @@ namespace YLFramework.Tests.ResourceBuild
         }
         private static string GroupIdentity(AddressableAssetGroup group) => group.Guid + "\n" + string.Join("\n", group.Schemas
             .Select(schema => schema.GetType().FullName + "=" + AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(schema)))) + "\n" +
-            string.Join("\n", group.entries.Select(entry => entry.guid + "=" + entry.address).OrderBy(value => value, StringComparer.Ordinal));
+            string.Join("\n", group.entries.Select(entry => entry.guid + "=" + entry.address + "|" +
+                string.Join(",", entry.labels.OrderBy(label => label, StringComparer.Ordinal))).OrderBy(value => value, StringComparer.Ordinal));
         private static string[] Entries(AddressableAssetSettings settings, string except) => settings.groups.Where(group => group &&
             AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(group)) != except).SelectMany(group => group.entries.Select(entry =>
                 group.Guid + "|" + entry.guid + "|" + entry.address + "|" + string.Join(",", entry.labels.OrderBy(label => label, StringComparer.Ordinal))))

@@ -144,6 +144,109 @@ namespace YLFramework.Tests.Resource
         }
 
         [UnityTest]
+        public IEnumerator FailedResultReturnDoesNotInterruptStopOrHideTheErrorAfterBusy()
+        {
+            yield return new EnterPlayMode();
+            yield return StopWithReleaseFaultCase();
+            yield return new ExitPlayMode();
+        }
+
+        private IEnumerator StopWithReleaseFaultCase()
+        {
+            _owner = new ResourceStartup();
+            yield return ResourceSessionTests.Start(_owner);
+            var system = _owner.Resources;
+            using var acquired = system.AcquireAsync<TextAsset>(ResourceSessionTests.MessageKey);
+            yield return acquired;
+            _held = acquired.TakeResult();
+            var scope = system.CreateScope("healthy stop scope");
+            using var loading = scope.LoadAsync<TextAsset>(ResourceSessionTests.MessageKey);
+            yield return loading;
+            Assert.That(loading.TakeResult().text, Is.EqualTo(ResourceSessionTests.MessageText));
+
+            var probe = new ResourceSessionTests.ShutdownReleaseProbe(system);
+            probe.ExpectFaultLog();
+            using var busy = _owner.StopAsync();
+            Assert.That(busy.Error?.Kind, Is.EqualTo(ResourceError.Busy));
+            Assert.That(_held.IsValid && !scope.IsDisposed, Is.True);
+            probe.AssertSettled(system);
+
+            _held.Dispose();
+            _held = null;
+            using var stop = _owner.StopAsync();
+            yield return ResourceSessionTests.Wait(() => stop.IsDone, "stop reports failed cleanup");
+            Assert.That(stop.Status, Is.EqualTo(ResourceRequestStatus.Failed));
+            Assert.That(stop.Error.Kind, Is.EqualTo(ResourceError.LoadFailed));
+            Assert.That(((AggregateException)stop.Error.InnerException).Flatten().InnerExceptions, Does.Contain(probe.Fault));
+            probe.AssertSettled(system);
+            var report = system.GetDiagnostics();
+            Assert.That(report.LeaseCount + report.ScopeCount + report.RequestCount +
+                report.PendingWorkCount + report.DrainingHandleCount, Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator AwaitInFlightAtStopReceivesItsOriginalSessionError()
+        {
+            yield return new EnterPlayMode();
+            yield return AwaitAtStopCase();
+            yield return new ExitPlayMode();
+        }
+
+        private IEnumerator AwaitAtStopCase()
+        {
+            _owner = new ResourceStartup();
+            yield return ResourceSessionTests.Start(_owner);
+            using var load = _owner.Resources.AcquireAsync<TextAsset>(ResourceSessionTests.MessageKey);
+            int resumed = 0;
+            var awaiting = ResourceSessionTests.ObserveAwaitError(load, () => resumed++);
+            Assert.That(awaiting.IsCompleted, Is.False);
+            yield return ResourceSessionTests.Stop(_owner);
+            Assert.That(awaiting.IsCompletedSuccessfully, Is.True);
+            Assert.That(awaiting.Result, Is.SameAs(load.Error));
+            Assert.That(load.Error.Kind, Is.EqualTo(ResourceError.SessionUnavailable));
+            Assert.That(resumed, Is.EqualTo(1));
+            Assert.Throws<ObjectDisposedException>(() => load.GetAwaiter());
+        }
+
+        [UnityTest]
+        public IEnumerator AStartupCallbackCanStopBeforeAnotherObserverClaimsTheService()
+        {
+            yield return new EnterPlayMode();
+            yield return ReentrantStopCase();
+            yield return new ExitPlayMode();
+        }
+
+        private IEnumerator ReentrantStopCase()
+        {
+            _owner = new ResourceStartup();
+            using var first = _owner.StartAsync();
+            using var second = _owner.StartAsync();
+            ResourceRequest<ResourceStartup> readyButUnclaimed = null;
+            ResourceRequest<bool> stop = null;
+            int notifications = 0;
+            first.Completed += done =>
+            {
+                done.TakeResult();
+                readyButUnclaimed = _owner.StartAsync();
+                stop = _owner.StopAsync();
+            };
+            second.Completed += _ => notifications++;
+
+            yield return ResourceSessionTests.Wait(() => second.IsDone && stop?.IsDone == true, "reentrant startup stop");
+            using (stop)
+            using (readyButUnclaimed)
+            {
+                Assert.That(stop.TakeResult(), Is.True);
+                Assert.That(notifications, Is.EqualTo(1));
+                Assert.That(second.Status, Is.EqualTo(ResourceRequestStatus.Invalidated));
+                Assert.That(Assert.Throws<ResourceException>(() => second.TakeResult()).Kind,
+                    Is.EqualTo(ResourceError.SessionUnavailable));
+                Assert.That(Assert.Throws<ResourceException>(() => readyButUnclaimed.TakeResult()).Kind,
+                    Is.EqualTo(ResourceError.SessionUnavailable));
+            }
+        }
+
+        [UnityTest]
         public IEnumerator FailedOptionalAssemblyCannotPretendSuccessOnRetryOrLoseItsCleanupResponsibility()
         {
             yield return new EnterPlayMode();

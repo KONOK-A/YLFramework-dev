@@ -46,9 +46,12 @@ namespace YLFramework.Resource
         public ResourceRequest<ResourceStartup> StartAsync()
         {
             ResourceSystem.CheckStartupThread();
-            if (_started && Resources?.State == ResourceSystemState.Ready && Resources.IsSessionActive)
-                return ResourceSystem.Success(this);
             var request = new ResourceRequest<ResourceStartup>();
+            if (_started && Resources?.State == ResourceSystemState.Ready && Resources.IsSessionActive)
+            {
+                SetStartResult(request, Resources);
+                return request;
+            }
             _waiters.Add(request);
             request.Attach(() => _waiters.Remove(request), null);
             if (_starting)
@@ -58,6 +61,8 @@ namespace YLFramework.Resource
             initialization.Completed += done =>
             {
                 Exception error = null;
+                var failureStatus = done.Status == ResourceRequestStatus.Invalidated
+                    ? ResourceRequestStatus.Invalidated : ResourceRequestStatus.Failed;
                 try
                 {
                     if (done.Status != ResourceRequestStatus.Succeeded)
@@ -80,17 +85,45 @@ namespace YLFramework.Resource
                 }
                 var waiters = _waiters.ToArray();
                 _waiters.Clear();
+                var service = Resources;
                 foreach (var waiter in waiters)
                 {
                     if (error == null)
-                        waiter.SetSuccess(this);
+                        SetStartResult(waiter, service);
                     else
-                        waiter.SetFailure(ResourceRequestStatus.Failed, ResourceSystem.Wrap(error));
+                        waiter.SetFailure(failureStatus, ResourceSystem.Wrap(error));
                     waiter.NotifyCompletion();
                 }
             };
             return request;
         }
+
+        private void SetStartResult(ResourceRequest<ResourceStartup> request, ResourceSystem service)
+        {
+            if (request.IsDone)
+            {
+                return;
+            }
+            if (!CanDeliver(service))
+            {
+                request.SetFailure(ResourceRequestStatus.Invalidated, StartupResultExpired());
+                return;
+            }
+            request.ValidateBeforeTake = () =>
+            {
+                if (!CanDeliver(service))
+                {
+                    throw StartupResultExpired();
+                }
+            };
+            request.SetSuccess(this);
+        }
+
+        private bool CanDeliver(ResourceSystem service) =>
+            ReferenceEquals(Resources, service) && service?.State == ResourceSystemState.Ready && service.IsSessionActive;
+
+        private static ResourceException StartupResultExpired() =>
+            new(ResourceError.SessionUnavailable, "The resource service ended before its startup result was delivered.");
 
         /// <summary>冻结新工作，独立租约未归还时返回 Busy，不强行销毁调用者的内容。</summary>
         public ResourceRequest<bool> StopAsync()
