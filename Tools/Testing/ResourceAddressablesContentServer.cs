@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace YLFramework.Testing
@@ -20,6 +21,7 @@ namespace YLFramework.Testing
             public int status;
             public long bytes;
             public string sha256;
+            public string method, receivedUtc, completedUtc;
         }
 
         private readonly TcpListener _listener;
@@ -31,10 +33,15 @@ namespace YLFramework.Testing
         private readonly object _gate = new object();
         private TcpClient _active;
         private volatile bool _stopping;
+        private readonly string _gates;
+        private readonly string _gatedPath;
 
         public string BaseUrl { get; }
 
         public ResourceAddressablesContentServer(string root, string token, IDictionary<string, string> files)
+            : this(root, token, files, null, null) { }
+
+        public ResourceAddressablesContentServer(string root, string token, IDictionary<string, string> files, string gates, string gatedPath)
         {
             _root = Path.GetFullPath(root);
             RejectLinks(_root);
@@ -42,6 +49,9 @@ namespace YLFramework.Testing
                 throw new InvalidOperationException("The content fixture requires a frozen owned build.");
             _prefix = "/" + token + "/";
             _files = new Dictionary<string, string>(files, StringComparer.Ordinal);
+            _gates = gates;
+            _gatedPath = gatedPath;
+            if (_gates != null) RejectLinks(_gates);
             foreach (var file in _files)
             {
                 if (string.IsNullOrEmpty(file.Key) || file.Key.Contains("..") || file.Key.Contains("\\") ||
@@ -92,7 +102,8 @@ namespace YLFramework.Testing
                 headerBytes += line.Length;
                 if (headerBytes > 16384) throw new IOException("Fixture HTTP headers are too large.");
             }
-            var record = new Request { path = fields.Length > 1 ? fields[1] : "", status = 404 };
+            var record = new Request { path = fields.Length > 1 ? fields[1] : "", status = 404,
+                method = fields[0], receivedUtc = DateTime.UtcNow.ToString("o") };
             byte[] body = Array.Empty<byte>();
             if (fields.Length == 3 && (fields[0] == "GET" || fields[0] == "HEAD") &&
                 fields[1].StartsWith(_prefix, StringComparison.Ordinal))
@@ -114,6 +125,24 @@ namespace YLFramework.Testing
                 }
             }
             else if (fields.Length == 3 && fields[0] != "GET" && fields[0] != "HEAD") record.status = 405;
+            if (_gates != null)
+            {
+                // Keep attempts, not just successful responses, in the isolated experiment's receipt.
+                _requests.Enqueue(record);
+                if (record.status == 200 && record.method == "GET" && record.path == _gatedPath && (record.round == 2 || record.round == 4))
+                {
+                    string stem = Path.Combine(_gates, "round-" + record.round);
+                    try { using (File.Open(stem + ".arrived", FileMode.CreateNew)) { } }
+                    catch (IOException) when (File.Exists(stem + ".arrived")) { }
+                    var timeout = System.Diagnostics.Stopwatch.StartNew();
+                    while (!_stopping && !File.Exists(stem + ".release"))
+                    {
+                        if (timeout.ElapsedMilliseconds > 15000) throw new IOException("The Player did not release the loopback response gate.");
+                        Thread.Sleep(5);
+                    }
+                    if (_stopping) return;
+                }
+            }
             string reason = record.status == 200 ? "OK" : record.status == 409 ? "Conflict" : "Not Found";
             var header = Encoding.ASCII.GetBytes("HTTP/1.1 " + record.status + " " + reason +
                 "\r\nContent-Length: " + body.Length + "\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n");
@@ -124,7 +153,8 @@ namespace YLFramework.Testing
                 record.bytes = body.Length;
             }
             stream.Flush();
-            _requests.Enqueue(record);
+            record.completedUtc = DateTime.UtcNow.ToString("o");
+            if (_gates == null) _requests.Enqueue(record);
         }
 
         private static void RejectLinks(string path)

@@ -13,7 +13,7 @@
 | Runtime / Editor | 正式框架实现与作者工具 |
 | Prefabs / Resources | 随包的默认模板与运行资产 |
 | `Documentation~` / `Samples~` | 按文件路径打开的说明，以及显式 Import 后才编译的样例 |
-| 选装包 | 配置、本地化、存档、状态机、二维移动、检测、玩法、红点、Excel、HybridCLR |
+| 选装包 | 配置、本地化、存档、状态机、二维移动、检测、玩法、红点、Excel、HybridCLR、远端资源加密 |
 | `Plugins/BouncyCastle/SOURCE.txt` | 旧加密实现的来源记录；不包含运行 DLL |
 | `Assets/Tests/YLFramework` / `Tools` | 源码仓库的测试和工具，不进入产品包 |
 | `Assets/YLFrameworkData` | 使用工程自己的配置与生成内容，不属于框架包输入 |
@@ -39,6 +39,7 @@ PackageSources/
   com.kano.ylframework.reddot/
   com.kano.ylframework.excel/
   com.kano.ylframework.hybridclr/
+  com.kano.ylframework.resource-encryption/
 ```
 
 安装后的主包逻辑根是 `Packages/com.kano.ylframework`。`Documentation~` 与 `Samples~` 不进入 AssetDatabase，前者按实际磁盘路径打开，后者导入为使用工程副本后才编译。业务有 asmdef 时须显式引用所属程序集，`autoReferenced` 不能替代 asmdef 引用。
@@ -57,6 +58,7 @@ PackageSources/
 | `YLFramework.RedDots` / `.Editor` | 主包、红点核心与只读诊断工具，不强装 Save |
 | `YLFramework.Excel.Editor` | 主 Runtime/Editor、DataAssets Runtime/Editor、MiniExcel、Json.NET，仅 Editor |
 | `YLFramework.HybridCLR` / `.Editor` | 主包与官方 HybridCLR SDK；dnlib 仅 Editor，业务显式引用，主体不反向依赖 |
+| `YLFramework.Resource.Encryption` / `.Editor` | 选装包依赖主包；加密程序集与 Windows x64 原生插件不进入主包，普通资源继续由 Addressables 管理 |
 | `YLFramework.Actions.DOTween` | 主包内的条件程序集，外置 DOTween.dll 与 `DOTWEEN` 同时成立才启用，需显式引用 |
 | `YLFramework.RedDots.Save` | RedDots 包内条件适配，由真实 Save 包的 Version Define 启用 |
 | `YLFramework.Domain.Excel.Editor` | Excel 包内 Gameplay 适配，由真实 Gameplay 包的 Version Define 启用 |

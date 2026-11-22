@@ -1,0 +1,5 @@
+{
+  "name": "YLFramework.FrozenEncryption.Fixture",
+  "references": ["YLFramework.Runtime", "YLFramework.Resource.Encryption", "Unity.Addressables", "Unity.ResourceManager"],
+  "autoReferenced": true
+}

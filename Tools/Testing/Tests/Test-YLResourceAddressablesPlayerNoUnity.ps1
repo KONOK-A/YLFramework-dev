@@ -359,6 +359,51 @@ try {
     Check (@($server.Snapshot() | Where-Object { $_.status -eq 200 -and $_.round -eq 1 -and $_.bytes -gt 0 }).Count -eq 1) 'Actual network evidence is missing.'
 } finally { $client.Dispose(); $server.Dispose() }
 
+Add-Type -Path (Join-Path $PSScriptRoot '../ResourceEncryption/FrozenLoopback.cs')
+$heldServer = [YLFramework.Testing.FrozenLoopback]::new()
+$heldClient = [Net.Http.HttpClient]::new()
+$heldClient.Timeout = [TimeSpan]::FromSeconds(8)
+try {
+    Check ($null -ne $heldServer.GetType().GetMethod('HoldNextProtectedTransfer')) 'The frozen fixture cannot hold a protected GET in flight.'
+    $heldDirectory = Join-Path $sandbox 'HeldGet'; $null = [IO.Directory]::CreateDirectory($heldDirectory)
+    $heldServer.SetRoutes($content, $content, [string[]]@('bundle.bundle'), [string[]]@())
+    $heldServer.HoldNextProtectedTransfer($heldDirectory)
+    $heldGet = $heldClient.GetStringAsync($heldServer.Prefix + 'r/bundle.bundle')
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while (-not [IO.File]::Exists((Join-Path $heldDirectory 'in-flight')) -and $clock.Elapsed.TotalSeconds -lt 3) {
+        Start-Sleep -Milliseconds 10
+    }
+    $pending = @($heldServer.Snapshot())
+    Check ($pending.Count -eq 1 -and $pending[0].held -and $pending[0].bytes -gt 0 -and -not $heldGet.IsCompleted) 'The protected GET was not blocked after partial bytes.'
+    [IO.File]::WriteAllText((Join-Path $heldDirectory 'release'), '')
+    Check ($heldGet.GetAwaiter().GetResult() -ceq 'concurrent-change') 'The released protected GET did not deliver the full original response.'
+    $finished = @($heldServer.Snapshot())
+    Check ($finished.Count -eq 1 -and $finished[0].held -and $finished[0].bytes -eq ([IO.FileInfo]$file).Length) 'The held response was not accounted as one transfer.'
+} finally { $heldClient.Dispose(); $heldServer.Dispose() }
+
+$lateServer = [YLFramework.Testing.FrozenLoopback]::new()
+$allowParsing = [Threading.Tasks.TaskCompletionSource[bool]]::new([Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
+try {
+    Check ($null -ne $lateServer.GetType().GetMethod('CaptureRoundAsync')) 'The frozen loopback cannot drain request handlers at the end of a Player round.'
+    $lateServer.HoldNextRequestParsing($allowParsing.Task)
+    $endpoint = [uri]::new($lateServer.Prefix)
+    $lateClient = [Net.Sockets.TcpClient]::new()
+    try {
+        $lateClient.Connect($endpoint.Host, $endpoint.Port)
+        $wire = [Text.Encoding]::ASCII.GetBytes("HEAD /unregistered HTTP/1.1`r`nHost: $($endpoint.Authority)`r`nConnection: close`r`n`r`n")
+        $lateClient.GetStream().Write($wire, 0, $wire.Length)
+        $lateClient.Client.Shutdown([Net.Sockets.SocketShutdown]::Send)
+    } finally { $lateClient.Dispose() }
+    $round = $lateServer.CaptureRoundAsync()
+    Check (-not $round.IsCompleted) 'The round sealed before the late HEAD was parsed.'
+    $allowParsing.SetResult($true)
+    $requests = $round.GetAwaiter().GetResult()
+    Check ($requests.Length -eq 1 -and $requests[0].method -ceq 'HEAD' -and $requests[0].target -ceq '/unregistered' -and $requests[0].status -eq 404) 'The late HEAD did not stay in the original Player round.'
+    $quiet = $false
+    try { [YLFramework.Testing.FrozenLoopback]::RequireQuiet($requests); $quiet = $true } catch { if ($_.Exception.Message -notmatch 'received 1 content request') { throw } }
+    Check (-not $quiet) 'The zero-request gate admitted a late non-GET request.'
+} finally { $null = $allowParsing.TrySetResult($true); $lateServer.Dispose() }
+
 Check ($null -ne (Get-Command Get-YLResourceAddressablesContentIdentity -ErrorAction SilentlyContinue)) 'Frozen actual Player content validation is missing.'
 $aa = Join-Path $sandbox 'aa'; $null = [IO.Directory]::CreateDirectory($aa)
 $settings = Join-Path $aa 'settings.json'; [IO.File]::WriteAllText($settings, 'local-runtime-settings-fixture')

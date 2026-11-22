@@ -61,7 +61,7 @@ YLFramework 为 Unity C# 项目提供按需组合的基础机制、业务与表�
 
 ## 选装能力
 
-下列链接指向源码仓库当前文档；安装后的对应包也包含自己的 `README.md` 和 `Documentation~/README.md`。完整说明不依赖 UPM 缓存目录之间的相对位置。
+各能力包均有随包 `README.md`。标示为源码仓库的链接指向主线文档。完整说明不依赖 UPM 缓存目录之间的相对位置。
 
 | 能力包 | 用途与完整手册 |
 | --- | --- |
@@ -75,6 +75,7 @@ YLFramework 为 Unity C# 项目提供按需组合的基础机制、业务与表�
 | `com.kano.ylframework.reddot` | [红点聚合、已读状态与诊断](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.reddot/Documentation~/README.md) |
 | `com.kano.ylframework.excel` | [Excel 工作簿作者流程与 Gameplay 适配](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.excel/Documentation~/README.md) |
 | `com.kano.ylframework.hybridclr` | [HybridCLR 构建、补丁与运行时](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.hybridclr/Documentation~/README.md) |
+| `com.kano.ylframework.resource-encryption` | [Windows x64 远端 Bundle 加密交付](Modules/Resource/Delivery.md#可选的远端-bundle-加密)，普通资源项目不需要安装 |
 
 包选择、依赖和条件适配见[安装指南](Installation.md#选择能力包)。轻量 FSM 属于主包，配置式 StateMachine 属于选装包，两者使用不同执行内核。
 

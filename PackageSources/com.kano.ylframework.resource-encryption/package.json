@@ -1,0 +1,13 @@
+{
+  "name": "com.kano.ylframework.resource-encryption",
+  "version": "0.1.0-preview.1",
+  "displayName": "YLFramework Encrypted Resource Delivery",
+  "description": "Optional fixed-catalog Windows x64 encrypted Addressables Bundle delivery.",
+  "unity": "2022.3",
+  "unityRelease": "62f3",
+  "license": "MIT",
+  "author": { "name": "Kano" },
+  "repository": { "type": "git", "url": "https://github.com/KONOK-A/YLFramework-dev.git", "directory": "PackageSources/com.kano.ylframework.resource-encryption" },
+  "files": ["package.json", "package.json.meta", "LICENSE.md", "LICENSE.md.meta", "README.md", "README.md.meta", "Runtime", "Runtime.meta", "Editor", "Editor.meta", "Documentation~"],
+  "dependencies": { "com.kano.ylframework": "0.1.0-preview.1", "com.unity.addressables": "1.25.0", "com.unity.nuget.newtonsoft-json": "3.2.1" }
+}

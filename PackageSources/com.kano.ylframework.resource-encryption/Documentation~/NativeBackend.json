@@ -1,0 +1,22 @@
+{
+  "algorithm": "AES256_GCM_HKDF_1MB",
+  "tink": {
+    "repository": "https://github.com/tink-crypto/tink-cc",
+    "release": "v2.9.2",
+    "commit": "6e9682859227bbe3cb93db4a36ff929263dc1517",
+    "archiveSha256": "3e4587e072c0f944ba3a8d6cdb3372e5a7c94aa44bf69b9b2c20bb756da07f42",
+    "license": "Apache-2.0"
+  },
+  "linkedDependencies": [
+    { "name": "Abseil", "version": "20260526.0", "archiveSha256": "6e1aee535473414164bf83e4ebc40240dec71a4701f8a642d906e95bea1aea0c" },
+    { "name": "BoringSSL", "version": "0.20260803.0", "archiveSha256": "585c91782fc0651ba6f2376b672acdc30437705d8a50b4967c20e6293e318969" }
+  ],
+  "sourceRecipe": "Tools/Packaging/Native/ResourceEncryption/CMakeLists.txt",
+  "toolchain": "Visual Studio 18 2026 x64 Release, C++17, static MSVC runtime, OPENSSL_NO_ASM=ON, TINK_BUILD_TESTS=OFF",
+  "artifact": {
+    "relativePath": "Runtime/Plugins/Win64/ylresource_tink.dll",
+    "machine": "AMD64",
+    "sha256": "963ba62687c2f895649923138083b78acff7bba470ce92ba90228c27e9a46f5c",
+    "importerSha256": "66631371d78c62e2d09347f070ad5fc5c365fa390b0e0a3bcf12e37bec446baf"
+  }
+}

@@ -118,6 +118,10 @@ namespace YLFramework.Testing
                 defaultObjectGuid = AssetDatabase.AssetPathToGUID(AddressableAssetSettingsDefaultObject.kDefaultConfigFolder + "/DefaultObject.asset");
                 settings.BuildAddressablesWithPlayerBuild = AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer;
                 settings.BuildRemoteCatalog = false;
+                var encryptedRemoteGroup = (bool?)request["encryptedRemoteGroup"] == true;
+                var verifiedSizeSnapshot = (bool?)request["verifiedSizeSnapshot"] == true;
+                var heldDownload = (string)request["heldDownload"] ?? "";
+                if (encryptedRemoteGroup) settings.DisableCatalogUpdateOnStartup = true;
                 int builder = settings.DataBuilders.FindIndex(value => value is BuildScriptPackedMode);
                 Require(builder >= 0, "The official packed player content builder is unavailable.");
                 settings.ActivePlayerDataBuilderIndex = builder;
@@ -139,7 +143,46 @@ namespace YLFramework.Testing
                 text.SetLabel(ResourceAddressablesPlayerProbe.BatchLabel, true);
                 text.SetLabel(text.address, true, true);
                 Add(settings, local, assets + "/Parallel.txt", ResourceAddressablesPlayerProbe.ParallelKey).SetLabel(ResourceAddressablesPlayerProbe.BatchLabel, true);
-                Add(settings, remote, assets + "/Cached.txt", ResourceAddressablesPlayerProbe.CachedKey);
+                var cached = Add(settings, remote, assets + "/Cached.txt", ResourceAddressablesPlayerProbe.CachedKey);
+                AddressableAssetGroup protectedGroup = null;
+                P0SizePackedBuilder sizeBuilder = null;
+                if (encryptedRemoteGroup)
+                {
+                    settings.AddLabel(ResourceAddressablesPlayerProbe.SizeMixedLabel);
+                    cached.SetLabel(ResourceAddressablesPlayerProbe.SizeMixedLabel, true);
+                    text.SetLabel(ResourceAddressablesPlayerProbe.SizeMixedLabel, true);
+                    protectedGroup = settings.CreateGroup("P0Protected", false, false, false, null, typeof(BundledAssetGroupSchema));
+                    ConfigureGroup(settings, protectedGroup, "AcceptanceRemoteBuild", "AcceptanceRemoteLoad");
+                    var schema = protectedGroup.GetSchema<BundledAssetGroupSchema>();
+                    schema.BundleMode = BundledAssetGroupSchema.BundlePackingMode.PackTogether;
+                    schema.UseAssetBundleCache = false;
+                    foreach (var pair in new[] { ("SizeA", ResourceAddressablesPlayerProbe.SizeProtectedA), ("SizeB", ResourceAddressablesPlayerProbe.SizeProtectedB) })
+                    {
+                        string path = assets + "/" + pair.Item1 + ".txt";
+                        WriteNew(Path.GetFullPath(path), pair.Item1 + ":" + token);
+                        AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+                        Add(settings, protectedGroup, path, pair.Item2).SetLabel(ResourceAddressablesPlayerProbe.SizeMixedLabel, true);
+                    }
+                    if (heldDownload == "Separated")
+                    {
+                        var authored = new SerializedObject(schema);
+                        var selection = authored.FindProperty("m_AssetBundleProviderType");
+                        Require(selection != null, "Owned schema lacks its serialized provider choice.");
+                        selection.FindPropertyRelative("m_AssemblyName").stringValue = typeof(P0HeldBundleProvider).Assembly.FullName;
+                        selection.FindPropertyRelative("m_ClassName").stringValue = typeof(P0HeldBundleProvider).FullName;
+                        authored.ApplyModifiedPropertiesWithoutUndo();
+                        Require(schema.AssetBundleProviderType.Value == typeof(P0HeldBundleProvider), "The author choice is not the isolated Bundle Provider.");
+                    }
+                    if (verifiedSizeSnapshot || heldDownload == "Separated")
+                    {
+                        sizeBuilder = ScriptableObject.CreateInstance<P0SizePackedBuilder>();
+                        sizeBuilder.ProtectedGroup = protectedGroup;
+                        sizeBuilder.SeparateMount = heldDownload == "Separated";
+                        AssetDatabase.CreateAsset(sizeBuilder, assets + "/P0SizePackedBuilder.asset");
+                        Require(settings.AddDataBuilder(sizeBuilder), "Could not register the isolated Packed Builder hook.");
+                        settings.ActivePlayerDataBuilderIndex = settings.DataBuilders.IndexOf(sizeBuilder);
+                    }
+                }
                 var benchmarkClose = (bool?)request["scopeCloseBenchmark"] == true;
                 if (benchmarkClose)
                 {
@@ -165,6 +208,22 @@ namespace YLFramework.Testing
                 AddressableAssetSettings.BuildPlayerContent(out AddressablesPlayerBuildResult content);
                 Require(content != null && string.IsNullOrEmpty(content.Error), "Official BuildPlayerContent failed: " + content?.Error);
                 var files = Inventory(localRoot, remoteRoot);
+                if (encryptedRemoteGroup)
+                {
+                    string RelativeBundle(AddressableAssetGroup group)
+                    {
+                        string path = Path.GetFullPath(content.AssetBundleBuildResults.Single(bundle => bundle.SourceAssetGroup == group).FilePath);
+                        Require(Inside(path, remoteRoot) && File.Exists(path), "Expected a real remote output owned by " + group.Name);
+                        return path.Substring(remoteRoot.Length + 1).Replace('\\', '/');
+                    }
+                    string catalog = Text(request, "addressablesVersion") == "2.10.3" ? "catalog.bin" : "catalog.json";
+                    Require(File.Exists(Path.Combine(localRoot, catalog)), "The version's default catalog file was not written: " + catalog);
+                    report["p0ProtectedGroupGuid"] = protectedGroup.Guid;
+                    report["p0ProtectedBundle"] = RelativeBundle(protectedGroup);
+                    report["p0OrdinaryBundle"] = RelativeBundle(remote);
+                    report["p0Catalog"] = catalog;
+                    report["p0PackedPlainBytes"] = sizeBuilder == null ? new FileInfo(Path.Combine(remoteRoot, (string)report["p0ProtectedBundle"])).Length : sizeBuilder.PackedPlainBytes;
+                }
                 Require(files.Any(file => (string)file["area"] == "aa" && ((string)file["path"]).EndsWith("settings.json", StringComparison.Ordinal)) &&
                     files.Any(file => (string)file["area"] == "aa" && ((string)file["path"]).Contains("catalog")) &&
                     files.Any(file => (string)file["area"] == "remote" && ((string)file["path"]).EndsWith(".bundle", StringComparison.Ordinal)),
@@ -185,7 +244,8 @@ namespace YLFramework.Testing
                     unityVersion = Application.unityVersion, addressablesVersion = package.version, stripping = Text(request, "stripping"),
                     playerRoot = playerRoot, graphics = (bool)request["graphics"], hostId = Text(request, "hostId"),
                     resultId = Text(request, "resultId"), workspaceId = Text(request, "workspaceId"), buildFlavor = BuildFlavor(request),
-                    scopeCloseBenchmark = benchmarkClose, publishedSourceSha256 = Hash(generatedPath),
+                    scopeCloseBenchmark = benchmarkClose, encryptedRemoteGroup = encryptedRemoteGroup,
+                    verifiedSizeSnapshot = verifiedSizeSnapshot, heldDownload = heldDownload, publishedSourceSha256 = Hash(generatedPath),
                     guidOnlyKey = guidOnly.guid, suppressedGuidKey = addressOnly.guid, packedSpriteGuid = packedSprite.guid
                 };
                 var boot = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -428,6 +488,16 @@ namespace YLFramework.Testing
                 "Scope close measurement requires an explicit Boolean option.");
             Require((bool?)request["scopeCloseBenchmark"] != true || (BuildFlavor(request) == "Release" && (bool)request["graphics"]),
                 "Scope close measurement uses the Release Player with an actual graphics device.");
+            Require(request["encryptedRemoteGroup"] == null || request["encryptedRemoteGroup"].Type == JTokenType.Boolean,
+                "Encryption experiment requires an explicit Boolean option.");
+            Require((bool?)request["encryptedRemoteGroup"] != true || (BuildFlavor(request) == "Release" && (bool)request["graphics"] && (bool?)request["scopeCloseBenchmark"] != true),
+                "Encryption experiment uses a dedicated graphics Release workload.");
+            Require((request["verifiedSizeSnapshot"] == null || request["verifiedSizeSnapshot"].Type == JTokenType.Boolean) &&
+                ((bool?)request["verifiedSizeSnapshot"] != true || (bool?)request["encryptedRemoteGroup"] == true),
+                "Verified size snapshot requires the isolated experiment.");
+            var held = (string)request["heldDownload"] ?? "";
+            Require(held == "" || ((held == "Stock" || held == "Separated") && (bool?)request["encryptedRemoteGroup"] == true && (bool?)request["verifiedSizeSnapshot"] != true),
+                "Only one isolated P0 workload may be selected.");
             string project = Project();
             string result = Path.GetFullPath(Text(request, "resultRoot"));
             string output = Path.GetFullPath(Text(request, "output"));

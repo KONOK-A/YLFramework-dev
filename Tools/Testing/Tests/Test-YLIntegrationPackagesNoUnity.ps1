@@ -37,14 +37,17 @@ try {
         if (-not [Collections.Generic.HashSet[string]]::new([string[]]$expectedPackages.id, [StringComparer]::Ordinal).SetEquals([string[]]@($definition.assemblies.package | Sort-Object -Unique)) -or
             @($definition.assemblies | Where-Object name -CEQ 'YLFramework.Actions.DOTween').Count -ne 0) { throw "$name lost its exact closure or enabled an absent SDK." }
         if ($name -ceq 'AllPackages') {
-            if ($roots.Count -ne 11 -or $definition.id -cne 'com.kano.ylframework' -or
+            if ('com.kano.ylframework.resource-encryption' -cnotin $roots -or $definition.id -cne 'com.kano.ylframework' -or
                 @($definition.assemblies | Where-Object name -CEQ 'YLFramework.RedDots.Save').Count -ne 1 -or
                 @($definition.assemblies | Where-Object name -CEQ 'YLFramework.Domain.Excel.Editor').Count -ne 1 -or
-                @($definition.assemblies | Where-Object { $_.name -cin @('YLFramework.HybridCLR', 'YLFramework.HybridCLR.Editor') }).Count -ne 2) { throw 'The final full installation must enable both package adapters and its separately installed HybridCLR SDK, not DOTween.' }
+                @($definition.assemblies | Where-Object { $_.name -cin @('YLFramework.HybridCLR', 'YLFramework.HybridCLR.Editor') }).Count -ne 2 -or
+                @($definition.assemblies | Where-Object { $_.name -cin @('YLFramework.Resource.Encryption', 'YLFramework.Resource.Encryption.Editor') }).Count -ne 2) { throw 'The full installation must include the package adapters, HybridCLR and the optional encryption assemblies without DOTween.' }
             $release = @{ packages = @($expectedPackages | ForEach-Object { @{ id = $_.id; version = $_.version; dependencies = $_.manifest.dependencies; path = (Join-Path $root ($_.id + '.tgz')) } }) }
             $manifest = New-YLRegistryHostManifest -PackageSource LocalTarball -Release $release -EntryPackage $roots[0] -EntryPackages $roots
             Assert-YLPackageStringArray -Actual $manifest.scopedRegistries[0].scopes -Expected @('com.kano.ylframework', 'com.code-philosophy.hybridclr') -Label 'Full installation SDK Registry scope'
-            if ($manifest.dependencies.Count -ne 11 -or $manifest.dependencies.Contains('com.code-philosophy.hybridclr')) { throw 'The full artifact installation must declare all frozen tarballs, leaving the SDK indirect.' }
+            if (-not [Collections.Generic.HashSet[string]]::new([string[]]$manifest.dependencies.Keys, [StringComparer]::Ordinal).SetEquals([string[]]$roots)) {
+                throw 'The full artifact installation must declare exactly all frozen tarballs, leaving the SDK indirect.'
+            }
             $reordered = @($roots[0]) + @($roots[2..($roots.Count - 1)]) + @($roots[1])
             Reject { Get-YLRegistryEntryPackages -EntryPackage $roots[0] -EntryPackages $reordered } 'explicit'
             Reject { Get-YLPackageAssemblyPlan -Catalog $catalog -Packages $planInputs[0..($planInputs.Count - 2)] -Profile AllPackages -MetadataOnly } 'complete catalog'

@@ -140,8 +140,9 @@ try {
     }
     Case 'Independent fixed-commit checkout never copies the current dirty source tree' {
         $git = (Get-Command -Name git.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
-        $commit = (& $git -C $repository rev-parse HEAD).Trim()
-        if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the read-only source commit.' }
+        $resolved = & $git -C $repository rev-parse HEAD
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolved)) { throw 'The fixed-commit checkout case requires a source Git checkout.' }
+        $commit = $resolved.Trim()
         $environment = Join-Path $run.path 'checkout-environment'; $null = [IO.Directory]::CreateDirectory($environment)
         foreach ($name in @('empty.gitconfig', 'user.npmrc', 'global.npmrc')) { Save (Join-Path $environment $name) '' }
         $checkout = Join-Path $run.path 'fixed-checkout'
@@ -439,7 +440,9 @@ try {
         $saved = @{}; foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
         try {
             foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, 'untrusted-fixture-value') }
-            $environment = Join-Path $run.path 'checkout-environment'
+            $environment = Join-Path $run.path 'process-environment'
+            $null = [IO.Directory]::CreateDirectory($environment)
+            foreach ($name in @('empty.gitconfig', 'user.npmrc', 'global.npmrc')) { Save (Join-Path $environment $name) '' }
             $code = '[ordered]@{user=$env:NPM_CONFIG_USERCONFIG; global=$env:NPM_CONFIG_GLOBALCONFIG; cache=$env:NPM_CONFIG_CACHE; token=$env:NPM_TOKEN; node=$env:NODE_OPTIONS; git=$env:GIT_DIR; scripts=$env:NPM_CONFIG_IGNORE_SCRIPTS; home=$env:USERPROFILE} | ConvertTo-Json -Compress'
             $text = Invoke-YLRegistryProcess -Exe (Get-Process -Id $PID).Path -Arguments @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', $code) -Directory $environment -Log (Join-Path $run.path 'environment-probe.log') -EnvironmentRoot $environment
             $actual = $text | ConvertFrom-Json -AsHashtable
@@ -489,7 +492,7 @@ try {
         }
     }
     if ($NodeRoot) {
-        Case 'Workspace-only npm diagnostic verifies fixed tools and two real offline packs of all five fixture packages' {
+        Case 'Workspace-only npm diagnostic verifies fixed tools and two real offline packs of the complete catalog' {
             $diagnostic = New-YLTestDirectory -Workspace $workspace -Kind Result -Key WorkspaceNpmDiagnostic
             $diagnosticLease = Lock-YLTestDirectory -Workspace $workspace -Path $diagnostic.path
             try {
@@ -541,7 +544,7 @@ try {
                         Check ($package.files[$i].path -ceq $before.files[$i].path -and $package.files[$i].sha256 -ceq $before.files[$i].sha256) 'npm pack wrote source/package metadata or asset bytes.'
                     }
                 }
-                "NPM DIAGNOSTIC: Node $nodeVersion / npm $npmVersion; 5 workspace fixture packages packed twice with matching complete payloads. NOT a fixed-commit CI candidate, release, ReadyForPublish or Unity result."
+                "NPM DIAGNOSTIC: Node $nodeVersion / npm $npmVersion; $((Get-YLRegistryPackageIds).Count) workspace fixture packages packed twice with matching complete payloads. NOT a fixed-commit CI candidate, release, ReadyForPublish or Unity result."
             } finally {
                 $diagnosticLease.Dispose()
                 "Workspace-only npm diagnostic evidence retained: $($diagnostic.path)"

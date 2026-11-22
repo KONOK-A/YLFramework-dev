@@ -11,7 +11,7 @@
 - 主包声明 UGUI、Json.NET 及所用内置 Unity 模块，Registry 依赖由 UPM 解析。不要拷贝同名替身 DLL；不同 Editor 的实际解析版本可能不同。
 - DOTween 和 HybridCLR 是显式选择的集成，按对应手册准备 SDK。普通主包接入不要求 MCP、Odin、MiniExcel 或 HybridCLR。
 
-主包正式依赖 Addressables（兼容底线 1.25.0；当前 Unity 6 验证 2.10.3），自定义程序集直接调用含 AssetReference 重载的 API 时需引用 `Unity.Addressables`。安装不初始化资源服务。平台、AOT、远端 Player 与 HybridCLR native 按[资源交付](Modules/Resource/Delivery.md)及集成手册分别验证，不能由 Editor 导入成功推导支持范围；加密和版本事务/回滚尚属后续阶段。
+主包正式依赖 Addressables（兼容底线 1.25.0；当前 Unity 6 验证 2.10.3），自定义程序集直接调用含 AssetReference 重载的 API 时需引用 `Unity.Addressables`。安装不初始化资源服务。平台、AOT、远端 Player 与 HybridCLR native 按[资源交付](Modules/Resource/Delivery.md)及集成手册分别验证，不能由 Editor 导入成功推导支持范围。版本事务与回滚不是当前资源交付的保证。
 
 ## 获取源码
 
@@ -72,6 +72,7 @@ Workspace/
 | RedDots | 主包、`.reddot` | `YLFramework.RedDots` |
 | Excel | 主包、`.data-assets`、`.excel` | 仅 Editor：`YLFramework.Excel.Editor` |
 | HybridCLR | 主包、`.hybridclr`，另提供官方 SDK `9.0.3` 来源 | `YLFramework.HybridCLR` |
+| 远端资源加密 | 主包、`.resource-encryption` | `YLFramework.Resource.Encryption` |
 
 表中 `.xxx` 均是 `com.kano.ylframework.xxx` 的简写。完整用法见[选装手册导航](README.md#选装能力)。
 
@@ -93,6 +94,12 @@ Workspace/
 - RedDots + Save：同装两者启用红点包内 `YLFramework.RedDots.Save`；RedDots 核心不强装 Save。
 - DOTween：适配源码在主包中，外置 Standard SDK 和 `DOTWEEN` 都成立后才启用 `YLFramework.Actions.DOTween`，业务 asmdef 需显式引用它。
 - HybridCLR：准备官方 SDK `9.0.3` 与匹配 native 后端；SDK、native 与基座的要求见源码仓库当前的 [HybridCLR 手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.hybridclr/Documentation~/README.md)。主包不自带 SDK。
+
+### 选装远端资源加密
+
+普通 Addressables 项目只装主包，不需要加密扩展、加密程序集或原生 DLL。有明确的远端 Bundle 加密需求时，先提供同一批次的主包，再在 Package Manager 选择 `PackageSources/com.kano.ylframework.resource-encryption/package.json`。使用已取得的本地 `.tgz` 时，从同一批次依次安装主包和扩展包，两者均用 `Add package from tarball...`。
+
+安装不会启用加密。要使用它，须显式配置远端组、构建配套 Player 和密文内容，并在应用启动时注入密钥。已验证的平台、Mono / IL2CPP 组合以及停用后重建要求，见[加密交付说明](Modules/Resource/Delivery.md#可选的远端-bundle-加密)。
 
 ## Git 接入
 
