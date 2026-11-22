@@ -35,10 +35,13 @@ namespace YLFramework.Editor.Core
                     HelpBlock.Paragraph("MVC 所有权", "通过 Module.AddModel / GetModel、AddController / GetController 管理注册，不从 View 改写 Model 的受保护状态。" +
                         "Model/Controller 的 OnInit 与 OnExit 对应每次注册；Module 负责退出，业务监听与借用资源仍须按自身所有权收尾。"),
                     HelpBlock.Notice("接入边界", "业务 asmdef 显式引用 YLFramework.Runtime；Core、Foundation 和 ZipTool 共用该主体程序集，仍按职责组织源码。" +
-                        "ProjectName 是正式 YL Resource ProjectId，不是外部项目名或 BundleName。命名加载无隐式回退；缺失 Provider 明确失败。" +
-                        "Core 与 Audio 使用唯一正式 ResourceSystem，不建立第二套资源运行栈。"),
-                    HelpBlock.Paragraph("资源启动与退出", "应用持有 ResourceConfiguration，等待 ResourceSystem.InitializeAsync 完成并 TakeResult，调用 resources.BindCoreResourceProvider() 后再启动 Module。" +
-                        "关闭业务 Module 后，按所有权归还实例、清理缓存、卸载 Scene，再等待 ShutdownAsync；成功关闭只解绑自身 Provider。SceneLease 释放不卸载场景，SceneRecord 持有依赖直到 native sceneUnloaded。")),
+                        "ProjectName 是官方 address 的业务命名空间；Core 将项目/路径投影为 project/path，缺失 Provider 或地址歧义明确失败。" +
+                        "Core 与 Audio 借用同一 Addressables 资源服务，不建立第二套内容运行栈。"),
+                    HelpBlock.Paragraph("资源启动与退出", "应用持有 ResourceStartup(new ResourceConfiguration())，等待 StartAsync 成功后再启动 Module；默认绑定 Core，可通过 audioProjects 明确装配音频命名空间。" +
+                        "业务用 Resources.CreateScope(label) 和 Scope.LoadAsync 借用；Scope.InstantiateAsync 每次新建，RentAsync 才复用，冷同步加载明确拒绝。独立责任使用 AcquireAsync/Retain 并自行归还。" +
+                        "先关闭业务 Module、停止播放并结算各自责任，等待 Scope.CloseAsync 后再等待 Startup.StopAsync；Dispose 只发起，不表示完成。Busy 时读取 Resources.GetDiagnostics 的 owner/key 并由真实持有者归还后重试。" +
+                        "Scope 场景默认自动激活的 Additive；应用保留中立 Bootstrap 场景，Root 不会为停机临时制造空场景。" +
+                        "当前 Module.DefaultStartUpScene 非空时使用 Core 的 Single 入口；需要保留 Bootstrap 时留空并由业务 Scope 显式加载。")),
                 Guide("view-ui", "View 与 UI", "Module 唯一拥有业务；Panel 继承 View，使用统一请求和可选配置快照，不需要窗口目录。",
                     new[] { typeof(View), typeof(Panel), typeof(LoadViewArgs), typeof(LoadViewRequest<>), typeof(LoadPanelRequest<>), typeof(PanelConfig), typeof(PanelOverrides), typeof(PanelRule), typeof(UIRootContext) },
                     HelpBlock.Paragraph("加载与参数", "场景或动态对象使用 owner.AttachView(view) 显式纳管；Prefab/具名资产使用 Module.LoadView / LoadPanel 或异步入口。" +
@@ -58,8 +61,10 @@ namespace YLFramework.Editor.Core
                     HelpBlock.Paragraph("Module 模板", "Assets/Create/YLFramework/Core/Module 输出 " + CreateModuleCommand.OutputRoot + " 下的独立用户代码和 asmdef，拒绝覆盖已有目录。" +
                         "namespace 为 YLFramework.Core.Examples；不会生成完整 MVC/View/Panel 代码或改写 Assets/Games。"),
                     HelpBlock.Paragraph("默认资源与资源常量", "YLFramework/Core/Create Missing Default Resources 只补缺失的 Core Canvas/EventSystem，不替换已有身份。" +
-                        "YLFramework/Resource/Workbench 通过 ResourceProject、Group 和 Catalog 配置资源。项目可登记多个已有来源目录，每个目录使用 GUID 和明确的地址前缀；由组中的选择项决定内容，无需搬动已有资源。现有Editor配置已统一为此模型，不再保留旧单根配置的读取或迁移。Core Editor 预览使用同一资源模拟层，不查询外部资源项目。资源地址常量默认生成到 Assets/YLFrameworkData/Generated/ResourceReferences/YLResourceReferences.cs，类型为 YLFramework.Generated.ResourceNames；" +
-                        "业务 asmdef 需显式引用生成程序集，未知/手写承载拒绝覆盖。这些用户生成物不随 UPM 包交付。"),
+                        "官方 Addressables Settings/Groups/Labels/Profiles/AssetReference 是唯一作者事实；YLFramework/Resource/Workbench 只增强校验、官方导航、地址与 Label 常量及正式内容构建。Group 是构建事实，不是运行时加载集合。" +
+                        "ResourceEditorOperations.BuildContent/BuildContentUpdate 使用官方完整构建与内容更新，并使用目标 Player 的官方内容状态；Editor 作者工具不启动 Native 资源会话。" +
+                        "常量默认生成到 Assets/YLFrameworkData/Generated/ResourceReferences/YLResourceReferences.cs，类型为 YLFramework.Resources.ResourceNames，生成程序集为 YLFramework.Generated.ResourceNames。" +
+                        "业务 asmdef 显式引用生成程序集，未知/手写承载拒绝覆盖。这些用户生成物不随 UPM 包交付。"),
                     Document("资源工具与生成承载", "Modules/Resource.md")),
                 Guide("analyzers", "自有分析器 " + AnalyzerRuleCatalog.Rules[0].Id + "～" + AnalyzerRuleCatalog.Rules[AnalyzerRuleCatalog.Rules.Count - 1].Id,
                     AnalyzerRuleCatalog.Rules.Count + " 项诊断默认启用且均为 Warning；提示使用约束，不是运行时安全证明。",

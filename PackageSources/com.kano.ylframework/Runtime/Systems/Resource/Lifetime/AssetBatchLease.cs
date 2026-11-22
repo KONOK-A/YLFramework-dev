@@ -1,67 +1,96 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
+using Object = UnityEngine.Object;
 
 namespace YLFramework.Resource
 {
-    /// <summary>typed 批量/Group 的拥有型结果。每个成员是独立正式 Lease，Dispose 只释放本批责任；Errors 保留可选成员失败。</summary>
-    /// <typeparam name="T">本批租约借读的 Unity 资源类型。</typeparam>
-    public sealed class AssetBatchLease<T> : IDisposable where T : UnityEngine.Object
+    /// <summary>一份官方批量引用；整批资源只在租约有效期间借读。</summary>
+    public sealed class AssetBatchLease<T> : IDisposable, ISynchronousResourceLease where T : Object
     {
-        private readonly int _threadId = Thread.CurrentThread.ManagedThreadId;
-        /// <summary>本批持有的成功成员租约；读取集合不转移单项责任。</summary>
-        public IReadOnlyList<AssetLease<T>> Items
+        private readonly ResourceSystem _system;
+        private IReadOnlyList<T> _assets;
+        private AddressablesHandleOwner<IList<T>> _owner;
+
+        ResourceSystem IResourceLease.System => _system;
+        ResourceScope IResourceLease.Scope
         {
-            get;
+            get; set;
         }
-        /// <summary>未阻止批次成功的可选成员错误，不包含本批释放时发生的异常。</summary>
-        public IReadOnlyList<ResourceException> Errors
+        bool IResourceLease.IsSettled => IsDisposed;
+
+        /// <summary>本份引用是否已归还。</summary>
+        public bool IsDisposed => _owner == null;
+
+        /// <summary>会话、官方引用和所有已加载对象仍有效。</summary>
+        public bool IsValid
         {
-            get;
+            get
+            {
+                _system.CheckThread();
+                if (_owner == null || !_system.IsSessionActive || !_owner.BorrowedHandle.IsValid())
+                {
+                    return false;
+                }
+                foreach (var asset in _assets)
+                {
+                    if (!asset)
+                        return false;
+                }
+                return true;
+            }
         }
-        /// <summary>本批是否已经开始归还；清理失败也不会恢复持有身份。</summary>
-        public bool IsDisposed
+
+        /// <summary>借读完整的不同资源集合，不承诺 Label 内部的排序。</summary>
+        public IReadOnlyList<T> Assets
         {
-            get; private set;
+            get
+            {
+                _system.CheckThread();
+                if (IsDisposed)
+                    throw new ObjectDisposedException(nameof(AssetBatchLease<T>));
+                if (!IsValid)
+                    throw new ResourceException(ResourceError.SessionUnavailable, "The required asset batch is no longer available.");
+                return _assets;
+            }
         }
-        /// <summary>复制成员和错误列表，接管传入租约而不增加资源引用计数。</summary>
-        internal AssetBatchLease(IEnumerable<AssetLease<T>> items, IEnumerable<ResourceException> errors)
+
+        internal AssetBatchLease(ResourceSystem system, string[] keys, AddressablesHandleOwner<IList<T>> owner, T[] assets)
         {
-            Items = ResourceCatalog.Copy(items);
-            Errors = ResourceCatalog.Copy(errors);
+            _system = system;
+            _assets = Array.AsReadOnly(assets);
+            _owner = owner;
+            _system.RegisterLease(this, string.Join(", ", keys));
         }
-        /// <summary>在接受批次的线程逐项归还自有租约，继续清理后再汇总错误。</summary>
-        /// <exception cref="InvalidOperationException">未在接受批次的 Unity 主线程调用。</exception>
-        /// <exception cref="AggregateException">一个或多个成员归还失败。</exception>
+
+        /// <summary>归还本份官方引用，不销毁共享对象或撤销其他消费者的引用。</summary>
         public void Dispose()
         {
-            if (Thread.CurrentThread.ManagedThreadId != _threadId)
-            {
-                throw new InvalidOperationException("Resource batches must be used on their accepting Unity thread.");
-            }
-
-            if (IsDisposed)
-            {
+            _system.CheckThread();
+            var owner = _owner;
+            if (owner == null)
                 return;
-            }
-
-            IsDisposed = true;
-            List<Exception> errors = null;
-            foreach (var item in Items)
+            _owner = null;
+            _assets = null;
+            try
             {
-                try
-                {
-                    item.Dispose();
-                }
-                catch (Exception error)
-                {
-                    (errors ??= new List<Exception>()).Add(error);
-                }
+                owner.Dispose();
             }
-
-            if (errors != null)
+            finally
             {
-                throw new AggregateException("Resource batch cleanup failed.", errors);
+                _system.UnregisterLease(this);
+            }
+        }
+
+        ResourceRequest<bool> IResourceLease.CloseAsync()
+        {
+            try
+            {
+                Dispose();
+                return ResourceSystem.Success(true);
+            }
+            catch (Exception error)
+            {
+                return ResourceSystem.Failure<bool>(error);
             }
         }
     }

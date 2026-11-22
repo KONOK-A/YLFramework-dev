@@ -1,184 +1,255 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
 using UnityEngine;
-using UnityEngine.LowLevel;
 using UnityEngine.SceneManagement;
 
 namespace YLFramework.Resource
 {
     public sealed partial class ResourceSystem
     {
-        private readonly Dictionary<(AssetRecord, InstanceCachePolicy, int), InstanceCache> _openInstanceCaches = new();
-        private readonly HashSet<InstanceCache> _instanceCaches = new();
+        private readonly Dictionary<(string, GameObject, InstanceCachePolicy, int), InstanceCache>
+            _openInstanceCaches = new();
+        private readonly List<InstanceCache> _instanceCaches = new();
+        // 每个请求持有一份例程责任及未交付 Entry 责任；取消状态不代表这些责任已经结束。
+        private readonly Dictionary<ResourceRequest<InstanceLease>, int> _pendingInstanceRequests = new();
         private Transform _instanceRoot;
-        private static readonly List<InstanceCache> _instanceCleanup = new();
-        private static int _instanceCleanupIndex;
-        private static bool _isPruningInstances;
+        private IDisposable _instanceTick;
+        private int _instanceOperations;
+        private int _instanceCleanupIndex;
+        private long _instanceCleanupEpoch;
+        private bool _isPruningInstances;
 
-        /// <summary>默认按目标场景缓存。返回独立实例责任，Dispose/Return回桶，Discard销毁。</summary>
-        /// <param name="address">资源目录中的 Prefab 地址。</param>
-        /// <param name="parent">借出实例的父节点；为 null 时放入当前活动场景。</param>
-        /// <returns>由调用方负责结束借出的实例租约。</returns>
-        public InstanceLease Instantiate(ResourceAddress address, Transform parent = null)
+        /// <summary>异步取得官方 Prefab，每次新建；取消或未领取的对象由请求丢弃。</summary>
+        public ResourceRequest<InstanceLease> InstantiateAsync(string key, Transform parent = null,
+            Scene scene = default, CancellationToken cancellation = default)
+            => CreateInstanceAsync(key, parent, scene, cancellation, false);
+
+        /// <summary>异步取得官方 Prefab，明确复用空闲实例，不足时才创建。</summary>
+        public ResourceRequest<InstanceLease> RentAsync(string key, Transform parent = null,
+            Scene scene = default, CancellationToken cancellation = default)
+            => CreateInstanceAsync(key, parent, scene, cancellation, true);
+
+        /// <summary>仅用本系统已持有的 Prefab 新建；不加载、不等 IO，原 Lease 仍由调用者持有。</summary>
+        public InstanceLease Instantiate(AssetLease<GameObject> prefab, Transform parent = null, Scene scene = default)
+            => CreateInstance(prefab, parent, scene, false);
+
+        /// <summary>仅用本系统已持有的 Prefab 复用或新建；不会自动重置业务状态。</summary>
+        public InstanceLease Rent(AssetLease<GameObject> prefab, Transform parent = null, Scene scene = default)
+            => CreateInstance(prefab, parent, scene, true);
+
+        private InstanceLease CreateInstance(AssetLease<GameObject> prefab, Transform parent, Scene scene, bool reusable)
         {
-            using var prefab = Acquire<GameObject>(address);
-            return Instantiate(prefab, parent);
+            RequireAvailable();
+            scene = InstanceCache.TargetScene(parent, scene);
+            var cache = GetOrCreateInstanceCacheCore(prefab, InstanceCachePolicy.SceneScoped, scene);
+            using var reservation = cache.Reserve(reusable, parent, scene, null);
+            return reservation.Deliver();
         }
 
-        /// <summary>不消费输入 Lease；实例缓存取得自己的 Prefab pin。裸 Prefab/Attach 不由此入口纳管。</summary>
-        /// <param name="prefab">来自本资源系统的 Prefab 资产租约，调用方仍负责其原有责任。</param>
-        /// <param name="parent">借出实例的父节点；为 null 时放入当前活动场景。</param>
-        /// <returns>拥有独立借出身份的实例租约。</returns>
-        public InstanceLease Instantiate(AssetLease<GameObject> prefab, Transform parent = null)
-            => Instantiate(prefab, parent, SceneManager.GetActiveScene());
-
-        /// <summary>解析明确目标场景，从对应场景桶借出实例并确认交付。</summary>
-        internal InstanceLease Instantiate(AssetLease<GameObject> prefab, Transform parent, Scene targetScene)
+        private ResourceRequest<InstanceLease> CreateInstanceAsync(string key, Transform parent, Scene scene,
+            CancellationToken cancellation, bool reusable)
         {
             CheckThread();
-            var scene = InstanceCache.TargetScene(parent, targetScene);
-            var cache = GetInstanceCacheCore(prefab, InstanceCachePolicy.SceneScoped, scene);
-            var lease = cache.Instantiate(parent, scene);
-            cache.Commit();
-            return lease;
-        }
-
-        /// <summary>异步取得 Prefab 后在主线程创建或复用实例，并通过请求交付借出责任。</summary>
-        /// <param name="address">资源目录中的 Prefab 地址。</param>
-        /// <param name="parent">借出实例的父节点；无父节点时捕获调用时的活动场景。</param>
-        /// <returns>成功后可单次领取实例租约的请求；未领取结果由请求归还。</returns>
-        /// <remarks>取消解除本请求的等待；若实例创建回调重入取消，尚未交付的实例会被丢弃。</remarks>
-        public ResourceRequest<InstanceLease> InstantiateAsync(ResourceAddress address, Transform parent = null)
-        {
-            CheckThread();
-            var request = new ResourceRequest<InstanceLease>(value => value.Dispose());
-            if (!IsAvailable)
-            {
-                return Fail(request, ResourceError.SessionUnavailable, "ResourceSystem is not available.", address);
-            }
-
-            Scene scene;
             try
             {
-                scene = InstanceCache.TargetScene(parent, SceneManager.GetActiveScene());
+                RequireAvailable();
+                scene = InstanceCache.TargetScene(parent, scene);
             }
-            catch (ArgumentException error)
+            catch (Exception error)
             {
-                return Fail(request, ResourceError.LoadFailed, "Invalid instance destination.", address, cause: error);
+                return Failure<InstanceLease>(error);
             }
-            ResourceRequest<AssetLease<GameObject>> child = null;
-            Track(request);
-            request.Attach(() => child?.Dispose(), () => child?.Progress ?? 0);
-            child = AcquireAsync<GameObject>(address);
-            if (request.IsDone)
+            var request = Track(new ResourceRequest<InstanceLease>(lease => lease.Discard()), key,
+                operation: reusable ? nameof(RentAsync) : nameof(InstantiateAsync));
+            _pendingInstanceRequests.Add(request, 1);
+            _businessStarted = true;
+            try
             {
-                child.Dispose();
-                return request;
+                BindCancellation(request, cancellation);
+                Run(CreateInstanceRoutine(request, key, parent, scene, cancellation, reusable));
             }
-            child.Completed += result =>
+            catch (Exception error)
             {
-                if (request.IsDone)
-                {
-                    result.Dispose();
-                    return;
-                }
-                try
-                {
-                    using var prefab = result.TakeResult();
-                    var target = InstanceCache.TargetScene(parent, scene);
-                    var cache = GetInstanceCacheCore(prefab, InstanceCachePolicy.SceneScoped, target);
-                    var lease = cache.Instantiate(parent, target);
-                    if (request.IsDone)
-                    {
-                        lease.Discard();
-                    }
-                    else
-                    {
-                        cache.Commit();
-                        request.SetSuccess(lease);
-                    }
-                }
-                catch (Exception cause)
-                {
-                    if (!request.IsDone)
-                    {
-                        request.SetFailure(ResourceRequestStatus.Failed, cause as ResourceException ??
-                        new ResourceException(ResourceError.LoadFailed, "Prefab instance creation failed.", cause, address));
-                    }
-                }
-                finally
-                {
-                    result.Dispose();
-                }
-                request.Notify();
-            };
+                ReleasePendingInstanceRequest(request);
+                FailInstanceRequest(request, error);
+                request.NotifyCompletion();
+            }
             return request;
         }
 
-        /// <summary>取得本 authority 的正式缓存。SceneScoped 默认绑定当前活动场景，Persistent仅缓存跨场景，不自动DDOL借出对象。</summary>
-        /// <param name="address">资源目录中的 Prefab 地址。</param>
-        /// <param name="policy">缓存桶的场景寿命策略。</param>
-        /// <param name="scene">SceneScoped 绑定的场景；默认值使用当前活动场景，Persistent 不使用此值分桶。</param>
-        /// <returns>可能与其他调用方共享的正式缓存；关闭它会退休整个桶。</returns>
-        public InstanceCache GetInstanceCache(ResourceAddress address, InstanceCachePolicy policy = InstanceCachePolicy.SceneScoped, Scene scene = default)
+        private IEnumerator CreateInstanceRoutine(ResourceRequest<InstanceLease> request, string key,
+            Transform parent, Scene scene, CancellationToken cancellation, bool reusable)
         {
-            using var prefab = Acquire<GameObject>(address);
-            return GetInstanceCache(prefab, policy, scene);
+            _instanceOperations++;
+            ResourceRequest<AssetLease<GameObject>> loading = null;
+            AssetLease<GameObject> prefab = null;
+            InstanceCache.Reservation reservation = null;
+            try
+            {
+                if (request.IsDone)
+                {
+                    yield break;
+                }
+                // 调用方先取得请求，Scope 才能在 Awake/OnEnable 重入时取消这一轮。
+                yield return null;
+                if (cancellation.IsCancellationRequested)
+                {
+                    request.Cancel();
+                }
+                if (request.IsDone)
+                {
+                    yield break;
+                }
+                try
+                {
+                    RequireAvailable();
+                    loading = AcquireAsync<GameObject>(key, cancellation);
+                    request.Attach(() => loading.Dispose(), () => loading.Progress);
+                }
+                catch (Exception error)
+                {
+                    FailInstanceRequest(request, error);
+                }
+                if (request.IsDone)
+                {
+                    yield break;
+                }
+                while (!loading.IsDone && !request.IsDone)
+                {
+                    if (cancellation.IsCancellationRequested)
+                    {
+                        request.Cancel();
+                    }
+                    yield return null;
+                }
+                if (request.IsDone)
+                {
+                    yield break;
+                }
+                try
+                {
+                    prefab = loading.TakeResult();
+                    MakeInternal(prefab);
+                    loading.Dispose();
+                    if (InstanceCache.TargetScene(parent, scene) != scene)
+                    {
+                        throw new ArgumentException("The instance parent changed its target scene while loading.");
+                    }
+                    var cache = GetOrCreateInstanceCacheCore(prefab, InstanceCachePolicy.SceneScoped, scene);
+                    reservation = cache.Reserve(reusable, parent, scene,
+                        () => !request.IsDone && !cancellation.IsCancellationRequested, request);
+                    prefab.Dispose();
+                    prefab = null;
+                }
+                catch (Exception error)
+                {
+                    FailInstanceRequest(request, error);
+                }
+                if (request.IsDone)
+                {
+                    yield break;
+                }
+                // Unity 的 Object.Destroy 在回调当帧仍可能为真，异步交割等实际死亡边界后再复核。
+                yield return null;
+                if (cancellation.IsCancellationRequested)
+                {
+                    request.Cancel();
+                }
+                if (!request.IsDone)
+                {
+                    try
+                    {
+                        var lease = reservation.Deliver();
+                        request.ValidateBeforeTake = () =>
+                        {
+                            if (!IsAvailable || !lease.IsValid)
+                            {
+                                request.Dispose();
+                                throw new ResourceException(ResourceError.SessionUnavailable,
+                                    "The instance ended before its result was claimed.");
+                            }
+                        };
+                        request.SetSuccess(lease);
+                        _pendingInstanceRequests.Remove(request);
+                    }
+                    catch (Exception error)
+                    {
+                        FailInstanceRequest(request, error);
+                    }
+                }
+            }
+            finally
+            {
+                try
+                {
+                    reservation?.Dispose();
+                }
+                finally
+                {
+                    try
+                    {
+                        prefab?.Dispose();
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            loading?.Dispose();
+                        }
+                        finally
+                        {
+                            _instanceOperations--;
+                            ReleasePendingInstanceRequest(request);
+                            request.NotifyCompletion();
+                        }
+                    }
+                }
+            }
         }
 
-        /// <summary>用本系统 Prefab 租约取得共享缓存，不消费输入租约；缓存另持独立 pin。</summary>
-        /// <param name="prefab">来自本资源系统的 Prefab 资产租约。</param>
-        /// <param name="policy">缓存桶的场景寿命策略。</param>
-        /// <param name="scene">SceneScoped 绑定的场景；默认值使用当前活动场景，Persistent 不使用此值分桶。</param>
-        /// <returns>按资产记录、策略和绑定场景复用的正式缓存。</returns>
-        public InstanceCache GetInstanceCache(AssetLease<GameObject> prefab, InstanceCachePolicy policy = InstanceCachePolicy.SceneScoped, Scene scene = default)
+        private static void FailInstanceRequest(ResourceRequest<InstanceLease> request, Exception error)
         {
-            var cache = GetInstanceCacheCore(prefab, policy, scene);
-            cache.Commit();
+            if (error is OperationCanceledException || error is ResourceException { Kind: ResourceError.Canceled })
+            {
+                request.Cancel();
+                return;
+            }
+            request.SetFailure(ResourceRequestStatus.Failed, error as ResourceException ??
+                new ResourceException(ResourceError.LoadFailed, "Prefab instance creation failed.", error));
+        }
+
+        /// <summary>取得或创建共享实例缓存并保留空池；新缓存会独立增持 Prefab，不消费传入租约。</summary>
+        public InstanceCache GetOrCreateInstanceCache(AssetLease<GameObject> prefab,
+            InstanceCachePolicy policy = InstanceCachePolicy.SceneScoped, Scene scene = default)
+        {
+            var cache = GetOrCreateInstanceCacheCore(prefab, policy, scene);
+            cache.KeepEmpty();
             return cache;
         }
 
-        /// <summary>校验 Prefab 与目标策略，复用开放桶或建立持有独立 pin 的新桶。</summary>
-        private InstanceCache GetInstanceCacheCore(AssetLease<GameObject> prefab, InstanceCachePolicy policy, Scene scene)
+        private InstanceCache GetOrCreateInstanceCacheCore(AssetLease<GameObject> prefab, InstanceCachePolicy policy, Scene scene)
         {
-            CheckThread();
-            if (!IsAvailable)
-            {
-                throw new ResourceException(ResourceError.SessionUnavailable, "ResourceSystem is not available.");
-            }
-
+            RequireAvailable();
             if (prefab == null)
             {
                 throw new ArgumentNullException(nameof(prefab));
             }
-
             var asset = prefab.Asset;
-            RequireContentAdmission(prefab.Record.Entry);
-            if (IsProjectBlocked(prefab.Address.ProjectId))
+            if (!ReferenceEquals(prefab.System, this) || asset.scene.IsValid())
             {
-                throw new ResourceException(ResourceError.Busy, "The project is inside its activation barrier.");
+                throw new ArgumentException("A Prefab asset lease from this resource system is required.", nameof(prefab));
             }
-
-            if (!ReferenceEquals(prefab.Record.Owner, this) || asset.scene.IsValid())
-            {
-                throw new ArgumentException("An asset Prefab lease from this authority is required.", nameof(prefab));
-            }
-
             if (policy != InstanceCachePolicy.SceneScoped && policy != InstanceCachePolicy.Persistent)
             {
                 throw new ArgumentOutOfRangeException(nameof(policy));
             }
-
             if (policy == InstanceCachePolicy.SceneScoped)
             {
-                if (scene == default)
-                {
-                    scene = SceneManager.GetActiveScene();
-                }
-
-                InstanceCache.TargetScene(null, scene);
+                scene = InstanceCache.TargetScene(null, scene);
             }
-            var key = (prefab.Record, policy, policy == InstanceCachePolicy.Persistent ? 0 : (int)scene.handle);
+            var key = (prefab.Key, asset, policy, policy == InstanceCachePolicy.Persistent ? 0 : (int)scene.handle);
             if (_openInstanceCaches.TryGetValue(key, out var cache))
             {
                 cache.Prune(8);
@@ -187,44 +258,132 @@ namespace YLFramework.Resource
                     return cache;
                 }
             }
-            var pin = new AssetLease<GameObject>(prefab.Record, prefab.Address, true);
+            AssetLease<GameObject> pin = null;
+            InstanceCache created = null;
+            _instanceOperations++;
             try
             {
+                pin = prefab.Retain("Resource instance cache");
+                MakeInternal(pin);
                 if (!_instanceRoot)
                 {
                     _instanceRoot = new GameObject("YL Resource Instance Cache").transform;
                     UnityEngine.Object.DontDestroyOnLoad(_instanceRoot.gameObject);
                 }
-                cache = new InstanceCache(this, pin, policy, scene, _instanceRoot);
+                cache = created = new InstanceCache(this, pin, policy, scene, _instanceRoot);
                 _openInstanceCaches.Add(key, cache);
-                if (_instanceCaches.Count == 0)
+                _instanceCaches.Add(cache);
+                if (_instanceTick == null)
                 {
                     SceneManager.sceneUnloaded += OnInstanceSceneUnloaded;
+                    _instanceTick = AddTick(TickInstanceCleanup);
                 }
-
-                _instanceCaches.Add(cache);
-                _instanceCleanup.Add(cache);
-                InstallInstanceCleanup();
+                RequireAvailable();
                 return cache;
             }
             catch
             {
-                pin.Dispose();
+                if (created != null)
+                {
+                    created.Dispose();
+                }
+                else
+                {
+                    pin?.Dispose();
+                    if (_instanceCaches.Count == 0 && _instanceRoot)
+                    {
+                        UnityEngine.Object.Destroy(_instanceRoot.gameObject);
+                        _instanceRoot = null;
+                    }
+                }
                 throw;
             }
-        }
-
-        /// <summary>退休当前缓存快照；不销毁借出实例。回调新建的缓存不属于本次快照。</summary>
-        public void ClearInstanceCaches()
-        {
-            CheckThread();
-            foreach (var cache in new List<InstanceCache>(_openInstanceCaches.Values))
+            finally
             {
-                cache.Dispose();
+                _instanceOperations--;
             }
         }
 
-        /// <summary>退休绑定到已卸载场景的开放缓存，不处理 Persistent 桶。</summary>
+        /// <summary>退休当前实例缓存并清除空闲实例；已借出的实例在归还时销毁。</summary>
+        public void RetireInstanceCaches()
+        {
+            CheckThread();
+            List<Exception> errors = null;
+            foreach (var cache in new List<InstanceCache>(_openInstanceCaches.Values))
+            {
+                try
+                {
+                    cache.Dispose();
+                }
+                catch (Exception error)
+                {
+                    (errors ??= new List<Exception>()).Add(error);
+                }
+            }
+            if (errors != null)
+            {
+                throw new AggregateException("Instance cache retirement failed.", errors);
+            }
+        }
+
+        internal bool HasInstanceWork => _pendingInstanceRequests.Count != 0 ||
+            _instanceOperations != 0 || _instanceCaches.Count != 0;
+        internal long InstanceCleanupEpoch => _instanceCleanupEpoch;
+
+        internal bool HasPendingInstanceRequest(ResourceRequest<InstanceLease> input)
+        {
+            CheckThread();
+            return input != null && _pendingInstanceRequests.ContainsKey(input);
+        }
+
+        internal void TrackPendingInstanceEntry(ResourceRequest<InstanceLease> input, InstanceCache.Entry entry)
+        {
+            if (input == null || entry.PendingRequest != null || !_pendingInstanceRequests.TryGetValue(input, out var count))
+            {
+                return;
+            }
+            entry.PendingRequest = input;
+            _pendingInstanceRequests[input] = count + 1;
+        }
+
+        internal void SettlePendingInstanceEntry(InstanceCache.Entry entry)
+        {
+            var input = entry.PendingRequest;
+            entry.PendingRequest = null;
+            if (input != null)
+            {
+                ReleasePendingInstanceRequest(input);
+            }
+        }
+
+        private void ReleasePendingInstanceRequest(ResourceRequest<InstanceLease> input)
+        {
+            if (!_pendingInstanceRequests.TryGetValue(input, out var count))
+            {
+                return;
+            }
+            if (count == 1)
+            {
+                _pendingInstanceRequests.Remove(input);
+            }
+            else
+            {
+                _pendingInstanceRequests[input] = count - 1;
+            }
+        }
+
+        internal bool IsInstancePin(IResourceLease lease)
+        {
+            foreach (var cache in _instanceCaches)
+            {
+                if (cache.OwnsPrefabPin(lease))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private void OnInstanceSceneUnloaded(Scene scene)
         {
             foreach (var cache in new List<InstanceCache>(_openInstanceCaches.Values))
@@ -236,62 +395,54 @@ namespace YLFramework.Resource
             }
         }
 
-        /// <summary>从开放桶索引移除指定旧缓存，保留其尚未销毁实例的清理责任。</summary>
         internal void RetireInstanceCache(InstanceCache cache)
         {
-            var key = (cache.AssetRecord, cache.Policy, cache.Policy == InstanceCachePolicy.Persistent ? 0 : (int)cache.ScopeScene.handle);
+            var key = (cache.Key, cache.Prefab, cache.Policy,
+                cache.Policy == InstanceCachePolicy.Persistent ? 0 : (int)cache.ScopeScene.handle);
             if (_openInstanceCaches.TryGetValue(key, out var current) && ReferenceEquals(current, cache))
             {
                 _openInstanceCaches.Remove(key);
             }
         }
 
-        /// <summary>移除已排空缓存，最后一桶结束时解除场景订阅并销毁共享缓存根。</summary>
         internal void ReleaseInstanceCache(InstanceCache cache)
         {
             _instanceCaches.Remove(cache);
-            _instanceCleanup.Remove(cache);
             if (_instanceCaches.Count != 0)
             {
                 return;
             }
-
             SceneManager.sceneUnloaded -= OnInstanceSceneUnloaded;
+            _instanceTick?.Dispose();
+            _instanceTick = null;
             if (_instanceRoot)
             {
                 UnityEngine.Object.Destroy(_instanceRoot.gameObject);
             }
-
             _instanceRoot = null;
         }
 
-        // 无协程/MonoBehaviour宿主，退出不新建对象；每帧最多8个桶、每桶8项fake-null检查。
-        /// <summary>按帧推进远端、内容、场景与实例清理。</summary>
-        private static void TickInstanceCleanup()
+        private void TickInstanceCleanup()
         {
             if (_isPruningInstances)
             {
                 return;
             }
-
             _isPruningInstances = true;
             try
             {
-                TickRemoteUpdates();
-                TickContentWork();
-                TickSceneCleanup();
-                _authority?.TrimImageCache();
-                var count = Math.Min(8, _instanceCleanup.Count);
-                for (var i = 0; i < count && _instanceCleanup.Count != 0; i++)
+                _instanceCleanupEpoch++;
+                var count = Math.Min(8, _instanceCaches.Count);
+                for (var i = 0; i < count && _instanceCaches.Count != 0; i++)
                 {
-                    if (_instanceCleanupIndex >= _instanceCleanup.Count)
+                    if (_instanceCleanupIndex >= _instanceCaches.Count)
                     {
                         _instanceCleanupIndex = 0;
                     }
-
-                    var cache = _instanceCleanup[_instanceCleanupIndex];
+                    var cache = _instanceCaches[_instanceCleanupIndex];
                     cache.Prune(8);
-                    if (_instanceCleanupIndex < _instanceCleanup.Count && ReferenceEquals(_instanceCleanup[_instanceCleanupIndex], cache))
+                    if (_instanceCleanupIndex < _instanceCaches.Count &&
+                        ReferenceEquals(_instanceCaches[_instanceCleanupIndex], cache))
                     {
                         _instanceCleanupIndex++;
                     }
@@ -301,21 +452,6 @@ namespace YLFramework.Resource
             {
                 _isPruningInstances = false;
             }
-        }
-
-        /// <summary>幂等安装 PlayerLoop 清理回调，不创建 MonoBehaviour 或协程宿主。</summary>
-        private static void InstallInstanceCleanup()
-        {
-            var loop = PlayerLoop.GetCurrentPlayerLoop();
-            var children = new List<PlayerLoopSystem>(loop.subSystemList);
-            if (children.Exists(x => x.type == typeof(InstanceCache)))
-            {
-                return;
-            }
-
-            children.Add(new PlayerLoopSystem { type = typeof(InstanceCache), updateDelegate = TickInstanceCleanup });
-            loop.subSystemList = children.ToArray();
-            PlayerLoop.SetPlayerLoop(loop);
         }
     }
 }

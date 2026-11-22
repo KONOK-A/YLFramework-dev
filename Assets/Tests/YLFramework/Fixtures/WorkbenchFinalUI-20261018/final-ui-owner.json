@@ -1,8 +1,0 @@
-{
-  "createdUtc": "2026-10-18T12:31:32.45688Z",
-  "root": "Assets/YLFramework/Tests/Fixtures/WorkbenchFinalUI-20261018",
-  "evidence": "C:\\Users\\Kano\\AppData\\Local\\Temp\\kilo\\workbench-final-ui-20261018-1153",
-  "projectId": "yl-workbench-final-ui-20261018",
-  "projectGuid": "fb278890e808af04babc4d76bba4278f",
-  "purpose": "Owned UI editing/Undo/save only; generated output stays absent. No build/publish/deploy."
-}

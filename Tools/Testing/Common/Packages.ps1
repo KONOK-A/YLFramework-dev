@@ -61,7 +61,12 @@ function Read-YLPackageCatalog {
                     $assembly['name'] -ceq 'YLFramework.Localization.TMP' -and
                     $version['name'] -ceq 'com.unity.textmeshpro' -and $version['expression'] -ceq '1.0.0' -and
                     $version['define'] -ceq 'YL_LOCALIZATION_TMP'
-                if ($tmpCode) {
+                $legacyPlayerData = $package['id'] -ceq 'com.kano.ylframework' -and $assembly['name'] -ceq 'YLFramework.Editor' -and
+                    $path -ceq 'Editor/YLFramework.Editor.asmdef' -and -not $assembly['player'] -and $defines.Count -eq 0 -and
+                    $version['name'] -is [string] -and $version['name'] -ceq 'com.unity.addressables' -and
+                    $version['expression'] -is [string] -and $version['expression'] -ceq '[1.25.0]' -and
+                    $version['define'] -is [string] -and $version['define'] -ceq 'YL_ADDRESSABLES_LEGACY_PLAYER_DATA'
+                if ($tmpCode -or $legacyPlayerData) {
                     if ($defines.Contains($version['define']) -or -not $versionDefines.Add($version['define'])) {
                         throw 'A native code condition cannot be used as a package catalog assembly gate.'
                     }
@@ -260,10 +265,14 @@ function Add-YLUpmDependencies {
 }
 
 function Read-YLPackageEvidenceJson {
-    param([string] $Path)
+    param([string] $Path, [ValidatePattern('^[0-9a-fA-F]{64}$')][string] $ExpectedSha256)
     $Path = Get-YLTestPath $Path
     if ([IO.FileInfo]::new($Path).Length -gt 16MB) { throw 'Package evidence JSON exceeds the size limit.' }
-    $text = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($Path))
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    if ($PSBoundParameters.ContainsKey('ExpectedSha256') -and [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ine $ExpectedSha256) {
+        throw "Package evidence JSON SHA-256 mismatch: $Path"
+    }
+    $text = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
     $document = [Text.Json.JsonDocument]::Parse($text)
     function Check-Properties([Text.Json.JsonElement] $Element) {
         if ($Element.ValueKind -eq [Text.Json.JsonValueKind]::Object) {

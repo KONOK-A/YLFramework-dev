@@ -22,6 +22,7 @@
       "fileVersion": "2022.3.62",
       "productVersion": "2022.3.62f3c1_1623fc0bbb97",
       "version": "2022.3.62f3c1",
+      "addressables": "1.25.0",
       "testFramework": "1.3.9",
       "ugui": "1.0.0"
     },
@@ -29,6 +30,7 @@
       "fileVersion": "2022.3.62",
       "productVersion": "2022.3.62f3_96770f904ca7",
       "version": "2022.3.62f3",
+      "addressables": "1.25.0",
       "testFramework": "1.3.9",
       "ugui": "1.0.0"
     },
@@ -36,11 +38,386 @@
       "fileVersion": "6000.3.27",
       "productVersion": "6000.3.27f1_672d562a42a7",
       "version": "6000.3.27f1",
+      "addressables": "2.10.3",
       "testFramework": "1.6.0",
       "ugui": "2.0.0"
     }
   ],
   "modules": [
+    {
+      "name": "ResourceAddressablesAuthoringRegression",
+      "shortHostKey": true,
+      "category": "",
+      "assemblies": ["YLFramework.Tests.EditMode"],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "prepareAddressablesConsumerContent": true,
+      "sortingLayer": "",
+      "excludedCategories": ["YL.Resource.Addressables", "YL.Special.ResourceCurrent"],
+      "description": "Preserved atomic output, metadata, six generator orderings, ordinary Player isolation and official Settings cold reads.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared",
+        "Assets/Tests/YLFramework/Fixtures/ResourceCurrent",
+        "Assets/Tests/YLFramework/Fixtures/Core"
+      ],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesGeneratorFixture.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceGeneratorTestWait.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCodeGenerationTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCodeCompilationTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceGeneratorOutputTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceOutputSafetyTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCurrentPublicationTests.cs"
+      ],
+      "playTests": [],
+      "assemblyMetadata": [
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Shared/Editor/YLFramework.Tests.Fixtures.Editor.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/ResourceCurrent/YLFramework.Tests.ResourceCurrent.Player.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Core/Editor/YLFramework.Core.Tests.Fixtures.Editor.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourceAddressablesLifecycle",
+      "shortHostKey": true,
+      "category": "",
+      "assemblies": ["YLFramework.Tests.EditMode"],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "prepareAddressablesContent": true,
+      "sortingLayer": "",
+      "excludedCategories": ["YL.Resource.Addressables"],
+      "description": "Migrated real cross-Play and no-domain-reload ownership, failed startup and foreign Core binding isolation.",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs"],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs", "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs"],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/CoreResourceProviderTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceStartupTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceStartupConfigurationTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogTests.cs"
+      ],
+      "playTests": [],
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourceAddressablesRegression",
+      "shortHostKey": true,
+      "category": "YL.Resource.Addressables.Regression",
+      "assemblies": [],
+      "modes": ["PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "prepareAddressablesContent": true,
+      "prepareCoreContent": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Migrated original Core, scene, Audio, DataAssets and Gameplay ownership regressions with formal Addressables content.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLCoreSmokeModule.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLCoreSmokeView.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLCoreSmokePanel.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLCoreSmokeSceneEntry.cs",
+        "Assets/Tests/YLFramework/Fixtures/Core/Editor",
+        "Assets/Tests/YLFramework/Fixtures/Audio"
+      ],
+      "nativeFixtureInputs": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLCoreSmokeModule.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLCoreSmokeView.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLCoreSmokePanel.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLCoreSmokeSceneEntry.cs"
+      ],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs"],
+      "playTests": [
+        "Assets/Tests/YLFramework/PlayMode/Core/CoreResourcePlayModeTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Core/Scenes/SceneControllerPlayModeTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Core/CoreClassPoolScope.cs",
+        "Assets/Tests/YLFramework/PlayMode/Core/CoreUpdateHostScope.cs",
+        "Assets/Tests/YLFramework/PlayMode/Core/CoreMvcSmokeFixtures.cs",
+        "Assets/Tests/YLFramework/PlayMode/Core/CoreDirectViewPlayModeTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Audio/AudioNamedResourcePlaybackTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/DataAssets/DataAssetResourceTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Equipment/EquipmentResourceTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Equipment/EquipmentResourceProbe.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/AddressablesDomainResourceFixture.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/DomainResourceLeaseTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/DomainReviewExitTests.cs"
+      ],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/Core/YLFramework.Core.Tests.PlayMode.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Core/Editor/YLFramework.Core.Tests.Fixtures.Editor.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework", "com.kano.ylframework.data-assets", "com.kano.ylframework.gameplay"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourceAddressablesLocalization",
+      "shortHostKey": true,
+      "category": "YL.Resource.Addressables.Localization",
+      "assemblies": [],
+      "modes": ["PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "prepareLocalizationContent": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Fresh-host official Localization and native Addressables initialization, Locale/asset ownership and YL shutdown coexistence.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs"],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs", "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs", "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceLocalizationFixture.cs"],
+      "playTests": ["Assets/Tests/YLFramework/PlayMode/Systems/Resource/ResourceLocalizationCoexistenceTests.cs"],
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef", "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"],
+      "packageInputs": ["com.kano.ylframework.localization"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourceAddressablesMigration",
+      "shortHostKey": true,
+      "category": "YL.Resource.Addressables.Migration",
+      "assemblies": [],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Owned native candidate conversion, exact identity, certified field rewrites and foreign official configuration preservation.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared/ResourceMigrationProbe.cs"],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs", "Assets/Tests/YLFramework/Fixtures/Shared/ResourceMigrationProbe.cs"],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesMigration.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesCandidateValidation.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesMigrationTests.cs"
+      ],
+      "playTests": [],
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourceAddressablesConsumers",
+      "shortHostKey": true,
+      "category": "YL.Resource.Addressables.Consumers",
+      "assemblies": [],
+      "modes": ["EditMode", "PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "prepareAddressablesContent": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "DataAssets and Gameplay independent configuration ownership, equipment checkout and official authoring.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/AddressablesEquipmentConsumerProbe.cs"
+      ],
+      "nativeFixtureInputs": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/AddressablesEquipmentConsumerProbe.cs"
+      ],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Equipment/EquipmentAddressablesAuthoringTests.cs"
+      ],
+      "playTests": ["Assets/Tests/YLFramework/PlayMode/Systems/Domain/AddressablesConsumerMigrationTests.cs"],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework", "com.kano.ylframework.data-assets", "com.kano.ylframework.gameplay"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourceAddressablesHybridCLR",
+      "shortHostKey": true,
+      "category": "YL.Resource.Addressables",
+      "assemblies": [],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "nativeSdk": "HybridCLR",
+      "graphics": false,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Real HybridCLR SDK and official Addressables authoring, frozen profile and content-state contracts.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": [],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs"],
+      "editTests": ["Assets/Tests/YLFramework/Integrations/HybridCLR/Addressables/Editor/HybridCLRAddressablesTests.cs"],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/Integrations/HybridCLR/Addressables/Editor/YLFramework.Addressables.HybridCLR.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework.hybridclr"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourceAddressablesRuntime",
+      "shortHostKey": true,
+      "category": "YL.Resource.Addressables.Runtime",
+      "assemblies": [],
+      "modes": ["PlayMode"],
+      "nativeLayout": "Framework",
+      "graphics": true,
+      "prepareAddressablesContent": true,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Real built Addressables content and lifecycle integration for instances, native scenes, dynamic images, Core and Audio.",
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs",
+        "Assets/Tests/YLFramework/Fixtures/CommonSystem/Scenes/CommonNeutral.unity"
+      ],
+      "nativeFixtureInputs": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs"
+      ],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs"],
+      "playTests": [
+        "Assets/Tests/YLFramework/PlayMode/Systems/Resource/ResourceAddressablesInstanceTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Resource/ResourceAddressablesSceneTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Resource/ResourceAddressablesImageTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Resource/ResourceAddressablesCoreAudioTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Resource/ResourceAddressablesCostTests.cs"
+      ],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourceAddressables",
+      "shortHostKey": true,
+      "prepareAddressablesContent": true,
+      "category": "YL.Resource.Addressables",
+      "assemblies": [],
+      "modes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "sortingLayer": "",
+      "excludedCategories": [],
+      "description": "Official Addressables authoring, real package-version and main-only dependency contracts.",
+      "nativeFixtureInputs": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs"
+      ],
+      "suites": ["Daily"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/InstanceLifecycleProbe.cs",
+        "Assets/Tests/YLFramework/Fixtures/CommonSystem/Scenes/CommonNeutral.unity"
+      ],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesAuthoringTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceRequestTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceRequestAwaitTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/AddressablesHandleOwnerTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCostCounterTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesBuildTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesUpdateTests.cs"
+      ],
+      "playTests": [],
+      "assemblyMetadata": [
+        "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"
+      ],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourcePackedCatalog",
+      "shortHostKey": true,
+      "category": "YL.Resource.Addressables.PackedContract",
+      "assemblies": [],
+      "excludedCategories": [],
+      "specialCategory": "YL.Resource.Addressables.PackedContract",
+      "specialModes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "sortingLayer": "",
+      "description": "Opt-in Packed catalog contract with the pinned package's default encoding (2022 JSON; Unity 6 binary).",
+      "nativeFixtureInputs": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"
+      ],
+      "suites": ["Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/CommonSystem/Scenes/CommonNeutral.unity"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesBuildTests.cs"],
+      "playTests": [],
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef"],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
+    {
+      "name": "ResourcePackedCatalogBinary",
+      "shortHostKey": true,
+      "category": "YL.Resource.Addressables.PackedContract",
+      "assemblies": [],
+      "excludedCategories": [],
+      "specialCategory": "YL.Resource.Addressables.PackedContract",
+      "specialModes": ["EditMode"],
+      "nativeLayout": "Framework",
+      "graphics": false,
+      "sortingLayer": "",
+      "description": "Opt-in Packed catalog contract with ENABLE_BINARY_CATALOG on Unity 2022 and Registry Addressables 1.25.0 only.",
+      "nativeFixtureInputs": [
+        "Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs",
+        "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"
+      ],
+      "suites": ["Special"],
+      "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/CommonSystem/Scenes/CommonNeutral.unity"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesBuildTests.cs"],
+      "playTests": [],
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef"],
+      "packageInputs": ["com.kano.ylframework"],
+      "sampleInputs": []
+    },
     {
       "name": "PoolingPlayer",
       "shortHostKey": true,
@@ -313,6 +690,8 @@
     {
       "name": "Core",
       "shortHostKey": true,
+      "prepareAddressablesConsumerContent": true,
+      "prepareCoreContent": true,
       "sortingLayer": "YL.Testing.Core",
       "category": "",
       "assemblies": [
@@ -334,6 +713,7 @@
       "excludedCategories": [
         "YL.Integration.CrossModuleAuthoring",
         "YL.NativeClipboard",
+        "YL.Resource.Addressables",
         "YL.Special.CoreSession"
       ],
       "description": "Actual Core lifecycle, authoring and resource fixtures through the complete UPM package. Real OS clipboard acceptance is the separately executed CoreClipboard desktop profile.",
@@ -354,6 +734,9 @@
       "editTests": [
         "Assets/Tests/YLFramework/EditMode/Core",
         "Assets/Tests/YLFramework/EditMode/Editor/Core",
+        "Assets/Tests/YLFramework/EditMode/Editor/Distribution/FrameworkAssemblyIndependenceTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Distribution/TestDependencyGuard.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Http/HttpRequestTests.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Http/HttpSessionTests.cs"
       ],
@@ -377,6 +760,9 @@
     },
     {
       "name": "Domain",
+      "prepareSceneTemplates": true,
+      "prepareSessionScene": true,
+      "prepareAddressablesConsumerContent": true,
       "category": "YL.Module.Domain",
       "assemblies": [],
       "nativeAssemblies": [
@@ -415,12 +801,15 @@
         "Assets/Tests/YLFramework/Fixtures/Authoring/YLFramework.Tests.Tools.Editor.asmdef",
         "Assets/Tests/YLFramework/EditMode/Editor/Domain",
         "Assets/Tests/YLFramework/EditMode/Editor/Equipment",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs",
         "Assets/Tests/YLFramework/EditMode/Editor/Utilities/TreeViews/E0ReorderableTestWindow.cs",
         "Assets/Editor/YLFrameworkDev"
       ],
       "offlineReferences": [
         "Library/ScriptAssemblies/UnityEngine.UI.dll",
-        "PackageSources/com.kano.ylframework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
+        "Library/ScriptAssemblies/Unity.Addressables.dll",
+        "Library/ScriptAssemblies/Unity.ResourceManager.dll",
+        "Library/ScriptAssemblies/Unity.Profiling.Core.dll"
       ],
       "offlinePackageReferences": [{ "package": "com.unity.nuget.newtonsoft-json", "path": "Runtime/Newtonsoft.Json.dll" }],
       "editTests": [
@@ -437,7 +826,10 @@
         "Assets/Tests/YLFramework/PlayMode/Systems/Mission",
         "Assets/Tests/YLFramework/PlayMode/Systems/Equipment",
         "Assets/Tests/YLFramework/PlayMode/Systems/Reddot",
-        "Assets/Tests/YLFramework/PlayMode/Systems/Domain"
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/AddressablesDomainResourceFixture.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/DomainHostSceneTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/DomainResourceLeaseTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/DomainReviewExitTests.cs"
       ],
       "assemblyMetadata": [
         "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
@@ -455,6 +847,7 @@
     {
       "name": "Gameplay",
       "shortHostKey": true,
+      "prepareAddressablesConsumerContent": true,
       "sortingLayer": "",
       "category": "YL.Module.Domain",
       "assemblies": [],
@@ -464,9 +857,18 @@
       "description": "Daily owner of Skill/Buff/Mission/Equipment behavior and pure Gameplay authoring in main+Gameplay only; Special retains its own two-Play and current four-domain publication/Player evidence.",
       "suites": ["Daily", "Special"],
       "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.gameplay/Runtime"],
-      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Extensions/Domain", "Assets/Tests/YLFramework/Fixtures/Extensions/Equipment", "Assets/Tests/YLFramework/Fixtures/Authoring/Equipment", "Assets/Tests/YLFramework/Fixtures/Authoring/YLFramework.Tests.Tools.Editor.asmdef", "Assets/Tests/YLFramework/EditMode/Editor/Utilities/TreeViews/E0ReorderableTestWindow.cs", "Assets/Editor/YLFrameworkDev"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Extensions/Domain", "Assets/Tests/YLFramework/Fixtures/Extensions/Equipment", "Assets/Tests/YLFramework/Fixtures/Authoring/Equipment", "Assets/Tests/YLFramework/Fixtures/Authoring/YLFramework.Tests.Tools.Editor.asmdef", "Assets/Tests/YLFramework/EditMode/Editor/Utilities/TreeViews/E0ReorderableTestWindow.cs", "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs", "Assets/Editor/YLFrameworkDev"],
       "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Skill", "Assets/Tests/YLFramework/EditMode/Systems/Buff", "Assets/Tests/YLFramework/EditMode/Systems/Mission", "Assets/Tests/YLFramework/EditMode/Systems/Equipment", "Assets/Tests/YLFramework/EditMode/Editor/Domain", "Assets/Tests/YLFramework/EditMode/Editor/Equipment"],
-      "playTests": ["Assets/Tests/YLFramework/PlayMode/Systems/Skill", "Assets/Tests/YLFramework/PlayMode/Systems/Buff", "Assets/Tests/YLFramework/PlayMode/Systems/Mission", "Assets/Tests/YLFramework/PlayMode/Systems/Equipment", "Assets/Tests/YLFramework/PlayMode/Systems/Domain"],
+      "playTests": [
+        "Assets/Tests/YLFramework/PlayMode/Systems/Skill",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Buff",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Mission",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Equipment",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/AddressablesDomainResourceFixture.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/DomainHostSceneTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/DomainResourceLeaseTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/DomainReviewExitTests.cs"
+      ],
       "excludedCategories": ["YL.Special.Session", "YL.Special.EquipmentSession", "YL.Special.GameplaySession", "YL.Special.MainEditor", "YL.C1EditorAcceptance"],
       "specialBackend": "SessionNative",
       "specialModes": ["EditMode"],
@@ -481,6 +883,7 @@
     {
       "name": "Equipment",
       "shortHostKey": true,
+      "prepareAddressablesConsumerContent": true,
       "sortingLayer": "",
       "category": "YL.Module.Domain",
       "assemblies": [],
@@ -490,7 +893,7 @@
       "description": "Independent Equipment two-Play exit-hook and settings-admission evidence in main+Gameplay; ordinary behavior and authoring execute in Gameplay Daily.",
       "suites": ["Special"],
       "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.gameplay/Runtime"],
-      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Extensions/Equipment", "Assets/Tests/YLFramework/Fixtures/Authoring/Equipment", "Assets/Tests/YLFramework/Fixtures/Authoring/YLFramework.Tests.Tools.Editor.asmdef", "Assets/Tests/YLFramework/EditMode/Systems/Equipment/EquipmentLifecycleTests.cs"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/Extensions/Equipment", "Assets/Tests/YLFramework/Fixtures/Authoring/Equipment", "Assets/Tests/YLFramework/Fixtures/Authoring/YLFramework.Tests.Tools.Editor.asmdef", "Assets/Tests/YLFramework/EditMode/Systems/Equipment/EquipmentLifecycleTests.cs", "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs"],
       "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Equipment/EquipmentTwoPlayTests.cs", "Assets/Tests/YLFramework/EditMode/Editor/Equipment/EquipmentSettingsAdmissionTests.cs"],
       "playTests": [],
       "excludedCategories": ["YL.Special.EquipmentSession"],
@@ -711,7 +1114,9 @@
       ],
       "offlineReferences": [
         "Library/ScriptAssemblies/UnityEngine.UI.dll",
-        "PackageSources/com.kano.ylframework/Plugins/BouncyCastle/BouncyCastle.Cryptography.dll"
+        "Library/ScriptAssemblies/Unity.Addressables.dll",
+        "Library/ScriptAssemblies/Unity.ResourceManager.dll",
+        "Library/ScriptAssemblies/Unity.Profiling.Core.dll"
       ],
       "offlinePackageReferences": [{ "package": "com.unity.nuget.newtonsoft-json", "path": "Runtime/Newtonsoft.Json.dll" }],
       "nativeSources": [
@@ -821,6 +1226,7 @@
       "name": "DataAssets",
       "prepareSceneTemplates": true,
       "prepareSessionScene": true,
+      "prepareAddressablesConsumerContent": true,
       "category": "",
       "assemblies": ["YLFramework.Tests.EditMode", "YLFramework.Tests.PlayMode"],
       "nativeLayout": "Framework",
@@ -833,7 +1239,7 @@
       "description": "Current DataAssets author-generated roots/rows, identity, resources, formal publication and session contracts; no frozen assembly input or Excel/Localization/Save feature inputs.",
       "suites": ["Daily", "Special"],
       "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.data-assets/Runtime"],
-      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/DataAssets/Runtime", "Assets/Editor/YLFrameworkDev"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/DataAssets/Runtime", "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs", "Assets/Tests/YLFramework/PlayMode/Systems/Domain/AddressablesDomainResourceFixture.cs", "Assets/Editor/YLFrameworkDev"],
       "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/DataAssets", "Assets/Tests/YLFramework/EditMode/Editor/DataAssets"],
       "playTests": ["Assets/Tests/YLFramework/PlayMode/Systems/DataAssets"],
       "assemblyMetadata": ["PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef", "PackageSources/com.kano.ylframework.data-assets/Runtime/YLFramework.DataAssets.asmdef", "PackageSources/com.kano.ylframework.data-assets/Editor/YLFramework.DataAssets.Editor.asmdef", "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/PlayMode/YLFramework.Tests.PlayMode.asmdef"],
@@ -867,6 +1273,7 @@
       "name": "Data",
       "prepareSceneTemplates": true,
       "prepareSessionScene": true,
+      "prepareAddressablesConsumerContent": true,
       "shortHostKey": true,
       "category": "YL.Module.Data",
       "assemblies": [],
@@ -876,12 +1283,13 @@
       "sortingLayer": "",
       "excludedCategories": [
         "YL.Special.Session",
+        "YL.Special.DataComposition",
         "YL.Special.MainEditor",
         "YL.Package.SaveStandalone"
       ],
-      "specialCategory": "YL.Special.Session",
+      "specialCategory": "YL.Special.DataComposition",
       "disableDomainReload": true,
-      "description": "Daily explicit Save/dictionary/source-identity and current Data+Language authoring composition only. Compiled support retains distinct combined Special sessions/publication, not duplicate standalone Daily execution.",
+      "description": "Daily Data+Language authoring and Save composition. Special runs the combined two-Play session; standalone publication stays in DataAssets and Localization.",
       "suites": [
         "Daily",
         "Special"
@@ -904,6 +1312,8 @@
         "Assets/Tests/YLFramework/EditMode/Systems/DataAssets",
         "Assets/Tests/YLFramework/EditMode/Editor/Localization",
         "Assets/Tests/YLFramework/EditMode/Editor/DataAssets",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs",
+        "Assets/Tests/YLFramework/PlayMode/Systems/Domain/AddressablesDomainResourceFixture.cs",
         "Assets/Tests/YLFramework/PlayMode/Systems/Localization",
         "Assets/Tests/YLFramework/PlayMode/Systems/DataAssets"
       ],
@@ -1244,6 +1654,7 @@
     },
     {
       "name": "Audio",
+      "prepareAddressablesConsumerContent": true,
       "prepareSceneTemplates": true,
       "prepareSessionScene": true,
       "shortHostKey": true,
@@ -1257,6 +1668,7 @@
       "sortingLayer": "",
       "excludedCategories": [
         "YL.Module.Resource",
+        "YL.Resource.Addressables",
         "YL.Special.AudioNative",
         "YL.Special.AudioSession"
       ],
@@ -1273,10 +1685,8 @@
         "Assets/Tests/YLFramework/Fixtures/Shared",
         "Assets/Tests/YLFramework/Fixtures/Audio",
         "Assets/Tests/YLFramework/Acceptance/Core/AudioAcceptanceEntry.cs",
-        "Assets/Tests/YLFramework/PlayMode/Systems/Resource/Resources/YLResource81/Message.txt",
         "Assets/Tests/YLFramework/EditMode/Editor/Distribution/TestDependencyGuard.cs",
-        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs",
         "Assets/Tests/YLFramework/EditMode/Editor/Utilities/TreeViews/E0ReorderableTestWindow.cs",
         "Assets/Tests/YLFramework/PlayMode/Systems/Action/ActionFixtureSession.cs",
@@ -1304,6 +1714,7 @@
       "name": "Resource",
       "prepareSceneTemplates": true,
       "prepareSessionScene": true,
+      "prepareAddressablesConsumerContent": true,
       "shortHostKey": true,
       "category": "YL.Module.Resource",
       "assemblies": [],
@@ -1317,7 +1728,7 @@
         "YL.Special.ResourceSession"
       ],
       "specialCategory": "YL.Special.ResourceSession",
-      "description": "Bounded real catalog/codec/native bundle build with an explicit Resource session profile; no Workbench/Cost/TLS/download evidence replay.",
+      "description": "ResourceAddress value and contract tests; Special exercises real Addressables ownership across two Play sessions.",
       "suites": [
         "Daily",
         "Special"
@@ -1327,13 +1738,10 @@
       ],
       "nativeSources": [
         "Assets/Tests/YLFramework/Fixtures/Shared",
-        "Assets/Tests/YLFramework/PlayMode/Systems/Resource/Resources/YLResource81/Message.txt",
-        "Assets/Editor/YLFrameworkDev"
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs"
       ],
       "editTests": [
         "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs"
       ],
       "playTests": [],
@@ -1349,6 +1757,8 @@
     },
     {
       "name": "AudioNative",
+      "prepareAddressablesConsumerContent": true,
+      "nativeUnityPackages": ["com.unity.inputsystem"],
       "prepareSceneTemplates": true,
       "prepareSessionScene": true,
       "shortHostKey": true,
@@ -1362,7 +1772,7 @@
       "graphics": true,
       "sortingLayer": "",
       "excludedCategories": [],
-      "description": "Original Audio native bundle, PCM output and lifecycle plus current saved inputs in two graphical native Players; separate from Daily and AudioSession.",
+      "description": "Official Audio resource builds, PCM output and lifecycle in two graphical native Players; separate from Daily and AudioSession.",
       "suites": ["Special"],
       "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
       "nativeSources": [
@@ -1370,9 +1780,7 @@
         "Assets/Tests/YLFramework/Fixtures/Audio",
         "Assets/Tests/YLFramework/Acceptance/Core/AudioAcceptanceEntry.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Audio/AudioCoreTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs"
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs"
       ],
       "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared"],
       "editTests": [
@@ -1383,7 +1791,8 @@
       "assemblyMetadata": [
         "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
         "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef",
-        "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef"
+        "Assets/Tests/YLFramework/EditMode/Foundation/YLFramework.Foundation.Tests.EditMode.asmdef",
+        "Assets/Tests/YLFramework/Acceptance/Core/YLFramework.UI.Acceptance.asmdef"
       ],
       "packageInputs": ["com.kano.ylframework"],
       "sampleInputs": []
@@ -1403,42 +1812,18 @@
       "graphics": true,
       "sortingLayer": "",
       "excludedCategories": [],
-      "description": "ArtifactStore transactions, recovery, root floors, cancellation, signatures, TLS downloads, native CNG content crypto and current v2 control-format regressions; original 21-source baseline is recorded separately.",
+      "description": "Official Addressables download, catalog checking and startup-only update guard; private transactions and encryption are retired.",
       "suites": ["Special"],
       "sourceEnvironment": [],
       "outputEnvironment": ["YL_TEST_OUTPUT_ROOT"],
       "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
       "nativeSources": [
         "Assets/Tests/YLFramework/Fixtures/Shared",
-        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceTlsServer.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs"
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs"
       ],
       "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared"],
       "editTests": [
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ArtifactStoreQueryTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.ControlRecords.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.Native.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.Query.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.Recovery.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.Remote.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.RemoteDownload.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.RemoteReview.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.RemoteSecurity.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceContentUpdateTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceContentUpdateTests.CheckIO.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceContentUpdateTests.Encrypted.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceContentUpdateTests.RemoteIO.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSignatureTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceDownloadTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceDownloadTests.Tls.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceContentTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceContentTests.Envelope.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceContentTests.Native.cs",
-        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceContentBuildTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceContentBuildTests.Publishing.cs"
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesUpdateTests.cs"
       ],
       "playTests": [],
       "assemblyMetadata": [
@@ -1463,41 +1848,20 @@
       "graphics": true,
       "sortingLayer": "",
       "excludedCategories": [],
-      "description": "Current Resource author asset persistence and actual Build/Publish/Deploy consumed by two independent Windows Players; never rewrites frozen migration fixtures.",
+      "description": "Official packed content read by two independent Windows Players without changing frozen migration fixtures.",
       "suites": ["Special"],
       "outputEnvironment": ["YL_TEST_OUTPUT_ROOT"],
       "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
       "nativeSources": [
         "Assets/Tests/YLFramework/Fixtures/Shared",
         "Assets/Tests/YLFramework/Fixtures/ResourceCurrent",
-        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceOutputSafetyTests.cs",
-        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceGeneratorTestWait.cs"
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs"
       ],
       "nativeFixtureInputs": [
         "Assets/Tests/YLFramework/Fixtures/Shared",
-        "Assets/Tests/YLFramework/Fixtures/ResourceCurrent",
-        "Assets/Tests/YLFramework/Fixtures/CommonSystem/ResourceProject.asset",
-        "Assets/Tests/YLFramework/Fixtures/Core/YLCoreResourceModule/ResourceProject.asset",
-        "Assets/Tests/YLFramework/Fixtures/ResourceMultiDirectory-20261018/Legacy/LegacyProject.asset",
-        "Assets/Tests/YLFramework/Fixtures/ResourceMultiDirectory-20261018/Legacy/Content/GeneratedAtlases/AutomaticAtlases.asset",
-        "Assets/Tests/YLFramework/Fixtures/ResourceMultiDirectory-20261018/Modern/ModernProject.asset",
-        "Assets/Tests/YLFramework/Fixtures/ResourceMultiDirectory-20261018/Modern/ModernRecipe.asset",
-        "Assets/Tests/YLFramework/Fixtures/ResourceMultiDirectory-20261018/Modern/Generated/OwnedAtlases/AutomaticAtlases.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchUX1-20261017/WorkbenchProject.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchUX1-20261017/SameDisplayNameProject.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchUX2To5-20261017/WorkbenchProject.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchUX2To5-20261017/MismatchProject.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchUX2To5-20261017/WorkbenchRecipe.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchUX2To5-20261017/PartialFailureRecipe.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchUX2To5-20261017/Content/GeneratedAtlases/AutomaticAtlases.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchPolish-20261018/WorkbenchProject.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchPolish-20261018/PartialFailureRecipe.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchFinalUI-20261018/FinalUIProject.asset",
-        "Assets/Tests/YLFramework/Fixtures/WorkbenchFinalUI-20261018/Content/GeneratedAtlases/AutomaticAtlases.asset"
+        "Assets/Tests/YLFramework/Fixtures/ResourceCurrent"
       ],
-      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCurrentPublicationTests.cs", "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceEditorTests.cs"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCurrentPublicationTests.cs"],
       "playTests": [],
       "assemblyMetadata": [
         "PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef",
@@ -1563,7 +1927,18 @@
       "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
       "nativeSources": ["Assets/Editor/YLFrameworkDev", "Assets/Tests/YLFramework/Fixtures/Core", "Assets/Tests/YLFramework/Fixtures/ResourceCurrent"],
       "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/ResourceCurrent"],
-      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Resource", "Assets/Tests/YLFramework/EditMode/Editor/Resource", "Assets/Tests/YLFramework/EditMode/Editor/Distribution/TestDependencyGuard.cs", "Assets/Tests/YLFramework/EditMode/Editor/Core"],
+      "editTests": [
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesGeneratorFixture.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceGeneratorTestWait.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCodeGenerationTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCodeCompilationTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceGeneratorOutputTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceOutputSafetyTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCurrentPublicationTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Distribution/TestDependencyGuard.cs",
+        "Assets/Tests/YLFramework/EditMode/Editor/Core"
+      ],
       "playTests": [],
       "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/EditMode/Editor/Core/YLFramework.Core.Editor.Tests.asmdef"],
       "packageInputs": ["com.kano.ylframework"],
@@ -1571,6 +1946,8 @@
     },
     {
       "name": "HybridCLR",
+      "shortHostKey": true,
+      "prepareAddressablesConsumerContent": true,
       "prepareSceneTemplates": true,
       "prepareSessionScene": true,
       "category": "",
@@ -1584,7 +1961,7 @@
       "description": "Approved Git SDK, explicitly imported HybridCLR Module sample and both original test assemblies in an owned host. Editor simulation and compilation are not native Player acceptance.",
       "suites": ["Daily"],
       "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime", "PackageSources/com.kano.ylframework.hybridclr/Runtime"],
-      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs"],
       "editTests": ["Assets/Tests/YLFramework/Integrations/HybridCLR/EditMode"],
       "playTests": ["Assets/Tests/YLFramework/Integrations/HybridCLR/PlayMode"],
       "assemblyMetadata": [
@@ -1592,30 +1969,33 @@
         "PackageSources/com.kano.ylframework.hybridclr/Runtime/YLFramework.HybridCLR.asmdef",
         "PackageSources/com.kano.ylframework.hybridclr/Editor/YLFramework.HybridCLR.Editor.asmdef",
         "Assets/Tests/YLFramework/Integrations/HybridCLR/EditMode/YLFramework.HybridCLR.Tests.EditMode.asmdef",
-        "Assets/Tests/YLFramework/Integrations/HybridCLR/PlayMode/YLFramework.HybridCLR.Tests.PlayMode.asmdef"
+        "Assets/Tests/YLFramework/Integrations/HybridCLR/PlayMode/YLFramework.HybridCLR.Tests.PlayMode.asmdef",
+        "Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef"
       ],
       "packageInputs": ["com.kano.ylframework.hybridclr"],
       "sampleInputs": [{ "package": "com.kano.ylframework.hybridclr", "name": "HybridCLR Module" }]
     },
     {
       "name": "ResourceSamples",
+      "shortHostKey": true,
       "prepareSceneTemplates": true,
       "prepareSessionScene": true,
+      "prepareAddressablesConsumerContent": true,
       "category": "",
-      "assemblies": ["YLFramework.ResourceStartup.Sample.Tests.EditMode"],
+      "assemblies": ["YLFramework.Tests.EditMode", "YLFramework.ResourceStartup.Sample.Tests.EditMode"],
       "modes": ["EditMode"],
       "nativeLayout": "Framework",
       "graphics": true,
       "sortingLayer": "",
-      "excludedCategories": [],
-      "description": "Explicitly imported Resource Startup sample behavior, serialization and compilation acceptance.",
+      "excludedCategories": ["YL.Resource.Addressables"],
+      "description": "Explicitly imported official Addressables sample, serialized references, no implicit native startup and safe Editor guard.",
       "suites": ["Daily"],
       "runtimeSources": ["PackageSources/com.kano.ylframework/Runtime"],
-      "nativeSources": ["Assets/Editor/YLFrameworkDev", "Assets/Tests/YLFramework/EditMode/AssemblyInfo.cs", "Assets/Tests/YLFramework/Fixtures/ResourceCurrent"],
-      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/Fixtures/ResourceCurrent"],
-      "editTests": ["Assets/Tests/YLFramework/EditMode/Systems/Resource", "Assets/Tests/YLFramework/EditMode/Editor/Resource", "Assets/Tests/YLFramework/EditMode/Editor/Distribution/TestDependencyGuard.cs", "Assets/Tests/YLFramework/EditMode/Samples/ResourceStartup"],
+      "nativeSources": ["Assets/Tests/YLFramework/Fixtures/Shared", "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs"],
+      "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs"],
+      "editTests": ["Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceStartupSampleTests.cs", "Assets/Tests/YLFramework/EditMode/Samples/ResourceStartup"],
       "playTests": [],
-      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef"],
+      "assemblyMetadata": ["Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef", "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef", "Assets/Tests/YLFramework/EditMode/Samples/ResourceStartup/YLFramework.ResourceStartup.Sample.Tests.EditMode.asmdef"],
       "packageInputs": ["com.kano.ylframework"],
       "sampleInputs": [{ "package": "com.kano.ylframework", "name": "Resource Startup" }]
     }

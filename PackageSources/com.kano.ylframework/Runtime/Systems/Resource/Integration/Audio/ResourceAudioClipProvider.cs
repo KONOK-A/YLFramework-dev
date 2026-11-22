@@ -6,13 +6,13 @@ using YLFramework.Update;
 
 namespace YLFramework.Audio
 {
-    /// <summary>正式 Audio 资源后端。key 为所属 ProjectId 内的逻辑地址，不是 Bundle 名或 Resources 物理路径。</summary>
+    /// <summary>正式 Audio 资源后端。ProjectId/key 投影为官方地址，不是 Bundle 名或 Resources 物理路径。</summary>
     /// <remarks>由显式初始化的 ResourceSystem.GetAudioClipProvider 装配。每次成功交付独立 AssetLease，
     /// Audio 只管理播放/闲置使用；取消等待者、Audio Shutdown 不关闭 Resource，会话退出由原 Resource 请求完成收尾。</remarks>
     public sealed class ResourceAudioClipProvider : IAudioClipProvider
     {
         private readonly ResourceSystem _resources;
-        /// <summary>固定资源项目；传入 key 只在此项目的目录内解析。</summary>
+        /// <summary>固定地址命名空间；不要求存在旧 YL Catalog。</summary>
         public string ProjectId
         {
             get;
@@ -26,8 +26,19 @@ namespace YLFramework.Audio
             ProjectId = projectId;
         }
 
-        /// <summary>在主线程同步取得独立 AudioClip 资产租约，包装后由 Audio 消费者负责归还。</summary>
-        public AudioClipLease Load(string key) => Wrap(_resources.Acquire<AudioClip>(new ResourceAddress(ProjectId, key)));
+        /// <summary>只同步保留已加载的 AudioClip；未命中时要求预加载或异步取得，不阻塞官方生产。</summary>
+        public AudioClipLease Load(string key)
+        {
+            _resources.RequireAvailable();
+            var address = new ResourceAddress(ProjectId, key);
+            string resourceKey = address.ProjectId + "/" + address.Path;
+            if (!_resources.TryAcquireLoaded<AudioClip>(resourceKey, out var lease))
+            {
+                throw new ResourceException(ResourceError.InProgress,
+                    "The AudioClip is not loaded. Preload it or use LoadAsync: " + resourceKey);
+            }
+            return Wrap(lease);
+        }
 
         /// <summary>在主线程启动并交付独立音频租约或错误，允许完成回调在本方法返回前执行。</summary>
         /// <param name="key">固定项目内的精确逻辑地址，不解析 Bundle 名或附加子资产片段。</param>
@@ -156,12 +167,19 @@ namespace YLFramework.Audio
             }
         }
 
-        /// <summary>将资产租约交给 Audio 租约保活，并附加内容接纳复核；包装失败立即归还原租约。</summary>
+        /// <summary>将独立资产责任交给 Audio，交付时复核原租约而不访问旧资源记录；包装失败立即归还。</summary>
         private static AudioClipLease Wrap(AssetLease<AudioClip> lease)
         {
             try
             {
-                return new AudioClipLease(lease.Asset, lease, () => lease.Record.Owner.RequireContentAdmission(lease.Record.Entry));
+                return new AudioClipLease(lease.Asset, lease, () =>
+                {
+                    if (!lease.IsValid)
+                    {
+                        throw new ResourceException(ResourceError.SessionUnavailable, "The Audio asset lease is no longer valid.");
+                    }
+                    _ = lease.Asset;
+                });
             }
             catch
             {

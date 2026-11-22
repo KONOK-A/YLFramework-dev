@@ -6,7 +6,7 @@
 
 - 基础机制可独立使用，不要求创建 `YLFrameworkRoot` 或启动业务 Module。
 - `YLFramework.Runtime` / `YLFramework.Editor` 是两个主体程序集；Foundation、Core、Systems、Utilities 是包内职责区，不是四个独立安装包。
-- 包含正式 UI 模板、BouncyCastle 与许可证、使用手册、Roslyn Analyzer，以及需显式导入的 Resource Startup 样例。
+- 包含正式 UI 模板、许可证、使用手册、Roslyn Analyzer，以及需显式导入的 Resource Startup 样例。资源加载依赖官方 Addressables。
 - DOTween Action 适配源码随主包提供，只有准备外置 SDK 和 `DOTWEEN` 时才编译；主包不捆绑 SDK。
 - 配置、存档、本地化、玩法等选装能力各自有独立包；测试、仓库工具、MCP 和开发宿主设置不属于本包。
 

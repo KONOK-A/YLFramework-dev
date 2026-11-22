@@ -55,9 +55,41 @@ public sealed class MissionExample : MonoBehaviour
 
 ## 配置资源与初始化
 
-`AddConfig` 借用已经加载的根，不取得外部资产所有权。`LoadConfig(resources, address)` 同步取得根租约，由对应 Manager 持有到 `RemoveConfig` 或 `Shutdown`；登记失败会归还本次租约。
+`AddConfig` 借用已经加载的根，不取得外部资产所有权。按地址加载前由应用启动并持有 `ResourceStartup`，业务借用其 `Resources`。根与 Prefab 使用官方 Addressables 条目：`new ResourceAddress("game", "config/skills")` 对应唯一地址 `game/config/skills`，不挂载私有目录或维护另一套类型清单。
 
-使用资源入口前由应用初始化 `ResourceSystem`，在 `ResourceProjectMount` 的 `assetTypes` 或本地目录类型清单中登记实际根及直接加载的具体资产类型。反射创建的技能、Buff、任务、装备 CLR 类型须为具体类型、满足各域构造要求，并由应用在 IL2CPP 中保留。资源类型清单不替代业务反射 / AOT 保留。
+| 入口 | 行为 |
+| --- | --- |
+| `Manager.AddConfig(root)` | 同步登记外部已加载根；外部 owner 保活 |
+| `Manager.LoadConfig(resources, address)` | 同步只增持 YL 已持有的根；冷资源抛 `ResourceException`，`Kind == ResourceError.InProgress` |
+| `await Manager.LoadConfigAsync(resources, address)` | 四个 Manager 均提供，返回 `Task`；异步取得并登记根，成功后由对应 Manager 持有独立 `AssetLease` |
+
+例如在 Unity 主线程 async 方法中初始化四域：
+
+```csharp
+using YLFramework.Buff;
+using YLFramework.Equipment;
+using YLFramework.Mission;
+using YLFramework.Resource;
+using YLFramework.Skill;
+
+// resources 是应用已启动的 ResourceStartup.Resources。
+await SkillManager.LoadConfigAsync(resources, new ResourceAddress("game", "config/skills"));
+await BuffManager.LoadConfigAsync(resources, new ResourceAddress("game", "config/buffs"));
+await MissionManager.LoadConfigAsync(resources, new ResourceAddress("game", "config/missions"));
+await EquipmentManager.LoadConfigAsync(resources, new ResourceAddress("game", "config/equipment"));
+```
+
+这些操作各自登记，不是四域事务；后一步失败不回滚前面的成功根。应用按自身登记记录收尾，不在异常处理中无条件关闭他人共用的领域。配置根租约不是 Task 的返回值，不对 Task 使用 `using`；由登记方 `RemoveConfig` 或对应 Manager `Shutdown()` 归还。条目借读根，运行时副本与实例责任仍按各域规则管理。
+
+同步入口不会查找或阻塞加载冷资产，也不因外部 Addressables 已加载就自动命中。确需同步登记时先异步预加载，调用时保持租约有效：
+
+```csharp
+using var warm = await resources.AcquireAsync<SkillsConfig>("game/config/skills");
+SkillManager.LoadConfig(resources, new ResourceAddress("game", "config/skills"));
+// Manager 已增持自己的根租约；warm 释放不移除登记。
+```
+
+反射创建的技能、Buff、任务、装备 CLR 类型须为具体类型、满足各域构造要求，并由应用在 IL2CPP 中保留。采用官方资源内容流程不替代业务反射 / AOT 保留。
 
 Manager 不返回 DataAssets 式的每消费者登记 token。配置登记和移除应由一个明确的应用所有者管理；宿主组件不能在自己退出时随意移除其他宿主共用的根。不同域的 ID 互不混合，Skill / Buff / Equipment 各自在全部已登记根之间要求 ID 唯一；Mission 的任务 ID 属于各根，参数按根内名称查询。
 
@@ -106,21 +138,38 @@ Mission 没有宿主 `CloseHost`。`Reset(rootName)` 保留登记和租约，但
 
 宿主实现 `IEquippable`，持有稳定且已初始化的 `List<IEquipment> Equipments` 和 `CanEquip`；运行装备实现 `IEquipment` 的定义、穿戴者与四个生命周期回调。
 
-`EquipmentType.Asset` 由 Resource 实例化 Prefab，根节点必须恰有一个 `IEquipment` 组件；`Script` 使用有 public 无参构造、非抽象且不继承 `UnityEngine.Object` 的普通类。`projectName/assetName` 是装备 Prefab 的 ProjectId / Path，与图标地址独立。
+`EquipmentType.Asset` 由 Resource 取得 Prefab 并通过 `Rent` 复用或新建实例，根节点必须恰有一个 `IEquipment` 组件；`Script` 使用有 public 无参构造、非抽象且不继承 `UnityEngine.Object` 的普通类。`projectName/assetName` 投影为官方 Prefab 地址 `projectName/assetName`，与图标地址独立。
 
 1. `CreateEquipment(id)` 为自有实例赋共享 `EquipmentData`、空 `Equipper` 后调用 `OnLoaded`，不承诺早于 Prefab 的原生 `Awake/OnEnable`。
 2. `Equip(host, equipment)` 返回 `EquipState`；同一实例已有挂载时返回 `AlreadyEquipped`，同 ID 的不同实例可以同时装备。`CreateAndEquip` 合并创建与尝试挂接。
 3. `Unequip(equipment, false)` 卸下但保留可重装的自有实例；默认 `destroy == true` 会安排归还。最终用 `DestroyEquipment`、移除所属根或 `Shutdown` 归还保留实例。
 
+Asset 冷路径使用返回 `Task<IEquipment>` 的 `CreateEquipmentAsync(id)` 或 `CreateAndEquipAsync(host, id)`。它们先 `AcquireAsync`，再用已持有 Prefab 进入同一套 `Rent` 与生命周期路径，不改成每次强制新建：
+
+```csharp
+// 先 await EquipmentManager.LoadConfigAsync(...)；host 由业务提供并初始化 Equipments。
+var equipment = await EquipmentManager.CreateAndEquipAsync(host, 1001);
+if (equipment == null)
+{
+    // 本次业务许可拒绝或挂接未成功，不是资源加载错误的替代结果。
+    return;
+}
+// 宿主退出时 EquipmentManager.CloseHost(host)，不保留已归还的 equipment 引用。
+```
+
+`CreateEquipment/CreateAndEquip` 保留 Script 和已加载 Prefab 的同步热路径；Asset 未命中热资源时抛 `ResourceException`，`Kind == ResourceError.InProgress`，应改异步入口或显式先预载。冷地址错误、组件数不等于 1、配置/生命周期异常均明确失败，不静默转换为 null。
+
 Manager 创建的 Asset / Script 实例分别持有 `InstanceLease` 或 CLR 池责任。直接 `Equip` 外部对象只借用，不转移创建、销毁或回池责任，外部 owner 保活定义和资源；自有对象归还触发 `OnUnloaded`，外部对象只解除挂载。
 
 回调失败会撤销本域挂载并清理，不回滚任意外部属性或背包副作用。归还后的原始 `IEquipment` 引用不得继续使用，没有跨 checkout 的公开 Handle 保护。
 
-宿主退出用 `CloseHost`，关闭屏障期间拒绝回调重新装备到该宿主，延迟归还在最外层操作收尾时完成；完整收尾后仍可重新使用有效宿主。临时卸装可用 `Unequip/UnequipAll` 并自行决定保留或归还实例。源定义不保存耐久、冷却等实例状态。
+宿主退出用 `CloseHost`，同时取消该宿主尚在等待 Prefab 的创建请求，不取消其他宿主的等待。`RemoveConfig` 取消使用该配置的在途装备创建，`Shutdown` 取消本域等待；原生加载仍按 Resource 协议排空，关闭后不发布迟到实例。等待被取消时 Task 以取消结束，其他加载或生命周期错误由 await 传播。
+
+关闭屏障期间拒绝回调重新装备到该宿主，延迟归还在最外层操作收尾时完成；完整收尾后仍可重新使用有效宿主。临时卸装可用 `Unequip/UnequipAll` 并自行决定保留或归还实例。源定义不保存耐久、冷却等实例状态。
 
 ## 作者工具与格式
 
-窗口分别为 `Window/YLFramework/SkillSystem`、`Window/YLFramework/BuffSystem/Buff` / `Effect`、`Window/YLFramework/MissionSystem`、`Window/YLFramework/EquipmentSystem`。支持对应域的列表重排、字段 Undo 和资源预览；各工具按本域所有权删除自有条目，外部引用只解除关联，冲突不覆盖。
+窗口分别为 `Window/YLFramework/SkillSystem`、`Window/YLFramework/BuffSystem/Buff` / `Effect`、`Window/YLFramework/MissionSystem`、`Window/YLFramework/EquipmentSystem`。支持对应域的列表重排、字段 Undo 和资源预览；各工具按本域所有权删除自有条目，外部引用只解除关联，冲突不覆盖。资源命名空间与地址选择读取官方 Addressables Entries，按主资产类型筛选，不依赖旧项目目录；手工输入仍须满足同一地址规则。
 
 装备条目位于 `Assets/YLFrameworkData/Equipment/<根GUID>/`，显式刷新才补入本根条目，getter 不扫描或写盘。Buff 的项目设置精确位于：
 
@@ -148,10 +197,12 @@ ProjectSettings/YLFramework/Core/YLFramework.Editor.Buff.BuffSystemSettings.asse
 
 - 在 Unity 主线程访问资产、Manager 和宿主。Skill / Buff 管理器接入更新后按需收尾；宿主的集合通过 Manager 修改，不直接清列表绕过效果、回调与池责任。
 - 宿主停用、销毁或场景结束时明确处理本方实例；普通 CLR 宿主必须显式调用关闭入口。`CloseHost` 不销毁宿主，完整收尾后可再次装备；Equipment 的回调屏障与延迟归还见上文。
-- 系统退出分别调用自身 `Shutdown`，只归还本域的更新、池、回调和租约。关闭任意业务 Module 不等于关闭领域系统，也不应关闭应用共享的 `ResourceSystem` 来代替精确释放。
+- 关闭顺序是先停止业务借读和新建请求，再用 `CloseHost` 收尾 Skill / Buff / Equipment 宿主，登记方移除自己持有的配置；只有全域退出才调用对应 `Shutdown()`。Mission 没有 `CloseHost`，用 `RemoveConfig` 或全域 `Shutdown`。
+- 各 Manager 的 `Shutdown` 仅取消自己的在途配置加载并归还本域更新、池、回调和独立根租约；不会取消另一域加载或停止共享 Resource。装备配置根保留到相关实例及收尾责任结束，不能提前释放定义。
+- 最后由应用等待 `ResourceStartup.StopAsync()`。仍有其他消费者的独立租约时可返回 `Busy`，应归还责任后重试，不强卸载。关闭业务 Module 或 Resource Scope 都不等于清除这些业务 registry；Scope 不是 `RemoveConfig/Shutdown` 的替代。
 - 运行实例和回调引用仅在当前挂接 / checkout 有效，结束后不得保留作后续调用。退订业务监听与释放业务 `UserData` 仍由订阅者 / 创建者负责。
-- 配置类型错误、ID 冲突、缺失参数、非法宿主或关闭期间新增责任会按各 API 合同拒绝。清理可能在尝试其余对象后汇总异常；记录并修复原因，不通过重写源定义掩盖失败。
-- Resource Bundle 与 Catalog 使用实际类型全名和程序集身份，应由正式工具配套构建 / 发布；不要手改 Catalog 或摘要，也不能由一次 Editor 成功推断任意 SDK、平台和 Player 后端均已验证。
+- 配置类型错误、ID 冲突、缺失参数、非法宿主或关闭期间新增责任会按各 API 合同拒绝。异步登记失败只归还本次取得的根租约，不移除其他成功配置；Manager 关闭取消自己的等待，迟到结果不重新登记。清理可能在尝试其余对象后汇总异常；记录并修复原因，不通过重写源定义掩盖失败。
+- 资源按官方 Addressables 内容流程与 Player 配套构建、发布和验证，不维护另一套私有 Catalog / 摘要；一次 Editor 成功不代表任意 SDK、平台或 Player 后端已验证。
 
 ## 相关文档
 

@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.ResourceStartup.Sample.Editor",
     "rootNamespace": "YLFramework.Samples.Resource.Editor",
-    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.ResourceStartup.Sample"],
+    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.ResourceStartup.Sample", "Unity.Addressables", "Unity.Addressables.Editor"],
     "includePlatforms": ["Editor"],
     "overrideReferences": true,
     "precompiledReferences": [],

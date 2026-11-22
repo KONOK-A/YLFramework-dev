@@ -29,7 +29,8 @@ namespace YLFramework.Tests.Http
             {
                 Assert.That(reference.Name, Is.Not.EqualTo("YLFramework.Core.Runtime"));
                 Assert.That(reference.Name.EndsWith(".Editor", StringComparison.Ordinal), Is.False);
-                Assert.That(new[] { "netstandard", "mscorlib", "System", "System.Core", "Newtonsoft.Json", "BouncyCastle.Cryptography" }
+                Assert.That(new[] { "netstandard", "mscorlib", "System", "System.Core", "Newtonsoft.Json", "Unity.Addressables",
+                    "Unity.ResourceManager", "Unity.Profiling.Core" }
                     .Contains(reference.Name) || reference.Name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
                     reference.Name.StartsWith("UnityEditor.", StringComparison.Ordinal), Is.True, reference.FullName);
             }

@@ -1,11 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.AddressableAssets;
+using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using YLFramework.Buff;
@@ -38,6 +40,20 @@ namespace YLFramework.Tests.DomainAcceptance
         };
         private string _folder;
         private string _folderGuid;
+        private string _settingsGuid;
+        private string _groupPath;
+        private string _groupGuid;
+        private string[] _schemaGuids;
+        private Dictionary<string, string> _entries;
+
+        [Serializable]
+        private sealed class HostOwner
+        {
+            public int schemaVersion;
+            public string purpose;
+            public string kind;
+            public string path;
+        }
 
         [Test]
         public void NewFourDomainPublicationRejectsOldAssemblyTuplesAndRunsInTwoOwnedMonoPlayers()
@@ -46,6 +62,21 @@ namespace YLFramework.Tests.DomainAcceptance
             Assert.That(EditorApplication.isCompiling || EditorApplication.isUpdating, Is.False);
             string output = global::YLFramework.Testing.Editor.YLTestEntry.RequireOwnedRunOutput();
             Assert.That(Directory.Exists(output), Is.True, "Never create or adopt an unowned result directory.");
+            string projectPath = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            var hostOwner = JsonUtility.FromJson<HostOwner>(File.ReadAllText(Path.Combine(projectPath, ".yl-owner.json")));
+            Assert.That(hostOwner, Is.Not.Null);
+            Assert.That(hostOwner.schemaVersion, Is.EqualTo(1));
+            Assert.That(hostOwner.purpose, Is.EqualTo("YLTesting.Directory"));
+            Assert.That(hostOwner.kind, Is.EqualTo("Host"));
+            Assert.That(Path.GetFullPath(hostOwner.path), Is.EqualTo(projectPath).IgnoreCase);
+            for (var directory = new DirectoryInfo(projectPath); directory != null; directory = directory.Parent)
+                Assert.That((directory.Attributes & FileAttributes.ReparsePoint) == 0, Is.True);
+            var settings = AddressableAssetSettingsDefaultObject.GetSettings(false);
+            Assert.That(settings, Is.Not.Null, "Prepare existing official default settings; never replace unknown authoring settings here.");
+            Assert.That(settings.BuildAddressablesWithPlayerBuild, Is.EqualTo(AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer));
+            ResourceEditorOperations.ValidateBuild(settings);
+            _settingsGuid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(settings));
+            Assert.That(_settingsGuid, Is.Not.Empty);
             Assert.That(ResourceSystem.Current, Is.Null, "Do not take over another Resource authority.");
             Assert.That(SkillManager.ConfigCount + BuffManager.ConfigCount + MissionManager.ConfigCount, Is.Zero);
             Assert.That(SkillManager.HostCount + BuffManager.HostCount + BuffManager.EffectOwnerCount, Is.Zero);
@@ -75,53 +106,43 @@ namespace YLFramework.Tests.DomainAcceptance
             _folder = folder;
             _folderGuid = folderGuid;
             Assert.That(AssetDatabase.CreateFolder(folder, "Content"), Is.Not.Empty);
-            var project = CreateContent(token);
-            var release = ResourcePublisher.Publish(ResourceBundleBuilder.Build(project, BuildTarget.StandaloneWindows64), "gameplay-resource-v1");
-            project = AssetDatabase.LoadAssetAtPath<ResourceProject>(folder + "/Project.asset");
-            Assert.That((bool)project, Is.True, "Bundle building can reload assets; reacquire the owned project by its saved path.");
-            Assert.That(release.IsRepeat, Is.False);
-            Assert.That(release.Catalog.Assets, Has.Count.EqualTo(11));
-            Assert.That(release.Catalog.Assets.Count(asset => asset.Kind == "Asset"), Is.EqualTo(4));
+            CreateContent(token);
+            string projectId = "gp-" + token.Substring(0, 8);
+            RegisterEntries(projectId);
+            var built = ResourceEditorOperations.BuildContent(Settings(), Path.Combine(output, "gameplay-content-state.bin"));
+            string contentHash = StandaloneFixturePlayer.ContentHash(built);
+            var roots = new[] { ("Skills", typeof(SkillsConfig)), ("Buffs", typeof(BuffsConfig)), ("Missions", typeof(MissionsConfig)), ("Equipment", typeof(EquipmentsConfig)) };
+            foreach (var root in roots)
+            {
+                var asset = AssetDatabase.LoadMainAssetAtPath(folder + "/Content/" + root.Item1 + ".asset");
+                Assert.That(asset, Is.Not.Null, "Reacquire the actual saved root after the official build.");
+                Assert.That(asset.GetType(), Is.EqualTo(root.Item2));
+            }
+            var objects = roots.SelectMany(root => AssetDatabase.LoadAllAssetsAtPath(folder + "/Content/" + root.Item1 + ".asset").OfType<ScriptableObject>()).ToArray();
+            Assert.That(objects, Has.Length.EqualTo(11));
+            Assert.That(objects.Count(AssetDatabase.IsMainAsset), Is.EqualTo(4));
             foreach (var expected in new[] { ("YLFramework.Skill", 2), ("YLFramework.Buff", 4), ("YLFramework.Mission", 3), ("YLFramework.Equipment", 2) })
             {
-                Assert.That(release.Catalog.Assets.Count(asset => asset.AssetAssembly == expected.Item1), Is.EqualTo(expected.Item2));
+                Assert.That(objects.Count(asset => asset.GetType().Assembly.GetName().Name == expected.Item1), Is.EqualTo(expected.Item2));
             }
-            foreach (var asset in release.Catalog.Assets)
+            var identities = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var asset in objects)
             {
-                Assert.That(_assetTypes.Any(type => type.FullName == asset.AssetType && type.Assembly.GetName().Name == asset.AssetAssembly), Is.True);
+                Assert.That(_assetTypes, Does.Contain(asset.GetType()));
+                Assert.That(MonoScript.FromScriptableObject(asset).GetClass(), Is.EqualTo(asset.GetType()), "Serialized script identity must resolve to the actual new Runtime type.");
+                Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string guid, out long localId), Is.True);
+                Assert.That(guid, Is.Not.Empty);
+                Assert.That(localId, Is.Not.Zero);
+                Assert.That(identities.Add(guid + "/" + localId), Is.True, "Every saved root/row/effect needs a distinct real asset identity.");
             }
-            var snapshot = ResourceLocalSnapshot.Open(Path.GetFullPath(release.DirectoryPath), release.Catalog.ProjectId,
-                release.Catalog.CatalogDigest, release.Catalog.Platform, release.Catalog.AppContentCompatibilityId);
-            Assert.That(snapshot.CreateCatalog(_assetTypes).Entries, Has.Count.EqualTo(11));
-            var positive = new ResourceEditorSimulation(new[] { project }, new[] { release.Catalog });
-            foreach (var root in new[] { ("skills", typeof(SkillsConfig)), ("buffs", typeof(BuffsConfig)), ("missions", typeof(MissionsConfig)), ("equipment", typeof(EquipmentsConfig)) })
-            {
-                Assert.That(positive.Load(new ResourceAddress(project.projectId, root.Item1), root.Item2).GetType(), Is.EqualTo(root.Item2));
-            }
-
-            // Change only a tuple in a copy of this new publication. Frozen catalogs and Bundles remain untouched.
-            byte[] publishedBytes = ResourceCatalogCodec.Write(release.Catalog);
-            foreach (string assembly in new[] { "YLFramework.Skill", "YLFramework.Buff", "YLFramework.Mission", "YLFramework.Equipment" })
-            {
-                var payload = JObject.Parse(Encoding.UTF8.GetString(publishedBytes));
-                payload.Remove("BuildId");
-                foreach (var asset in ((JArray)payload["Assets"]).OfType<JObject>().Where(asset => (string)asset["AssetAssembly"] == assembly))
-                {
-                    asset["AssetAssembly"] = "YLFramework.Runtime";
-                }
-                var bytes = ResourceCatalogCodec.Seal(Encoding.UTF8.GetBytes(payload.ToString(Formatting.None)));
-                var oldTuple = ResourceCatalogCodec.Read(bytes, project.projectId, release.Catalog.Platform,
-                    release.Catalog.UnityCompatibility, release.Catalog.AppContentCompatibilityId);
-                Assert.That(oldTuple.CatalogDigest, Is.Not.EqualTo(release.Catalog.CatalogDigest));
-                var rejected = new ResourceEditorSimulation(new[] { project }, new[] { oldTuple });
-                var error = Assert.Throws<InvalidOperationException>(() => rejected.Resolve(new ResourceAddress(project.projectId, "skills")));
-                Assert.That(error.Message, Does.StartWith("Published Catalog descriptor is stale:"), "Reject the assembly tuple, not a schema or compatibility error.");
-            }
-            CollectionAssert.AreEqual(publishedBytes, File.ReadAllBytes(Path.Combine(release.DirectoryPath, "resource-catalog.json")));
-            var definitions = Directory.GetFiles(folder + "/Content", "*.asset").ToDictionary(path => path, File.ReadAllBytes);
+            // Official catalogs have no private tuple descriptor; old Runtime type names must remain unresolvable.
+            foreach (var type in _assetTypes)
+                Assert.That(Type.GetType(type.FullName + ", YLFramework.Runtime", false), Is.Null, "Do not restore an old Runtime tuple through a compatibility type or forwarder.");
+            var definitions = Directory.GetFiles(folder + "/Content", "*.asset")
+                .SelectMany(path => new[] { path, path + ".meta" }).ToDictionary(path => path, File.ReadAllBytes);
 
             // Keep only addresses and value tokens across BuildAndRun's scene switches, never native asset handles.
-            StandaloneFixturePlayer.BuildAndRun(output, folder, "YLFramework.Skill", release, scene =>
+            StandaloneFixturePlayer.BuildAndRun(output, folder, "YLFramework.Skill", built, scene =>
             {
                 var type = Type.GetType(ReceiverNamespace + "GameplayResourcePlayerProbe, " + ProbeAssembly, true);
                 var host = new GameObject("GameplayResourceStandaloneProbe");
@@ -129,9 +150,8 @@ namespace YLFramework.Tests.DomainAcceptance
                 SceneManager.MoveGameObjectToScene(host, scene);
                 using (var serialized = new SerializedObject(host.AddComponent(type)))
                 {
-                    serialized.FindProperty("projectId").stringValue = release.Catalog.ProjectId;
-                    serialized.FindProperty("catalogDigest").stringValue = release.Catalog.CatalogDigest;
-                    serialized.FindProperty("compatibility").stringValue = release.Catalog.AppContentCompatibilityId;
+                    serialized.FindProperty("projectId").stringValue = projectId;
+                    serialized.FindProperty("contentHash").stringValue = contentHash;
                     serialized.FindProperty("contentToken").stringValue = token;
                     serialized.ApplyModifiedPropertiesWithoutUndo();
                 }
@@ -150,8 +170,13 @@ namespace YLFramework.Tests.DomainAcceptance
                 }
                 CollectionAssert.AreEquivalent(_frameworkAssemblies, report["frameworkAssemblies"].ToObject<string[]>());
                 Assert.That((string)report["contentToken"], Is.EqualTo(token));
-                Assert.That((int)report["catalogAssetCount"], Is.EqualTo(11));
-                Assert.That((int)report["bundleRecordCount"], Is.Zero);
+                Assert.That((int)report["schemaVersion"], Is.EqualTo(2));
+                Assert.That((string)report["contentHash"], Is.EqualTo(contentHash));
+                Assert.That((int)report["definitionAssetCount"], Is.EqualTo(11));
+                Assert.That((bool)report["ledgerMeasured"], Is.True);
+                Assert.That((string)report["resourceState"], Is.EqualTo("Closed"));
+                foreach (string count in new[] { "leaseCount", "scopeCount", "requestCount", "pendingWorkCount", "drainingHandleCount" })
+                    Assert.That((int)report[count], Is.Zero, count + ": " + report);
                 foreach (string flag in new[] { "fourRootsLoaded", "skillLifecycle", "buffLifecycle", "missionLifecycle", "rewardDefinitions",
                     "equipmentLifecycle", "borrowedOwnership", "configsUnchanged", "independentRootSurvived", "managersClosed", "resourceReturned" })
                 {
@@ -171,7 +196,7 @@ namespace YLFramework.Tests.DomainAcceptance
             Assert.That(ResourceSystem.Current, Is.Null);
         }
 
-        private ResourceProject CreateContent(string token)
+        private void CreateContent(string token)
         {
             var skills = ScriptableObject.CreateInstance<SkillsConfig>();
             skills.name = "Skills";
@@ -237,21 +262,61 @@ namespace YLFramework.Tests.DomainAcceptance
             equipment.Equipments.Add(itemData);
             SaveRoot(equipment, itemData);
 
-            var project = ScriptableObject.CreateInstance<ResourceProject>();
-            project.projectId = "gp-" + token.Substring(0, 8);
-            project.sourceDirectories.Add(new ResourceSourceDirectory { guid = AssetDatabase.AssetPathToGUID(_folder + "/Content") });
-            var group = new ResourceGroup { id = "Gameplay", packing = ResourcePacking.Together };
-            foreach (var root in new[] { ("Skills", "skills"), ("Buffs", "buffs"), ("Missions", "missions"), ("Equipment", "equipment") })
+        }
+
+        private AddressableAssetSettings Settings()
+        {
+            var settings = AddressableAssetSettingsDefaultObject.GetSettings(false);
+            Assert.That(settings, Is.Not.Null);
+            Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(settings)), Is.EqualTo(_settingsGuid), "Do not switch or replace the prepared official settings.");
+            return settings;
+        }
+
+        private void RegisterEntries(string projectId)
+        {
+            var settings = Settings();
+            var existing = new List<AddressableAssetEntry>();
+            settings.GetAllAssets(existing, false);
+            _entries = new[] { ("Skills", "skills"), ("Buffs", "buffs"), ("Missions", "missions"), ("Equipment", "equipment") }
+                .ToDictionary(root => AssetDatabase.AssetPathToGUID(_folder + "/Content/" + root.Item1 + ".asset"), root => projectId + "/" + root.Item2, StringComparer.Ordinal);
+            Assert.That(_entries.Keys, Is.All.Not.Empty);
+            foreach (var entry in _entries)
+                Assert.That(existing.Any(value => value.guid == entry.Key || value.address == entry.Value || value.labels.Contains(entry.Value)), Is.False, "Never move or overwrite another owner's entry.");
+            Assert.That(settings.groups.Any(group => group && group.Name == projectId), Is.False);
+            _groupPath = settings.GroupFolder.Replace('\\', '/') + "/" + projectId + ".asset";
+            var schemas = settings.GroupSchemaFolder.Replace('\\', '/');
+            foreach (string path in new[] { _groupPath, schemas + "/" + projectId + "_BundledAssetGroupSchema.asset", schemas + "/" + projectId + "_ContentUpdateGroupSchema.asset" })
             {
-                group.selections.Add(new ResourceSelection { guid = AssetDatabase.AssetPathToGUID(_folder + "/Content/" + root.Item1 + ".asset"), address = root.Item2 });
+                RequireLocalAssetPath(path);
+                Assert.That(File.Exists(path) || File.Exists(path + ".meta") || Directory.Exists(path), Is.False, "Never overwrite an occupied official group/schema output.");
             }
-            project.groups.Add(group);
-            string path = _folder + "/Project.asset";
-            Assert.That(File.Exists(path) || File.Exists(path + ".meta"), Is.False);
-            AssetDatabase.CreateAsset(project, path);
-            EditorUtility.SetDirty(project);
-            AssetDatabase.SaveAssetIfDirty(project);
-            return project;
+            var group = settings.CreateGroup(projectId, false, false, false, null, typeof(BundledAssetGroupSchema), typeof(ContentUpdateGroupSchema));
+            Assert.That(AssetDatabase.GetAssetPath(group), Is.EqualTo(_groupPath));
+            _groupGuid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(group));
+            var bundled = group.GetSchema<BundledAssetGroupSchema>();
+            bundled.BuildPath.SetVariableByName(settings, AddressableAssetSettings.kLocalBuildPath);
+            bundled.LoadPath.SetVariableByName(settings, AddressableAssetSettings.kLocalLoadPath);
+            bundled.BundleMode = BundledAssetGroupSchema.BundlePackingMode.PackTogether;
+            bundled.IncludeInBuild = bundled.IncludeAddressInCatalog = bundled.IncludeGUIDInCatalog = true;
+            group.GetSchema<ContentUpdateGroupSchema>().StaticContent = false;
+            foreach (var entry in _entries)
+                settings.CreateOrMoveEntry(entry.Key, group).SetAddress(entry.Value);
+            foreach (var schema in group.Schemas)
+            {
+                EditorUtility.SetDirty(schema);
+                AssetDatabase.SaveAssetIfDirty(schema);
+            }
+            _schemaGuids = group.Schemas.Select(schema => AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(schema))).ToArray();
+            AssetDatabase.SaveAssetIfDirty(group);
+            AssetDatabase.SaveAssetIfDirty(settings);
+        }
+
+        private static void RequireLocalAssetPath(string path)
+        {
+            Assert.That(path.StartsWith("Assets/", StringComparison.Ordinal), Is.True, "Only local host Assets may be authored or removed.");
+            for (string cursor = Path.GetFullPath(path); cursor != null; cursor = Path.GetDirectoryName(cursor))
+                if (File.Exists(cursor) || Directory.Exists(cursor))
+                    Assert.That((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) == 0, Is.True, "Do not author or delete through linked assets.");
         }
 
         private void SaveRoot(ScriptableObject root, params ScriptableObject[] children)
@@ -273,12 +338,28 @@ namespace YLFramework.Tests.DomainAcceptance
         {
             if (_folder != null && TestContext.CurrentContext.Result.Outcome.Status == NUnit.Framework.Interfaces.TestStatus.Passed)
             {
+                if (_groupGuid != null)
+                {
+                    Assert.That(AssetDatabase.AssetPathToGUID(_groupPath), Is.EqualTo(_groupGuid));
+                    var group = AssetDatabase.LoadAssetAtPath<AddressableAssetGroup>(_groupPath);
+                    Assert.That(group.entries.Count, Is.EqualTo(_entries.Count));
+                    Assert.That(group.entries.All(entry => _entries.TryGetValue(entry.guid, out var key) && key == entry.address), Is.True);
+                    CollectionAssert.AreEquivalent(_schemaGuids, group.Schemas.Select(schema => AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(schema))));
+                    foreach (string path in new[] { _groupPath }.Concat(group.Schemas.Select(AssetDatabase.GetAssetPath)))
+                        RequireLocalAssetPath(path);
+                    var settings = Settings();
+                    settings.RemoveGroup(group);
+                    AssetDatabase.SaveAssetIfDirty(settings);
+                }
                 Assert.That(AssetDatabase.AssetPathToGUID(_folder), Is.EqualTo(_folderGuid));
                 Assert.That((File.GetAttributes(_folder) & FileAttributes.ReparsePoint) == 0, Is.True);
                 Assert.That(AssetDatabase.DeleteAsset(_folder), Is.True);
             }
             _folder = null;
             _folderGuid = null;
+            _groupPath = _groupGuid = _settingsGuid = null;
+            _schemaGuids = null;
+            _entries = null;
         }
     }
 }

@@ -2,13 +2,15 @@
     "name": "YLFramework.Runtime",
     "rootNamespace": "YLFramework",
     "references": [
-        "UnityEngine.UI"
+        "UnityEngine.UI",
+        "Unity.Addressables",
+        "Unity.ResourceManager"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": true,
     "overrideReferences": true,
-    "precompiledReferences": ["Newtonsoft.Json.dll", "BouncyCastle.Cryptography.dll"],
+    "precompiledReferences": ["Newtonsoft.Json.dll"],
     "autoReferenced": true,
     "defineConstraints": [],
     "versionDefines": [],

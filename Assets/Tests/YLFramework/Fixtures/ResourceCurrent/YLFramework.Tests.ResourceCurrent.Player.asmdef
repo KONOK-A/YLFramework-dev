@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Tests.ResourceCurrent.Player",
     "rootNamespace": "YLFramework.Tests.ResourceBuild",
-    "references": ["YLFramework.Runtime"],
+    "references": ["YLFramework.Runtime", "Unity.Addressables"],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

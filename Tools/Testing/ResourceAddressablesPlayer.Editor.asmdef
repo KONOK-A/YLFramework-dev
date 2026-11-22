@@ -1,0 +1,11 @@
+{
+  "name": "YLFramework.ResourceAddressables.Acceptance.Editor",
+  "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.ResourceAddressables.Acceptance", "Unity.Addressables", "Unity.ResourceManager", "Unity.Addressables.Editor", "Unity.ScriptableBuildPipeline.Editor"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "noEngineReferences": false
+}

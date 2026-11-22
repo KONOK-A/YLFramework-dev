@@ -1,0 +1,157 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 468a46d0ae32c3544b7d98094e6448a9, type: 3}
+  m_Name: AddressableAssetSettings
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetSettings
+  m_DefaultGroup: cc6f6f77ab7d91443946aa2bcb38aa56
+  m_currentHash:
+    serializedVersion: 2
+    Hash: 6e31ee36fbb323f6670bc2c0a21bcb80
+  m_DisableWriteTypeTree: 0
+  m_OptimizeCatalogSize: 0
+  m_BuildRemoteCatalog: 0
+  m_CatalogRequestsTimeout: 0
+  m_DisableCatalogUpdateOnStart: 1
+  m_InternalIdNamingMode: 0
+  m_InternalBundleIdMode: 1
+  m_AssetLoadMode: 0
+  m_BundledAssetProviderType:
+    m_AssemblyName: Unity.ResourceManager, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+    m_ClassName: UnityEngine.ResourceManagement.ResourceProviders.BundledAssetProvider
+  m_AssetBundleProviderType:
+    m_AssemblyName: Unity.ResourceManager, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+    m_ClassName: UnityEngine.ResourceManagement.ResourceProviders.AssetBundleProvider
+  m_IgnoreUnsupportedFilesInBuild: 0
+  m_UniqueBundleIds: 0
+  m_EnableJsonCatalog: 0
+  m_NonRecursiveBuilding: 1
+  m_AllowNestedBundleFolders: 0
+  m_CCDEnabled: 0
+  m_maxConcurrentWebRequests: 3
+  m_UseUWRForLocalBundles: 0
+  m_BundleTimeout: 0
+  m_BundleRetryCount: 0
+  m_BundleRedirectLimit: -1
+  m_SharedBundleSettings: 0
+  m_SharedBundleSettingsCustomGroupIndex: 0
+  m_simulatedLoadDelay: 0.1
+  m_ContiguousBundles: 1
+  m_StripUnityVersionFromBundleBuild: 0
+  m_DisableVisibleSubAssetRepresentations: 0
+  m_BuiltInBundleNaming: 0
+  mBuiltInBundleCustomNaming: 
+  m_MonoScriptBundleNaming: 0
+  m_CheckForContentUpdateRestrictionsOption: 0
+  m_MonoScriptBundleCustomNaming: 
+  m_RemoteCatalogBuildPath:
+    m_Id: 
+  m_RemoteCatalogLoadPath:
+    m_Id: 
+  m_ContentStateBuildPathProfileVariableName: <default settings path>
+  m_CustomContentStateBuildPath: 
+  m_ContentStateBuildPath: 
+  m_BuildAddressablesWithPlayerBuild: 0
+  m_overridePlayerVersion: '[UnityEditor.PlayerSettings.bundleVersion]'
+  m_GroupAssets:
+  - {fileID: 11400000, guid: 951a3ace4b0dfb749906f3f7590832ab, type: 2}
+  - {fileID: 11400000, guid: 4954718592637ce44823eafef3ab109d, type: 2}
+  - {fileID: 11400000, guid: d88cf5f6e62da284fb2874af3db4076b, type: 2}
+  - {fileID: 11400000, guid: 92499b69f34ec4b4ca3878d6b1531429, type: 2}
+  - {fileID: 11400000, guid: 604f3707e7ca68947b85dd9a502260ad, type: 2}
+  - {fileID: 11400000, guid: 98fe280ac77a4c24fb840c8460efdfca, type: 2}
+  - {fileID: 11400000, guid: e2e2d92833276c344a6485c0ce511813, type: 2}
+  - {fileID: 11400000, guid: 0404e4fa0fc0df545ac7abd96b1c148f, type: 2}
+  - {fileID: 11400000, guid: 553b06990dd51b145b6e94a9b0f7a5ac, type: 2}
+  - {fileID: 11400000, guid: cad8507df2ffda348b4edfbfe16eaa4c, type: 2}
+  - {fileID: 11400000, guid: 0e3a2950daf2f11469b5a1213ffe4f6e, type: 2}
+  - {fileID: 11400000, guid: 9707b3b92af68aa44991d3fb07ab0654, type: 2}
+  - {fileID: 11400000, guid: 36cc5adba1a4c5742bc23456fbc2aacc, type: 2}
+  - {fileID: 11400000, guid: 2c743429c3c88af4bbcfb15648113ffa, type: 2}
+  - {fileID: 11400000, guid: 3a55f3eee1ed41843818a4cce5ff293a, type: 2}
+  - {fileID: 11400000, guid: 2db38f1db28c0194fb50cbac26e6b5da, type: 2}
+  - {fileID: 11400000, guid: 35c51679f8a0fd8429cae647b45765ca, type: 2}
+  - {fileID: 11400000, guid: abdc4af67a3377b41ab8f10360113643, type: 2}
+  - {fileID: 11400000, guid: 247832c763f04d341b18bbaffdd106bb, type: 2}
+  - {fileID: 11400000, guid: ec1bc4c1d98e8294c817beee97f66653, type: 2}
+  - {fileID: 11400000, guid: fbc3ec69e62b8794b936ad11d212276b, type: 2}
+  m_BuildSettings:
+    m_LogResourceManagerExceptions: 1
+    m_BundleBuildPath: Temp/com.unity.addressables/AssetBundles
+  m_ProfileSettings:
+    m_Profiles:
+    - m_InheritedParent: 
+      m_Id: c6b493e2ad9616a4da76b7c99284bf20
+      m_ProfileName: Default
+      m_Values:
+      - m_Id: 38721f0903c38d84a9e7d7247bd9f7f5
+        m_Value: '[UnityEngine.AddressableAssets.Addressables.BuildPath]/[BuildTarget]'
+      - m_Id: 5eaa51abb0a3bad40876b593fa41c242
+        m_Value: '[UnityEditor.EditorUserBuildSettings.activeBuildTarget]'
+      - m_Id: 6bcc4d30acf35184996e131e998347a8
+        m_Value: 'ServerData/[BuildTarget]'
+      - m_Id: b4879024280c05749976af7fb0c229cd
+        m_Value: <undefined>
+      - m_Id: d6ec58876dd22ca4d9344b0d9de08b7e
+        m_Value: '{UnityEngine.AddressableAssets.Addressables.RuntimePath}/[BuildTarget]'
+    m_ProfileEntryNames:
+    - m_Id: 38721f0903c38d84a9e7d7247bd9f7f5
+      m_Name: Local.BuildPath
+      m_InlineUsage: 0
+    - m_Id: 5eaa51abb0a3bad40876b593fa41c242
+      m_Name: BuildTarget
+      m_InlineUsage: 0
+    - m_Id: 6bcc4d30acf35184996e131e998347a8
+      m_Name: Remote.BuildPath
+      m_InlineUsage: 0
+    - m_Id: b4879024280c05749976af7fb0c229cd
+      m_Name: Remote.LoadPath
+      m_InlineUsage: 0
+    - m_Id: d6ec58876dd22ca4d9344b0d9de08b7e
+      m_Name: Local.LoadPath
+      m_InlineUsage: 0
+    m_ProfileVersion: 1
+  m_LabelTable:
+    m_LabelNames:
+    - default
+    - YL.CommonSystem.Fixture/scenes
+    - yl-core-resource/text
+    - yl-core-resource/scenes
+    - yl-core-resource/panels
+    - yl-core-resource/views
+    - yl-multidirectory-legacy-20261018/atlases
+    - yl-multidirectory-legacy-20261018/main
+    - yl-resource-multidirectory-modern-20261018/main
+    - yl-resource-multidirectory-modern-20261018/other
+    - yl-resource-multidirectory-modern-20261018/scenes
+    - yl-workbench-final-ui-20261018/atlases
+    - yl-workbench-polish-20261018/messages
+    - yl-workbench-polish-20261018/optional
+    - ux1-workbench-20261017/data-directory
+    - ux1-workbench-20261017/views
+    - ux1-workbench-20261017/long-paths
+    - yl-workbench-ux2to5-20261017/cards
+    - yl-workbench-ux2to5-20261017/atlases
+    - yl-workbench-ux2to5-20261017/scenes
+    - yl-workbench-ux2to5-20261017/messages
+  m_SchemaTemplates: []
+  m_GroupTemplateObjects:
+  - {fileID: 11400000, guid: 4dc757280e8aabe4391130146ee9749a, type: 2}
+  m_InitializationObjects: []
+  m_CertificateHandlerType:
+    m_AssemblyName: 
+    m_ClassName: 
+  m_ActivePlayerDataBuilderIndex: 2
+  m_DataBuilders:
+  - {fileID: 11400000, guid: 82a3517264e7e184593fe3ffc7a78749, type: 2}
+  - {fileID: 11400000, guid: 53b015aabd51f9d419298ac3e02d9f49, type: 2}
+  - {fileID: 11400000, guid: 51e9a8bd8fcd0954e9995c8bc7b50105, type: 2}
+  m_ActiveProfileId: c6b493e2ad9616a4da76b7c99284bf20

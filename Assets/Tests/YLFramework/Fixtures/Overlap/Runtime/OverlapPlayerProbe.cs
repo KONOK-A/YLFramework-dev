@@ -405,10 +405,10 @@ namespace YLFramework.Overlap.Acceptance
             }
             _report.measurements = measurements.ToArray();
             var resource = ResourceSystem.Current;
-            var diagnostic = resource?.GetDiagnosticsSnapshot();
             _report.resourceWasNull = resource == null;
-            _report.leaseCount = diagnostic?.LeaseCount ?? 0;
-            _report.recordCount = diagnostic?.RecordCount ?? 0;
+            Require(_report.resourceWasNull, "Overlap must not create or adopt a Resource service.");
+            // Preserve the resource-free result contract, not a fabricated measurement of a retired ledger.
+            _report.leaseCount = _report.recordCount = 0;
             Require(_report.resourceWasNull && _report.leaseCount == 0 && _report.recordCount == 0, "Overlap leaked Resource state.");
         }
 

@@ -30,7 +30,7 @@ namespace YLFramework.Tests.Audio
             var runtime = global::YLFramework.Testing.PackageTestPaths.Physical("Packages/com.kano.ylframework/Runtime");
             var editor = (flags & AssemblyBuilderFlags.EditorAssembly) != 0;
             var profile = CompilationPipeline.GetAssemblies(editor ? AssembliesType.Editor : AssembliesType.Player).Single(x => x.name == "YLFramework.Runtime");
-            var runtimeSources = profile.sourceFiles.Select(Path.GetFullPath).ToArray();
+            var runtimeSources = profile.sourceFiles.Select(global::YLFramework.Testing.PackageTestPaths.Physical).Select(Path.GetFullPath).ToArray();
             // Audio及Root的Core依赖全量收集；不能用缺失UIRootContext的伪闭包证明独立编译。
             var directories = new[]
             {
@@ -95,15 +95,19 @@ namespace YLFramework.Tests.Audio
                     AllowUnsafeCode = profile.compilerOptions.AllowUnsafeCode
                 };
                 var json = profile.compiledAssemblyReferences.Single(x => Path.GetFileName(x) == "Newtonsoft.Json.dll");
-                var contentCrypto = profile.compiledAssemblyReferences.Single(x => Path.GetFileName(x) == "BouncyCastle.Cryptography.dll");
-                Assert.That(TestDependencyGuard.IsApprovedBouncyCastleReference(contentCrypto), Is.True);
+                var sdk = CompilationPipeline.GetAssemblies(AssembliesType.Editor)
+                    .Where(assembly => assembly.name == "Unity.Addressables" || assembly.name == "Unity.ResourceManager" || assembly.name == "Unity.Profiling.Core")
+                    .Select(assembly => Path.GetFullPath(assembly.outputPath)).ToArray();
+                CollectionAssert.IsSubsetOf(new[] { "Unity.Addressables.dll", "Unity.ResourceManager.dll" }, sdk.Select(Path.GetFileName));
+                Assert.That(sdk.All(path => TestDependencyGuard.IsApprovedOfficialOutput(path, editor)), Is.True);
+                Assert.That(profile.compiledAssemblyReferences.Select(Path.GetFileName), Does.Not.Contain("BouncyCastle.Cryptography.dll"));
                 Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(json)), Is.True);
                 Assert.That(builder.defaultDefines.Contains("UNITY_EDITOR"), Is.EqualTo(editor));
                 var contents = EditorApplication.applicationContentsPath;
                 var ui = typeof(UnityEngine.UI.Image).Assembly.Location;
                 var references = builder.defaultReferences;
                 builder.excludeReferences = references.Where(path => !IsAllowedReference(path, contents, ui, editor, json)).ToArray();
-                builder.additionalReferences = new[] { ui, json, contentCrypto };
+                builder.additionalReferences = new[] { ui, json }.Concat(sdk).ToArray();
                 var effective = references.Except(builder.excludeReferences).Concat(builder.additionalReferences).Distinct().ToArray();
                 Assert.That(effective.All(path => IsAllowedReference(path, contents, ui, editor, json)), Is.True);
                 Assert.That(effective.Any(path => Path.GetFileName(path) == "UnityEngine.CoreModule.dll"), Is.True);

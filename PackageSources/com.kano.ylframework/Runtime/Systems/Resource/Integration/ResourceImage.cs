@@ -1,6 +1,8 @@
 using System;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
 using UnityEngine.UI;
+using UnityEngine.U2D;
 
 namespace YLFramework.Resource
 {
@@ -9,12 +11,12 @@ namespace YLFramework.Resource
     [DisallowMultipleComponent]
     public sealed class ResourceImage : MonoBehaviour
     {
-        /// <summary>组件输入的解释方式，明确区分直接图片定位、目录资产与图集克隆。</summary>
+        /// <summary>组件输入的解释方式，区分动态图片、官方资产与图集克隆；枚举值保留序列化身份。</summary>
         public enum ImageSource
         {
             /// <summary>完整本地路径或 HTTP(S) URL，由图片来源解码为 Texture2D。</summary>
             Location,
-            /// <summary>项目目录中的 Texture2D 或 Sprite 逻辑地址，可携带显式子资产键。</summary>
+            /// <summary>官方 address 或 AssetReference 指向的 Texture2D 或 Sprite。</summary>
             Catalog,
             /// <summary>先取得主 SpriteAtlas 租约，再按精确名称取得组件自有的 Sprite 克隆。</summary>
             Atlas
@@ -28,13 +30,13 @@ namespace YLFramework.Resource
         [SerializeField] private string projectId;
         [SerializeField] private string address;
         [SerializeField] private string subAsset;
+        [SerializeField] private AssetReference assetReference;
         [SerializeField, Tooltip("显式SpriteAtlas中唯一的Sprite名称；克隆由此组件拥有，Atlas仍由原AssetLease保活。")]
         private string spriteName;
         [SerializeField] private bool loadOnEnable = true;
         [SerializeField] private bool setNativeSize;
 
-        private ResourceRequest<AssetLease<Texture2D>> _imageRequest;
-        private ResourceRequest<AssetLease<UnityEngine.Object>> _catalogRequest;
+        private IResourceRequest _pendingRequest;
         private IDisposable _lease;
         private Graphic _displayTarget;
         private UnityEngine.Object _previous;
@@ -52,7 +54,7 @@ namespace YLFramework.Resource
             get; private set;
         }
         /// <summary>当前是否仍持有尚未完成的图片或目录请求。</summary>
-        public bool IsLoading => _imageRequest != null && !_imageRequest.IsDone || _catalogRequest != null && !_catalogRequest.IsDone;
+        public bool IsLoading => _pendingRequest is { IsDone: false };
         /// <summary>当前加载或显示结果的通知；Clear 与停用不主动通知，观察者异常分别记录。</summary>
         public event Action<ResourceImage> Completed;
 
@@ -82,7 +84,8 @@ namespace YLFramework.Resource
         {
             get => setNativeSize; set => setNativeSize = value;
         }
-        private bool HasInput => source == ImageSource.Location ? !string.IsNullOrEmpty(location) : !string.IsNullOrEmpty(address);
+        private bool HasInput => source == ImageSource.Location ? !string.IsNullOrEmpty(location) :
+            !string.IsNullOrEmpty(address) || assetReference != null && assetReference.RuntimeKeyIsValid();
 
         /// <summary>修改目标输入并发起新一代请求；停用时只记录输入，由 Load On Enable 或 Refresh 取得。</summary>
         public void SetImage(string imageLocation)
@@ -92,38 +95,68 @@ namespace YLFramework.Resource
             Refresh();
         }
 
-        /// <summary>正式 Catalog 的 Texture2D 或 Sprite 地址；借用资产仅由对应 Lease 保活。</summary>
-        public void SetImage(ResourceAddress resourceAddress)
+        /// <summary>官方 Texture2D 或 Sprite address；子对象使用官方 AssetReference，不拼接旧子资产键。</summary>
+        public void SetAddress(string imageAddress)
         {
-            if (!resourceAddress.IsValid)
+            if (string.IsNullOrWhiteSpace(imageAddress))
             {
-                throw new ArgumentException("A valid image resource address is required.", nameof(resourceAddress));
+                throw new ArgumentException("An exact Addressables address is required.", nameof(imageAddress));
             }
 
             source = ImageSource.Catalog;
-            projectId = resourceAddress.ProjectId;
-            address = resourceAddress.Path;
-            subAsset = resourceAddress.SubAsset;
+            address = imageAddress;
+            projectId = subAsset = null;
+            assetReference = null;
             Refresh();
         }
 
-        /// <summary>显式取得Atlas中的Sprite克隆，仅供Image使用；不订阅全局atlasRequested或借用其他消费者的克隆。</summary>
-        public void SetAtlasSprite(ResourceAddress atlasAddress, string name)
+        /// <summary>读取官方 RuntimeKey，不使用 AssetReference 实例上的共享操作槽。</summary>
+        public void SetImage(AssetReference reference)
         {
-            if (!atlasAddress.IsValid || atlasAddress.SubAsset != null)
+            if (reference == null || !reference.RuntimeKeyIsValid())
             {
-                throw new ArgumentException("An explicit main SpriteAtlas address is required.", nameof(atlasAddress));
+                throw new ArgumentException("A valid Addressables asset reference is required.", nameof(reference));
             }
+            source = ImageSource.Catalog;
+            assetReference = reference;
+            address = projectId = subAsset = null;
+            Refresh();
+        }
 
+        /// <summary>按官方 Atlas address 取得本组件自有 Sprite 克隆，不订阅全局 atlasRequested。</summary>
+        public void SetAtlasSprite(string atlasAddress, string name)
+        {
+            if (string.IsNullOrWhiteSpace(atlasAddress))
+            {
+                throw new ArgumentException("An exact main SpriteAtlas address is required.", nameof(atlasAddress));
+            }
             if (string.IsNullOrWhiteSpace(name))
             {
                 throw new ArgumentException("A unique Sprite name is required.", nameof(name));
             }
 
             source = ImageSource.Atlas;
-            projectId = atlasAddress.ProjectId;
-            address = atlasAddress.Path;
-            subAsset = null;
+            address = atlasAddress;
+            projectId = subAsset = null;
+            assetReference = null;
+            spriteName = name;
+            Refresh();
+        }
+
+        /// <summary>显式引用主 SpriteAtlas；只拥有 GetSprite 返回的克隆，不销毁借用的 Atlas。</summary>
+        public void SetAtlasSprite(AssetReference reference, string name)
+        {
+            if (reference == null || !reference.RuntimeKeyIsValid() || !string.IsNullOrEmpty(reference.SubObjectName))
+            {
+                throw new ArgumentException("A valid main SpriteAtlas reference is required.", nameof(reference));
+            }
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new ArgumentException("A unique Sprite name is required.", nameof(name));
+            }
+            source = ImageSource.Atlas;
+            assetReference = reference;
+            address = projectId = subAsset = null;
             spriteName = name;
             Refresh();
         }
@@ -171,6 +204,11 @@ namespace YLFramework.Resource
                 Fail(new ResourceException(ResourceError.InvalidConfiguration, "Atlas sprites require an Image target and a unique Sprite name."));
                 return;
             }
+            if (source != ImageSource.Location && (!string.IsNullOrEmpty(projectId) || !string.IsNullOrEmpty(subAsset)))
+            {
+                Fail(new ResourceException(ResourceError.InvalidConfiguration, "Migrate this legacy image input to an exact Addressables address or AssetReference before loading."));
+                return;
+            }
             var system = ResourceSystem.Current;
             if (system == null || !system.IsAvailable)
             {
@@ -180,23 +218,38 @@ namespace YLFramework.Resource
             Status = ResourceRequestStatus.Pending;
             Error = null;
             var acceptedTarget = target;
+            var acceptedSource = source;
+            var acceptedSpriteName = spriteName;
             try
             {
                 if (source == ImageSource.Location)
                 {
-                    _imageRequest = system.AcquireImageAsync(location);
-                    _imageRequest.Completed += value => Apply(value, accepted, acceptedTarget);
+                    Observe(system.AcquireImageAsync(location));
                 }
                 else
                 {
-                    _catalogRequest = system.AcquireAsync<UnityEngine.Object>(new ResourceAddress(projectId, address,
-                        source == ImageSource.Catalog && !string.IsNullOrEmpty(subAsset) ? subAsset : null));
-                    _catalogRequest.Completed += value => Apply(value, accepted, acceptedTarget);
+                    var key = assetReference != null && assetReference.RuntimeKeyIsValid()
+                        ? assetReference.RuntimeKey.ToString() : address;
+                    if (source == ImageSource.Atlas)
+                        Observe(system.AcquireAsync<SpriteAtlas>(key));
+                    else if (assetReference is AssetReferenceAtlasedSprite)
+                    {
+                        // Only a Sprite query selects AtlasSpriteProvider, which owns the returned Sprite clone.
+                        Observe(system.AcquireAsync<Sprite>(key));
+                    }
+                    else
+                        Observe(system.AcquireAsync<UnityEngine.Object>(key));
                 }
             }
             catch (ArgumentException error)
             {
                 Fail(new ResourceException(ResourceError.InvalidAddress, "Invalid image resource address.", error));
+            }
+
+            void Observe<T>(ResourceRequest<AssetLease<T>> request) where T : UnityEngine.Object
+            {
+                _pendingRequest = request;
+                request.Completed += value => Apply(value, accepted, acceptedTarget, acceptedSource, acceptedSpriteName);
             }
         }
 
@@ -205,6 +258,8 @@ namespace YLFramework.Resource
         {
             location = null;
             address = null;
+            assetReference = null;
+            projectId = subAsset = null;
             var accepted = _generation + 1;
             try
             {
@@ -221,7 +276,8 @@ namespace YLFramework.Resource
         }
 
         /// <summary>只接受当前代且目标未变的完成结果，交割租约并应用图片；失配或失败时归还本次责任。</summary>
-        private void Apply<T>(ResourceRequest<AssetLease<T>> request, int accepted, Graphic acceptedTarget) where T : UnityEngine.Object
+        private void Apply<T>(ResourceRequest<AssetLease<T>> request, int accepted, Graphic acceptedTarget,
+            ImageSource acceptedSource, string acceptedSpriteName) where T : UnityEngine.Object
         {
             if (accepted != _generation || !isActiveAndEnabled)
             {
@@ -240,14 +296,9 @@ namespace YLFramework.Resource
                 }
                 return;
             }
-            if (ReferenceEquals(_imageRequest, request))
+            if (ReferenceEquals(_pendingRequest, request))
             {
-                _imageRequest = null;
-            }
-
-            if (ReferenceEquals(_catalogRequest, request))
-            {
-                _catalogRequest = null;
+                _pendingRequest = null;
             }
 
             AssetLease<T> acquired = null;
@@ -261,21 +312,20 @@ namespace YLFramework.Resource
                     return;
                 }
                 acquired = request.TakeResult();
-                acquired.OwnerLabel = "ResourceImage: " + acceptedTarget.name + " (" + acceptedTarget.GetInstanceID() + ")";
                 var asset = acquired.Asset;
                 _previous = ReadTarget(acceptedTarget);
                 _displayTarget = acceptedTarget;
-                if (source == ImageSource.Atlas)
+                if (acceptedSource == ImageSource.Atlas)
                 {
-                    if (!(asset is UnityEngine.U2D.SpriteAtlas atlas))
+                    if (!(asset is SpriteAtlas atlas))
                     {
                         throw new ResourceException(ResourceError.TypeMismatch, "The explicit Atlas address must declare a SpriteAtlas.");
                     }
 
-                    _ownedSprite = atlas.GetSprite(spriteName);
+                    _ownedSprite = atlas.GetSprite(acceptedSpriteName);
                     if (!_ownedSprite)
                     {
-                        throw new ResourceException(ResourceError.AddressNotFound, "SpriteAtlas does not contain Sprite: " + spriteName);
+                        throw new ResourceException(ResourceError.AddressNotFound, "SpriteAtlas does not contain Sprite: " + acceptedSpriteName);
                     }
 
                     if (!_ownedSprite.texture)
@@ -359,10 +409,8 @@ namespace YLFramework.Resource
         private void ReleaseDisplay()
         {
             _generation++;
-            var pendingImage = _imageRequest;
-            _imageRequest = null;
-            var pendingCatalog = _catalogRequest;
-            _catalogRequest = null;
+            var pending = _pendingRequest;
+            _pendingRequest = null;
             var oldTarget = _displayTarget;
             var oldDisplayed = _displayed;
             var oldPrevious = _previous;
@@ -377,14 +425,7 @@ namespace YLFramework.Resource
             // 先移交局部清理责任，再调用可重入 UI setter；不覆盖外部代码替换的内容。
             try
             {
-                try
-                {
-                    pendingImage?.Dispose();
-                }
-                finally
-                {
-                    pendingCatalog?.Dispose();
-                }
+                pending?.Dispose();
                 if (hadDisplay && oldTarget && ReferenceEquals(ReadTarget(oldTarget), oldDisplayed))
                 {
                     if (oldTarget is Image image)

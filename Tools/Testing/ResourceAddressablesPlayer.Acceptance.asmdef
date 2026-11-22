@@ -1,0 +1,11 @@
+{
+  "name": "YLFramework.ResourceAddressables.Acceptance",
+  "references": ["YLFramework.Runtime", "Unity.Addressables", "Unity.ResourceManager"],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "autoReferenced": false,
+  "defineConstraints": ["UNITY_EDITOR || YL_RESOURCE_ADDRESSABLES_ACCEPTANCE"],
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "noEngineReferences": false
+}

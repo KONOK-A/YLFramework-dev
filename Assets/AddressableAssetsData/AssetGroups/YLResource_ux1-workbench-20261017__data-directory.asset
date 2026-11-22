@@ -1,0 +1,95 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_ux1-workbench-20261017__data-directory
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_ux1-workbench-20261017__data-directory
+  m_GUID: 608cda939d127f04babeed37a3803f02
+  m_SerializeEntries:
+  - m_GUID: 127919acc86021c4a8b2487fb82e2666
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_005.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 2c997ac3b417067469374d9462af0760
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_006.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 5a8b3a4ed54e22642a75eb6171eac555
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_003.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 677e032ff0a7cf04a91ed53fe30e7938
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_002.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 787a936bb9e29d24aa73b97225a9452d
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_007.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 91f087da81c1a704fb8eb4d438ea2088
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_009.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 95dbf6ff2cab92c40bae358f8b522fb6
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_001.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: aa98723a8f12672438ed808757814c21
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_010.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: b442d4303a222e14d973df95f3c64011
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_012.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: bec55edbaecd8f446b8afe51e1fc103a
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_004.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: d2766103f047a534095bee6e0646f120
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_008.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: e133d5b2aa580684ebd6e0c911c96e41
+    m_Address: ux1-workbench-20261017/DirectorySet/UI_DirectorySet_011.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - ux1-workbench-20261017/data-directory
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: 25a1816dd1d286145b76d36b7250311d, type: 2}
+    - {fileID: 11400000, guid: 35bfa10bd394c7649bc1ce20f9d95959, type: 2}

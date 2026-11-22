@@ -20,7 +20,7 @@ namespace YLFramework.Editor.Resource
 
             EditorGUILayout.PropertyField(serializedObject.FindProperty("target"), new GUIContent("显示组件", "选择 Image 或 RawImage；为空时使用同一 GameObject 上的组件。"));
             var source = serializedObject.FindProperty("source");
-            EditorGUILayout.PropertyField(source, new GUIContent("图片来源", "Location 使用 URL 或本地文件，Catalog 使用资源地址，Atlas 使用图集地址和 Sprite 名称。"));
+            EditorGUILayout.PropertyField(source, new GUIContent("图片来源", "Location 使用 URL 或本地文件，Catalog 使用官方 address/AssetReference，Atlas 使用官方图集引用和 Sprite 名称。"));
             if (source.hasMultipleDifferentValues || source.enumValueIndex == (int)ResourceImage.ImageSource.Location)
             {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("location"), new GUIContent("URL / 本地文件", "填写完整 URL 或本地图片文件的绝对路径。"));
@@ -28,11 +28,13 @@ namespace YLFramework.Editor.Resource
 
             if (source.hasMultipleDifferentValues || source.enumValueIndex != (int)ResourceImage.ImageSource.Location)
             {
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("projectId"), new GUIContent("资源项目标识", "已挂载资源目录中的 ProjectId。"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("address"), new GUIContent("资源地址", "资源配置中登记的加载地址，不是源文件路径。"));
-                if (source.hasMultipleDifferentValues || source.enumValueIndex == (int)ResourceImage.ImageSource.Catalog)
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("assetReference"), new GUIContent("官方资产引用", "优先使用有效 AssetReference；子 Sprite 使用官方子对象选择。"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("address"), new GUIContent("官方资源地址", "没有有效 AssetReference 时使用此精确 Addressables address。"));
+                var legacyProject = serializedObject.FindProperty("projectId");
+                var legacySubAsset = serializedObject.FindProperty("subAsset");
+                if (!string.IsNullOrEmpty(legacyProject.stringValue) || !string.IsNullOrEmpty(legacySubAsset.stringValue))
                 {
-                    EditorGUILayout.PropertyField(serializedObject.FindProperty("subAsset"), new GUIContent("子资源键（可选）", "须与工作台中登记的子资源键一致；留空时使用主资源。"));
+                    EditorGUILayout.HelpBox("仍有旧版图片输入，需通过迁移流程转换为官方 address/AssetReference 后再加载。旧字段保留用于核验，不在运行时拼接地址。", MessageType.Warning);
                 }
 
                 if (source.hasMultipleDifferentValues || source.enumValueIndex == (int)ResourceImage.ImageSource.Atlas)
@@ -59,14 +61,14 @@ namespace YLFramework.Editor.Resource
 
             if (!Application.isPlaying)
             {
-                EditorGUILayout.HelpBox("应用启动时需先初始化 ResourceSystem。URL 和本地图片无需 Catalog；资源目录支持 Texture2D 和 Sprite。图集使用明确地址和唯一 Sprite 名称，只支持 Image。组件停用或销毁时归还租约，并销毁自己创建的克隆。", MessageType.Info);
+                EditorGUILayout.HelpBox("先显式启动 ResourceSystem。URL 和绝对本地 PNG/JPEG 使用受限官方 Provider（WebGL 不支持本地路径）；其他图片使用官方 address/AssetReference。Atlas 只支持 Image。停用或销毁只归还自己的租约和 Sprite 克隆，不销毁原有占位图。", MessageType.Info);
                 return;
             }
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("图片请求", ResourceEditorText.RequestStatus(image.Status), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("图片请求", image.Status.ToString(), EditorStyles.boldLabel);
             if (image.Error != null)
             {
-                EditorGUILayout.HelpBox("图片加载未完成。错误详情：\n" + ResourceEditorText.FailureDetails(image.Error), MessageType.Error);
+                EditorGUILayout.HelpBox("图片加载未完成。错误详情：\n" + image.Error, MessageType.Error);
             }
 
             using (new EditorGUILayout.HorizontalScope())

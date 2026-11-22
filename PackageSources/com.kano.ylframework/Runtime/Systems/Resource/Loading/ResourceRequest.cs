@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using UnityEngine;
 
@@ -22,6 +23,11 @@ namespace YLFramework.Resource
     /// <summary>供资源会话批量冻结请求、释放未交付责任并通知观察者的内部协议。</summary>
     internal interface IResourceRequest : IDisposable
     {
+        bool IsDone
+        {
+            get;
+        }
+        ResourceRequestDiagnostics CaptureDiagnostics();
         /// <summary>冻结待完成请求的失效终态，并暂存解绑及通知责任。</summary>
         void PrepareInvalidation();
         /// <summary>解除本请求的等待，归还未领取结果并结束请求持有责任。</summary>
@@ -30,7 +36,7 @@ namespace YLFramework.Resource
         void NotifyInvalidation();
     }
 
-    /// <summary>独立消费者。yield 只等待终态；TakeResult 恰一次转交结果，Dispose 只释放未领取结果。</summary>
+    /// <summary>独立消费者。yield 只等待终态；await 或 TakeResult 恰一次转交结果，Dispose 只释放未领取结果。</summary>
     /// <remarks>所有操作在接受请求的 Unity 主线程执行；完成观察异常逐个报告，不改终态。</remarks>
     /// <typeparam name="T">成功时交付的结果类型；其释放规则由创建请求的入口指定。</typeparam>
     public class ResourceRequest<T> : CustomYieldInstruction, IDisposable, IResourceRequest
@@ -43,10 +49,19 @@ namespace YLFramework.Resource
         private Action<ResourceRequest<T>> _observers;
         private Action<ResourceRequest<T>> _invalidationObservers;
         private Action _invalidationDetach;
+        private ResourceException _reservedAwaitError;
         private bool _isClaimed;
+        private bool _awaitReserved;
+        private bool _awaitContinuationRegistered;
         private float _progress;
         internal Action OwnershipEnded;
         internal Action Terminal;
+        internal Action ValidateBeforeTake;
+        internal CancellationToken Cancellation;
+        internal int DiagnosticId;
+        internal (string Operation, string Key, string Owner) DiagnosticIdentity;
+
+        ResourceRequestDiagnostics IResourceRequest.CaptureDiagnostics() => new(DiagnosticId, DiagnosticIdentity, Status, Error?.ToString());
 
         /// <summary>当前等待状态；释放成功请求不会将成功终态改成取消。</summary>
         public ResourceRequestStatus Status
@@ -123,6 +138,14 @@ namespace YLFramework.Resource
             _progressReader = getProgress;
         }
 
+        /// <summary>工作启动后更新进度来源，不覆盖已经登记的取消解绑责任。</summary>
+        internal void SetProgressReader(Func<float> progress)
+        {
+            CheckThread();
+            if (!IsDone)
+                _progressReader = progress;
+        }
+
         /// <summary>暂存成功结果；请求已结束时立即归还迟到结果，不覆盖原终态。</summary>
         internal bool SetSuccess(T value)
         {
@@ -161,7 +184,7 @@ namespace YLFramework.Resource
         }
 
         /// <summary>移走当前观察者快照后逐个通知，避免重入重复派发。</summary>
-        internal void Notify()
+        internal void NotifyCompletion()
         {
             var snapshot = _observers;
             _observers = null;
@@ -198,9 +221,107 @@ namespace YLFramework.Resource
         /// <summary>成功结果单次转移。失败/取消抛原资源错误；Dispose 后始终抛 ObjectDisposedException。</summary>
         /// <returns>由调用方接管的结果；后续释放本请求不再归还它。</returns>
         /// <exception cref="ObjectDisposedException">请求已经释放或被会话关闭。</exception>
-        /// <exception cref="InvalidOperationException">线程不符、请求尚未成功或结果已经领取。</exception>
+        /// <exception cref="InvalidOperationException">线程不符、请求尚未成功、结果已经领取或已由 await 预约。</exception>
         /// <exception cref="ResourceException">请求以错误终态结束。</exception>
         public T TakeResult()
+        {
+            CheckThread();
+            if (_awaitReserved)
+            {
+                throw new InvalidOperationException("The result is reserved by this request's single awaiter.");
+            }
+            return ClaimResult();
+        }
+
+        /// <summary>为唯一领取者保留结果；完成后领取结果并关闭请求，不依赖平台特定的 Handle.Task。</summary>
+        /// <returns>仅对应本次请求的一次结果交割，不创建新的消费者。</returns>
+        public Awaiter GetAwaiter()
+        {
+            CheckThread();
+            if (IsDisposed)
+            {
+                throw new ObjectDisposedException(nameof(ResourceRequest<T>));
+            }
+            if (_awaitReserved || _isClaimed)
+            {
+                throw new InvalidOperationException("A resource request can transfer its result only once.");
+            }
+            _awaitReserved = true;
+            return new Awaiter(this);
+        }
+
+        /// <summary>同一请求的单次 await 状态；复制此值不会产生第二份领取权。</summary>
+        public readonly struct Awaiter : INotifyCompletion
+        {
+            private readonly ResourceRequest<T> _request;
+
+            internal Awaiter(ResourceRequest<T> request) => _request = request;
+
+            /// <summary>只观察终态，不领取或关闭请求。</summary>
+            public bool IsCompleted
+            {
+                get
+                {
+                    _request.CheckThread();
+                    return _request.IsDone;
+                }
+            }
+
+            /// <summary>在接受请求的线程登记一次续体；终态已到达时按完成事件规则即时通知。</summary>
+            /// <param name="continuation">由编译器或调用者提供的唯一后续操作。</param>
+            public void OnCompleted(Action continuation)
+            {
+                _request.CheckThread();
+                if (continuation == null)
+                {
+                    throw new ArgumentNullException(nameof(continuation));
+                }
+                if (_request._awaitContinuationRegistered)
+                {
+                    throw new InvalidOperationException("The resource await continuation was already registered.");
+                }
+                _request._awaitContinuationRegistered = true;
+                _request.Completed += _ => continuation();
+            }
+
+            /// <summary>领取唯一结果并结束请求责任；取消使用标准取消异常，失败保留原资源异常。</summary>
+            /// <returns>由调用方或所属 Scope 接管的成功结果。</returns>
+            public T GetResult()
+            {
+                _request.CheckThread();
+                if (!_request.IsDone)
+                {
+                    throw new InvalidOperationException("The resource request has not completed.");
+                }
+                try
+                {
+                    var reservedError = _request._reservedAwaitError;
+                    if (reservedError != null)
+                    {
+                        _request._reservedAwaitError = null;
+                        throw reservedError;
+                    }
+                    if (_request.Status == ResourceRequestStatus.Canceled && !_request._isClaimed)
+                    {
+                        _request._isClaimed = true;
+                        throw new OperationCanceledException(_request.Error?.Message, _request.Error, _request.Cancellation);
+                    }
+                    if (_request.Status == ResourceRequestStatus.Invalidated && !_request._isClaimed)
+                    {
+                        _request._isClaimed = true;
+                        throw _request.Error;
+                    }
+                    return _request.ClaimResult();
+                }
+                finally
+                {
+                    _request.Dispose();
+                }
+            }
+        }
+
+        /// <summary>由已确定的唯一领取入口交割责任，其他观察者不能争抢已预约的结果。</summary>
+        private T ClaimResult()
         {
             CheckThread();
             if (IsDisposed)
@@ -222,6 +343,8 @@ namespace YLFramework.Resource
                 throw new InvalidOperationException("The resource result was already taken.");
             }
 
+            ValidateBeforeTake?.Invoke();
+            ValidateBeforeTake = null;
             _isClaimed = true;
             var value = _result;
             _result = default;
@@ -241,7 +364,7 @@ namespace YLFramework.Resource
             var detach = _cancel;
             SetTerminal(ResourceRequestStatus.Canceled, new ResourceException(ResourceError.Canceled, "The resource consumer canceled its wait."));
             detach?.Invoke();
-            Notify();
+            NotifyCompletion();
         }
 
         /// <summary>先冻结本请求，防止退出回调重入改写同批请求的结束原因。</summary>
@@ -257,6 +380,18 @@ namespace YLFramework.Resource
                 _invalidationDetach = _cancel;
                 SetTerminal(ResourceRequestStatus.Invalidated, new ResourceException(ResourceError.SessionUnavailable, "The resource session ended."));
             }
+            else if (_awaitReserved && !_isClaimed)
+            {
+                // 生产终态不变；更早的观察者可能在已预约的续体领取前结束会话。
+                if (Status == ResourceRequestStatus.Succeeded)
+                {
+                    _reservedAwaitError = new ResourceException(ResourceError.SessionUnavailable, "The resource session ended before the result was delivered.");
+                }
+                else if (Status == ResourceRequestStatus.Failed)
+                {
+                    _reservedAwaitError = Error;
+                }
+            }
             IsDisposed = true;
             _invalidationObservers = _observers;
             _observers = null;
@@ -265,16 +400,22 @@ namespace YLFramework.Resource
         /// <summary>履行会话冻结时暂存的解绑和结果归还责任。</summary>
         void IResourceRequest.ReleaseInvalidatedResult()
         {
+            var detach = _invalidationDetach;
+            _invalidationDetach = null;
             try
             {
-                var detach = _invalidationDetach;
-                _invalidationDetach = null;
                 detach?.Invoke();
-                ReleaseUnclaimedResult();
             }
             finally
             {
-                EndOwnership();
+                try
+                {
+                    ReleaseUnclaimedResult();
+                }
+                finally
+                {
+                    EndOwnership();
+                }
             }
         }
 
@@ -283,6 +424,7 @@ namespace YLFramework.Resource
         {
             var snapshot = _invalidationObservers;
             _invalidationObservers = null;
+            ValidateBeforeTake = null;
             NotifyObservers(snapshot);
         }
 
@@ -311,6 +453,7 @@ namespace YLFramework.Resource
             }
             finally
             {
+                ValidateBeforeTake = null;
                 _observers = null;
                 EndOwnership();
             }

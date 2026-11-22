@@ -6,9 +6,13 @@ using System.Reflection;
 using System.Runtime.ExceptionServices;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.AddressableAssets;
+using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEngine;
 using UnityEngine.TestTools;
 using YLFramework.Editor.Resource;
+using YLFramework.Integrations.HybridCLR;
 using YLFramework.Integrations.HybridCLR.Editor;
 using YLFramework.Samples.HybridCLR.Editor;
 
@@ -23,45 +27,46 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var rootGuid = AssetDatabase.AssetPathToGUID(root);
             var settings = File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/HybridCLRSettings.asset")) ? File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/HybridCLRSettings.asset")) : null;
             var backend = PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone);
+            var previousDefaultSettings = AddressableAssetSettingsDefaultObject.GetSettings(false);
             try
             {
                 var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Game.asset");
-                Assert.That(profile.recipe, Is.Not.Null);
-                Assert.That(profile.recipe.project, Is.Not.Null);
-                Assert.That(profile.recipe.action, Is.EqualTo(ResourceBuildAction.BuildAndPublish));
-                Assert.That(profile.recipe.target, Is.EqualTo(BuildTarget.StandaloneWindows64));
-                Assert.That(profile.recipe.project.sourceDirectories.Count, Is.EqualTo(1));
-                var selection = profile.recipe.project.groups.Single().selections.Single();
-                Assert.That(AssetDatabase.GUIDToAssetPath(selection.guid), Is.EqualTo(profile.generatedAssetDirectory + "/hybridclr"));
-                Assert.That(selection.extensions, Is.EquivalentTo(new[] { ".bytes", ".json" }));
-                Assert.That(EditorUtility.IsDirty(profile) || EditorUtility.IsDirty(profile.recipe) || EditorUtility.IsDirty(profile.recipe.project), Is.False);
+                Assert.That(profile.schemaVersion, Is.EqualTo(2));
+                Assert.That(profile.recipe, Is.Null);
+                Assert.That(profile.addressableSettings, Is.SameAs(AddressableAssetSettingsDefaultObject.GetSettings(false)));
+                Assert.That(profile.codeGroup, Is.Null, "The tool must not silently choose an official code group.");
+                Assert.That(profile.target, Is.EqualTo(BuildTarget.StandaloneWindows64));
+                Assert.That(EditorUtility.IsDirty(profile), Is.False);
+                Assert.Throws<InvalidDataException>(() => HybridCLRBuildPipeline.ValidateInputPaths(profile));
+                BindOfficialSettings(root, profile);
                 Assert.DoesNotThrow(() => HybridCLRBuildPipeline.ValidateInputPaths(profile));
-                var paths = new[] { AssetDatabase.GetAssetPath(profile), AssetDatabase.GetAssetPath(profile.recipe), AssetDatabase.GetAssetPath(profile.recipe.project) };
+                var paths = new[] { AssetDatabase.GetAssetPath(profile), AssetDatabase.GetAssetPath(profile.addressableSettings), AssetDatabase.GetAssetPath(profile.codeGroup) };
                 var guids = paths.Select(AssetDatabase.AssetPathToGUID).ToArray();
                 var bytes = paths.Select(File.ReadAllBytes).ToArray();
                 var metas = paths.Select(path => File.ReadAllBytes(path + ".meta")).ToArray();
-                var projectId = profile.recipe.project.projectId;
+                var projectId = profile.projectId;
                 var generated = profile.generatedAssetDirectory;
                 var baseline = profile.baselineDirectory;
                 var development = profile.development;
-                var recipe = profile.recipe;
-                var project = recipe.project;
+                var official = profile.addressableSettings;
+                var code = profile.codeGroup;
                 Resources.UnloadAsset(profile);
-                Resources.UnloadAsset(recipe);
-                Resources.UnloadAsset(project);
-                Assert.That((bool)profile || (bool)recipe || (bool)project, Is.False);
+                Resources.UnloadAsset(code);
+                Resources.UnloadAsset(official);
+                Assert.That((bool)profile || (bool)official || (bool)code, Is.False);
                 var restored = AssetDatabase.LoadAssetAtPath<HybridCLRBuildProfile>(paths[0]);
-                Assert.That(restored.recipe.project.projectId, Is.EqualTo(projectId));
+                Assert.That(restored.schemaVersion, Is.EqualTo(2));
+                Assert.That(restored.recipe, Is.Null);
+                Assert.That(restored.projectId, Is.EqualTo(projectId));
                 Assert.That(restored.development, Is.EqualTo(development));
                 Assert.That(restored.baseProfile, Is.Null);
                 Assert.That(restored.hotUpdateAssemblies, Is.Empty);
                 Assert.That(restored.generatedAssetDirectory, Is.EqualTo(generated));
                 Assert.That(restored.baselineDirectory, Is.EqualTo(baseline));
-                Assert.That(restored.recipe.appContentCompatibilityId, Is.EqualTo("base-v1"));
-                Assert.That(restored.recipe.action, Is.EqualTo(ResourceBuildAction.BuildAndPublish));
-                Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(restored.recipe)), Is.EqualTo(guids[1]));
-                Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(restored.recipe.project)), Is.EqualTo(guids[2]));
-                Assert.That(AssetDatabase.GUIDToAssetPath(restored.recipe.project.groups.Single().selections.Single().guid), Is.EqualTo(generated + "/hybridclr"));
+                Assert.That(restored.appContentCompatibilityId, Is.EqualTo("aa-base-v2"));
+                Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(restored.addressableSettings)), Is.EqualTo(guids[1]));
+                Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(restored.codeGroup)), Is.EqualTo(guids[2]));
+                Assert.That(restored.codeGroup.Settings, Is.SameAs(restored.addressableSettings));
                 var output = Environment.GetEnvironmentVariable("YL_TEST_OUTPUT_ROOT");
                 Assert.That(Directory.Exists(output), Is.True);
                 var evidence = Path.Combine(output, "HybridCLRFormalProfileProducer");
@@ -77,6 +82,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                     TestContext.WriteLine("Formal profile input: {0}; GUID={1}", paths[i], guids[i]);
                 }
                 Assert.That(PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone), Is.EqualTo(backend));
+                Assert.That(AddressableAssetSettingsDefaultObject.GetSettings(false), Is.SameAs(previousDefaultSettings));
                 Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/HybridCLRSettings.asset")), Is.EqualTo(settings != null));
                 if (settings != null)
                 {
@@ -114,33 +120,44 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         public void GeneratedResourceMappingIsIdempotentPreservesOtherGroupsAndSupportsUndo()
         {
             var root = NewToolRoot();
-            ResourceProject project = null;
+            AddressableAssetSettings official = null;
+            AddressableAssetGroup code = null;
             try
             {
                 var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Game.asset");
-                project = profile.recipe.project;
-                project.sourceDirectories.Clear();
-                project.groups.Clear();
-                project.groups.Add(new ResourceGroup { id = "user-content" });
-                EditorUtility.SetDirty(project);
-                AssetDatabase.SaveAssetIfDirty(project);
+                official = BindOfficialSettings(root, profile);
+                code = profile.codeGroup;
+                var manifest = CommitToolPayload(profile);
+                var foreignPath = root + "/user.txt";
+                File.WriteAllText(foreignPath, "unrelated user content");
+                AssetDatabase.ImportAsset(foreignPath, ImportAssetOptions.ForceSynchronousImport);
+                var foreignGroup = NewOfficialGroup(official, "user-content");
+                var foreign = official.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(foreignPath), foreignGroup);
+                foreign.SetAddress("user/content");
+                SaveOfficialSettings(official);
+                var foreignBytes = File.ReadAllBytes(AssetDatabase.GetAssetPath(foreignGroup));
+                Undo.IncrementCurrentGroup();
+                var undo = Undo.GetCurrentGroup();
+                Undo.SetCurrentGroupName("Register exact code entries");
                 ProfileTool("MapGeneratedResources", profile);
-                Assert.That(project.sourceDirectories.Count, Is.EqualTo(1));
-                Assert.That(project.groups.Select(g => g.id), Does.Contain("user-content"));
-                Assert.That(project.groups.Sum(g => g.selections.Count), Is.EqualTo(1));
+                Assert.That(code.entries.Count, Is.EqualTo(2));
+                Assert.That(ResourceAddressablesAuthoring.FindUniqueEntry(official, HybridCLRManifest.ResourceKey(profile.projectId, HybridCLRManifest.ManifestPath)).parentGroup, Is.SameAs(code));
+                Assert.That(ResourceAddressablesAuthoring.FindUniqueEntry(official, HybridCLRManifest.ResourceKey(profile.projectId, manifest.HotUpdateAssemblies.Single().Address)).parentGroup, Is.SameAs(code));
                 ProfileTool("MapGeneratedResources", profile);
-                Assert.That(project.sourceDirectories.Count, Is.EqualTo(1));
-                Assert.That(project.groups.Sum(g => g.selections.Count), Is.EqualTo(1));
+                Assert.That(code.entries.Count, Is.EqualTo(2));
+                Undo.FlushUndoRecordObjects();
+                Undo.CollapseUndoOperations(undo);
                 Undo.PerformUndo();
-                Assert.That(project.sourceDirectories, Is.Empty);
-                Assert.That(project.groups.Select(g => g.id), Is.EqualTo(new[] { "user-content" }));
+                Assert.That(code.entries, Is.Empty);
+                Assert.That(foreignGroup.entries.Single().address, Is.EqualTo("user/content"));
+                CollectionAssert.AreEqual(foreignBytes, File.ReadAllBytes(AssetDatabase.GetAssetPath(foreignGroup)));
             }
             finally
             {
-                if (project)
-                {
-                    Undo.ClearUndo(project);
-                }
+                if (official)
+                    Undo.ClearUndo(official);
+                if (code)
+                    Undo.ClearUndo(code);
                 AssetDatabase.DeleteAsset(root);
             }
         }
@@ -152,6 +169,75 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             return "Assets/Tests/YLFramework/Fixtures/" + name;
         }
 
+        private static AddressableAssetSettings CreateOfficialSettings(string root, out AddressableAssetGroup code, out AddressableAssetGroup sample)
+        {
+            var settings = AddressableAssetSettings.Create(root, "OfficialSettings", true, true);
+            settings.DisableCatalogUpdateOnStartup = true;
+            settings.BuildRemoteCatalog = true;
+            code = settings.DefaultGroup;
+            sample = NewOfficialGroup(settings, "Sample");
+            foreach (var group in new[] { code, sample })
+            {
+                var schema = group.GetSchema<BundledAssetGroupSchema>();
+                schema.BuildPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteBuildPath);
+                schema.LoadPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteLoadPath);
+                group.GetSchema<ContentUpdateGroupSchema>().StaticContent = false;
+            }
+            SaveOfficialSettings(settings);
+            return settings;
+        }
+
+        private static AddressableAssetGroup NewOfficialGroup(AddressableAssetSettings settings, string name) =>
+            settings.CreateGroup(name, false, false, true, null, typeof(BundledAssetGroupSchema), typeof(ContentUpdateGroupSchema));
+
+        private static AddressableAssetSettings BindOfficialSettings(string root, HybridCLRBuildProfile profile)
+        {
+            var settings = CreateOfficialSettings(root, out var code, out _);
+            profile.addressableSettings = settings;
+            profile.codeGroup = code;
+            EditorUtility.SetDirty(profile);
+            AssetDatabase.SaveAssetIfDirty(profile);
+            return settings;
+        }
+
+        private static void SaveOfficialSettings(AddressableAssetSettings settings)
+        {
+            foreach (var group in settings.groups)
+            {
+                if (!group)
+                    continue;
+                foreach (var schema in group.Schemas)
+                    AssetDatabase.SaveAssetIfDirty(schema);
+                AssetDatabase.SaveAssetIfDirty(group);
+            }
+            AssetDatabase.SaveAssetIfDirty(settings);
+        }
+
+        private static HybridCLRManifest CommitToolPayload(HybridCLRBuildProfile profile)
+        {
+            var assembly = HybridCLRAssemblyAnalysis.Read(typeof(HybridCLRManifest).Assembly.Location);
+            var manifest = new HybridCLRManifest
+            {
+                ProjectId = profile.projectId,
+                AppContentCompatibilityId = profile.appContentCompatibilityId,
+                UnityVersion = Application.unityVersion,
+                Development = profile.development,
+                HotUpdateAssemblies = new[] { new HybridCLRPayload
+                {
+                    Name = assembly.Name, Identity = assembly.Identity, Mvid = assembly.Mvid,
+                    Length = assembly.Length, Sha256 = assembly.Sha256,
+                    Address = HybridCLRManifest.PayloadAddress(assembly.Name, false), References = assembly.References
+                } }
+            };
+            manifest.Seal();
+            HybridCLRBuildPipeline.CommitPayloads(profile, manifest, new HybridCLRAssemblySet
+            {
+                HotUpdate = new[] { assembly },
+                Aot = Array.Empty<HybridCLRAssemblyRecord>()
+            });
+            return manifest;
+        }
+
         [Test]
         public void MappingANewGenerationDirectoryRejectsOldCodeMappingsWithoutChangingTheProject()
         {
@@ -159,60 +245,17 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             try
             {
                 var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Game.asset");
-                var project = profile.recipe.project;
-                var before = EditorJsonUtility.ToJson(project);
-                profile.generatedAssetDirectory = root + "/OtherGenerated";
-                Assert.Throws<InvalidDataException>(() => ProfileTool("MapGeneratedResources", profile));
-                Assert.That(EditorJsonUtility.ToJson(project), Is.EqualTo(before));
-            }
-            finally
-            {
-                AssetDatabase.DeleteAsset(root);
-            }
-        }
-
-        [Test]
-        public void ConfigurationInspectionReportsStaleCodeMappingsEvenWhenTheNewMappingExists()
-        {
-            var root = NewToolRoot();
-            try
-            {
-                var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Game.asset");
-                AssetDatabase.CreateFolder(root, "OtherGenerated");
-                AssetDatabase.CreateFolder(root + "/OtherGenerated", "hybridclr");
-                profile.generatedAssetDirectory = root + "/OtherGenerated";
-                profile.recipe.project.sourceDirectories.Add(new ResourceSourceDirectory { guid = AssetDatabase.AssetPathToGUID(profile.generatedAssetDirectory) });
-                profile.recipe.project.groups.Add(new ResourceGroup
-                {
-                    id = "new-code",
-                    selections = new System.Collections.Generic.List<ResourceSelection>
-                    { new ResourceSelection { guid = AssetDatabase.AssetPathToGUID(profile.generatedAssetDirectory + "/hybridclr"), extensions = new[] { ".bytes", ".json" } } }
-                });
-                var result = (HybridCLRProfileInspection)ProfileTool("Inspect", profile);
-                Assert.That(result.Errors.Any(e => e.Contains("代码映射") && e.Contains("其他目录")), Is.True,
-                    "Preflight must diagnose the old canonical code mapping, not only notice that the new mapping exists.");
-            }
-            finally
-            {
-                AssetDatabase.DeleteAsset(root);
-            }
-        }
-
-        [Test]
-        public void MappingAvoidsUserGroupIdsCaseInsensitivelyIncludingSuffixes()
-        {
-            var root = NewToolRoot();
-            try
-            {
-                var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Game.asset");
-                var project = profile.recipe.project;
-                project.sourceDirectories.Clear();
-                project.groups.Clear();
-                project.groups.Add(new ResourceGroup { id = "HybridCLR-Code" });
-                project.groups.Add(new ResourceGroup { id = "HYBRIDCLR-CODE-2" });
+                var official = BindOfficialSettings(root, profile);
+                CommitToolPayload(profile);
                 ProfileTool("MapGeneratedResources", profile);
-                Assert.That(project.groups.Select(g => g.id).Distinct(StringComparer.OrdinalIgnoreCase).Count(), Is.EqualTo(project.groups.Count));
-                Assert.That(project.groups.Select(g => g.id), Does.Contain("HybridCLR-Code").And.Contain("HYBRIDCLR-CODE-2"));
+                SaveOfficialSettings(official);
+                var before = EditorJsonUtility.ToJson(official);
+                var code = EditorJsonUtility.ToJson(profile.codeGroup);
+                profile.generatedAssetDirectory = root + "/OtherGenerated";
+                CommitToolPayload(profile);
+                Assert.Throws<InvalidDataException>(() => ProfileTool("MapGeneratedResources", profile));
+                Assert.That(EditorJsonUtility.ToJson(official), Is.EqualTo(before));
+                Assert.That(EditorJsonUtility.ToJson(profile.codeGroup), Is.EqualTo(code));
             }
             finally
             {
@@ -220,36 +263,91 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             }
         }
 
-        [TestCase("aliases")]
-        [TestCase("duplicate")]
+        [Test]
+        public void ConfigurationInspectionReportsAnInvalidOfficialGroupWithoutRewritingUserInputs()
+        {
+            var root = NewToolRoot();
+            try
+            {
+                var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Game.asset");
+                var official = BindOfficialSettings(root, profile);
+                profile.codeGroup = null;
+                var before = EditorJsonUtility.ToJson(profile);
+                var settingsBefore = File.ReadAllBytes(AssetDatabase.GetAssetPath(official));
+                var result = (HybridCLRProfileInspection)ProfileTool("Inspect", profile);
+                Assert.That(result.Errors.Any(e => e.Contains("official Addressables settings") && e.Contains("code group")), Is.True);
+                Assert.That(EditorJsonUtility.ToJson(profile), Is.EqualTo(before));
+                CollectionAssert.AreEqual(settingsBefore, File.ReadAllBytes(AssetDatabase.GetAssetPath(official)));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(root);
+            }
+        }
+
+        [Test]
+        public void MappingUsesTheExplicitOfficialGroupWithoutClaimingSimilarlyNamedUserGroups()
+        {
+            var root = NewToolRoot();
+            try
+            {
+                var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Game.asset");
+                var official = BindOfficialSettings(root, profile);
+                var first = NewOfficialGroup(official, "HybridCLR-Code");
+                var second = NewOfficialGroup(official, "HYBRIDCLR-CODE-2");
+                SaveOfficialSettings(official);
+                var firstBytes = File.ReadAllBytes(AssetDatabase.GetAssetPath(first));
+                var secondBytes = File.ReadAllBytes(AssetDatabase.GetAssetPath(second));
+                var groups = official.groups.Select(AssetDatabase.GetAssetPath).ToArray();
+                CommitToolPayload(profile);
+                ProfileTool("MapGeneratedResources", profile);
+                Assert.That(official.groups.Select(AssetDatabase.GetAssetPath), Is.EqualTo(groups));
+                Assert.That(profile.codeGroup.entries.Count, Is.EqualTo(2));
+                Assert.That(first.entries, Is.Empty);
+                Assert.That(second.entries, Is.Empty);
+                CollectionAssert.AreEqual(firstBytes, File.ReadAllBytes(AssetDatabase.GetAssetPath(first)));
+                CollectionAssert.AreEqual(secondBytes, File.ReadAllBytes(AssetDatabase.GetAssetPath(second)));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(root);
+            }
+        }
+
+        [TestCase("label-collision")]
+        [TestCase("address-collision")]
         public void InvalidCanonicalCodeSelectionsAreDiagnosedWithoutRewritingUserConfiguration(string invalid)
         {
             var root = NewToolRoot();
             try
             {
                 var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Game.asset");
-                var project = profile.recipe.project;
-                var selection = project.groups.Single().selections.Single();
-                if (invalid == "aliases")
+                var official = BindOfficialSettings(root, profile);
+                var manifest = CommitToolPayload(profile);
+                var path = root + "/foreign.txt";
+                File.WriteAllText(path, "must remain unchanged");
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+                var foreignGroup = NewOfficialGroup(official, "foreign");
+                var foreign = official.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(path), foreignGroup);
+                var key = HybridCLRManifest.ResourceKey(profile.projectId, HybridCLRManifest.ManifestPath);
+                if (invalid == "label-collision")
                 {
-                    selection.aliases = new[] { "not-valid-for-a-folder" };
+                    official.AddLabel(key);
+                    foreign.SetAddress("foreign/content");
+                    foreign.SetLabel(key, true);
                 }
                 else
                 {
-                    project.groups.Add(new ResourceGroup
-                    {
-                        id = "duplicate-selection",
-                        selections = new System.Collections.Generic.List<ResourceSelection>
-                    { new ResourceSelection { guid = selection.guid, extensions = new[] { ".bytes", ".json" } } }
-                    });
+                    foreign.SetAddress(key);
                 }
 
-                var before = EditorJsonUtility.ToJson(project);
+                SaveOfficialSettings(official);
+                var before = EditorJsonUtility.ToJson(official);
+                var groupBefore = EditorJsonUtility.ToJson(foreignGroup);
                 Assert.Throws<InvalidDataException>(() => ProfileTool("MapGeneratedResources", profile));
-                Assert.That(EditorJsonUtility.ToJson(project), Is.EqualTo(before));
-                var result = (HybridCLRProfileInspection)ProfileTool("Inspect", profile);
-                Assert.That(result.Errors.Any(e => e.Contains("代码目录选择")), Is.True, "Configuration inspection must explain invalid canonical code selections.");
-                Assert.That(EditorJsonUtility.ToJson(project), Is.EqualTo(before));
+                Assert.That(EditorJsonUtility.ToJson(official), Is.EqualTo(before));
+                Assert.That(EditorJsonUtility.ToJson(foreignGroup), Is.EqualTo(groupBefore));
+                Assert.That(official.FindAssetEntry(AssetDatabase.AssetPathToGUID(profile.generatedAssetDirectory + "/" + manifest.HotUpdateAssemblies.Single().Address)), Is.Null);
             }
             finally
             {
@@ -264,11 +362,13 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             try
             {
                 var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Game.asset");
+                BindOfficialSettings(root, profile);
+                CommitToolPayload(profile);
                 var code = profile.generatedAssetDirectory + "/hybridclr";
                 Assert.That(AssetDatabase.DeleteAsset(code), Is.True);
                 Assert.That(AssetDatabase.IsValidFolder(code), Is.False);
                 var result = (HybridCLRProfileInspection)ProfileTool("Inspect", profile);
-                Assert.That(result.Errors.Any(e => e.Contains("代码来源目录")), Is.True,
+                Assert.That(result.Errors.Any(e => e.Contains("owned generated payload is missing")), Is.True,
                     "A historical GUID is not evidence that the selected folder still exists.");
             }
             finally
@@ -301,16 +401,22 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var settings = File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/HybridCLRSettings.asset")) ? File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/HybridCLRSettings.asset")) : null;
             var backend = PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone);
             var development = EditorUserBuildSettings.development;
+            var officialRoot = NewToolRoot();
             try
             {
-                var profile = HybridCLRExampleAssets.Create(root, Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical("Build/HybridCLR/ToolTest-" + Guid.NewGuid().ToString("N"))));
-                Assert.That(profile.recipe.action, Is.EqualTo(ResourceBuildAction.BuildAndPublish));
-                Assert.That(profile.recipe.project.groups.Count, Is.EqualTo(3));
-                Assert.That(profile.recipe.project.sourceDirectories.Count, Is.EqualTo(2));
-                Assert.That(profile.recipe.project.groups.Single(g => g.id == "configuration").selections.Single().address, Is.EqualTo("sample/message.json"));
-                Assert.Throws<InvalidOperationException>(() => ResourceBuildMap.Create(profile.recipe.project), "The empty code group must not be buildable until generation succeeds.");
-                Assert.That(EditorUtility.IsDirty(profile) || EditorUtility.IsDirty(profile.recipe) || EditorUtility.IsDirty(profile.recipe.project), Is.False);
-                Assert.Throws<ArgumentException>(() => HybridCLRExampleAssets.Create(root, profile.baselineDirectory));
+                var official = CreateOfficialSettings(officialRoot, out var code, out var sample);
+                var profile = HybridCLRExampleAssets.Create(root, Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical("Build/HybridCLR/ToolTest-" + Guid.NewGuid().ToString("N"))), official, code, sample);
+                Assert.That(profile.schemaVersion, Is.EqualTo(2));
+                Assert.That(profile.recipe, Is.Null);
+                Assert.That(profile.addressableSettings, Is.SameAs(official));
+                Assert.That(profile.codeGroup, Is.SameAs(code));
+                Assert.That(profile.appContentCompatibilityId, Is.EqualTo("hybridclr-aa-base-v2"));
+                Assert.That(ResourceAddressablesAuthoring.FindUniqueEntry(official, profile.projectId + "/sample/message.json").parentGroup, Is.SameAs(sample));
+                Assert.That(ResourceAddressablesAuthoring.FindUniqueEntry(official, profile.projectId + "/sample/hot-view").parentGroup, Is.SameAs(sample));
+                Assert.That(code.entries, Is.Empty);
+                Assert.Throws<FileNotFoundException>(() => ProfileTool("MapGeneratedResources", profile), "The sample does not fabricate a generated code manifest.");
+                Assert.That(EditorUtility.IsDirty(profile) || EditorUtility.IsDirty(official) || EditorUtility.IsDirty(sample), Is.False);
+                Assert.Throws<ArgumentException>(() => HybridCLRExampleAssets.Create(root, profile.baselineDirectory, official, code, sample));
                 Assert.That(File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical("ProjectSettings/HybridCLRSettings.asset")), Is.EqualTo(settings != null));
                 if (settings != null)
                 {
@@ -322,6 +428,7 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             }
             finally
             {
+                AssetDatabase.DeleteAsset(officialRoot);
                 if (AssetDatabase.IsValidFolder(root))
                 {
                     AssetDatabase.DeleteAsset(root);
@@ -375,18 +482,22 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var root = "Assets/Tests/YLFramework/Fixtures/HybridCLRPrefab-" + Guid.NewGuid().ToString("N");
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             var wasDirty = scene.isDirty;
+            var officialRoot = NewToolRoot();
             try
             {
-                var profile = HybridCLRExampleAssets.Create(root, Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical("Build/HybridCLR/PrefabTest-" + Guid.NewGuid().ToString("N"))));
+                var official = CreateOfficialSettings(officialRoot, out var code, out var sample);
+                var profile = HybridCLRExampleAssets.Create(root, Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical("Build/HybridCLR/PrefabTest-" + Guid.NewGuid().ToString("N"))), official, code, sample);
                 var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(root + "/Data/HotView.prefab");
                 Assert.That(prefab, Is.Not.Null);
                 Assert.That(GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(prefab), Is.Zero);
                 Assert.That(prefab.GetComponents<Component>().Any(c => c && c.GetType().FullName == "YLFramework.Samples.HybridCLR.HotUpdate.ExampleBehaviour"), Is.True);
-                Assert.That(profile.recipe.project.groups.Single(g => g.id == "prefab").selections.Single().address, Is.EqualTo("sample/hot-view"));
+                Assert.That(ResourceAddressablesAuthoring.FindUniqueEntry(official, profile.projectId + "/sample/hot-view").guid, Is.EqualTo(AssetDatabase.AssetPathToGUID(root + "/Data/HotView.prefab")));
+                Assert.That(ResourceAddressablesAuthoring.FindUniqueEntry(official, profile.projectId + "/sample/hot-view").parentGroup, Is.SameAs(sample));
                 Assert.That(scene.isDirty, Is.EqualTo(wasDirty));
             }
             finally
             {
+                AssetDatabase.DeleteAsset(officialRoot);
                 if (AssetDatabase.IsValidFolder(root))
                 {
                     AssetDatabase.DeleteAsset(root);
@@ -395,65 +506,154 @@ namespace YLFramework.Tests.Integrations.HybridCLR
         }
 
         [UnityTest]
-        public IEnumerator EveryNavigationTabCanBeClickedAndKeepsARealSelectedSkin()
+        public IEnumerator ReadOnlyInspectionCanBeClickedAndShowsErrorsWithoutRewritingInputs()
         {
+            RequireOwnedGuiHost();
+            var root = NewToolRoot();
+            var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Profile.asset");
+            var settings = BindOfficialSettings(root, profile);
+            profile.codeGroup = null;
+            EditorUtility.SetDirty(profile);
+            AssetDatabase.SaveAssetIfDirty(profile);
+            var profileBytes = File.ReadAllBytes(AssetDatabase.GetAssetPath(profile));
+            var settingsBytes = File.ReadAllBytes(AssetDatabase.GetAssetPath(settings));
+            var backend = PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone);
             var window = ScriptableObject.CreateInstance<HybridCLRWindow>();
-            var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            Type debugger = null;
             try
             {
-                window.position = new Rect(180, 100, 900, 600);
+                SelectWindowProfile(window, profile);
+                window.position = new Rect(80, 40, 950, 1100);
                 window.ShowUtility();
                 window.Focus();
                 yield return null;
-                var style = (GUIStyle)typeof(HybridCLRWindow).GetField("_navigationStyle", flags).GetValue(window);
-                Assert.That(EditorGUIUtility.GetBuiltinSkin(EditorSkin.Inspector).FindStyle(style.name), Is.Not.Null,
-                    "Renaming a native Editor style loses its skin-based selected-state painting.");
-                foreach (var target in new[] { 1, 2, 0 })
-                {
-                    window.Repaint();
-                    yield return null;
-                    var area = NavigationArea(window);
-                    var point = new Vector2(area.x + area.width * (target + .5f) / 3, area.center.y);
-                    window.SendEvent(new Event { type = EventType.MouseDown, button = 0, mousePosition = point });
-                    window.SendEvent(new Event { type = EventType.MouseUp, button = 0, mousePosition = point });
-                    yield return null;
-                    Assert.That(typeof(HybridCLRWindow).GetField("page", flags).GetValue(window), Is.EqualTo(target), "Each tab must be reachable through actual GUI mouse events, including returning to the first tab.");
-                }
+                debugger = BeginGuiCapture(window);
+                window.Repaint();
+                yield return null;
+                ClickCurrentButton(window, debugger, "Inspect Inputs (Read Only)");
+                yield return null;
+                window.Repaint();
+                yield return null;
+                Assert.That(DrawnText(debugger).Any(text => text.Contains("official Addressables settings") && text.Contains("code group")), Is.True,
+                    "The real inspection error must be drawn by the current workbench, not hidden in a private legacy tab.");
+                CollectionAssert.AreEqual(profileBytes, File.ReadAllBytes(AssetDatabase.GetAssetPath(profile)));
+                CollectionAssert.AreEqual(settingsBytes, File.ReadAllBytes(AssetDatabase.GetAssetPath(settings)));
+                Assert.That(EditorUtility.IsDirty(profile) || EditorUtility.IsDirty(settings), Is.False);
+                Assert.That(PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone), Is.EqualTo(backend));
+                Assert.That(Directory.Exists(profile.generatedAssetDirectory), Is.False);
             }
             finally
             {
+                if (debugger != null)
+                    debugger.GetMethod("StopDebugging", StaticFlags).Invoke(null, null);
                 window.Close();
+                AssetDatabase.DeleteAsset(root);
             }
         }
 
-        private static Rect NavigationArea(HybridCLRWindow window)
+        private const BindingFlags StaticFlags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+
+        private static void RequireOwnedGuiHost()
         {
-            var field = typeof(HybridCLRWindow).GetField("_navigationBounds", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(File.Exists(Path.Combine(Path.GetFullPath(Application.dataPath + "/.."), ".yl-owner.json")), Is.True,
+                "Interactive workbench tests run only in an owned test host.");
+        }
+
+        private static void SelectWindowProfile(HybridCLRWindow window, HybridCLRBuildProfile profile)
+        {
+            using var state = new SerializedObject(window);
+            var field = state.FindProperty("profile");
             Assert.That(field, Is.Not.Null);
-            var area = (Rect)field.GetValue(window);
-            Assert.That(area.height, Is.EqualTo(30));
-            Assert.That(area.width, Is.GreaterThan(window.position.width * .8f));
-            return area;
+            field.objectReferenceValue = profile;
+            state.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static Type BeginGuiCapture(HybridCLRWindow window)
+        {
+            // Observe the actual Unity IMGUI draw stream; no fields or hooks are added to the product.
+            var debugger = typeof(EditorWindow).Assembly.GetType("UnityEditor.GUIViewDebuggerHelper", true);
+            var parent = typeof(EditorWindow).GetField("m_Parent", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.That(parent, Is.Not.Null);
+            debugger.GetMethod("DebugWindow", StaticFlags).Invoke(null, new[] { parent.GetValue(window) });
+            return debugger;
+        }
+
+        private static object[] DrawInstructions(Type debugger)
+        {
+            var instruction = typeof(EditorWindow).Assembly.GetType("UnityEditor.IMGUIDrawInstruction", true);
+            var list = (IList)Activator.CreateInstance(typeof(System.Collections.Generic.List<>).MakeGenericType(instruction));
+            var method = debugger.GetMethod("GetDrawInstructions", StaticFlags);
+            Assert.That(method, Is.Not.Null);
+            var parameters = method.GetParameters();
+            Assert.That(parameters.Length, Is.InRange(1, 2));
+            method.Invoke(null, parameters.Length == 2 ? new object[] { list, false } : new object[] { list });
+            return list.Cast<object>().ToArray();
+        }
+
+        private static string[] DrawnText(Type debugger) => DrawInstructions(debugger)
+            .Select(item => (GUIContent)item.GetType().GetField("usedGUIContent").GetValue(item)).Where(content => content != null).Select(content => content.text ?? "").ToArray();
+
+        private static void ClickCurrentButton(HybridCLRWindow window, Type debugger, string label)
+        {
+            var matches = DrawInstructions(debugger).Where(item => ((GUIContent)item.GetType().GetField("usedGUIContent").GetValue(item))?.text == label).ToArray();
+            Assert.That(matches.Length, Is.EqualTo(1), "The current production button must be rendered exactly once: " + label);
+            var area = (Rect)matches[0].GetType().GetField("rect").GetValue(matches[0]);
+            Assert.That(area.width, Is.GreaterThan(0));
+            Assert.That(area.height, Is.GreaterThan(0));
+            window.SendEvent(new Event { type = EventType.MouseDown, button = 0, mousePosition = area.center });
+            window.SendEvent(new Event { type = EventType.MouseUp, button = 0, mousePosition = area.center });
         }
 
         [UnityTest]
-        public IEnumerator NavigationButtonsKeepUniformHeightAndTypography()
+        public IEnumerator FormalPreflightButtonShowsTheRealFailedReportWithoutBuildingOrChangingSettings()
         {
+            RequireOwnedGuiHost();
+            var root = NewToolRoot();
+            var profile = (HybridCLRBuildProfile)ProfileTool("Create", root + "/Profile.asset");
+            BindOfficialSettings(root, profile);
+            profile.schemaVersion = 1;
+            EditorUtility.SetDirty(profile);
+            AssetDatabase.SaveAssetIfDirty(profile);
+            var bytes = File.ReadAllBytes(AssetDatabase.GetAssetPath(profile));
+            var backend = PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone);
             var window = ScriptableObject.CreateInstance<HybridCLRWindow>();
+            Type debugger = null;
             try
             {
-                window.Show();
+                SelectWindowProfile(window, profile);
+                window.position = new Rect(80, 40, 950, 1100);
+                window.ShowUtility();
+                window.Focus();
                 yield return null;
-                var style = (GUIStyle)typeof(HybridCLRWindow).GetField("_navigationStyle", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
-                Assert.That(style.fixedHeight, Is.EqualTo(30));
-                Assert.That(style.fixedWidth, Is.Zero);
-                Assert.That(style.alignment, Is.EqualTo(TextAnchor.MiddleCenter));
-                Assert.That(style.fontSize, Is.EqualTo(12));
-                Assert.That(style.fontStyle, Is.EqualTo(FontStyle.Bold));
+                debugger = BeginGuiCapture(window);
+                window.Repaint();
+                yield return null;
+                ClickCurrentButton(window, debugger, "Validate Formal Build Preconditions");
+                yield return null;
+                var field = typeof(HybridCLRWindow).GetField("_report", BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(field, Is.Not.Null);
+                var report = (HybridCLRBuildReport)field.GetValue(window);
+                Assert.That(report, Is.Not.Null);
+                Assert.That(report.HasSucceeded, Is.False);
+                Assert.That(report.Stages.Count, Is.EqualTo(1));
+                Assert.That(report.Stages[0].Name, Is.EqualTo("Preflight"));
+                Assert.That(report.Stages[0].HasSucceeded, Is.False);
+                Assert.That(report.Stages[0].Error, Is.TypeOf<InvalidDataException>());
+                Assert.That(report.ResourceBuild, Is.Null);
+                window.Repaint();
+                yield return null;
+                Assert.That(DrawnText(debugger), Does.Contain(report.Summary));
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(AssetDatabase.GetAssetPath(profile)));
+                Assert.That(PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone), Is.EqualTo(backend));
+                Assert.That(Directory.Exists(profile.generatedAssetDirectory), Is.False);
+                Assert.That(Directory.Exists(profile.baselineDirectory), Is.False);
             }
             finally
             {
+                if (debugger != null)
+                    debugger.GetMethod("StopDebugging", StaticFlags).Invoke(null, null);
                 window.Close();
+                AssetDatabase.DeleteAsset(root);
             }
         }
 

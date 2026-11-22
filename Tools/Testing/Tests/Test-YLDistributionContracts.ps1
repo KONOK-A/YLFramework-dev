@@ -8,6 +8,31 @@ Assert-That ($null -ne $contentFunction) 'Distribution package content audit mus
 . ([scriptblock]::Create($contentFunction.Extent.Text))
 . (Join-Path $PSScriptRoot 'PackageCatalogFixtures.ps1')
 
+Test-Case 'Distribution Smoke asmdefs declare only the exact public Runtime and AA closure' {
+    $assignments = @($distributionAst.FindAll({ param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
+            $node.Left.VariablePath.UserPath -ceq 'probeReferences'
+    }, $true))
+    Assert-That ($assignments.Count -eq 2) 'Expected one shared Smoke reference declaration and one Hybrid addition.'
+    $declaration = @($assignments | Where-Object Operator -EQ Equals)[0]
+    $addition = @($assignments | Where-Object Operator -EQ PlusEquals)[0]
+    $conditional = $addition.Parent
+    while ($conditional -isnot [Management.Automation.Language.IfStatementAst]) { $conditional = $conditional.Parent }
+    foreach ($hybrid in @($false, $true)) {
+        $actual = & {
+            param([bool] $HybridCLR)
+            . ([scriptblock]::Create($declaration.Extent.Text))
+            . ([scriptblock]::Create($conditional.Extent.Text))
+            return ,$probeReferences
+        } $hybrid
+        $expected = @('YLFramework.Runtime', 'Unity.Addressables', 'Unity.ResourceManager', 'Unity.Profiling.Core')
+        if ($hybrid) { $expected += @('YLFramework.HybridCLR', 'YLFramework.HybridCLR.Sample.Host') }
+        Assert-That ($actual.Count -eq $expected.Count -and @($actual | Select-Object -Unique).Count -eq $expected.Count -and
+            @($expected | Where-Object { $_ -cnotin $actual }).Count -eq 0) 'The generated bare/Hybrid Runtime closure is incomplete or broadened.'
+        Assert-That (@($actual | Where-Object { $_ -match 'Editor|Test|NUnit|\*' }).Count -eq 0) 'No Editor, test or wildcard reference may enter a Player Smoke assembly.'
+    }
+}
+
 function Invoke-UpmDistributionFixture {
     param([string] $Fault = '', [string] $Backend = 'Mono', [string] $PackageSource = 'File',
         [string] $EditorVersion = '2022.3.62f3', [hashtable] $Options = @{})
@@ -72,17 +97,40 @@ function Invoke-UpmDistributionFixture {
         $state.calls.Add($call)
         if ($phase -cin @('PlayerRun', 'PlayerRepeat')) {
             $request = [IO.File]::ReadAllText((Join-Path $state.resultRoot 'Build/request.json')) | ConvertFrom-Json -DateKind String
-            Write-YLTestJson -Path (Join-Path $output 'result.json') -Value @{
-                schemaVersion = 1; purpose = 'YLTesting.PlayerSmoke'; status = 'Passed'; resultId = $request.resultId; hostId = $request.hostId
-                unityVersion = $EditorVersion; pid = 42; isEditor = $false; platform = 'WindowsPlayer'; frames = 2; error = ''; backend = $Backend; recordCount = 0; leaseCount = 0
+            $smoke = @{
+                schemaVersion = 2; purpose = 'YLTesting.PlayerSmoke'; status = 'Passed'; resultId = $request.resultId; hostId = $request.hostId
+                unityVersion = $EditorVersion; pid = 42; isEditor = $false; platform = 'WindowsPlayer'; frames = 2; error = ''; backend = $Backend
+                inputHash = $request.inputHash; contentHash = ('a' * 64); addressablesVersion = $(if ($EditorVersion.StartsWith('2022')) { '1.25.0' } else { '2.10.3' })
+                diagnosticsSchemaVersion = 2; ledgerMeasured = $true; resourceState = 'Closed'; leaseCount = 0; scopeCount = 0; requestCount = 0; pendingWorkCount = 0; drainingHandleCount = 0; cleanupErrors = @()
                 stages = @('Started', 'ResourceLoaded', 'EventLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown')
             }
+            switch -CaseSensitive ($Fault) {
+                'player-old-schema' { $smoke.schemaVersion = 1 }
+                'player-live-lease' { $smoke.leaseCount = 1 }
+                'player-live-scope' { $smoke.scopeCount = 1 }
+                'player-live-request' { $smoke.requestCount = 1 }
+                'player-live-work' { $smoke.pendingWorkCount = 1 }
+                'player-live-handle' { $smoke.drainingHandleCount = 1 }
+                'player-unmeasured' { $smoke.ledgerMeasured = $false }
+                'player-content-hash' { $smoke.contentHash = ('b' * 64) }
+                'player-input-hash' { $smoke.inputHash = ('b' * 64) }
+                'player-addressables-version' { $smoke.addressablesVersion = '0.0.0' }
+                'player-cleanup-error' { $smoke.cleanupErrors = @('actual cleanup failure') }
+            }
+            Write-YLTestJson -Path (Join-Path $output 'result.json') -Value $smoke
             [IO.File]::WriteAllText((Join-Path $output 'player.log'), ('[YLPlayerSmoke] PASS ' + $request.resultId))
             return $fact
         }
         $request = [IO.File]::ReadAllText((Join-Path $output 'request.json')) | ConvertFrom-Json -DateKind String
         $state.resultRoot = $request.resultRoot
         $project = $StartInfo.ArgumentList[$StartInfo.ArgumentList.IndexOf('-projectPath') + 1]
+        if ($phase -ceq 'Build') {
+            $smoke = [IO.File]::ReadAllText((Join-Path $project 'Assets/YLTestingDistribution/Smoke/YLTesting.PlayerSmoke.asmdef')) | ConvertFrom-Json -AsHashtable
+            $expected = @('YLFramework.Runtime', 'Unity.Addressables', 'Unity.ResourceManager', 'Unity.Profiling.Core')
+            if ($smoke.references.Count -ne $expected.Count -or @($expected | Where-Object { $_ -cnotin $smoke.references }).Count -ne 0) {
+                throw 'The actual generated bare Smoke asmdef is missing its exact public AA dependencies.'
+            }
+        }
         $manifest = [IO.File]::ReadAllText((Join-Path $project 'Packages/manifest.json')) | ConvertFrom-Json -AsHashtable -DateKind String
         $call['request'] = $request; $call['manifest'] = $manifest; $call['project'] = $project
         $packages = @(); $locked = @{}; $resolved = @()
@@ -126,7 +174,8 @@ function Invoke-UpmDistributionFixture {
         if ($phase -ceq 'Build') {
             $executable = Join-Path $output 'Player/YLDistribution.exe'; $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($executable))
             [IO.File]::WriteAllText($executable, 'player-artifact-fixture')
-            $result = @{ status = 'Passed'; backend = $Backend; executable = $executable }
+            $result = @{ status = 'Passed'; backend = $Backend; executable = $executable; contentHash = ('a' * 64)
+                addressablesVersion = $(if ($EditorVersion.StartsWith('2022')) { '1.25.0' } else { '2.10.3' }) }
             if ($Fault -like 'prerequisite-*') { $result.status = 'PrerequisiteNotMet'; $fact.status = 'NonZeroExit'; $fact.exitCode = 2 }
             switch -CaseSensitive ($Fault) {
                 'prerequisite-timeout' { $fact.timedOut = $true }
@@ -230,6 +279,39 @@ Test-Case 'UPM Distribution uses one exact Editor and manifest without Export or
     }
 }
 
+Test-Case 'UPM schema2 Player rejects every live ledger, stale identity and old protocol' {
+    foreach ($fault in @('player-old-schema', 'player-live-lease', 'player-live-scope', 'player-live-request', 'player-live-work', 'player-live-handle',
+        'player-unmeasured', 'player-content-hash', 'player-input-hash', 'player-addressables-version', 'player-cleanup-error')) {
+        Assert-Rejected { Invoke-UpmDistributionFixture -Fault $fault } 'Player|ledger'
+    }
+}
+
+Test-Case 'Distribution Result keys are short stable owner-bound identities with full descriptors retained' {
+    $profiles = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../TestSuites.json')) | ConvertFrom-Json -DateKind String
+    $profile = @($profiles.editors | Where-Object version -CEQ '6000.3.27f1')[0].productVersion
+    $first = Invoke-UpmDistributionFixture -EditorVersion '6000.3.27f1' -Backend IL2CPP
+    $second = Invoke-UpmDistributionFixture -EditorVersion '6000.3.27f1' -Backend IL2CPP
+    $other = Invoke-UpmDistributionFixture -EditorVersion '6000.3.27f1' -Backend Mono
+    foreach ($fixture in @($first, $second, $other)) {
+        $summary = $fixture.summary
+        Assert-That ($summary.resultKey -cmatch '^D[0-9a-f]{16}$') 'The owned Result group still expands full Editor/source/backend text into native file paths.'
+        $descriptor = "Tooling-Distribution-$profile-File-$($summary.backend)-Smoke"
+        $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($descriptor))).ToLowerInvariant()
+        Assert-That ($summary.resultKey -ceq ('D' + $hash.Substring(0, 16)) -and $summary.resultKeyDescriptor -ceq $descriptor -and
+            $summary.profile -ceq $profile -and $summary.packageOrigin -ceq 'File') 'The short key lost its exact full profile/source/backend binding.'
+        $resultPath = $fixture.calls[0].request.resultRoot
+        $owner = [IO.File]::ReadAllText((Join-Path $resultPath '.yl-owner.json')) | ConvertFrom-Json -AsHashtable
+        Assert-That ($owner.kind -ceq 'Result' -and $owner.key -ceq $summary.resultKey -and $owner.id -ceq $summary.ownerId -and
+            (Split-Path -Leaf $resultPath) -cmatch '^[0-9a-f]{32}$') 'Result issuer, kind, key or unique result identity was bypassed.'
+        $relative = 'Build/Player/YLDistribution_Data/StreamingAssets/aa/StandaloneWindows64/defaultlocalgroup_assets_all_' + ('a' * 32) + '.bundle'
+        $nativePath = "G:/Unity/D9NativeDistribution/Results/$($summary.resultKey)/$($summary.ownerId)/$relative"
+        Assert-That ($nativePath.Length -lt 240) 'The stable Result key does not repair the actual Mono native path budget.'
+    }
+    Assert-That ($first.summary.resultKey -ceq $second.summary.resultKey -and $first.summary.ownerId -cne $second.summary.ownerId -and
+        $first.calls[0].request.resultRoot -cne $second.calls[0].request.resultRoot) 'Repeated runs lost stable grouping or unique no-overwrite output identity.'
+    Assert-That ($first.summary.resultKey -cne $other.summary.resultKey) 'Different backends were merged into one owned Result group.'
+}
+
 Test-Case 'UPM Distribution defaults to an owned Git fixture containing only approved package roots' {
     $binding = [scriptblock]::Create($distributionAst.ParamBlock.Extent.Text + "`n" + '$PackageSource')
     Assert-That ((& $binding -WorkspaceRoot $sandbox -Unity 'MetadataOnly.exe') -ceq 'Git') 'Omitting PackageSource must select Git, not File.'
@@ -240,6 +322,59 @@ Test-Case 'UPM Distribution defaults to an owned Git fixture containing only app
     $fixtureRoot = ([Uri]$locator.Substring(4).Split('?')[0]).LocalPath
     $entries = @([IO.Directory]::EnumerateFileSystemEntries($fixtureRoot) | ForEach-Object { [IO.Path]::GetFileName($_) })
     Assert-That ($entries.Count -eq 2 -and $entries -ccontains '.git' -and $entries -ccontains 'PackageSources') 'The fixture includes host/SDK/MCP inputs.'
+}
+
+Test-Case 'HybridCLR schema2 receipt distinguishes v2 from repeated v1 and binds actual assembly SHA observations' {
+    $root = Join-Path $sandbox ('hybrid-report-contract-' + [Guid]::NewGuid().ToString('N'))
+    $null = [IO.Directory]::CreateDirectory($root)
+    $path = Join-Path $root 'report.json'
+    $process = [pscustomobject]@{ status = 'Exited'; observedExit = $true; exitCode = 0; forcedCleanup = $false; timedOut = $false; cancelled = $false
+        observerError = $null; cleanupError = $null; jobAssigned = $true; activeProcesses = 0; streamsDrained = $true; pid = 42 }
+    $expectedInputHash = 'a' * 64; $content = 'b' * 64
+    foreach ($version in @('v1', 'v2')) {
+        $path = Join-Path $root "valid-$version.json"
+        $payload = @{ role = 'HotUpdate'; name = 'Sample'; address = 'hybridclr/hot-update/Sample.dll.bytes'; sha256 = ('c' * 64)
+            length = 128; mvid = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; fullName = 'Sample, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null' }
+        $expected = @{ sampleVersion = $version; codePackageId = ('d' * 64); nativeVariant = 'ParameterOwner'
+            manifestAddress = 'hybridclr-example/hybridclr/manifest.json'; manifestSha256 = ('e' * 64)
+            metadataAssemblies = @('mscorlib'); assemblies = @('Sample'); payloads = @(
+                @{ role = 'AotMetadata'; name = 'mscorlib'; address = 'hybridclr/aot/mscorlib.dll.bytes'; sha256 = ('f' * 64); length = 128
+                    mvid = 'ffffffff-ffff-ffff-ffff-ffffffffffff'; fullName = 'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=null' }, $payload) }
+        $detail = @{ mode = 'Native'; codePackageId = $expected.codePackageId; nativeVariant = 'ParameterOwner'; sampleVersion = $version
+            manifestSchemaVersion = 2; manifestAddress = $expected.manifestAddress; manifestSha256 = $expected.manifestSha256
+            message = "$($version): YL Resource configuration; dependency-count=2"; asyncResult = "$version-async"; prefabMarker = "$version-prefab"
+            isSimulation = $false; reflectionCount = 3; repeatedLoadReused = $true; wrongBaseRejected = $true
+            metadataAssemblies = @('mscorlib'); assemblies = @('Sample'); payloads = @($expected.payloads[0].Clone(), $payload.Clone()) }
+        $report = @{ schemaVersion = 2; purpose = 'YLTesting.PlayerSmoke'; status = 'Passed'; error = ''; resultId = 'r'; hostId = 'h'; unityVersion = 'u'
+            runtimeAssembly = 'YLFramework.Runtime'; backend = 'IL2CPP'; isEditor = $false; platform = 'WindowsPlayer'; pid = 42; frames = 2; resourceState = 'Closed'; ledgerMeasured = $true
+            leaseCount = 0; scopeCount = 0; requestCount = 0; pendingWorkCount = 0; drainingHandleCount = 0; cleanupErrors = @()
+            inputHash = $expectedInputHash; contentHash = $content; addressablesVersion = '2.10.3'; graphicsDevice = 'Direct3D11'
+            stages = @('Started', 'HybridCLRMetadata', 'HybridCLRModule', 'HybridCLRReflection', 'HybridCLRShutdown')
+            startupCatalogUpdated = ($version -ceq 'v2'); hybridClr = $detail }
+        Write-YLTestJson $path $report
+        $null = Read-YLPlayerSmoke -Path $path -ResultId r -HostId h -UnityVersion u -ProcessResult $process -Backend IL2CPP -HybridCLR $expected `
+            -InputHash $expectedInputHash -ContentHash $content -AddressablesVersion '2.10.3'
+        $badCatalogs = [ordered]@{ missing = $null; string = 'true'; opposite = ($version -ceq 'v1') }
+        foreach ($badCatalog in $badCatalogs.GetEnumerator()) {
+            $invalid = $report.Clone()
+            if ($badCatalog.Key -ceq 'missing') { $invalid.Remove('startupCatalogUpdated') }
+            else { $invalid['startupCatalogUpdated'] = $badCatalog.Value }
+            $badPath = Join-Path $root "invalid-$version-catalog-$($badCatalog.Key).json"; Write-YLTestJson $badPath $invalid
+            Assert-Rejected { Read-YLPlayerSmoke -Path $badPath -ResultId r -HostId h -UnityVersion u -ProcessResult $process -Backend IL2CPP -HybridCLR $expected `
+                -InputHash $expectedInputHash -ContentHash $content -AddressablesVersion '2.10.3' } 'catalog evidence'
+        }
+        foreach ($field in @('sha256', 'mvid', 'fullName', 'length', 'address')) {
+            $bad = $payload.Clone(); $bad[$field] = $(if ($field -ceq 'length') { 129 } else { 'different' })
+            $detail.payloads = @($expected.payloads[0].Clone(), $bad); $badPath = Join-Path $root "invalid-$version-$field.json"; Write-YLTestJson $badPath $report
+            Assert-Rejected { Read-YLPlayerSmoke -Path $badPath -ResultId r -HostId h -UnityVersion u -ProcessResult $process -Backend IL2CPP -HybridCLR $expected `
+                -InputHash $expectedInputHash -ContentHash $content -AddressablesVersion '2.10.3' } 'payload|bytes|SHA'
+        }
+        $detail.payloads = @($expected.payloads[0].Clone(), $payload.Clone())
+        $detail.message = $(if ($version -ceq 'v2') { 'v1' } else { 'v2' }) + ': YL Resource configuration; dependency-count=2'
+        $badPath = Join-Path $root "wrong-version-$version.json"; Write-YLTestJson $badPath $report
+        Assert-Rejected { Read-YLPlayerSmoke -Path $badPath -ResultId r -HostId h -UnityVersion u -ProcessResult $process -Backend IL2CPP -HybridCLR $expected `
+            -InputHash $expectedInputHash -ContentHash $content -AddressablesVersion '2.10.3' } 'native identity'
+    }
 }
 
 Test-Case 'UPM remote Git requests keep their URL and full SHA and cannot substitute local sources' {

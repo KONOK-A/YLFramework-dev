@@ -515,7 +515,7 @@ namespace YLFramework.Testing
                 if (assembly.name == "YLFramework.Runtime")
                 {
                     var forbidden = References(assembly).Where(reference =>
-                        !(Regex.IsMatch(reference, @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)(?:\.dll)?$") ||
+                        !(Regex.IsMatch(reference, @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Unity\.Addressables|Unity\.ResourceManager|Unity\.Profiling\.Core|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json)(?:\.dll)?$") ||
                             !player.Contains(assembly) && Regex.IsMatch(reference, @"^(?:UnityEditor(?:\.[A-Za-z0-9_]+)*|Unity\.Android\.(?:Types|Gradle|GradleProject))(?:\.dll)?$")) ||
                         Regex.IsMatch(reference, "TestRunner|Tests|Mcp|ReflectorNet|Analyzer", RegexOptions.IgnoreCase)).ToArray();
                     if (forbidden.Length != 0) { throw new InvalidOperationException("The main Runtime acquired an unapproved dependency: " + string.Join(", ", forbidden)); }

@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.DataAssets",
     "rootNamespace": "YLFramework.DataAssets",
-    "references": ["YLFramework.Runtime"],
+    "references": ["YLFramework.Runtime", "Unity.Addressables"],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

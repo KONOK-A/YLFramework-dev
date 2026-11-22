@@ -1,184 +1,566 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
+using System.Linq;
+using System.Threading;
+using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.SceneManagement;
 
 namespace YLFramework.Resource
 {
-    /// <summary>只聚合自己接管的请求与租约，不建立缓存或第二份资源加载权威。</summary>
-    /// <remarks>在所属资源系统的 Unity 主线程使用；跟踪请求不自动接管其已领取结果，须显式通过本域领取或交入。</remarks>
+    /// <summary>业务生命周期内的借用入口；同键同类型仅持有一份官方资产引用。</summary>
     public sealed class ResourceScope : IDisposable
     {
         private readonly ResourceSystem _system;
-        private readonly HashSet<IDisposable> _requests = new(ReferenceComparer.Instance);
-        private readonly HashSet<IDisposable> _leases = new(ReferenceComparer.Instance);
-        /// <summary>本域是否已经关闭；关闭后拒绝继续接管责任。</summary>
+        private readonly Dictionary<(string, Type), object> _entries = new();
+        private readonly HashSet<IResourceLease> _leases = new();
+        private readonly HashSet<IResourceRequest> _requests = new();
+        private readonly HashSet<ResourceRequest<InstanceLease>> _pendingInstances = new();
+        private int _pendingAssetWork;
+        private IDisposable _pendingInstanceSweep;
+        private readonly List<ResourceRequest<bool>> _closeWaiters = new();
+        private IDisposable _destroyBinding;
+        private GameObject _boundObject;
+        private bool _bound;
+        private bool _closing;
+        private bool _settled;
+
+        /// <summary>调用者明确给出的业务身份。</summary>
+        public string OwnerLabel
+        {
+            get;
+        }
+        /// <summary>已开始关闭；不表示异步清理已经完成。</summary>
         public bool IsDisposed
         {
             get; private set;
         }
-        /// <summary>将本域绑定到创建它的资源系统，不取得额外资源引用。</summary>
-        internal ResourceScope(ResourceSystem system) => this._system = system;
-
-        /// <summary>按对象身份去重，避免不同责任对象因值相等而被合并。</summary>
-        private sealed class ReferenceComparer : IEqualityComparer<IDisposable>
+        internal ResourceException CloseError
         {
-            internal static readonly ReferenceComparer Instance = new();
-            /// <summary>判断两个责任对象是否为同一引用。</summary>
-            /// <param name="left">第一个责任对象。</param>
-            /// <param name="right">第二个责任对象。</param>
-            /// <returns>两个引用指向同一对象时为 true。</returns>
-            public bool Equals(IDisposable left, IDisposable right) => ReferenceEquals(left, right);
-            /// <summary>读取不受对象自定义相等规则影响的身份哈希。</summary>
-            /// <param name="value">要读取身份的责任对象。</param>
-            /// <returns>该对象的引用身份哈希。</returns>
-            public int GetHashCode(IDisposable value) => RuntimeHelpers.GetHashCode(value);
+            get; private set;
+        }
+        internal ResourceScope(ResourceSystem system, string ownerLabel)
+        {
+            _system = system;
+            OwnerLabel = ownerLabel;
         }
 
-        /// <summary>同步取得资产租约并交由本域管理。</summary>
-        /// <typeparam name="T">要借读的 Unity 资源类型。</typeparam>
-        /// <param name="address">资源目录中的地址。</param>
-        /// <returns>本域持有的租约；调用方借用，不新增持有责任。</returns>
-        public AssetLease<T> Acquire<T>(ResourceAddress address) where T : UnityEngine.Object
+        /// <summary>加载并借读，Scope 自动持有结果；相同 Scope 内的重复取得不累积租约。</summary>
+        public ResourceRequest<T> LoadAsync<T>(string key, CancellationToken cancellation = default) where T : UnityEngine.Object
         {
             CheckAvailable();
-            var lease = _system.Acquire<T>(address);
-            if (IsDisposed)
+            if (string.IsNullOrWhiteSpace(key))
+                return ResourceSystem.Failure<T>(new ArgumentException("An exact key is required."));
+            var entryKey = (key, typeof(T));
+            if (!_entries.TryGetValue(entryKey, out var value))
             {
-                lease.Dispose();
-                throw new ObjectDisposedException(nameof(ResourceScope));
+                var entry = new Entry<T>(this, key);
+                _entries.Add(entryKey, entry);
+                var waiting = entry.Wait(cancellation);
+                entry.Start();
+                return waiting;
             }
-            return Own(lease);
+            var existing = (Entry<T>)value;
+            if (existing.CanReuse)
+                return existing.Wait(cancellation);
+            existing.ReleaseStale();
+            var replacement = new Entry<T>(this, key);
+            _entries[entryKey] = replacement;
+            var result = replacement.Wait(cancellation);
+            replacement.Start();
+            return result;
         }
 
-        /// <summary>发起资产请求并跟踪其等待及未领取结果；领取到本域须使用本域的 TakeResult。</summary>
-        /// <typeparam name="T">要借读的 Unity 资源类型。</typeparam>
-        /// <param name="address">资源目录中的地址。</param>
-        /// <returns>由本域跟踪的独立消费者请求。</returns>
-        public ResourceRequest<AssetLease<T>> AcquireAsync<T>(ResourceAddress address) where T : UnityEngine.Object
+        /// <summary>以冻结的官方 RuntimeKey 借读，不占用 AssetReference 的操作槽。</summary>
+        public ResourceRequest<T> LoadAsync<T>(AssetReferenceT<T> reference, CancellationToken cancellation = default) where T : UnityEngine.Object =>
+            LoadAsync<T>(ResourceSystem.ReferenceKey(reference), cancellation);
+
+        /// <summary>只借读本 Scope 已经持有的就绪内容，不加载、不增持。</summary>
+        public bool TryGetLoaded<T>(string key, out T value) where T : UnityEngine.Object
         {
             CheckAvailable();
-            var request = _system.AcquireAsync<T>(address);
-            if (IsDisposed)
+            if (_entries.TryGetValue((key, typeof(T)), out var entry) && ((Entry<T>)entry).Ready)
             {
-                request.Dispose();
-                throw new ObjectDisposedException(nameof(ResourceScope));
+                value = ((Entry<T>)entry).Value;
+                return true;
             }
-            return Track(request);
+            value = null;
+            return false;
         }
 
-        /// <summary>显式接管一个等待/未领取结果。失败时不接管传入对象。</summary>
-        /// <typeparam name="T">请求成功时交付的结果类型。</typeparam>
-        /// <param name="request">调用方移交给本域的请求。</param>
-        /// <returns>原请求，不创建额外等待者。</returns>
-        public ResourceRequest<T> Track<T>(ResourceRequest<T> request)
+        /// <summary>接管一份真实资产租约，不新增引用；重复或跨 Scope 归属明确拒绝。</summary>
+        public AssetLease<T> Own<T>(AssetLease<T> lease) where T : UnityEngine.Object
         {
-            CheckAvailable();
-            if (request == null)
-            {
-                throw new ArgumentNullException(nameof(request));
-            }
-
-            _requests.Add(request);
-            return request;
+            OwnLease(lease);
+            return lease;
+        }
+        /// <summary>接管整批的官方引用，不增加引用。</summary>
+        public AssetBatchLease<T> Own<T>(AssetBatchLease<T> lease) where T : UnityEngine.Object
+        {
+            OwnLease(lease);
+            return lease;
+        }
+        /// <summary>接管本次实例 checkout。</summary>
+        public InstanceLease Own(InstanceLease lease)
+        {
+            OwnLease(lease);
+            return lease;
+        }
+        /// <summary>接管本次场景的卸载责任。</summary>
+        public SceneLease Own(SceneLease lease)
+        {
+            OwnLease(lease);
+            return lease;
         }
 
-        /// <summary>调用方将自己拥有的 Lease 交给 Scope；不是新增 retain。</summary>
-        /// <typeparam name="T">实现 IDisposable 的责任类型。</typeparam>
-        /// <param name="lease">由调用方移交释放责任的对象。</param>
-        /// <returns>原责任对象，随后由本域统一归还。</returns>
-        public T Own<T>(T lease) where T : IDisposable
+        private void OwnLease(IResourceLease lease)
         {
             CheckAvailable();
             if (lease == null)
-            {
                 throw new ArgumentNullException(nameof(lease));
-            }
-
+            if (!ReferenceEquals(lease.System, _system) || lease.Scope != null || lease.IsDisposed)
+                throw new InvalidOperationException("The lease is not an independent live responsibility of this service.");
+            lease.Scope = this;
             _leases.Add(lease);
-            return lease;
         }
 
-        /// <summary>领取已登记请求的结果并立即纳入本域；随后关闭 Request 不释放已接管的结果。</summary>
-        /// <typeparam name="T">实现 IDisposable 的请求结果类型。</typeparam>
-        /// <param name="request">已经由本域跟踪且成功完成的请求。</param>
-        /// <returns>本域持有的结果，调用方不再拥有独立于本域的释放责任。</returns>
-        public T TakeResult<T>(ResourceRequest<T> request) where T : IDisposable
+        internal void ForgetLease(IResourceLease lease) => _leases.Remove(lease);
+        internal void BeginAssetWork() => _pendingAssetWork++;
+        internal void EndAssetWork() => _pendingAssetWork--;
+
+        /// <summary>每次新建并由本 Scope 持有，不隐式复用旧组件状态。</summary>
+        public ResourceRequest<GameObject> InstantiateAsync(string key, Transform parent = null, Scene scene = default, CancellationToken cancellation = default) =>
+            BorrowInstanceAsync(key, nameof(InstantiateAsync), () => _system.InstantiateAsync(key, parent, scene, cancellation));
+
+        /// <summary>显式借用可复用实例；Scope 关闭时归还本次 checkout。</summary>
+        public ResourceRequest<GameObject> RentAsync(string key, Transform parent = null, Scene scene = default, CancellationToken cancellation = default) =>
+            BorrowInstanceAsync(key, nameof(RentAsync), () => _system.RentAsync(key, parent, scene, cancellation));
+
+        private ResourceRequest<GameObject> BorrowInstanceAsync(string key, string operation,
+            Func<ResourceRequest<InstanceLease>> startLeaseRequest)
         {
             CheckAvailable();
-            if (request == null || !_requests.Contains(request))
+            var borrowRequest = Track(new ResourceRequest<GameObject>(), key, operation);
+            var leaseRequest = startLeaseRequest();
+            _pendingInstances.Add(leaseRequest);
+            _pendingInstanceSweep ??= _system.AddTick(PrunePendingInstances);
+            borrowRequest.Attach(leaseRequest.Dispose, () => leaseRequest.Progress);
+            leaseRequest.Completed += completed =>
             {
-                throw new ArgumentException("The request is not owned by this scope.", nameof(request));
-            }
-
-            var lease = request.TakeResult();
-            try
-            {
-                _leases.Add(lease);
-            }
-            catch
-            {
-                lease.Dispose();
-                throw;
-            }
-            _requests.Remove(request);
-            request.Dispose();
-            return lease;
+                try
+                {
+                    if (borrowRequest.IsDone || IsDisposed)
+                    {
+                        return;
+                    }
+                    if (completed.Status != ResourceRequestStatus.Succeeded)
+                    {
+                        borrowRequest.SetFailure(completed.Status, completed.Error);
+                        return;
+                    }
+                    var lease = completed.TakeResult();
+                    try
+                    {
+                        Own(lease);
+                        borrowRequest.ValidateBeforeTake = () =>
+                        {
+                            CheckBorrowAvailable();
+                            if (!lease.IsValid)
+                            {
+                                throw new ResourceException(ResourceError.SessionUnavailable,
+                                    "The scoped instance checkout ended before delivery: " + key);
+                            }
+                        };
+                        borrowRequest.SetSuccess(lease.GameObject);
+                    }
+                    catch
+                    {
+                        lease.Discard();
+                        throw;
+                    }
+                }
+                catch (Exception error)
+                {
+                    ResourceSystem.Fail(borrowRequest, error);
+                }
+                finally
+                {
+                    completed.Dispose();
+                    borrowRequest.NotifyCompletion();
+                }
+            };
+            return borrowRequest;
         }
 
-        /// <summary>检查所属线程和本域关闭状态，不替代资源系统自身的会话检查。</summary>
+        /// <summary>加载并激活本 Scope 拥有的场景；分阶段激活应使用显式 SceneLease。</summary>
+        public ResourceRequest<Scene> LoadSceneAsync(string key, LoadSceneMode mode = LoadSceneMode.Additive, CancellationToken cancellation = default)
+        {
+            CheckAvailable();
+            var borrowRequest = Track(new ResourceRequest<Scene>(), key, nameof(LoadSceneAsync));
+            var leaseRequest = _system.LoadSceneAsync(key, mode, true, 100, cancellation);
+            var pendingLease = _system.GetPendingSceneLease(leaseRequest);
+            if (pendingLease != null)
+            {
+                Own(pendingLease);
+            }
+            borrowRequest.Attach(leaseRequest.Dispose, () => leaseRequest.Progress);
+            leaseRequest.Completed += completed =>
+            {
+                try
+                {
+                    if (borrowRequest.IsDone || IsDisposed)
+                    {
+                        return;
+                    }
+                    if (completed.Status != ResourceRequestStatus.Succeeded)
+                    {
+                        borrowRequest.SetFailure(completed.Status, completed.Error);
+                        return;
+                    }
+                    var lease = completed.TakeResult();
+                    try
+                    {
+                        if (((IResourceLease)lease).Scope == null)
+                        {
+                            Own(lease);
+                        }
+                        else if (!ReferenceEquals(((IResourceLease)lease).Scope, this))
+                        {
+                            throw new InvalidOperationException("Scene responsibility was transferred to another scope.");
+                        }
+                        borrowRequest.ValidateBeforeTake = () =>
+                        {
+                            CheckBorrowAvailable();
+                            if (!lease.IsValid)
+                            {
+                                throw new ResourceException(ResourceError.SceneUnloaded,
+                                    "The scoped scene ended before delivery: " + key);
+                            }
+                        };
+                        borrowRequest.SetSuccess(lease.Scene);
+                    }
+                    catch
+                    {
+                        lease.Dispose();
+                        throw;
+                    }
+                }
+                catch (Exception error)
+                {
+                    ResourceSystem.Fail(borrowRequest, error);
+                }
+                finally
+                {
+                    completed.Dispose();
+                    borrowRequest.NotifyCompletion();
+                }
+            };
+            return borrowRequest;
+        }
+
+        /// <summary>可选地随真实场景 GameObject 销毁关闭；不随隐藏/停用关闭，也覆盖从未激活的对象。</summary>
+        public ResourceScope BindToDestroy(GameObject owner)
+        {
+            CheckAvailable();
+            if (!owner)
+            {
+                Dispose();
+                return this;
+            }
+            if (!owner.scene.IsValid())
+                throw new ArgumentException("Bind only to a scene object, not a prefab asset.", nameof(owner));
+            if (_bound && !ReferenceEquals(_boundObject, owner))
+                throw new InvalidOperationException("A scope is already bound to another object.");
+            if (_bound)
+                return this;
+            _bound = true;
+            _boundObject = owner;
+            _destroyBinding = _system.AddTick(() =>
+            {
+                if (!IsDisposed && !_boundObject)
+                {
+                    Dispose();
+                }
+            });
+            return this;
+        }
+
+        /// <summary>拒绝新工作，依次归还实例、卸载场景、释放资产；每次调用是独立观察者。</summary>
+        public ResourceRequest<bool> CloseAsync()
+        {
+            _system.CheckThread();
+            if (_settled)
+                return ResourceSystem.Success(true);
+            var request = new ResourceRequest<bool>();
+            _closeWaiters.Add(request);
+            request.Attach(() => _closeWaiters.Remove(request), null);
+            if (_closing)
+                return request;
+            _closing = true;
+            IsDisposed = true;
+            CloseError = null;
+            _destroyBinding?.Dispose();
+            _destroyBinding = null;
+            _boundObject = null;
+            _pendingInstanceSweep?.Dispose();
+            _pendingInstanceSweep = null;
+            var pending = _requests.ToArray();
+            _requests.Clear();
+            foreach (var waiting in pending)
+                waiting.Dispose();
+            _system.Run(CloseRoutine(), FinishClose);
+            return request;
+        }
+
+        /// <summary>发起异步收尾，不伪装已完成；调用 CloseAsync 可等待或观察失败。</summary>
+        public void Dispose()
+        {
+            var observer = CloseAsync();
+            observer.Dispose();
+        }
+
+        private IEnumerator CloseRoutine()
+        {
+            while (_pendingInstances.Any(input => _system.HasPendingInstanceRequest(input)))
+                yield return null;
+            _pendingInstances.Clear();
+            var ordered = _leases.OrderBy(lease => lease is InstanceLease ? 0 : lease is SceneLease ? 1 : 2).ToArray();
+            var gates = ordered.OfType<SceneLease>().Where(scene => scene.HasActivationGate).ToArray();
+            bool gatesOpened = gates.Length == 0;
+            foreach (var lease in ordered)
+            {
+                if (lease.IsSettled)
+                    continue;
+                if (!gatesOpened && lease is SceneLease)
+                {
+                    // Unity 的激活门会阻塞同一原生队列中的其他卸载；只解除本 Scope 的门。
+                    foreach (var scene in gates)
+                        scene.ReleaseActivationGateForCleanup();
+                    foreach (var scene in gates)
+                    {
+                        while (scene.HasActivationGate && scene.CleanupError == null)
+                            yield return null;
+                        if (scene.CleanupError != null)
+                            throw scene.CleanupError;
+                    }
+                    gatesOpened = true;
+                }
+                ResourceRequest<bool> close;
+                var synchronous = lease as ISynchronousResourceLease;
+                if (synchronous != null)
+                {
+                    while (!_system.TryCloseSynchronousLease(synchronous, out close))
+                    {
+                        yield return null;
+                        if (lease.IsSettled)
+                        {
+                            break;
+                        }
+                    }
+                    if (close == null)
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    close = lease.CloseAsync();
+                }
+
+                using (close)
+                {
+                    if (synchronous == null || !close.IsDone)
+                    {
+                        yield return close;
+                    }
+                    if (close.Status != ResourceRequestStatus.Succeeded)
+                    {
+                        throw close.Error ?? new ResourceException(ResourceError.LoadFailed, "Lease cleanup did not succeed.");
+                    }
+                    if (!lease.IsSettled)
+                    {
+                        throw new ResourceException(ResourceError.Busy, "Cleanup has not ended the owned responsibility.");
+                    }
+                }
+            }
+            while (_pendingAssetWork != 0)
+                yield return null;
+            _leases.Clear();
+            _entries.Clear();
+            _settled = true;
+            _system.ScopeSettled(this);
+            FinishClose(null);
+        }
+
+        private void PrunePendingInstances()
+        {
+            _pendingInstances.RemoveWhere(input => !_system.HasPendingInstanceRequest(input));
+            if (_pendingInstances.Count != 0)
+                return;
+            _pendingInstanceSweep?.Dispose();
+            _pendingInstanceSweep = null;
+        }
+
+        private void FinishClose(Exception error)
+        {
+            _closing = false;
+            var cause = error == null ? null : ResourceSystem.Wrap(error);
+            CloseError = cause;
+            var waiters = _closeWaiters.ToArray();
+            _closeWaiters.Clear();
+            foreach (var request in waiters)
+            {
+                if (cause == null)
+                    request.SetSuccess(true);
+                else
+                    request.SetFailure(ResourceRequestStatus.Failed, cause);
+            }
+            foreach (var request in waiters)
+                request.NotifyCompletion();
+        }
+
+        private ResourceRequest<T> Track<T>(ResourceRequest<T> request, string key, string operation)
+        {
+            _system.Track(request, key, OwnerLabel, operation);
+            _requests.Add(request);
+            request.OwnershipEnded += () => _requests.Remove(request);
+            request.ValidateBeforeTake = CheckAvailable;
+            return request;
+        }
+
         private void CheckAvailable()
         {
             _system.CheckThread();
             if (IsDisposed)
-            {
                 throw new ObjectDisposedException(nameof(ResourceScope));
-            }
+            _system.RequireAvailable();
         }
 
-        /// <summary>关闭本域，先释放请求，再归还已接管租约；重复调用不重复清理。</summary>
-        /// <remarks>先移走全部责任再执行清理，防止重入重复归还；所有成员均尝试清理后汇总异常。</remarks>
-        /// <exception cref="AggregateException">一个或多个自有责任清理失败。</exception>
-        /// <exception cref="InvalidOperationException">未在 Unity 主线程调用。</exception>
-        public void Dispose()
+        private void CheckBorrowAvailable()
         {
-            _system.CheckThread();
-            if (IsDisposed)
-            {
-                return;
-            }
-
-            IsDisposed = true;
-            var pending = new List<IDisposable>(_requests);
-            var held = new List<IDisposable>(_leases);
-            _requests.Clear();
-            _leases.Clear();
-            List<Exception> errors = null;
-            foreach (var request in pending)
-            {
-                Release(request, ref errors);
-            }
-
-            foreach (var lease in held)
-            {
-                Release(lease, ref errors);
-            }
-
-            if (errors != null)
-            {
-                throw new AggregateException("Resource scope cleanup failed.", errors);
-            }
+            CheckAvailable();
+            if (_bound && !_boundObject)
+                throw new ResourceException(ResourceError.SessionUnavailable, "The scoped borrow owner has been destroyed.");
         }
 
-        /// <summary>归还一个责任并收集异常，使其他自有责任仍有清理机会。</summary>
-        private static void Release(IDisposable value, ref List<Exception> errors)
+        private sealed class Entry<T> where T : UnityEngine.Object
         {
-            try
+            private readonly ResourceScope _scope;
+            private readonly string _key;
+            private readonly HashSet<ResourceRequest<T>> _waiting = new();
+            private ResourceRequest<AssetLease<T>> _input;
+            private AssetLease<T> _lease;
+            internal bool Ready => _lease != null && _lease.IsValid;
+            internal bool CanReuse => Ready || (_input != null && !_input.IsDone);
+            internal T Value => _lease.Asset;
+            internal Entry(ResourceScope scope, string key)
             {
-                value.Dispose();
+                _scope = scope;
+                _key = key;
             }
-            catch (Exception error)
+            internal void ReleaseStale()
             {
-                (errors ??= new List<Exception>()).Add(error);
+                _lease?.Dispose();
+                Remove();
+            }
+
+            internal ResourceRequest<T> Wait(CancellationToken token)
+            {
+                var request = _scope.Track(new ResourceRequest<T>(), _key, nameof(LoadAsync));
+                request.ValidateBeforeTake = CheckBorrow;
+                if (Ready)
+                {
+                    _scope._system.BindCancellation(request, token);
+                    if (!request.IsDone)
+                    {
+                        request.SetSuccess(Value);
+                        request.NotifyCompletion();
+                    }
+                    return request;
+                }
+                _waiting.Add(request);
+                request.Attach(() =>
+                {
+                    _waiting.Remove(request);
+                    if (_waiting.Count == 0 && !Ready)
+                    {
+                        Remove();
+                        _input?.Dispose();
+                    }
+                }, () => _input?.Progress ?? 0);
+                _scope._system.BindCancellation(request, token);
+                return request;
+            }
+
+            internal void Start()
+            {
+                if (_waiting.Count == 0)
+                {
+                    Remove();
+                    return;
+                }
+                _input = _scope._system.AcquireAssetAsync<T>(_key, default, _scope);
+                _input.Completed += done =>
+                {
+                    try
+                    {
+                        if (_scope.IsDisposed || _waiting.Count == 0)
+                            return;
+                        if (done.Status != ResourceRequestStatus.Succeeded)
+                        {
+                            Remove();
+                            foreach (var request in _waiting.ToArray())
+                            {
+                                request.SetFailure(done.Status, done.Error);
+                                request.NotifyCompletion();
+                            }
+                            return;
+                        }
+                        var lease = done.TakeResult();
+                        try
+                        {
+                            _lease = _scope.Own(lease);
+                        }
+                        catch
+                        {
+                            lease.Dispose();
+                            throw;
+                        }
+                        foreach (var request in _waiting.ToArray())
+                        {
+                            if (_scope.IsDisposed || request.IsDone)
+                                continue;
+                            request.SetSuccess(Value);
+                            request.NotifyCompletion();
+                        }
+                    }
+                    catch (Exception error)
+                    {
+                        Remove();
+                        foreach (var request in _waiting.ToArray())
+                            ResourceSystem.Fail(request, error);
+                    }
+                    finally
+                    {
+                        _waiting.Clear();
+                        done.Dispose();
+                    }
+                };
+            }
+
+            private void CheckBorrow()
+            {
+                _scope.CheckBorrowAvailable();
+                if (!Ready)
+                    throw new ResourceException(ResourceError.LoadFailed, "The scoped asset ended before delivery: " + _key);
+            }
+
+            private void Remove()
+            {
+                var key = (_key, typeof(T));
+                if (_scope._entries.TryGetValue(key, out var entry) && ReferenceEquals(entry, this))
+                    _scope._entries.Remove(key);
             }
         }
     }

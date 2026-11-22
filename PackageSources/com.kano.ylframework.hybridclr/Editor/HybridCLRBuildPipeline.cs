@@ -3,17 +3,19 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading;
 using dnlib.DotNet;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
+using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEditor.Build.Player;
 using UnityEditor.Build.Reporting;
 using UnityEditor.Compilation;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
 using YLFramework.Editor.Resource;
 using YLFramework.Resource;
 using PackageInfo = UnityEditor.PackageManager.PackageInfo;
@@ -54,18 +56,8 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         {
             get; internal set;
         }
-        /// <summary>资源流程返回的发布版本，须结合阶段错误判断是否完成。</summary>
-        public ResourceRelease Release
-        {
-            get; internal set;
-        }
-        /// <summary>正式 Resource 构建及发布的原始报告。</summary>
+        /// <summary>正式 Addressables 内容构建的原始报告，不代表上传或部署。</summary>
         public ResourceEditorBuildReport ResourceBuild
-        {
-            get; internal set;
-        }
-        /// <summary>显式内置部署的结果，未执行部署时为空。</summary>
-        public ResourceBuiltInDeployment Deployment
         {
             get; internal set;
         }
@@ -82,7 +74,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         /// <summary>包含已执行阶段、原始错误及现有制品身份的文本摘要。</summary>
         public string Summary => string.Join("\n", _stages.Select(s => s.Name + ": " + (s.HasSucceeded ? "OK" : s.Error.ToString()))) +
             (Manifest == null ? "" : "\nCodePackageId=" + Manifest.CodePackageId) +
-            (Release == null ? "" : "\nCatalogDigest=" + Release.Catalog.CatalogDigest) +
+            (ResourceBuild == null ? "" : "\n" + ResourceBuild.Summary) +
             (BaselineDirectory == null ? "" : "\nBaseline=" + BaselineDirectory);
         // 追加真实返回的阶段结果，不替尚未执行的阶段预填成功。
         internal void Add(string name, Exception error = null, IReadOnlyList<string> diagnostics = null) =>
@@ -101,7 +93,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         static HybridCLRBuildPipeline() => _mainThread = Thread.CurrentThread.ManagedThreadId;
 
         /// <summary>严格检查保存状态、输入归属及当前原生构建环境，不生成制品。</summary>
-        /// <param name="profile">已显式保存的构建配置及其 Resource 配方、项目。</param>
+        /// <param name="profile">已显式保存的新版配置及官方 Addressables Settings/Group。</param>
         /// <returns>仅包含 Preflight 阶段的报告；通过不等于 Player 或补丁可用。</returns>
         public static HybridCLRBuildReport Validate(HybridCLRBuildProfile profile)
         {
@@ -114,11 +106,10 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         /// <param name="profile">直接拥有新基座且未绑定 BaseProfile 的已保存配置。</param>
         /// <param name="options">与配置及 enabled scenes 精确匹配、输出目录全新或为空的 Player 选项。</param>
         /// <param name="cancellation">在阶段开始前检查并传入资源流程的取消令牌。</param>
-        /// <param name="provider">应用注入的可选资源内容密钥提供者，不写入 Profile。</param>
         /// <returns>截至失败或最终基线冻结的实际阶段报告。</returns>
         /// <remarks>取消不强制中断同步原生步骤，也不回滚此前已完成的生成、发布或部署。</remarks>
         public static HybridCLRBuildReport BuildBasePlayer(HybridCLRBuildProfile profile, BuildPlayerOptions options,
-            CancellationToken cancellation = default, IResourceContentKeyProvider provider = null)
+            CancellationToken cancellation = default)
         {
             var report = Validate(profile);
             if (!report.HasSucceeded)
@@ -163,68 +154,90 @@ namespace YLFramework.Integrations.HybridCLR.Editor
                     return report;
                 }
 
-                if (!Run(report, "EmptyMethodBridge", () =>
+                string addressablesLink = null;
+                // Packed content supplies additional linker roots. A cold strip may precede those roots.
+                // Repeat once from the actual packed inputs; never freeze a base whose roots still differ.
+                for (var attempt = 0; attempt < 2; attempt++)
                 {
-                    profile = inputs.Reload();
-                    global::HybridCLR.Commands.MethodBridgeGeneratorCommand.GenerateEmptyMethodBridgeAndReversePInvokeWrapper(profile.recipe.target);
-                }, cancellation))
-                {
-                    return report;
-                }
-
-                using (HybridCLRPlayerBuildGuard.Enter(profile, true))
-                {
-                    if (!Run(report, "StripAot", () => global::HybridCLR.Commands.StripAOTDllCommand.GenerateStripedAOTDlls(profile.recipe.target), cancellation))
+                    if (!Run(report, "EmptyMethodBridge", () =>
+                    {
+                        profile = inputs.Reload();
+                        global::HybridCLR.Commands.MethodBridgeGeneratorCommand.GenerateEmptyMethodBridgeAndReversePInvokeWrapper(profile.target);
+                    }, cancellation))
                     {
                         return report;
                     }
+
+                    string strippedWithLink = null;
+                    using (HybridCLRPlayerBuildGuard.Enter(profile, true))
+                    {
+                        if (!Run(report, "StripAot", () =>
+                        {
+                            strippedWithLink = AddressablesLinkFingerprint();
+                            global::HybridCLR.Commands.StripAOTDllCommand.GenerateStripedAOTDlls(profile.target);
+                            if (AddressablesLinkFingerprint() != strippedWithLink)
+                            {
+                                throw new InvalidDataException("The official Addressables linker input changed during the AOT strip.");
+                            }
+                        }, cancellation))
+                        {
+                            return report;
+                        }
+                    }
+
+                    if (!Run(report, "FullMethodBridge", () =>
+                    {
+                        profile = inputs.Reload();
+                        prepared = AnalyzeStripped(profile, compiled.HotUpdate);
+                        GenerateBridge(prepared, profile.development, SettingsUtil.GeneratedCppDir + "/MethodBridge.inc");
+                    }, cancellation))
+                    {
+                        return report;
+                    }
+
+                    if (!Run(report, "Manifest", () =>
+                    {
+                        // 基座冻结全局登记，资源交付只投影当前项目，不裁掉其他项目的原生能力证据。
+                        registration = CreateManifestForSet(profile, prepared);
+                        report.Manifest = CreateManifest(profile, prepared);
+                    }, cancellation))
+                    {
+                        return report;
+                    }
+
+                    if (!Run(report, "PayloadCommit", () =>
+                    {
+                        inputs.BeginResourceWrite();
+                        CommitPayloads(profile, report.Manifest, prepared);
+                    }, cancellation))
+                    {
+                        return report;
+                    }
+
+                    if (!Run(report, "AddressablesContent", () =>
+                    {
+                        profile = inputs.Reload();
+                        var contentWorkspace = Path.Combine(workspace, "content-" + attempt);
+                        Directory.CreateDirectory(contentWorkspace);
+                        PublishResources(report, profile, cancellation, null, contentWorkspace);
+                        inputs.CaptureAuthoring(profile);
+                        profile = inputs.Reload();
+                        addressablesLink = AddressablesLinkFingerprint();
+                        if (addressablesLink == null || (attempt != 0 && addressablesLink != strippedWithLink))
+                        {
+                            throw new InvalidDataException("The packed Addressables linker input is absent or did not stabilize after a second AOT strip. No Player baseline was produced.");
+                        }
+                    }, cancellation))
+                    {
+                        return report;
+                    }
+                    if (addressablesLink == strippedWithLink)
+                    {
+                        break;
+                    }
                 }
 
-                if (!Run(report, "FullMethodBridge", () =>
-                {
-                    profile = inputs.Reload();
-                    prepared = AnalyzeStripped(profile, compiled.HotUpdate);
-                    GenerateBridge(prepared, profile.development, SettingsUtil.GeneratedCppDir + "/MethodBridge.inc");
-                }, cancellation))
-                {
-                    return report;
-                }
-
-                if (!Run(report, "Manifest", () =>
-                {
-                    // 基座冻结全局登记，资源交付只投影当前项目，不裁掉其他项目的原生能力证据。
-                    registration = CreateManifestForSet(profile, prepared);
-                    report.Manifest = CreateManifest(profile, prepared);
-                }, cancellation))
-                {
-                    return report;
-                }
-
-                if (!Run(report, "PayloadCommit", () => CommitPayloads(profile, report.Manifest, prepared), cancellation))
-                {
-                    return report;
-                }
-
-                if (!Run(report, "ResourcePublish", () =>
-                {
-                    profile = inputs.Reload();
-                    PublishResources(report, profile, cancellation, provider);
-                    profile = inputs.Reload();
-                }, cancellation))
-                {
-                    return report;
-                }
-
-                if (!Run(report, "Deploy", () =>
-                {
-                    report.Deployment = ResourceBuiltInDeployer.Deploy(ResourceBuiltInDeployer.Preflight(report.Release), cancellation);
-                    profile = inputs.Reload();
-                }, cancellation))
-                {
-                    return report;
-                }
-
-                using (HybridCLRPlayerBuildGuard.Enter(profile, false))
+                using (HybridCLRPlayerBuildGuard.Enter(profile, false, addressablesLink))
                 {
                     if (!Run(report, "Player", () =>
                     {
@@ -245,6 +258,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
                 Run(report, "Baseline", () =>
                 {
                     profile = inputs.Reload();
+                    RequireAddressablesLink(addressablesLink);
                     var final = AnalyzeStripped(profile, compiled.HotUpdate);
                     VerifyFinalAot(prepared, final, registration);
                     var baseline = new HybridCLRBuildBaseline
@@ -257,8 +271,9 @@ namespace YLFramework.Integrations.HybridCLR.Editor
                     };
                     var sources = final.Aot.Select(a => new KeyValuePair<string, string>("Aot/" + a.Name + ".dll", a.Path))
                         .Concat(final.HotUpdate.Select(a => new KeyValuePair<string, string>("HotUpdate/" + a.Name + ".dll", a.Path)))
-                        .Concat(HybridCLRBuildBaseline.GeneratedNames.Select(n => new KeyValuePair<string, string>("Generated/" + n,
-                            n == "link.xml" ? LinkPath() : SettingsUtil.GeneratedCppDir + "/" + n)));
+                         .Concat(HybridCLRBuildBaseline.GeneratedNames.Select(n => new KeyValuePair<string, string>("Generated/" + n,
+                             n == "link.xml" ? LinkPath() : SettingsUtil.GeneratedCppDir + "/" + n)))
+                         .Append(new KeyValuePair<string, string>(HybridCLRBuildBaseline.ContentStateFile, report.ResourceBuild.ContentStatePath));
                     baseline.Freeze(profile.baselineDirectory, sources);
                     report.BaselineDirectory = baseline.Root;
                 }, cancellation);
@@ -270,14 +285,31 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             }
         }
 
+        private static string AddressablesLinkFingerprint()
+        {
+            var path = Path.Combine(Addressables.BuildPath, "AddressablesLink", "link.xml");
+            HybridCLRBuildBaseline.RejectLinks(path);
+            if (Directory.Exists(path))
+            {
+                throw new InvalidDataException("The official Addressables linker path is a directory.");
+            }
+            return File.Exists(path) ? HybridCLRManifest.Hash(File.ReadAllBytes(path)) : null;
+        }
+
+        internal static void RequireAddressablesLink(string expected)
+        {
+            if (expected == null || AddressablesLinkFingerprint() != expected)
+            {
+                throw new InvalidDataException("The final Player must use the exact official Addressables linker input that produced its prepared AOT assemblies.");
+            }
+        }
+
         /// <summary>按持久冻结基线检查项目热更闭包并发布补丁，不裁剪 AOT、重建原生桥或构建 Player。</summary>
         /// <param name="profile">拥有或显式一层绑定完整基线的已保存项目配置。</param>
         /// <param name="cancellation">阶段前及资源发布流程使用的取消令牌。</param>
-        /// <param name="provider">应用注入的可选资源内容密钥提供者。</param>
         /// <returns>基线读取、编译、兼容检查及已执行发布阶段的报告。</returns>
         /// <remarks>超出冻结登记的 metadata 或原生需求须建立新基座；本入口不部署也不修改冻结基线。</remarks>
-        public static HybridCLRBuildReport PublishPatch(HybridCLRBuildProfile profile, CancellationToken cancellation = default,
-            IResourceContentKeyProvider provider = null)
+        public static HybridCLRBuildReport PublishPatch(HybridCLRBuildProfile profile, CancellationToken cancellation = default)
         {
             var report = Validate(profile);
             if (!report.HasSucceeded)
@@ -289,10 +321,12 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             try
             {
                 HybridCLRBuildBaseline baseline = null;
+                HybridCLRBuildInputs inputs = null;
                 HybridCLRAssemblySet compiled = null;
                 HybridCLRAssemblySet patch = null;
                 if (!Run(report, "ReadBaseline", () =>
                 {
+                    inputs = HybridCLRBuildInputs.Capture(profile);
                     baseline = HybridCLRBuildBaseline.Read(profile.baselineDirectory);
                     ValidateBaselineBinding(profile, baseline, SettingsFingerprint(profile));
                     report.BaselineDirectory = baseline.Root;
@@ -308,6 +342,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
 
                 if (!Run(report, "PatchCompatibility", () =>
                 {
+                    profile = inputs.Reload();
                     var selected = SelectAssemblies(profile, compiled);
                     patch = HybridCLRAssemblyAnalysis.Analyze(selected.HotUpdate.Select(a => a.Path),
                         baseline.Files.Where(f => f.Path.StartsWith("Aot/", StringComparison.Ordinal)).Select(f => HybridCLRBuildBaseline.Child(baseline.Root, f.Path)), UnityAotAliases());
@@ -327,12 +362,21 @@ namespace YLFramework.Integrations.HybridCLR.Editor
                     return report;
                 }
 
-                if (!Run(report, "PayloadCommit", () => CommitPayloads(profile, report.Manifest, patch), cancellation))
+                if (!Run(report, "PayloadCommit", () =>
+                {
+                    inputs.BeginResourceWrite();
+                    CommitPayloads(profile, report.Manifest, patch);
+                }, cancellation))
                 {
                     return report;
                 }
 
-                Run(report, "ResourcePublish", () => PublishResources(report, profile, cancellation, provider), cancellation);
+                Run(report, "AddressablesContentUpdate", () =>
+                {
+                    PublishResources(report, profile, cancellation, baseline);
+                    inputs.CaptureAuthoring(profile);
+                    profile = inputs.Reload();
+                }, cancellation);
                 return report;
             }
             finally
@@ -405,20 +449,15 @@ namespace YLFramework.Integrations.HybridCLR.Editor
                 throw new InvalidOperationException("Save the selected HybridCLR profile first.");
             }
 
-            var input = ResourceEditorOperations.ResolveRecipe(profile.recipe);
-            if (EditorUtility.IsDirty(profile.recipe) || EditorUtility.IsDirty(profile.recipe.project))
+            ValidateResourceInputs(profile);
+            ResourceEditorOperations.ValidateBuild(profile.addressableSettings);
+            if (profile.addressableSettings.BuildAddressablesWithPlayerBuild != AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer)
             {
-                throw new InvalidOperationException("Save the selected Resource recipe and project first.");
+                throw new InvalidDataException("Explicitly disable automatic Addressables builds with Player builds; this pipeline builds and freezes content before its Player.");
             }
-
-            if (input.Action != ResourceBuildAction.BuildAndPublish || input.GenerateReferences)
-            {
-                throw new InvalidDataException("Use BuildAndPublish without generated C# address references.");
-            }
-
             ValidateInputPaths(profile);
             var owner = ResolveBaseProfile(profile);
-            if (EditorUtility.IsDirty(owner) || EditorUtility.IsDirty(owner.recipe) || EditorUtility.IsDirty(owner.recipe.project))
+            if (EditorUtility.IsDirty(owner))
             {
                 throw new InvalidOperationException("Save the explicitly bound native base configuration first.");
             }
@@ -431,7 +470,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         // 核对当前 Windows64、IL2CPP、Framework、精确包来源和已安装原生工具链，不代为配置。
         internal static void ValidateEnvironment(HybridCLRBuildProfile profile)
         {
-            if (profile.recipe.target != BuildTarget.StandaloneWindows64 || EditorUserBuildSettings.activeBuildTarget != profile.recipe.target ||
+            if (profile.target != BuildTarget.StandaloneWindows64 || EditorUserBuildSettings.activeBuildTarget != profile.target ||
                 profile.development != EditorUserBuildSettings.development || Application.platform != RuntimePlatform.WindowsEditor)
             {
                 throw new InvalidDataException("Only the already-active Windows64 target with the exact Development profile is supported.");
@@ -575,7 +614,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             var settings = new ScriptCompilationSettings
             {
                 group = BuildTargetGroup.Standalone,
-                target = profile.recipe.target,
+                target = profile.target,
                 options = profile.development ? ScriptCompilationOptions.DevelopmentBuild : ScriptCompilationOptions.None
             };
             var result = PlayerBuildInterface.CompilePlayerScripts(settings, output);
@@ -707,7 +746,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
 #if UNITY_EDITOR_WIN
             ValidateExecutableBuildMode(EditorUserBuildSettings.buildScriptsOnly, UnityEditor.WindowsStandalone.UserBuildSettings.createSolution);
 #endif
-            if (options.target != profile.recipe.target || options.targetGroup != BuildTargetGroup.Standalone ||
+            if (options.target != profile.target || options.targetGroup != BuildTargetGroup.Standalone ||
                 ((options.options & BuildOptions.Development) != 0) != profile.development ||
                 (options.options & (BuildOptions.BuildScriptsOnly | BuildOptions.IncludeTestAssemblies)) != 0 || options.subtarget != (int)StandaloneBuildSubtarget.Player)
             {
@@ -783,7 +822,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         // 用真实 Player 裁剪目录建立 AOT 集合，不以编译前引用程序集冒充最终输入。
         private static HybridCLRAssemblySet AnalyzeStripped(HybridCLRBuildProfile profile, IReadOnlyList<HybridCLRAssemblyRecord> hot)
         {
-            var directory = SettingsUtil.GetAssembliesPostIl2CppStripDir(profile.recipe.target);
+            var directory = SettingsUtil.GetAssembliesPostIl2CppStripDir(profile.target);
             if (!Directory.Exists(directory) || Directory.GetFiles(directory, "*.dll").Length == 0)
             {
                 throw new InvalidDataException("The actual Player strip output is absent.");
@@ -841,8 +880,8 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             };
             var manifest = new HybridCLRManifest
             {
-                ProjectId = profile.recipe.project.projectId,
-                AppContentCompatibilityId = profile.recipe.appContentCompatibilityId,
+                ProjectId = profile.projectId,
+                AppContentCompatibilityId = profile.appContentCompatibilityId,
                 UnityVersion = Application.unityVersion,
                 Development = profile.development,
                 HotUpdateAssemblies = assemblies.HotUpdate.Select(a => Payload(a, false)).ToArray(),
@@ -960,10 +999,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         // 解析唯一直接基座拥有者，拒绝自引用、链式绑定及目录或构建身份不匹配。
         internal static HybridCLRBuildProfile ResolveBaseProfile(HybridCLRBuildProfile profile)
         {
-            if (!profile || !profile.recipe || !profile.recipe.project)
-            {
-                throw new InvalidDataException("Select a profile with a Resource recipe and project.");
-            }
+            ValidateResourceInputs(profile);
 
             if (!profile.baseProfile)
             {
@@ -971,13 +1007,14 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             }
 
             var owner = profile.baseProfile;
-            if (owner == profile || owner.baseProfile || !owner.recipe || !owner.recipe.project)
+            if (owner == profile || owner.baseProfile)
             {
                 throw new InvalidDataException("A native base binding must point directly to a different, unbound owner profile.");
             }
 
-            if (owner.development != profile.development || owner.recipe.target != profile.recipe.target ||
-                owner.recipe.appContentCompatibilityId != profile.recipe.appContentCompatibilityId ||
+            ValidateResourceInputs(owner);
+            if (owner.development != profile.development || owner.target != profile.target ||
+                owner.appContentCompatibilityId != profile.appContentCompatibilityId || owner.addressableSettings != profile.addressableSettings ||
                 string.IsNullOrWhiteSpace(owner.baselineDirectory) || string.IsNullOrWhiteSpace(profile.baselineDirectory) ||
                 !Path.GetFullPath(owner.baselineDirectory).TrimEnd('\\', '/').Equals(Path.GetFullPath(profile.baselineDirectory).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
             {
@@ -992,7 +1029,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         internal static void ValidateBaselineBinding(HybridCLRBuildProfile profile, HybridCLRBuildBaseline baseline, string fingerprint)
         {
             var owner = ResolveBaseProfile(profile);
-            baseline.InitialManifest.Validate(owner.recipe.project.projectId, profile.recipe.appContentCompatibilityId, Application.unityVersion, profile.development);
+            baseline.InitialManifest.Validate(owner.projectId, profile.appContentCompatibilityId, Application.unityVersion, profile.development);
             if (baseline.ProfileGuid != ProfileGuid(owner) || baseline.SettingsFingerprint != fingerprint)
             {
                 throw new InvalidDataException("The explicit base owner/tool/settings identity changed; build a new base with a new compatibility id.");
@@ -1213,7 +1250,11 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             {
                 Unity = Application.unityVersion,
                 Version = "9.0.3",
-                Target = profile.recipe.target.ToString(),
+                ResourceBackend = "addressables-v2",
+                AddressablesVersion = PackageInfo.FindForAssembly(typeof(AddressableAssetSettings).Assembly)?.version,
+                AddressablesSettingsGuid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(profile.addressableSettings)),
+                AddressablesProfileId = profile.addressableSettings.activeProfileId,
+                Target = profile.target.ToString(),
                 Development = profile.development,
                 Api = PlayerSettings.GetApiCompatibilityLevel(BuildTargetGroup.Standalone).ToString(),
                 Backend = PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone).ToString(),
@@ -1255,42 +1296,122 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             return HybridCLRManifest.Hash(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(files)));
         }
 
-        // 先核对规范生成地址，再调用正式 Resource 流程并保留其首个原始错误。
-        internal static void PublishResources(HybridCLRBuildReport report, HybridCLRBuildProfile profile, CancellationToken cancellation, IResourceContentKeyProvider provider)
+        // 登记真实源 GUID 与规范 key，再执行正式官方完整构建或基于冻结内容状态的更新。
+        internal static void PublishResources(HybridCLRBuildReport report, HybridCLRBuildProfile profile, CancellationToken cancellation,
+            HybridCLRBuildBaseline baseline = null, string workspace = null)
         {
-            var map = ResourceBuildMap.Create(profile.recipe.project);
-            var expected = report.Manifest.HotUpdateAssemblies.Concat(report.Manifest.AotMetadata).Select(a => a.Address).Append(HybridCLRManifest.ManifestPath).ToArray();
-            var sourceRoot = profile.generatedAssetDirectory.TrimEnd('/') + "/";
-            foreach (var address in expected)
+            cancellation.ThrowIfCancellationRequested();
+            RegisterResourceEntries(profile, report.Manifest);
+            SaveAddressables(profile);
+            if (baseline == null)
             {
-                if (!map.Assets.Any(a => a.Address == new ResourceAddress(profile.recipe.project.projectId, address) && a.SourcePath == sourceRoot + address))
+                if (string.IsNullOrEmpty(workspace))
                 {
-                    throw new InvalidDataException("The saved Resource Project must explicitly select the generated canonical address: " + address);
+                    throw new ArgumentException("A fresh base build workspace is required.", nameof(workspace));
+                }
+                report.ResourceBuild = ResourceEditorOperations.BuildContent(profile.addressableSettings,
+                    Path.Combine(workspace, "addressables_content_state.bin"), cancellation);
+            }
+            else
+            {
+                report.ResourceBuild = ResourceEditorOperations.BuildContentUpdate(profile.addressableSettings,
+                    HybridCLRBuildBaseline.Child(baseline.Root, HybridCLRBuildBaseline.ContentStateFile), cancellation);
+            }
+        }
+
+        // 旧 Recipe 只供迁移读取，绝不回退到旧作者事实或替用户切换官方设置。
+        internal static void ValidateResourceInputs(HybridCLRBuildProfile profile)
+        {
+            if (!profile || profile.schemaVersion != 2 || profile.recipe)
+            {
+                throw new InvalidDataException("A schema 2 Addressables HybridCLR profile is required. Migrate explicitly and build a new native base; legacy recipes/baselines are not upgraded in place.");
+            }
+            if (!profile.addressableSettings || !profile.codeGroup || profile.codeGroup.Settings != profile.addressableSettings ||
+                !profile.addressableSettings.groups.Contains(profile.codeGroup) || profile.codeGroup.ReadOnly)
+            {
+                throw new InvalidDataException("Select existing official Addressables settings and a writable code group belonging to them.");
+            }
+            _ = new ResourceAddress(profile.projectId, HybridCLRManifest.ManifestPath);
+            _ = new ResourceAddress(profile.appContentCompatibilityId, "compatibility");
+            var bundle = profile.codeGroup.GetSchema<BundledAssetGroupSchema>();
+            var update = profile.codeGroup.GetSchema<ContentUpdateGroupSchema>();
+            var localLoadPath = new ProfileValueReference();
+            localLoadPath.SetVariableByName(profile.addressableSettings, AddressableAssetSettings.kLocalLoadPath);
+            if (bundle == null || !bundle.IncludeInBuild || !bundle.IncludeAddressInCatalog || update == null || update.StaticContent ||
+                !profile.addressableSettings.BuildRemoteCatalog ||
+                bundle.LoadPath.Id == localLoadPath.Id)
+            {
+                throw new InvalidDataException("The official code group must include exact addresses, allow post-release changes and use a nonlocal load path with a remote Catalog. Configure official settings explicitly.");
+            }
+        }
+
+        // 整批验证文件、GUID、key 和现有登记后才开始写官方 Entries，不覆盖别人的地址或分组。
+        internal static void RegisterResourceEntries(HybridCLRBuildProfile profile, HybridCLRManifest manifest)
+        {
+            ValidateResourceInputs(profile);
+            if (manifest == null)
+            {
+                throw new ArgumentNullException(nameof(manifest));
+            }
+            manifest.Validate(profile.projectId, profile.appContentCompatibilityId, Application.unityVersion, profile.development);
+            var root = profile.generatedAssetDirectory.TrimEnd('/') + "/";
+            var paths = manifest.HotUpdateAssemblies.Concat(manifest.AotMetadata).Select(payload => payload.Address)
+                .Append(HybridCLRManifest.ManifestPath).ToArray();
+            var all = new List<AddressableAssetEntry>();
+            profile.addressableSettings.GetAllAssets(all, false);
+            var inputs = new List<(string Guid, string Key)>();
+            foreach (var relative in paths)
+            {
+                var path = root + relative;
+                HybridCLRBuildBaseline.RejectLinks(path);
+                var guid = AssetDatabase.AssetPathToGUID(path);
+                if (string.IsNullOrEmpty(guid) || !File.Exists(path) || !AssetDatabase.LoadAssetAtPath<TextAsset>(path))
+                {
+                    throw new InvalidDataException("Generated code must resolve to a real TextAsset and source GUID: " + path);
+                }
+                var key = HybridCLRManifest.ResourceKey(profile.projectId, relative);
+                if (all.Any(entry => (entry.address == key || entry.guid == key) && entry.guid != guid || entry.labels.Contains(key)) ||
+                    all.Any(entry => entry.guid == guid && (entry.address != key || entry.parentGroup != profile.codeGroup || entry.ReadOnly)))
+                {
+                    throw new InvalidDataException("Official Addressables entry conflicts with the canonical generated source/key: " + key);
+                }
+                inputs.Add((guid, key));
+            }
+            foreach (var payload in manifest.HotUpdateAssemblies.Concat(manifest.AotMetadata))
+            {
+                HybridCLRManifest.ValidatePayload(payload, File.ReadAllBytes(root + payload.Address));
+            }
+            var descriptor = HybridCLRManifest.Parse(File.ReadAllText(root + HybridCLRManifest.ManifestPath));
+            if (descriptor.CodePackageId != manifest.CodePackageId)
+            {
+                throw new InvalidDataException("The generated manifest file does not match the checked code package.");
+            }
+            if (all.Any(entry => entry.AssetPath.StartsWith(root, StringComparison.Ordinal) &&
+                !inputs.Any(input => input.Guid == entry.guid)) || all.Any(entry => entry.IsFolder &&
+                root.StartsWith(entry.AssetPath.TrimEnd('/') + "/", StringComparison.Ordinal)))
+            {
+                throw new InvalidDataException("Official entries include undeclared generated files or an implicit code folder; use exact generated entries only.");
+            }
+            Undo.RecordObjects(new UnityEngine.Object[] { profile.addressableSettings, profile.codeGroup }, "Register HybridCLR Addressables");
+            foreach (var input in inputs)
+            {
+                if (profile.addressableSettings.FindAssetEntry(input.Guid) == null)
+                {
+                    profile.addressableSettings.CreateOrMoveEntry(input.Guid, profile.codeGroup).SetAddress(input.Key);
                 }
             }
+        }
 
-            if (map.Assets.Any(a => a.SourcePath.StartsWith(sourceRoot, StringComparison.Ordinal) && !expected.Contains(a.Address.Path)))
-            {
-                throw new InvalidDataException("The Resource recipe selects undeclared generated files.");
-            }
-
-            report.ResourceBuild = ResourceEditorOperations.ExecuteRecipe(profile.recipe, cancellation, provider);
-            report.Release = report.ResourceBuild.Release;
-            var error = report.ResourceBuild.BuildError ?? report.ResourceBuild.PublicationError ?? report.ResourceBuild.GenerationError;
-            if (error != null)
-            {
-                ExceptionDispatchInfo.Capture(error).Throw();
-            }
-
-            if (report.Release == null)
-            {
-                throw new InvalidOperationException("Resource publication was not confirmed.");
-            }
+        private static void SaveAddressables(HybridCLRBuildProfile profile)
+        {
+            AssetDatabase.SaveAssetIfDirty(profile.codeGroup);
+            AssetDatabase.SaveAssetIfDirty(profile.addressableSettings);
         }
 
         // 检查自有 Assets 生成根及独立持久基线，并在写入前验证现有归属。
         internal static void ValidateInputPaths(HybridCLRBuildProfile profile)
         {
+            ValidateResourceInputs(profile);
             if (!profile || string.IsNullOrWhiteSpace(profile.generatedAssetDirectory) || !profile.generatedAssetDirectory.StartsWith("Assets/", StringComparison.Ordinal) ||
                 profile.generatedAssetDirectory.Contains('\\') || profile.generatedAssetDirectory.Split('/').Any(p => p.Length == 0 || p == "." || p == ".."))
             {
@@ -1326,7 +1447,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         private sealed class Owner
         {
             /// <summary>生成归属回执的格式版本。</summary>
-            public int SchemaVersion = 1;
+            public int SchemaVersion = 2;
             /// <summary>拥有此生成根的已保存 Profile GUID。</summary>
             public string ProfileGuid;
             /// <summary>上次提交的规范代码文件及指纹。</summary>
@@ -1369,7 +1490,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             {
                 throw new InvalidDataException("Invalid output ownership record.", exception);
             }
-            if (owner == null || owner.SchemaVersion != 1 || owner.ProfileGuid != ProfileGuid(profile) || owner.Files == null || owner.Files.Length > 257)
+            if (owner == null || owner.SchemaVersion != 2 || owner.ProfileGuid != ProfileGuid(profile) || owner.Files == null || owner.Files.Length > 257)
             {
                 throw new InvalidDataException("The generated directory belongs to another or incomplete profile.");
             }
@@ -1415,7 +1536,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         internal static void CommitPayloads(HybridCLRBuildProfile profile, HybridCLRManifest manifest, HybridCLRAssemblySet assemblies)
         {
             ValidateInputPaths(profile);
-            manifest.Validate(profile.recipe.project.projectId, profile.recipe.appContentCompatibilityId, Application.unityVersion, profile.development);
+            manifest.Validate(profile.projectId, profile.appContentCompatibilityId, Application.unityVersion, profile.development);
             var root = Path.GetFullPath(profile.generatedAssetDirectory);
             var owner = ReadOwner(profile);
             var payloads = new Dictionary<string, byte[]>(StringComparer.Ordinal);
@@ -1433,6 +1554,22 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             }
 
             payloads.Add(HybridCLRManifest.ManifestPath, descriptor);
+            var retiredEntries = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var record in owner.Files.Where(record => !payloads.ContainsKey(record.Path)))
+            {
+                var path = profile.generatedAssetDirectory.TrimEnd('/') + "/" + record.Path;
+                var guid = AssetDatabase.AssetPathToGUID(path);
+                var entry = string.IsNullOrEmpty(guid) ? null : profile.addressableSettings.FindAssetEntry(guid);
+                if (entry != null)
+                {
+                    if (entry.address != HybridCLRManifest.ResourceKey(profile.projectId, record.Path) ||
+                        entry.parentGroup != profile.codeGroup || entry.ReadOnly)
+                    {
+                        throw new InvalidDataException("A retired generated source is registered by another authoring owner: " + path);
+                    }
+                    retiredEntries.Add(record.Path, guid);
+                }
+            }
             var next = new Owner
             {
                 ProfileGuid = owner.ProfileGuid,
@@ -1447,9 +1584,17 @@ namespace YLFramework.Integrations.HybridCLR.Editor
 
             foreach (var obsolete in owner.Files.Where(f => !payloads.ContainsKey(f.Path)))
             {
+                if (retiredEntries.ContainsKey(obsolete.Path))
+                {
+                    Undo.RecordObjects(new UnityEngine.Object[] { profile.addressableSettings, profile.codeGroup }, "Retire HybridCLR Addressables");
+                }
                 if (!AssetDatabase.DeleteAsset(profile.generatedAssetDirectory.TrimEnd('/') + "/" + obsolete.Path))
                 {
                     throw new IOException("Could not remove a verified obsolete owned payload: " + obsolete.Path);
+                }
+                if (retiredEntries.TryGetValue(obsolete.Path, out var guid))
+                {
+                    profile.addressableSettings.RemoveAssetEntry(guid);
                 }
             }
 

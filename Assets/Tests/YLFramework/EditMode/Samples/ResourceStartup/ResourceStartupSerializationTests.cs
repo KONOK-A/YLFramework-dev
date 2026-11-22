@@ -1,13 +1,19 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
-using YLFramework.Editor.Resource;
+using UnityEngine.AddressableAssets;
+using UnityEngine.SceneManagement;
 using YLFramework.Resource;
 using YLFramework.Samples.Resource;
+using Object = UnityEngine.Object;
 
 namespace YLFramework.Tests.ResourceBuild
 {
@@ -15,158 +21,278 @@ namespace YLFramework.Tests.ResourceBuild
     {
         private string _folder;
         private string _folderGuid;
+        private readonly HashSet<string> _owned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly string[] SampleFields =
+        {
+            "message", "data", "prefab", "preview", "audioCue", "audioPreloadLabel", "scene", "reusePrefab",
+            "bindCoreResourceProvider", "contentProjectId", "startupCatalogId", "audioProjects"
+        };
+
         [SetUp]
         public void SetUp()
         {
-            _folder = "Assets/Tests/YLFramework/EditMode/ResourceSample-" + Guid.NewGuid().ToString("N");
-            Assert.That(Directory.Exists(_folder) || File.Exists(_folder + ".meta"), Is.False);
-            _folderGuid = AssetDatabase.CreateFolder("Assets/Tests/YLFramework/EditMode", Path.GetFileName(_folder));
+            ResourceStartupExampleTests.UseSavedAuthoringAnchor();
+            EnsureSavedScenes();
+            _owned.Clear();
+            _folder = "Assets/ResourceSampleSerialization-" + Guid.NewGuid().ToString("N");
+            Assert.That(Directory.Exists(_folder) || File.Exists(_folder) || File.Exists(_folder + ".meta"), Is.False);
+            _folderGuid = AssetDatabase.CreateFolder("Assets", Path.GetFileName(_folder));
+            Assert.That(_folderGuid, Is.Not.Empty);
         }
+
         [TearDown]
         public void TearDown()
         {
+            EnsureSavedScenes();
             Assert.That(AssetDatabase.AssetPathToGUID(_folder), Is.EqualTo(_folderGuid));
-            AssetDatabase.DeleteAsset(_folder);
+            CollectionAssert.AreEquivalent(_owned, Directory.GetFiles(_folder, "*", SearchOption.AllDirectories).Select(Path.GetFullPath),
+                "Do not delete an unknown asset or output added to the owned folder.");
+            Assert.That(AssetDatabase.DeleteAsset(_folder), Is.True);
         }
 
-        [TestCase(typeof(ResourceStartupExample), "mode")]
-        [TestCase(typeof(ResourceStartupExample), "projectId")]
-        [TestCase(typeof(ResourceStartupExample), "platform")]
-        [TestCase(typeof(ResourceStartupExample), "appCompatibility")]
-        [TestCase(typeof(ResourceStartupExample), "snapshotDirectory")]
-        [TestCase(typeof(ResourceStartupExample), "catalogDigest")]
-        [TestCase(typeof(ResourceStartupExample), "useBuiltIn")]
-        [TestCase(typeof(ResourceStartupExample), "bindCore")]
-        [TestCase(typeof(ResourceStartupExample), "useAudio")]
+        [TestCase(typeof(ResourceStartupExample), "message")]
+        [TestCase(typeof(ResourceStartupExample), "data")]
+        [TestCase(typeof(ResourceStartupExample), "prefab")]
+        [TestCase(typeof(ResourceStartupExample), "scene")]
+        [TestCase(typeof(ResourceStartupExample), "preview")]
+        [TestCase(typeof(ResourceStartupExample), "audioCue")]
+        [TestCase(typeof(ResourceStartupExample), "audioPreloadLabel")]
+        [TestCase(typeof(ResourceStartupExample), "reusePrefab")]
+        [TestCase(typeof(ResourceStartupExample), "bindCoreResourceProvider")]
+        [TestCase(typeof(ResourceStartupExample), "contentProjectId")]
+        [TestCase(typeof(ResourceStartupExample), "startupCatalogId")]
+        [TestCase(typeof(ResourceStartupExample), "audioProjects")]
         [TestCase(typeof(ResourceStartupExampleData), "text")]
         public void CurrentSampleFieldsDoNotRetainLegacySerializedReaders(Type type, string name)
         {
             var field = type.GetField(name);
             Assert.That(field, Is.Not.Null);
             Assert.That(field.GetCustomAttributes<UnityEngine.Serialization.FormerlySerializedAsAttribute>(), Is.Empty,
-                "Current formally saved sample inputs must not require the retired field reader: " + name);
+                "Current formally saved sample inputs must not require a retired field reader: " + name);
         }
 
         [TestCase(false)]
         [TestCase(true)]
         public void CurrentStartupSamplePrefabAndDataColdReadSettingsFlagsAndIdentity(bool enabled)
         {
-            var scene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
+            var preview = EditorSceneManager.NewPreviewScene();
             var root = new GameObject("CurrentStartupSample");
             root.SetActive(false);
-            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(root, scene);
+            SceneManager.MoveGameObjectToScene(root, preview);
             var prefabPath = _folder + "/Sample.prefab";
+            var visualName = enabled ? "VisualEnabled" : "VisualDisabled";
+            var visualPath = _folder + "/" + visualName + ".prefab";
             var dataPath = _folder + "/SampleData.asset";
-            ResourceStartupExample sample;
-            ResourceStartupExampleData data;
+            var messagePath = _folder + "/Message.txt";
+            var scenePath = _folder + "/Target.unity";
+            ResourceStartupExample sample = null;
+            ResourceStartupExampleData data = null;
+            var projects = enabled ? new[] { "audio-primary", "audio-secondary" } : Array.Empty<string>();
+            var originalScene = SceneManager.GetActiveScene();
             try
             {
-                sample = root.AddComponent<ResourceStartupExample>();
-                Assert.That(sample.mode, Is.EqualTo(ResourceLoadMode.EditorSimulation));
-                Assert.That(sample.useBuiltIn, Is.False);
-                Assert.That(sample.bindCore && sample.useAudio, Is.True);
-                Assert.That(sample.platform, Is.EqualTo("StandaloneWindows64"));
-                Assert.That(sample.appCompatibility, Is.EqualTo("startup-sample-v1"));
-                using (var serialized = new SerializedObject(sample))
+                using (var stream = new FileStream(messagePath, FileMode.CreateNew, FileAccess.Write))
+                using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
                 {
-                    Assert.That(serialized.FindProperty("ContentKeyProvider"), Is.Null, "The injected runtime key provider must remain nonserialized.");
+                    writer.Write(enabled ? "Persistent official message" : "");
                 }
-                sample.mode = enabled ? ResourceLoadMode.Bundles : ResourceLoadMode.EditorSimulation;
-                sample.projectId = "current-sample-project";
-                sample.appCompatibility = "current-sample-v1";
-                sample.snapshotDirectory = Path.GetFullPath(_folder + "/ExplicitSnapshot");
-                sample.catalogDigest = new string('a', 64);
-                sample.useBuiltIn = enabled;
-                sample.bindCore = !enabled;
-                sample.useAudio = enabled;
+                AssetDatabase.ImportAsset(messagePath, ImportAssetOptions.ForceSynchronousImport);
+                Own(messagePath);
                 data = ScriptableObject.CreateInstance<ResourceStartupExampleData>();
                 data.text = enabled ? "Current sample data" : "";
                 AssetDatabase.CreateAsset(data, dataPath);
                 AssetDatabase.SaveAssetIfDirty(data);
+                Own(dataPath);
+                var visual = new GameObject(visualName);
+                SceneManager.MoveGameObjectToScene(visual, preview);
+                visual.transform.localPosition = new Vector3(1, enabled ? 2 : -2, 3);
+                try
+                {
+                    Assert.That(PrefabUtility.SaveAsPrefabAsset(visual, visualPath), Is.Not.Null);
+                    Own(visualPath);
+                }
+                finally
+                {
+                    Object.DestroyImmediate(visual);
+                }
+                var target = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+                try
+                {
+                    SceneManager.SetActiveScene(target);
+                    new GameObject(enabled ? "TargetEnabled" : "TargetDisabled");
+                    Assert.That(EditorSceneManager.SaveScene(target, scenePath), Is.True);
+                    Own(scenePath);
+                }
+                finally
+                {
+                    EditorSceneManager.CloseScene(target, true);
+                    if (originalScene.IsValid() && originalScene.isLoaded)
+                    {
+                        SceneManager.SetActiveScene(originalScene);
+                    }
+                }
+                sample = root.AddComponent<ResourceStartupExample>();
+                Assert.That(sample.reusePrefab, Is.False);
+                Assert.That(sample.bindCoreResourceProvider, Is.True);
+                Assert.That(sample.audioPreloadLabel, Is.Null.Or.Empty);
+                Assert.That(sample.audioProjects, Is.Empty);
+                sample.message = new AssetReferenceT<TextAsset>(AssetDatabase.AssetPathToGUID(messagePath));
+                sample.data = new AssetReferenceT<ResourceStartupExampleData>(AssetDatabase.AssetPathToGUID(dataPath));
+                sample.prefab = new AssetReferenceGameObject(AssetDatabase.AssetPathToGUID(visualPath));
+                sample.scene = new AssetReference(AssetDatabase.AssetPathToGUID(scenePath));
+                using (var serialized = new SerializedObject(sample))
+                {
+                    serialized.Update();
+                    serialized.FindProperty("reusePrefab").boolValue = enabled;
+                    serialized.FindProperty("bindCoreResourceProvider").boolValue = !enabled;
+                    serialized.FindProperty("contentProjectId").stringValue = enabled ? "sample-content" : "";
+                    serialized.FindProperty("startupCatalogId").stringValue = enabled ? "sample-catalog" : "";
+                    var audio = serialized.FindProperty("audioProjects");
+                    audio.arraySize = projects.Length;
+                    for (var index = 0; index < projects.Length; index++)
+                    {
+                        audio.GetArrayElementAtIndex(index).stringValue = projects[index];
+                    }
+                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                }
+                sample.ValidateReferences();
                 Assert.That(PrefabUtility.SaveAsPrefabAsset(root, prefabPath), Is.Not.Null);
+                Own(prefabPath);
             }
             finally
             {
-                UnityEditor.SceneManagement.EditorSceneManager.ClosePreviewScene(scene);
+                EditorSceneManager.ClosePreviewScene(preview);
             }
-            Assert.That((bool)root || (bool)sample, Is.False, "The authoring scene must be unloaded before reopening the prefab.");
-            Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(data, out string dataGuid, out long dataId), Is.True);
+            Assert.That((bool)root || (bool)sample, Is.False, "The authoring scene must be unloaded before the prefab cold read.");
+            var paths = new[] { dataPath, messagePath, visualPath, scenePath, prefabPath };
+            var identities = paths.ToDictionary(path => path, path => Identity(AssetDatabase.LoadMainAssetAtPath(path)));
             Resources.UnloadAsset(data);
             Assert.That((bool)data, Is.False);
-            var paths = new[] { dataPath, prefabPath };
-            var guids = paths.Select(AssetDatabase.AssetPathToGUID).ToArray();
-            var bytes = paths.Select(File.ReadAllBytes).ToArray();
-            var metas = paths.Select(path => File.ReadAllBytes(path + ".meta")).ToArray();
+            var bytes = paths.ToDictionary(path => path, File.ReadAllBytes);
+            var metas = paths.ToDictionary(path => path, path => File.ReadAllBytes(path + ".meta"));
             var restoredData = AssetDatabase.LoadAssetAtPath<ResourceStartupExampleData>(dataPath);
             Assert.That(ReferenceEquals(restoredData, data), Is.False);
             Assert.That(restoredData.text, Is.EqualTo(enabled ? "Current sample data" : ""));
-            Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(restoredData, out string restoredGuid, out long restoredId), Is.True);
-            Assert.That(restoredGuid, Is.EqualTo(dataGuid));
-            Assert.That(restoredId, Is.EqualTo(dataId));
+            Assert.That(Identity(restoredData), Is.EqualTo(identities[dataPath]));
             Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(restoredData))), Is.EqualTo("a8a69b199e86111478bb1ebeee38034e"));
             var contents = PrefabUtility.LoadPrefabContents(prefabPath);
             try
             {
                 var restored = contents.GetComponent<ResourceStartupExample>();
                 Assert.That(contents.activeSelf, Is.False);
-                Assert.That(restored.mode, Is.EqualTo(enabled ? ResourceLoadMode.Bundles : ResourceLoadMode.EditorSimulation));
-                Assert.That(restored.projectId, Is.EqualTo("current-sample-project"));
-                Assert.That(restored.platform, Is.EqualTo("StandaloneWindows64"));
-                Assert.That(restored.appCompatibility, Is.EqualTo("current-sample-v1"));
-                Assert.That(restored.snapshotDirectory, Is.EqualTo(Path.GetFullPath(_folder + "/ExplicitSnapshot")));
-                Assert.That(restored.catalogDigest, Is.EqualTo(new string('a', 64)));
-                Assert.That(restored.useBuiltIn, Is.EqualTo(enabled));
-                Assert.That(restored.bindCore, Is.EqualTo(!enabled));
-                Assert.That(restored.useAudio, Is.EqualTo(enabled));
-                Assert.That(restored.ContentKeyProvider, Is.Null);
+                Assert.That(restored.reusePrefab, Is.EqualTo(enabled));
+                Assert.That(restored.bindCoreResourceProvider, Is.EqualTo(!enabled));
+                Assert.That(restored.contentProjectId, Is.EqualTo(enabled ? "sample-content" : ""));
+                Assert.That(restored.startupCatalogId, Is.EqualTo(enabled ? "sample-catalog" : ""));
+                Assert.That(restored.audioPreloadLabel, Is.Null.Or.Empty, "A sample without a label keeps exact-key warmup by default.");
+                CollectionAssert.AreEqual(projects, restored.audioProjects);
                 Assert.That(restored.Startup, Is.Null);
                 Assert.That(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(restored))), Is.EqualTo("6efb2386a5492c0449d3f50a48627a32"));
+                var references = new AssetReference[] { restored.message, restored.data, restored.prefab, restored.scene };
+                var targets = new[] { messagePath, dataPath, visualPath, scenePath };
+                for (var index = 0; index < references.Length; index++)
+                {
+                    var asset = AssetDatabase.LoadMainAssetAtPath(targets[index]);
+                    Assert.That(references[index].AssetGUID, Is.EqualTo(AssetDatabase.AssetPathToGUID(targets[index])));
+                    Assert.That(references[index].editorAsset, Is.SameAs(asset));
+                    Assert.That(Identity(references[index].editorAsset), Is.EqualTo(identities[targets[index]]));
+                    Assert.That(references[index].RuntimeKeyIsValid(), Is.True);
+                }
+                Assert.That(((TextAsset)restored.message.editorAsset).text, Is.EqualTo(enabled ? "Persistent official message" : ""));
+                Assert.That(((GameObject)restored.prefab.editorAsset).name, Is.EqualTo(visualName));
+                Assert.That(((GameObject)restored.prefab.editorAsset).transform.localPosition, Is.EqualTo(new Vector3(1, enabled ? 2 : -2, 3)));
+                restored.ValidateReferences();
             }
             finally
             {
                 PrefabUtility.UnloadPrefabContents(contents);
             }
-            var output = Environment.GetEnvironmentVariable("YL_TEST_OUTPUT_ROOT");
-            Assert.That(Directory.Exists(output), Is.True, "Run this contract through the declared owned native host.");
-            var evidence = Path.Combine(output, "ResourceStartupCurrent-" + enabled);
-            Assert.That(Directory.Exists(evidence), Is.False);
-            Directory.CreateDirectory(evidence);
-            for (var i = 0; i < paths.Length; i++)
-            {
-                Assert.That(AssetDatabase.AssetPathToGUID(paths[i]), Is.EqualTo(guids[i]));
-                CollectionAssert.AreEqual(bytes[i], File.ReadAllBytes(paths[i]));
-                CollectionAssert.AreEqual(metas[i], File.ReadAllBytes(paths[i] + ".meta"));
-                File.WriteAllBytes(Path.Combine(evidence, Path.GetFileName(paths[i])), bytes[i]);
-                File.WriteAllBytes(Path.Combine(evidence, Path.GetFileName(paths[i]) + ".meta"), metas[i]);
-                TestContext.WriteLine("Current sample input: {0}; GUID={1}", paths[i], guids[i]);
-            }
-        }
-
-        [Test]
-        public void SampleBuiltInSelectionUsesExplicitIdentityInsteadOfDeveloperPublicationPath()
-        {
-            using var source = new ResourceBuiltInDeploymentTests.BuiltInSource();
-            ResourceBuiltInDeployer.Deploy(ResourceBuiltInDeployer.Preflight(source.Snapshot));
-            var go = new GameObject("C02 sample mount fixture");
+            var coldScene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
             try
             {
-                var example = go.AddComponent<ResourceStartupExample>();
-                example.useBuiltIn = true;
-                example.projectId = source.ProjectId;
-                example.platform = source.Snapshot.Document.Platform;
-                example.appCompatibility = "app-v1";
-                example.catalogDigest = source.Snapshot.Document.CatalogDigest;
-                example.snapshotDirectory = Path.Combine(source.Root, "not-deployed-on-this-machine");
-                var mount = example.CreateMount();
-                Assert.That(mount.BuiltIn.DirectoryPath, Does.StartWith(ResourceBuiltInDeployer.ResourcesRoot));
-                Assert.That(mount.BuiltIn.Document.CatalogDigest, Is.EqualTo(example.catalogDigest));
-                Assert.That(ResourceSystem.Current, Is.Null);
+                Assert.That(coldScene.GetRootGameObjects().Single().name, Is.EqualTo(enabled ? "TargetEnabled" : "TargetDisabled"));
             }
             finally
             {
-                UnityEngine.Object.DestroyImmediate(go);
+                EditorSceneManager.CloseScene(coldScene, true);
             }
+            var output = Environment.GetEnvironmentVariable("YL_TEST_OUTPUT_ROOT");
+            Assert.That(Directory.Exists(output), Is.True, "Run through the declared owned test output.");
+            var evidence = Path.Combine(output, "ResourceStartupCurrent-" + enabled);
+            Assert.That(Directory.Exists(evidence), Is.False);
+            Directory.CreateDirectory(evidence);
+            foreach (var path in paths)
+            {
+                Assert.That(Identity(AssetDatabase.LoadMainAssetAtPath(path)), Is.EqualTo(identities[path]));
+                CollectionAssert.AreEqual(bytes[path], File.ReadAllBytes(path));
+                CollectionAssert.AreEqual(metas[path], File.ReadAllBytes(path + ".meta"));
+                File.WriteAllBytes(Path.Combine(evidence, Path.GetFileName(path)), bytes[path]);
+                File.WriteAllBytes(Path.Combine(evidence, Path.GetFileName(path) + ".meta"), metas[path]);
+                TestContext.WriteLine("Persistent sample input {0}; identity={1}; SHA256={2}; metaSHA256={3}", path, identities[path], Hash(bytes[path]), Hash(metas[path]));
+            }
+            Assert.That(ResourceSystem.Current, Is.Null, "Persistence does not initialize native resource services.");
         }
 
+        [Test]
+        public void SerializedSurfaceHasOnlyCurrentOfficialInputsAndNoForeignSourceReader()
+        {
+            var preview = EditorSceneManager.NewPreviewScene();
+            var root = new GameObject("CurrentSampleSerializedSurface");
+            SceneManager.MoveGameObjectToScene(root, preview);
+            try
+            {
+                using var serialized = new SerializedObject(root.AddComponent<ResourceStartupExample>());
+                var names = new List<string>();
+                var iterator = serialized.GetIterator();
+                var children = true;
+                while (iterator.NextVisible(children))
+                {
+                    children = false;
+                    if (iterator.name != "m_Script")
+                    {
+                        names.Add(iterator.name);
+                    }
+                }
+                CollectionAssert.AreEquivalent(SampleFields, names);
+                foreach (var foreign in new[] { "source", "Sources", "UnknownSource", "mode", "projectId", "platform", "appCompatibility", "snapshotDirectory",
+                    "catalogDigest", "useBuiltIn", "bindCore", "useAudio", "ContentKeyProvider" })
+                {
+                    Assert.That(serialized.FindProperty(foreign), Is.Null, "There is no serialized reader or fallback for " + foreign);
+                    Assert.That(typeof(ResourceStartupExample).GetField(foreign), Is.Null);
+                }
+            }
+            finally
+            {
+                EditorSceneManager.ClosePreviewScene(preview);
+            }
+            Assert.That(ResourceSystem.Current, Is.Null);
+        }
+
+        private void Own(string path)
+        {
+            Assert.That(File.Exists(path) && File.Exists(path + ".meta"), Is.True);
+            _owned.Add(Path.GetFullPath(path));
+            _owned.Add(Path.GetFullPath(path + ".meta"));
+        }
+        private static string Identity(Object value)
+        {
+            Assert.That(value && EditorUtility.IsPersistent(value), Is.True);
+            Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(value, out string guid, out long id), Is.True);
+            return guid + ":" + id.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + value.GetType().FullName;
+        }
+        private static string Hash(byte[] bytes)
+        {
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+        }
+        private static void EnsureSavedScenes()
+        {
+            for (var index = 0; index < SceneManager.sceneCount; index++)
+            {
+                var scene = SceneManager.GetSceneAt(index);
+                Assert.That(scene.isDirty, Is.False, "Never save or close a dirty caller scene: " + scene.name);
+                Assert.That(!string.IsNullOrEmpty(scene.path) || scene.rootCount == 0, Is.True, "Do not discard unsaved caller content.");
+            }
+        }
     }
 }

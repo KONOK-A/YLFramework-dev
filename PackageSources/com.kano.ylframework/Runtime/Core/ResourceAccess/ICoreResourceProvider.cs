@@ -94,7 +94,7 @@ namespace YLFramework.Core
         public abstract void Dispose();
     }
 
-    /// <summary>Core 借读 prefab 并持有自己的责任；Instantiate 不消费 prefab lease，实例另持独立责任。</summary>
+    /// <summary>Core 借用 Prefab 并独立持有其租约；Rent 不消费 Prefab 租约，实例另有归还责任。</summary>
     public abstract class CorePrefabLease : IDisposable
     {
         /// <summary>有效租约内借读的 Prefab 资产；不可把资产当作可归还的场景实例。</summary>
@@ -102,16 +102,16 @@ namespace YLFramework.Core
         {
             get;
         }
-        /// <summary>当前租约是否仍允许访问资产或创建实例。</summary>
+        /// <summary>当前租约是否仍允许访问资产或借出实例。</summary>
         public abstract bool IsValid
         {
             get;
         }
-        /// <summary>取得独立的实例 checkout，不消费当前 Prefab 租约。</summary>
+        /// <summary>借出一个实例，可由后端复用空闲对象；不消费当前 Prefab 租约。</summary>
         /// <param name="parent">实例父节点；非空时以其所在场景为准。</param>
         /// <param name="scene">无父节点时使用的已加载目标场景。</param>
         /// <returns>由调用方负责 Return 或 Discard 的独立实例租约。</returns>
-        public abstract CoreInstanceLease Instantiate(Transform parent, Scene scene);
+        public abstract CoreInstanceLease Rent(Transform parent, Scene scene);
         /// <summary>释放本租约的 Prefab 持有责任，不代替已借出实例的归还。</summary>
         public abstract void Dispose();
     }

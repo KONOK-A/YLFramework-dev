@@ -1,11 +1,15 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.AddressableAssets;
+using UnityEditor.AddressableAssets.Settings;
 using UnityEngine;
 using YLFramework.Editor.Domain;
 using YLFramework.Editor.Resource;
 using YLFramework.Editor.Common;
 using YLFramework.Equipment;
+using YLFramework.Resource;
 
 namespace YLFramework.Editor.Equipment
 {
@@ -79,30 +83,46 @@ namespace YLFramework.Editor.Equipment
             serialized.FindProperty(path).stringValue = value;
             serialized.ApplyModifiedProperties();
         }
-        /// <summary>绘制资源项目字段，并列出项目内 ResourceProject 的项目标识供选择。</summary>
+        /// <summary>绘制地址命名空间，选项来自官方 project/path 条目，不依赖旧 ResourceProject。</summary>
         internal static void DrawProject(SerializedProperty property)
         {
             EditorGUILayout.PropertyField(property);
-            if (!EditorGUILayout.DropdownButton(new GUIContent("选择 YL 资源项目"), FocusType.Passive))
+            if (!EditorGUILayout.DropdownButton(new GUIContent("选择资源命名空间"), FocusType.Passive))
             {
                 return;
             }
 
-            var menu = new GenericMenu();
-            foreach (var guid in AssetDatabase.FindAssets("t:ResourceProject"))
+            try
             {
-                var project = AssetDatabase.LoadAssetAtPath<ResourceProject>(AssetDatabase.GUIDToAssetPath(guid));
-                if (!project)
+                var menu = new GenericMenu();
+                var projects = new SortedSet<string>(StringComparer.Ordinal);
+                foreach (var entry in GetEntries(AddressableAssetSettingsDefaultObject.Settings))
                 {
-                    continue;
+                    int separator = entry.address.IndexOf('/');
+                    if (separator <= 0)
+                        continue;
+                    try
+                    {
+                        var address = new ResourceAddress(entry.address.Substring(0, separator), entry.address.Substring(separator + 1));
+                        projects.Add(address.ProjectId);
+                    }
+                    catch (ArgumentException)
+                    {
+                        // 官方也允许不采用 project/path 的地址，这些不属于本选择器的命名空间。
+                    }
                 }
-
-                var id = project.projectId;
-                menu.AddItem(new GUIContent(id), id == property.stringValue, () => SetString(property, id));
+                foreach (string project in projects)
+                    menu.AddItem(new GUIContent(project), project == property.stringValue, () => SetString(property, project));
+                if (projects.Count == 0)
+                    menu.AddDisabledItem(new GUIContent("没有 project/path 地址"));
+                menu.ShowAsContext();
             }
-            menu.ShowAsContext();
+            catch (Exception error)
+            {
+                EditorUtility.DisplayDialog("装备资源命名空间", error.Message, "关闭");
+            }
         }
-        /// <summary>从唯一匹配项目的正式构建映射中按资产类型列出地址，不在此验证 Prefab 装备组件。</summary>
+        /// <summary>从官方条目按命名空间和主资产类型列出地址，不在此验证 Prefab 装备组件。</summary>
         internal static void DrawAddress(SerializedProperty project, SerializedProperty address, Type type)
         {
             EditorGUILayout.PropertyField(address);
@@ -114,24 +134,49 @@ namespace YLFramework.Editor.Equipment
             var menu = new GenericMenu();
             try
             {
-                var projects = AssetDatabase.FindAssets("t:ResourceProject").Select(g => AssetDatabase.LoadAssetAtPath<ResourceProject>(AssetDatabase.GUIDToAssetPath(g)))
-                    .Where(p => p && p.projectId == project.stringValue).ToArray();
-                if (projects.Length != 1)
+                var paths = GetAddresses(AddressableAssetSettingsDefaultObject.Settings, project.stringValue, type);
+                foreach (string path in paths)
                 {
-                    throw new InvalidOperationException("请选择唯一的 YL ResourceProject: " + project.stringValue);
-                }
-
-                foreach (var entry in ResourceBuildMap.Create(projects[0]).Assets.Where(a => type.IsAssignableFrom(a.AssetType)))
-                {
-                    var path = entry.Address.Path;
                     menu.AddItem(new GUIContent(path), path == address.stringValue, () => SetString(address, path));
                 }
+                if (paths.Length == 0)
+                    menu.AddDisabledItem(new GUIContent("没有匹配的正式地址"));
                 menu.ShowAsContext();
             }
             catch (Exception error)
             {
                 EditorUtility.DisplayDialog("装备资源地址", error.Message, "关闭");
             }
+        }
+
+        /// <summary>只读解析正式条目；地址歧义拒绝，不修改全局配置或回退到旧构建映射。</summary>
+        internal static string[] GetAddresses(AddressableAssetSettings settings, string projectId, Type type)
+        {
+            _ = new ResourceAddress(projectId, "selection");
+            if (type == null)
+                throw new ArgumentNullException(nameof(type));
+            string prefix = projectId + "/";
+            var paths = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (var entry in GetEntries(settings))
+            {
+                if (!entry.address.StartsWith(prefix, StringComparison.Ordinal) ||
+                    !type.IsAssignableFrom(AssetDatabase.GetMainAssetTypeAtPath(entry.AssetPath)))
+                    continue;
+                _ = ResourceAddressablesAuthoring.FindUniqueEntry(settings, entry.address);
+                string path = entry.address.Substring(prefix.Length);
+                _ = new ResourceAddress(projectId, path);
+                paths.Add(path);
+            }
+            return paths.ToArray();
+        }
+
+        private static List<AddressableAssetEntry> GetEntries(AddressableAssetSettings settings)
+        {
+            if (!settings)
+                throw new InvalidOperationException("Create official Addressables settings before selecting an equipment address.");
+            var entries = new List<AddressableAssetEntry>();
+            settings.GetAllAssets(entries, false);
+            return entries;
         }
     }
 }

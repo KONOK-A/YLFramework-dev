@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_yl-workbench-polish-20261018__optional
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_yl-workbench-polish-20261018__optional
+  m_GUID: 4c9cb9445df5b9f4baa4110a0a8a23ad
+  m_SerializeEntries:
+  - m_GUID: f2c888607d758ab48ad72cb05483579c
+    m_Address: yl-workbench-polish-20261018/Notes/note.json
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-workbench-polish-20261018/optional
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: f765bf51bc94fb144921267887e52610, type: 2}
+    - {fileID: 11400000, guid: 30a5569ccb62c0444a9e27d762aeb456, type: 2}

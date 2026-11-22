@@ -2,6 +2,10 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityEngine.Audio;
@@ -23,7 +27,8 @@ namespace YLFramework.Core.Tests
         [global::UnityEngine.Serialization.FormerlySerializedAs("MixerConfig")]
         public AudioMixerConfig mixerConfig;
         [global::UnityEngine.Serialization.FormerlySerializedAs("ResourceKey")]
-        public string resourceKey;
+        public string resourceKey = "yl-audio-acceptance/signal";
+        public string contentHash;
         public string ownedPlayerDirectory;
         public string runToken;
         public AudioEmitter emitter;
@@ -34,11 +39,18 @@ namespace YLFramework.Core.Tests
         private AudioPlayRequest _exitPending;
         private Provider _exitProvider;
         private bool _ownsAudioSession;
+        private bool _audioBusinessClosed;
         private readonly float[] _samples = new float[2048];
         private readonly JObject _measurements = new JObject();
         private string _resultPath;
         private string _runtimeError;
         private ResourceSystem _resources;
+        private ResourceStartup _startup;
+        private ResourceScope _preload;
+        private Task _cleanup;
+        private Exception _cleanupError;
+        private int _preloadLeaseCount;
+        public Task ShutdownCompletion => _cleanup;
 
         private sealed class Owner : IDisposable
         {
@@ -73,13 +85,13 @@ namespace YLFramework.Core.Tests
             DontDestroyOnLoad(gameObject);
             var stack = new Stack<IEnumerator>();
             stack.Push(RunAudio());
+            Exception failure = null;
             try
             {
                 while (stack.Count > 0)
                 {
                     object current = null;
                     bool next = false;
-                    Exception failure = null;
                     try
                     {
                         next = stack.Peek().MoveNext();
@@ -94,15 +106,7 @@ namespace YLFramework.Core.Tests
                     }
                     if (failure != null)
                     {
-                        Result = "FAILED: " + failure;
-                        Debug.LogError("AUDIO45 " + Result);
-                        if (!Application.isEditor)
-                        {
-                            WritePlayerResult(false);
-                            Application.Quit(1);
-                        }
-
-                        yield break;
+                        break;
                     }
                     if (!next)
                     {
@@ -118,31 +122,81 @@ namespace YLFramework.Core.Tests
                         yield return current;
                     }
                 }
-                Result = "AUDIO_PASS";
-                Debug.Log("AUDIO45 " + Result);
-                if (!Application.isEditor)
-                {
-                    Application.Quit(0);
-                }
             }
             finally
             {
                 while (stack.Count > 0)
                 {
-                    (stack.Pop() as IDisposable)?.Dispose();
+                    try
+                    {
+                        (stack.Pop() as IDisposable)?.Dispose();
+                    }
+                    catch (Exception cleanup)
+                    {
+                        failure = failure == null ? cleanup : new AggregateException(failure, cleanup);
+                    }
                 }
 
-                if (_ownsAudioSession && Result.StartsWith("FAILED", StringComparison.Ordinal))
+                if (_ownsAudioSession && failure != null)
                 {
                     Application.quitting -= VerifyQuit;
-                    if (group)
+                    try
                     {
-                        group.Stop();
+                        StopOwnedAudio();
                     }
-
-                    AudioKit.Shutdown();
+                    catch (Exception cleanup)
+                    {
+                        failure = new AggregateException(failure, cleanup);
+                    }
                     Debug.Log("AUDIO45 FAILURE_CLEANUP");
                 }
+            }
+            // A result file and process exit are not allowed to precede the actual owned shutdown.
+            _cleanup ??= CloseResourcesAsync();
+            while (!_cleanup.IsCompleted)
+            {
+                yield return null;
+            }
+            try
+            {
+                _cleanup.GetAwaiter().GetResult();
+                if (!string.IsNullOrEmpty(_runtimeError))
+                {
+                    throw new InvalidOperationException(_runtimeError);
+                }
+            }
+            catch (Exception cleanup)
+            {
+                failure = failure == null ? cleanup : new AggregateException(failure, cleanup);
+            }
+            if (failure != null)
+            {
+                Application.quitting -= VerifyQuit;
+                if (_ownsAudioSession)
+                {
+                    try
+                    {
+                        StopOwnedAudio();
+                    }
+                    catch (Exception cleanup)
+                    {
+                        failure = new AggregateException(failure, cleanup);
+                    }
+                }
+                Result = "FAILED: " + failure;
+                Debug.LogError("AUDIO45 " + Result);
+                if (!Application.isEditor)
+                {
+                    WritePlayerResult(false);
+                    Application.Quit(1);
+                }
+                yield break;
+            }
+            Result = "AUDIO_PASS";
+            Debug.Log("AUDIO45 " + Result);
+            if (!Application.isEditor)
+            {
+                Application.Quit(0);
             }
         }
 
@@ -166,27 +220,23 @@ namespace YLFramework.Core.Tests
                 Check(!AudioKit.Music.IsValid && !AudioKit.Voice.IsValid && AudioKit.SoundCount == 0 &&
                     AudioKit.SoundStats.OwnedSourceCount == 0, "fresh isolated audio fixture");
                 Check(ResourceSystem.Current == null, "fresh isolated Resource fixture");
-                // 历史验收夹具的 Resources 物理路径显式登记到独立 Catalog，不推断任何旧 Bundle 身份。
-                var locator = resourceKey;
-                if (locator.StartsWith("resources://", StringComparison.OrdinalIgnoreCase))
+                Check(resourceKey == "yl-audio-acceptance/signal", "explicit official Audio address, not a physical source locator");
+                _startup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: false,
+                    audioProjects: new[] { "yl-audio-acceptance" });
+                using (var initialized = _startup.StartAsync())
                 {
-                    locator = locator.Substring("resources://".Length);
-                }
-                else if (locator.StartsWith("resources/", StringComparison.OrdinalIgnoreCase))
-                {
-                    locator = locator.Substring("resources/".Length);
-                }
-
-                using (var initialized = ResourceSystem.InitializeAsync(new ResourceConfiguration(new[]
-                {
-                    new ResourceCatalog("yl-audio-acceptance", new[] { new ResourceCatalogEntry("signal",
-                        new ResourceAddress("yl-audio-acceptance", "signal"),
-                        new YLFramework.Resource.ResourceLocation(ResourceSourceId.Resources, locator, typeof(AudioClip))) })
-                })))
-                {
-                    resources = initialized.TakeResult();
+                    yield return Wait(() => initialized.IsDone, "official Resource startup completed");
+                    Check(ReferenceEquals(initialized.TakeResult(), _startup), "single Startup owner");
+                    resources = _startup.Resources;
                     _resources = resources;
                 }
+                _preload = resources.CreateScope("AudioAcceptance/hot-input");
+                using (var loaded = _preload.LoadAsync<AudioClip>(resourceKey))
+                {
+                    yield return Wait(() => loaded.IsDone, "official Audio preload completed");
+                    Check(loaded.TakeResult(), "formally built AudioClip preloaded before synchronous named playback");
+                }
+                _preloadLeaseCount = resources.GetDiagnostics().LeaseCount;
 
                 _ownsAudioSession = true;
                 AudioKit.Settings.IsOn = true;
@@ -196,7 +246,7 @@ namespace YLFramework.Core.Tests
                 AudioKit.PlaySoundMode = AudioKit.PlaySoundModes.EveryOne;
                 AudioKit.PrewarmSounds(3);
                 group.Play();
-                yield return Wait(() => group.LastHandle.IsPlaying, "formal GroupPlayer async Resources submission");
+                yield return Wait(() => group.LastHandle.IsPlaying, "formal GroupPlayer submission after explicit AA preload");
                 Check(group.LastRequest.IsAssetReady && group.LastRequest.IsDataReady, "named asset/data readiness");
                 double audible = 0;
                 yield return Measure("group-signal", value => audible = value);
@@ -235,7 +285,7 @@ namespace YLFramework.Core.Tests
                 var loop = AudioSoundOptions.MusicDefaults;
                 var first = AudioKit.PlayMusicNamed(address, loop);
                 var namedClip = FindSource().clip;
-                Check(first.IsPlaying && resources.GetDiagnosticsSnapshot().LeaseCount > 0, "sync Resources holds a real Resource lease");
+                Check(first.IsPlaying && resources.GetDiagnostics().LeaseCount > _preloadLeaseCount, "sync hot playback holds an independent lease beyond the preload Scope");
                 AudioKit.ApplyMixerConfig(mixerConfig);
                 Check(FindSource().outputAudioMixerGroup == mixerConfig.MusicGroup, "formal Mixer inherited route");
                 double mixerFull = 0, mixerHalf = 0;
@@ -246,11 +296,11 @@ namespace YLFramework.Core.Tests
                 AudioMixerControl.TryClearFloat(mixerConfig.Mixer, "MusicVolume");
                 var second = AudioKit.CrossFadeMusic(secondSignal, .4f);
                 yield return new WaitForSecondsRealtime(.12f);
-                Check(first.IsValid && second.IsPlaying && resources.GetDiagnosticsSnapshot().LeaseCount > 0, "two real crossfade voices retain tail resource");
+                Check(first.IsValid && second.IsPlaying && resources.GetDiagnostics().LeaseCount > _preloadLeaseCount, "two real crossfade voices retain tail resource");
                 yield return Measure("crossfade", value => Check(value > .001, "crossfade has real output"), .1f);
                 yield return new WaitForSecondsRealtime(.45f);
-                Check(!first.IsValid && second.IsPlaying && resources.GetDiagnosticsSnapshot().RecordCount == 0, "tail completion returns its Resource lease");
-                Check(namedClip, "returning a Resources lease preserves the shared borrowed Clip");
+                Check(!first.IsValid && second.IsPlaying && resources.GetDiagnostics().LeaseCount == _preloadLeaseCount, "tail completion returns its independent lease, preserving only the explicit preload");
+                Check(namedClip, "the explicit preload Scope still owns the borrowed Clip");
                 second.Stop();
                 AudioKit.ClearMixerRouting();
 
@@ -273,10 +323,10 @@ namespace YLFramework.Core.Tests
                 var async = AudioKit.PlaySoundAsync(address, loop);
                 yield return Wait(() => async.Handle.IsPlaying, "real named async retry");
                 namedClip = FindSource().clip;
-                Check(resources.GetDiagnosticsSnapshot().LeaseCount > 0, "async resource kept while playing");
+                Check(resources.GetDiagnostics().LeaseCount > _preloadLeaseCount, "async resource kept while playing");
                 async.Cancel();
-                Check(resources.GetDiagnosticsSnapshot().RecordCount == 0, "cancel returns resource ownership");
-                Check(namedClip, "cancel does not unload a borrowed Resources Clip");
+                Check(resources.GetDiagnostics().LeaseCount == _preloadLeaseCount, "cancel returns playback ownership and preserves only the preload");
+                Check(namedClip, "cancel does not unload the explicitly retained preload Clip");
                 var old = AudioKit.PlaySound(signal, loop);
                 old.Stop();
                 var current = AudioKit.PlaySound(signal, loop);
@@ -319,6 +369,7 @@ namespace YLFramework.Core.Tests
                     AudioKit.PlaySoundMode = AudioKit.PlaySoundModes.EveryOne;
                 }
                 AudioKit.Shutdown();
+                _audioBusinessClosed = true;
                 Check(AudioKit.SoundStats.OwnedSourceCount == 0, "Shutdown releases owned Source pool");
                 _exitProvider = new Provider { Clip = signal };
                 _exitHandle = AudioKit.PlaySoundNamed(new AudioClipAddress(_exitProvider, "active"), loop);
@@ -332,12 +383,7 @@ namespace YLFramework.Core.Tests
                 {
                     if (!completed && _ownsAudioSession)
                     {
-                        if (group)
-                        {
-                            group.Stop();
-                        }
-
-                        AudioKit.Shutdown();
+                        StopOwnedAudio();
                     }
                     if (mixerConfig && mixerConfig.Mixer)
                     {
@@ -348,25 +394,8 @@ namespace YLFramework.Core.Tests
                 {
                     try
                     {
-                        if (resources != null && resources.IsAvailable)
-                        {
-                            // 在途 native 可晚于 iterator 退出；关闭请求继续负责收尾，不用 Busy 断言覆盖原始失败。
-                            var shutdown = resources.ShutdownAsync();
-                            shutdown.Completed += done =>
-                            {
-                                try
-                                {
-                                    if (done.Status != ResourceRequestStatus.Succeeded)
-                                    {
-                                        Debug.LogError("AUDIO45 Resource cleanup failed: " + done.Error);
-                                    }
-                                }
-                                finally
-                                {
-                                    done.Dispose();
-                                }
-                            };
-                        }
+                        // The owned Task survives iterator disposal. Its actual completion remains observable.
+                        _cleanup ??= CloseResourcesAsync();
                     }
                     finally
                     {
@@ -391,6 +420,53 @@ namespace YLFramework.Core.Tests
             }
         }
 
+        private async Task CloseResourcesAsync()
+        {
+            try
+            {
+                if (_ownsAudioSession && !_audioBusinessClosed)
+                {
+                    StopOwnedAudio();
+                }
+                if (_preload != null)
+                {
+                    await _preload.CloseAsync();
+                    _preload = null;
+                }
+                if (_startup != null)
+                {
+                    await _startup.StopAsync();
+                }
+                if (_resources != null)
+                {
+                    var report = _resources.GetDiagnostics();
+                    Check(report.State == ResourceSystemState.Closed && report.LeaseCount == 0 && report.ScopeCount == 0 &&
+                        report.RequestCount == 0 && report.PendingWorkCount == 0 && report.DrainingHandleCount == 0 && report.Errors.Count == 0,
+                        "actual Resource shutdown and zero YL responsibility ledger");
+                }
+            }
+            catch (Exception error)
+            {
+                _cleanupError = error;
+                var report = _resources?.GetDiagnostics();
+                Debug.LogError("AUDIO45 Resource cleanup incomplete: " + error + "\n" +
+                    (report == null ? "Startup did not publish a ResourceSystem." :
+                        string.Join("\n", report.Leases.Select(lease => lease.Kind + " key=" + lease.Key + " owner=" + lease.Owner)) + "\n" +
+                        string.Join("\n", report.Scopes.Select(scope => "Scope owner=" + scope.Owner + " error=" + scope.Error))));
+                throw;
+            }
+        }
+
+        private void StopOwnedAudio()
+        {
+            if (group)
+            {
+                group.Stop();
+            }
+            AudioKit.Shutdown();
+            _audioBusinessClosed = true;
+        }
+
         private void VerifyQuit()
         {
             Application.quitting -= VerifyQuit;
@@ -405,7 +481,8 @@ namespace YLFramework.Core.Tests
             }
             var passed = rejected && !_exitHandle.IsValid && _exitPending.IsDone &&
                 _exitPending.EndReason == AudioPlayEnd.Shutdown && _exitProvider.Owner.Releases == 1 && AudioKit.SoundStats.OwnedSourceCount == 0 &&
-                ResourceSystem.Current == null && string.IsNullOrEmpty(_runtimeError);
+                ResourceSystem.Current == null && string.IsNullOrEmpty(_runtimeError) && _cleanup != null && _cleanup.IsCompleted &&
+                !_cleanup.IsFaulted && !_cleanup.IsCanceled && _cleanupError == null;
             if (passed)
             {
                 Debug.Log("AUDIO45 QUIT_PASS");
@@ -442,7 +519,31 @@ namespace YLFramework.Core.Tests
             }
             Check(Array.IndexOf(args, "-nographics") < 0 &&
                 SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null, "real graphical Player device");
+            Check(!string.IsNullOrEmpty(contentHash) && contentHash.Length == 64 && contentHash == InstalledContentHash(),
+                "actual installed official AA content matches the frozen build fingerprint");
             _resultPath = output;
+        }
+
+        private static string InstalledContentHash()
+        {
+            var directory = Path.Combine(Application.streamingAssetsPath, "aa");
+            Check(Directory.Exists(directory), "official Player AA content exists");
+            var files = Directory.GetFiles(directory, "*", SearchOption.AllDirectories).Select(path =>
+            {
+                for (var cursor = path; cursor != null; cursor = Path.GetDirectoryName(cursor))
+                {
+                    Check((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) == 0, "unlinked official content");
+                }
+                using var stream = File.OpenRead(path);
+                using var sha = SHA256.Create();
+                return new
+                {
+                    Path = path.Substring(directory.TrimEnd('/', '\\').Length + 1).Replace('\\', '/'),
+                    Hash = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant()
+                };
+            }).OrderBy(file => file.Path, StringComparer.Ordinal).Select(file => file.Path + "=" + file.Hash);
+            using var digest = SHA256.Create();
+            return BitConverter.ToString(digest.ComputeHash(Encoding.UTF8.GetBytes(string.Join("\n", files)))).Replace("-", "").ToLowerInvariant();
         }
 
         private void CaptureRuntimeError(string message, string stack, LogType type)
@@ -459,9 +560,10 @@ namespace YLFramework.Core.Tests
             {
                 return;
             }
-            var diagnostics = _resources?.GetDiagnosticsSnapshot();
+            var diagnostics = _resources?.GetDiagnostics();
             var report = new JObject
             {
+                ["schemaVersion"] = 2,
                 ["status"] = passed ? "Passed" : "Failed",
                 ["error"] = passed ? null : Result + "\n" + _runtimeError,
                 ["unityVersion"] = Application.unityVersion,
@@ -469,9 +571,15 @@ namespace YLFramework.Core.Tests
                 ["isEditor"] = Application.isEditor,
                 ["runtimeAssembly"] = typeof(AudioKit).Assembly.GetName().Name,
                 ["catalogDigest"] = "",
+                ["contentHash"] = contentHash,
+                ["ledgerMeasured"] = diagnostics != null,
+                ["resourceState"] = diagnostics?.State.ToString(),
                 ["pid"] = System.Diagnostics.Process.GetCurrentProcess().Id,
                 ["leaseCount"] = diagnostics?.LeaseCount ?? -1,
-                ["recordCount"] = diagnostics?.RecordCount ?? -1,
+                ["scopeCount"] = diagnostics?.ScopeCount ?? -1,
+                ["requestCount"] = diagnostics?.RequestCount ?? -1,
+                ["pendingWorkCount"] = diagnostics?.PendingWorkCount ?? -1,
+                ["drainingHandleCount"] = diagnostics?.DrainingHandleCount ?? -1,
                 ["token"] = runToken,
                 ["graphicsDevice"] = SystemInfo.graphicsDeviceType.ToString(),
                 ["audioSampleRate"] = AudioSettings.outputSampleRate,

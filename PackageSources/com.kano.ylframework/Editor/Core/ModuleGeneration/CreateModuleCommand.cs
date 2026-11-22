@@ -28,18 +28,21 @@ namespace YLFramework.Core.Examples
     /// <summary>业务模块入口；资源会话由应用先行启动，本脚本不负责初始化全局资源服务。</summary>
     public class {ModuleName} : global::YLFramework.Core.SingletonModule<{ModuleName}>
     {
-        // ProjectName 是正式 YL Resource ProjectId，不是外部项目名或 BundleName。
-        // 应用先通过 ResourceConfiguration.Create 和 ResourceStartup 显式启动，选择 bindCore:true，
-        // StartAsync 成功后再启动本 Module；Module 不自行初始化资源或覆盖全局 Provider。
-        // 完整配置、同一业务的 Simulation/Bundle 和 Core/Audio 可运行例见 Samples/ResourceStartup。
-        // Audio 需要时使用同一 startup.AudioProviders[{ProjectName}]，未选择Audio则不装配。
-        // 退出先关闭自己的 Module/播放并归还 Lease/Scene 等责任，再调用 startup.StopAsync。
-        // Busy 时保持原会话并在真实 owner 归还后重试，不关闭外部会话或强制释放他人责任。
-        /// <summary>资源项目标识，须与应用启动的资源配置保持一致。</summary>
+        // ProjectName 是官方 Addressables address 的业务命名空间；Core 将项目/路径投影为 project/path。
+        // 应用先创建 new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: true)，
+        // await startup.StartAsync() 成功后再启动本 Module；本模块不重复初始化或覆盖全局 Provider。
+        // Settings/Groups/Labels/Profiles/AssetReference 是唯一作者事实，完整例见 Samples~/ResourceStartup。
+        // 业务默认以 startup.Resources.CreateScope(label).LoadAsync<T>(key) 借用；冷同步加载明确拒绝。
+        // InstantiateAsync 每次新建，RentAsync 才允许复用；跨借用生命周期须显式 AcquireAsync/Retain。
+        // 保留中立 Bootstrap 场景；Scope 场景默认 Additive 并自动激活，不靠临时空场景停机。
+        // 当前 Core 默认入口场景按 Single 加载；需要保留 Bootstrap 时将下方默认场景留空，由业务 Scope 加载。
+        // 退出先关闭业务 Module/播放，再 await 自己的 scope.CloseAsync()，最后 await startup.StopAsync()。
+        // Dispose 仅发起；Busy 时读取 GetDiagnostics 的责任并由真实 owner 归还后重试，不能声称完成。
+        /// <summary>官方地址的业务命名空间；ProjectName/path 必须在官方配置中唯一解析。</summary>
         public override string ProjectName => {ProjectName};
         /// <summary>是否作为基础模块；基础模块由 ModuleManager.Shutdown 统一结束。</summary>
         public override bool IsBaseModule => {BaseModule};
-        /// <summary>模块启动时自动加载的默认场景标识；空字符串表示不自动加载场景。</summary>
+        /// <summary>模块自动入口场景；空值不加载。需要中立 Bootstrap 与 Additive 时保持空值，由业务 Scope 加载。</summary>
         public override string DefaultStartUpScene => {DefaultStartUpScene};
 
         /// <summary>模块资源和默认场景准备就绪后调用，在此开始本模块的业务。</summary>
@@ -71,7 +74,7 @@ namespace YLFramework.Core.Examples
             // IMGUI 会随界面事件反复调用这里；只有按钮点击才进入生成分支。
             EditorGUILayout.LabelField("Output", OutputRoot);
             _moduleName = EditorGUILayout.TextField(new GUIContent("ModuleName", "C# class name"), _moduleName);
-            _projectName = EditorGUILayout.TextField(new GUIContent("ProjectName", "YL Resource ProjectId；须由应用显式初始化并绑定 Core Provider"), _projectName);
+            _projectName = EditorGUILayout.TextField(new GUIContent("ProjectName", "官方 address 的业务命名空间；应用先启动 ResourceStartup，Core 默认绑定"), _projectName);
             _isBaseModule = EditorGUILayout.Toggle(new GUIContent("IsBaseModule", "基础模块不能通过普通 Close 关闭；使用 ModuleManager.Shutdown 统一结束"), _isBaseModule);
             _defaultStartUpScene = EditorGUILayout.TextField("DefaultStartUpScene", _defaultStartUpScene);
             EditorGUILayout.HelpBox("生成独立 YL Module 和 Runtime asmdef。命名加载前由应用初始化 YL Resource 并绑定 Core Provider；生成器不修改资源项目或场景。已有目录不会被覆盖。", MessageType.Info);
@@ -98,7 +101,7 @@ namespace YLFramework.Core.Examples
 
         /// <summary>在新的模块目录中生成脚本和仅引用 YLFramework.Runtime 的独立程序集定义。</summary>
         /// <param name="moduleName">模块类名，须为非关键字 ASCII 标识符，且不能与生成成员重名。</param>
-        /// <param name="projectName">正式 YL Resource 项目标识，不能为 null、空字符串或全空白。</param>
+        /// <param name="projectName">官方资源地址的业务命名空间，不能为 null、空字符串或全空白。</param>
         /// <param name="baseModule">是否生成基础模块；该配置影响运行时的关闭方式。</param>
         /// <param name="defaultStartUpScene">默认场景标识；为 null 或空字符串时生成 string.Empty。</param>
         /// <remarks>

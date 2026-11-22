@@ -3,7 +3,9 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 using UnityEngine;
 using YLFramework.Buff;
 using YLFramework.Equipment;
@@ -54,24 +56,28 @@ namespace YLFramework.Tests.DomainAcceptance
     public sealed class GameplayResourcePlayerProbe : MonoBehaviour, IEquippableSkill, IAddableBuff, IEquippable
     {
         public string projectId;
-        public string catalogDigest;
-        public string compatibility;
+        public string contentHash;
         public string contentToken;
 
         [Serializable]
         private sealed class Report
         {
+            public int schemaVersion = 2;
             public string status;
             public string error;
             public string unityVersion;
             public string platform;
             public bool isEditor;
             public string runtimeAssembly;
-            public string catalogDigest;
+            public string contentHash;
+            public bool ledgerMeasured;
+            public string resourceState;
             public int pid;
             public int leaseCount = -1;
-            public int recordCount = -1;
-            public int bundleRecordCount = -1;
+            public int scopeCount = -1;
+            public int requestCount = -1;
+            public int pendingWorkCount = -1;
+            public int drainingHandleCount = -1;
             public string skillAssembly;
             public string buffAssembly;
             public string missionAssembly;
@@ -79,7 +85,7 @@ namespace YLFramework.Tests.DomainAcceptance
             public string probeAssembly;
             public string[] frameworkAssemblies;
             public string contentToken;
-            public int catalogAssetCount;
+            public int definitionAssetCount;
             public bool fourRootsLoaded;
             public bool skillLifecycle;
             public bool buffLifecycle;
@@ -100,7 +106,9 @@ namespace YLFramework.Tests.DomainAcceptance
         }
 
         private readonly Report _report = new Report();
+        private ResourceStartup _startup;
         private ResourceSystem _resources;
+        private Task _configLoads;
         private bool _ownsDomains;
         private bool _buffCallbacksValid = true;
         private string _runtimeError;
@@ -160,12 +168,22 @@ namespace YLFramework.Tests.DomainAcceptance
                     catch (Exception error) { RecordFailure(error); }
                 }
             }
-            if (_resources != null)
+            if (_configLoads != null)
+            {
+                double deadline = Time.realtimeSinceStartupAsDouble + 15;
+                while (!_configLoads.IsCompleted && Time.realtimeSinceStartupAsDouble < deadline)
+                    yield return null;
+                if (!_configLoads.IsCompleted)
+                    RecordFailure(new InvalidOperationException("Domain configuration tasks did not drain after shutdown."));
+                else
+                    _ = _configLoads.Exception;
+            }
+            if (_startup != null)
             {
                 ResourceRequest<bool> shutdown = null;
                 try
                 {
-                    shutdown = _resources.ShutdownAsync();
+                    shutdown = _startup.StopAsync();
                 }
                 catch (Exception error) { RecordFailure(error); }
                 if (shutdown != null)
@@ -185,10 +203,15 @@ namespace YLFramework.Tests.DomainAcceptance
                 }
                 try
                 {
-                    var diagnostics = _resources.GetDiagnosticsSnapshot();
+                    var diagnostics = _resources.GetDiagnostics();
                     _report.leaseCount = diagnostics.LeaseCount;
-                    _report.recordCount = diagnostics.RecordCount;
-                    _report.bundleRecordCount = diagnostics.BundleRecordCount;
+                    _report.scopeCount = diagnostics.ScopeCount;
+                    _report.requestCount = diagnostics.RequestCount;
+                    _report.pendingWorkCount = diagnostics.PendingWorkCount;
+                    _report.drainingHandleCount = diagnostics.DrainingHandleCount;
+                    _report.resourceState = diagnostics.State.ToString();
+                    _report.ledgerMeasured = true;
+                    Require(diagnostics.Errors.Count == 0, "Resource cleanup reported an error.");
                 }
                 catch (Exception error) { RecordFailure(error); }
             }
@@ -200,8 +223,9 @@ namespace YLFramework.Tests.DomainAcceptance
                     Skills.Count + Buffs.Count + Equipments.Count == 0;
                 Require(_report.managersClosed && _buffCallbacksValid && _report.buffAdds == 5 && _report.buffRemoves == 5, "Owned managers, host collections or paired Buff callbacks leaked.");
                 _report.resourceReturned = _resources != null && _resources.State == ResourceSystemState.Closed && ResourceSystem.Current == null &&
-                    _report.leaseCount == 0 && _report.recordCount == 0 && _report.bundleRecordCount == 0;
-                Require(_report.resourceReturned, "Owned Resource records or authority survived shutdown.");
+                    _report.leaseCount == 0 && _report.scopeCount == 0 && _report.requestCount == 0 &&
+                    _report.pendingWorkCount == 0 && _report.drainingHandleCount == 0;
+                Require(_report.resourceReturned, "Owned Resource responsibilities or authority survived shutdown.");
                 _report.frameworkAssemblies = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetName().Name)
                     .Where(name => name.StartsWith("YLFramework", StringComparison.Ordinal)).OrderBy(name => name, StringComparer.Ordinal).ToArray();
                 Require(_report.frameworkAssemblies.SequenceEqual(new[] { "YLFramework.Buff", "YLFramework.Equipment", "YLFramework.Mission", "YLFramework.Runtime",
@@ -228,25 +252,33 @@ namespace YLFramework.Tests.DomainAcceptance
             Require(ResourceSystem.Current == null, "Do not take over an existing Resource authority.");
             Require(SkillManager.ConfigCount + BuffManager.ConfigCount + MissionManager.ConfigCount == 0 &&
                 SkillManager.HostCount + BuffManager.HostCount + BuffManager.EffectOwnerCount == 0 && EquipmentManager.GetConfig("Equipment") == null, "Do not clear another domain owner.");
-            var snapshot = ResourceLocalSnapshot.OpenBuiltIn(projectId, catalogDigest, "StandaloneWindows64", compatibility);
-            _report.catalogDigest = snapshot.Document.CatalogDigest;
-            _report.catalogAssetCount = snapshot.Document.Assets.Count;
-            Require(_report.catalogAssetCount == 11 && snapshot.Document.Assets.Count(asset => asset.Kind == "Asset") == 4, "The deployed catalog lost a root or subasset.");
-            var types = new[] { typeof(SkillsConfig), typeof(SkillConfigData), typeof(BuffsConfig), typeof(BuffConfigData), typeof(EffectData),
-                typeof(MissionsConfig), typeof(MissionConfigData), typeof(EquipmentsConfig), typeof(EquipmentConfigData) };
-            Require(snapshot.Document.Assets.All(asset => types.Any(type => type.FullName == asset.AssetType && type.Assembly.GetName().Name == asset.AssetAssembly)), "A deployed asset still uses an old Runtime tuple.");
+            _report.contentHash = ReadContentHash();
+            Require(_report.contentHash == contentHash, "The deployed official Addressables bytes differ from the frozen build.");
             _ownsDomains = true;
-            using (var initialized = ResourceSystem.InitializeAsync(new ResourceConfiguration(new[] { snapshot.CreateCatalog(types) })))
+            _startup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: false);
+            using (var initialized = _startup.StartAsync())
             {
-                yield return initialized;
-                Require(initialized.Status == ResourceRequestStatus.Succeeded, initialized.Error?.ToString());
-                _resources = initialized.TakeResult();
+                double startupDeadline = Time.realtimeSinceStartupAsDouble + 15;
+                while (!initialized.IsDone && Time.realtimeSinceStartupAsDouble < startupDeadline)
+                    yield return null;
+                Require(initialized.Status == ResourceRequestStatus.Succeeded, initialized.Error?.ToString() ?? "Resource startup timed out.");
+                _resources = initialized.TakeResult().Resources;
             }
-            using var independent = _resources.Acquire<SkillsConfig>(new ResourceAddress(projectId, "skills"));
-            SkillManager.LoadConfig(_resources, new ResourceAddress(projectId, "skills"));
-            BuffManager.LoadConfig(_resources, new ResourceAddress(projectId, "buffs"));
-            MissionManager.LoadConfig(_resources, new ResourceAddress(projectId, "missions"));
-            EquipmentManager.LoadConfig(_resources, new ResourceAddress(projectId, "equipment"));
+            using var independentRequest = _resources.AcquireAsync<SkillsConfig>(projectId + "/skills");
+            double loadDeadline = Time.realtimeSinceStartupAsDouble + 15;
+            while (!independentRequest.IsDone && Time.realtimeSinceStartupAsDouble < loadDeadline)
+                yield return null;
+            Require(independentRequest.Status == ResourceRequestStatus.Succeeded, independentRequest.Error?.ToString() ?? "Independent root loading timed out.");
+            using var independent = independentRequest.TakeResult();
+            _configLoads = Task.WhenAll(
+                SkillManager.LoadConfigAsync(_resources, new ResourceAddress(projectId, "skills")),
+                BuffManager.LoadConfigAsync(_resources, new ResourceAddress(projectId, "buffs")),
+                MissionManager.LoadConfigAsync(_resources, new ResourceAddress(projectId, "missions")),
+                EquipmentManager.LoadConfigAsync(_resources, new ResourceAddress(projectId, "equipment")));
+            loadDeadline = Time.realtimeSinceStartupAsDouble + 15;
+            while (!_configLoads.IsCompleted && Time.realtimeSinceStartupAsDouble < loadDeadline)
+                yield return null;
+            Require(_configLoads.IsCompletedSuccessfully, _configLoads.Exception?.ToString() ?? "Domain configuration loading timed out.");
             var skills = SkillManager.GetConfig("Skills");
             var buffs = BuffManager.GetConfig("Buffs");
             var missions = MissionManager.GetConfig("Missions");
@@ -258,17 +290,25 @@ namespace YLFramework.Tests.DomainAcceptance
             Require(skills.skills[0].id == 101 && skills.skills[0].duration == 0.05f && skills.skills[0].cooldownSeconds == 0.05f &&
                 buffs.buffs[0].id == 201 && buffs.buffs[0].mode == BuffMode.Single && buffs.buffs[1].id == 202 && buffs.buffs[1].mode == BuffMode.Additive &&
                 buffs.buffs.All(data => data.duration == 0.05f && data.effects.Count == 1 && data.effects[0].id == 301) &&
-                equipment.Equipments[0].id == 401, "The actual new Bundle content differs from the authored scenario.");
+                equipment.Equipments[0].id == 401, "The actual official content differs from the authored scenario.");
             Require(skills.skills.All(data => data.parent == skills && data.description == contentToken) &&
                 buffs.buffs.All(data => data.parent == buffs && data.description == contentToken && data.effects[0].description == contentToken) &&
                 missions.missions.All(data => data.parent == missions && data.description == contentToken) &&
                 missions.parameters[0].description == contentToken && equipment.Equipments[0].parent == equipment && equipment.Equipments[0].description == contentToken, "New content token or serialized parent links were lost.");
-            Require(_resources.GetDiagnosticsSnapshot().LeaseCount == 5 && _resources.GetDiagnosticsSnapshot().RecordCount == 4 &&
-                _resources.GetDiagnosticsSnapshot().NativeBundleLoadCount > 0, "Use real Bundle-backed root leases, not Resources or test doubles.");
+            var loaded = _resources.GetDiagnostics();
+            Require(loaded.LeaseCount == 5 && loaded.Leases.Select(lease => lease.Key).Distinct(StringComparer.Ordinal).Count() == 4 &&
+                loaded.Leases.Count(lease => lease.Key == projectId + "/skills") == 2 && loaded.RequestCount == 0,
+                "Each manager must own its root lease independently of the caller's Skill root lease.");
             _report.contentToken = contentToken;
             _report.fourRootsLoaded = true;
-            var definitions = new ScriptableObject[] { skills, skills.skills[0], buffs, buffs.buffs[0], buffs.buffs[1], buffs.buffs[0].effects[0],
-                missions, missions.missions[0], missions.missions[1], equipment, equipment.Equipments[0] };
+            var definitions = new ScriptableObject[] { skills, buffs, missions, equipment }
+                .Concat(skills.skills).Concat(buffs.buffs).Concat(buffs.buffs.SelectMany(data => data.effects))
+                .Concat(missions.missions).Concat(equipment.Equipments).Distinct().ToArray();
+            var types = new[] { typeof(SkillsConfig), typeof(SkillConfigData), typeof(BuffsConfig), typeof(BuffConfigData), typeof(EffectData),
+                typeof(MissionsConfig), typeof(MissionConfigData), typeof(EquipmentsConfig), typeof(EquipmentConfigData) };
+            _report.definitionAssetCount = definitions.Length;
+            Require(_report.definitionAssetCount == 11 && definitions.All(asset => asset && types.Contains(asset.GetType())),
+                "The deployed object graph lost a root/row/effect or retained an old Runtime type.");
             var before = definitions.Select(value => JsonUtility.ToJson(value)).ToArray();
 
             var skill = SkillManager.AddSkills(this, 101);
@@ -385,9 +425,29 @@ namespace YLFramework.Tests.DomainAcceptance
             EquipmentManager.Shutdown();
             Require(missionA.MissionConfig == null && missionB.MissionConfig == null && missionA.StatusChanged == null && missionB.StatusChanged == null, "Mission shutdown retained clones or callbacks.");
             Require(independent.IsValid && independent.Asset && independent.Asset.skills[0].description == contentToken &&
-                _resources.GetDiagnosticsSnapshot().LeaseCount == 1 && _resources.GetDiagnosticsSnapshot().RecordCount == 1, "A manager consumed an independent root lease or leaked its own.");
+                _resources.GetDiagnostics().LeaseCount == 1 && _resources.GetDiagnostics().Leases[0].Key == projectId + "/skills",
+                "A manager consumed an independent root lease or leaked its own.");
             _report.independentRootSurvived = true;
             yield return null;
+        }
+
+        private static string ReadContentHash()
+        {
+            string root = Path.GetFullPath(Path.Combine(Application.streamingAssetsPath, "aa"));
+            Require(Directory.Exists(root), "The official local Addressables content is missing.");
+            var files = Directory.GetFiles(root, "*", SearchOption.AllDirectories);
+            Require(files.Length != 0 && files.Any(path => Path.GetFileName(path) == "settings.json"), "The official runtime settings are missing.");
+            var entries = files.Select(path =>
+            {
+                for (var cursor = path; cursor != null; cursor = Path.GetDirectoryName(cursor))
+                    Require((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) == 0, "Do not read linked content as frozen Player evidence.");
+                using var stream = File.OpenRead(path);
+                using var sha = SHA256.Create();
+                string digest = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                return (Path: path.Substring(root.Length + 1).Replace('\\', '/'), Digest: digest);
+            }).OrderBy(entry => entry.Path, StringComparer.Ordinal).Select(entry => entry.Path + "=" + entry.Digest);
+            using var algorithm = SHA256.Create();
+            return BitConverter.ToString(algorithm.ComputeHash(Encoding.UTF8.GetBytes(string.Join("\n", entries)))).Replace("-", "").ToLowerInvariant();
         }
 
         private void ObserveError(string message, string stack, LogType type)

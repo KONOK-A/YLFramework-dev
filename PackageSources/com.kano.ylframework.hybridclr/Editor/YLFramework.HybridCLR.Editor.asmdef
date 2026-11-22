@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.HybridCLR.Editor",
     "rootNamespace": "YLFramework.Integrations.HybridCLR.Editor",
-    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "HybridCLR.Runtime", "HybridCLR.Editor"],
+    "references": ["YLFramework.Runtime", "YLFramework.Editor", "YLFramework.HybridCLR", "HybridCLR.Runtime", "HybridCLR.Editor", "Unity.Addressables", "Unity.Addressables.Editor", "Unity.ResourceManager"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

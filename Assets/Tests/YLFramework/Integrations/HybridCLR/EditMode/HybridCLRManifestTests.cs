@@ -83,7 +83,8 @@ namespace YLFramework.Tests.Integrations.HybridCLR
                 mismatch == "development"));
         }
 
-        [TestCase("schema")]
+        [TestCase("legacy-schema")]
+        [TestCase("future-schema")]
         [TestCase("version")]
         [TestCase("platform")]
         [TestCase("empty")]
@@ -101,8 +102,11 @@ namespace YLFramework.Tests.Integrations.HybridCLR
             var entry = manifest.HotUpdateAssemblies[0];
             switch (invalid)
             {
-                case "schema":
-                    manifest.SchemaVersion = 2;
+                case "legacy-schema":
+                    manifest.SchemaVersion = 1;
+                    break;
+                case "future-schema":
+                    manifest.SchemaVersion = 3;
                     break;
                 case "version":
                     manifest.HybridCLRVersion = "9.0.4";

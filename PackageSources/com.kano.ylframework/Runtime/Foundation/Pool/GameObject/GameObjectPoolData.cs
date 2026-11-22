@@ -75,6 +75,17 @@ namespace YLFramework.Pooling
             }
         }
 
+        internal int CountLiveIdleWithoutPruning()
+        {
+            var count = 0;
+            foreach (var instance in _queue)
+            {
+                if (instance)
+                    count++;
+            }
+            return count;
+        }
+
         /// <summary>空闲上限：-1 无限，0 禁缓存；缩容立即退休多余空闲实例。</summary>
         public int MaxCapacity
         {

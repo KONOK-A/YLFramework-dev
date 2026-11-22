@@ -7,11 +7,11 @@
 ## 环境与依赖
 
 - 包声明的 Unity 基线为 `2022.3.62f3`，开发宿主为 `6000.3.27f1`；源码按 C# 9 维护。声明基线不等于所有补丁、平台与后端均已验证。
-- 获取源码需要 Git 与 Git LFS。BouncyCastle、Analyzer 和 Excel 后端等 DLL 必须是真实二进制，不能是 LFS 指针。
+- 获取源码需要 Git 与 Git LFS。Analyzer 和 Excel 后端等 DLL 必须是真实二进制，不能是 LFS 指针。
 - 主包声明 UGUI、Json.NET 及所用内置 Unity 模块，Registry 依赖由 UPM 解析。不要拷贝同名替身 DLL；不同 Editor 的实际解析版本可能不同。
 - DOTween 和 HybridCLR 是显式选择的集成，按对应手册准备 SDK。普通主包接入不要求 MCP、Odin、MiniExcel 或 HybridCLR。
 
-Resource 内容加密、远端 Player 与 HybridCLR native 有更窄的平台/引擎前置，使用前阅读[资源平台限制](Modules/Resource/Delivery.md#平台与后端限制)及所属集成手册，不能由 Editor 导入成功推导支持范围。
+主包正式依赖 Addressables（兼容底线 1.25.0；当前 Unity 6 验证 2.10.3），自定义程序集直接调用含 AssetReference 重载的 API 时需引用 `Unity.Addressables`。安装不初始化资源服务。平台、AOT、远端 Player 与 HybridCLR native 按[资源交付](Modules/Resource/Delivery.md)及集成手册分别验证，不能由 Editor 导入成功推导支持范围；加密和版本事务/回滚尚属后续阶段。
 
 ## 获取源码
 

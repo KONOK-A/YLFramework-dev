@@ -4,232 +4,343 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using UnityEditor;
+using UnityEditor.AddressableAssets;
+using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.SceneManagement;
 using YLFramework.Editor.Resource;
-using YLFramework.Resource;
 
 namespace YLFramework.Samples.Resource.Editor
 {
-    /// <summary>样例的显式配置、构建、内置部署与运行入口，不在绘制 Inspector 时自动执行业务。</summary>
+    /// <summary>只做官方作者配置、引用核验和正式内容构建；不在 Editor 初始化或运行资源服务。</summary>
     [CustomEditor(typeof(ResourceStartupExample))]
     public sealed class ResourceStartupExampleEditor : UnityEditor.Editor
     {
-        private string _developmentKeyEnvironmentVariable = ResourceEditorOperations.ContentKeyEnvironmentVariable;
+        private AddressableAssetSettings _settings;
+        private string _message;
+        private MessageType _messageType;
 
-        /// <summary>展示样例状态与操作按钮，仅在用户选择对应操作时执行构建、部署或运行。</summary>
+        private void OnEnable() => _settings = AddressableAssetSettingsDefaultObject.GetSettings(false);
+
         public override void OnInspectorGUI()
         {
             DrawDefaultInspector();
             var example = (ResourceStartupExample)target;
-            EditorGUILayout.LabelField("Result", example.Result);
-            EditorGUILayout.HelpBox("在生成的 Project.asset 选择 ContentEncryption=None 或 Aes256GcmHkdfSegmentedV1；加密时填写非秘密 ContentKeyId 并显式保存，再构建/发布。" +
-                "\n生产环境由应用注入 ContentKeyProvider。下面仅供非生产开发：进程环境变量须为32字节key的Base64；这里只装配provider，不保存或显示key。" +
-                "\nBuild选中确切发布并重置UseBuiltIn，请明确切换Mode=Bundles。内置预检/部署不需key；部署后保存自己的Scene。进入Play或域重载后重新注入，再用原 Run Selected Mode。", MessageType.Info);
-            _developmentKeyEnvironmentVariable = EditorGUILayout.TextField("Development Key Variable", _developmentKeyEnvironmentVariable);
-            if (GUILayout.Button("Inject Development Environment Key Provider"))
+            EditorGUILayout.LabelField("Runtime Result", example.Result, EditorStyles.wordWrappedLabel);
+            EditorGUILayout.HelpBox("This inspector only authors, validates and builds. Open the saved Bootstrap scene, enter Play, and explicitly use the component's Start context command. Await normal shutdown before destroying the owner; Dispose is not a completion signal.", MessageType.Info);
+            if (ResourceStartupExample.PendingShutdownCount != 0)
             {
-                UseDevelopmentContentKeyFromEnvironment(example, _developmentKeyEnvironmentVariable);
+                EditorGUILayout.HelpBox(ResourceStartupExample.PendingShutdownDetails, MessageType.Error);
+            }
+            _settings = (AddressableAssetSettings)EditorGUILayout.ObjectField("Official Settings", _settings, typeof(AddressableAssetSettings), false);
+            if (GUILayout.Button("Open Official Addressables Groups"))
+            {
+                EditorApplication.ExecuteMenuItem("Window/Asset Management/Addressables/Groups");
+            }
+            using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode))
+            {
+                if (GUILayout.Button("Validate Official References (Read Only)"))
+                {
+                    Run(() =>
+                    {
+                        Validate(example, _settings);
+                        return "Reference and authoring checks passed. No native initialization or content build ran.";
+                    });
+                }
+                if (GUILayout.Button("Official Full Content Build + Archive State"))
+                {
+                    var path = EditorUtility.SaveFilePanel("New Player content state archive", "", "addressables_content_state.bin", "bin");
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        Run(() =>
+                        {
+                            Validate(example, _settings);
+                            return ResourceContentBuildExample.Build(_settings, path).Summary;
+                        });
+                    }
+                }
+                if (GUILayout.Button("Official Content Update From Frozen State"))
+                {
+                    var path = EditorUtility.OpenFilePanel("Select the target Player's archived official content state", "", "bin");
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        Run(() =>
+                        {
+                            Validate(example, _settings);
+                            return ResourceContentBuildExample.BuildUpdate(_settings, path).Summary;
+                        });
+                    }
+                }
+            }
+            if (!string.IsNullOrEmpty(_message))
+            {
+                EditorGUILayout.HelpBox(_message, _messageType);
+            }
+        }
+
+        /// <summary>按样例实际使用的 GUID、命名地址和预热 Label 只读检查官方配置。</summary>
+        public static void Validate(ResourceStartupExample example, AddressableAssetSettings settings)
+        {
+            if (!example)
+            {
+                throw new ArgumentNullException(nameof(example));
+            }
+            example.ValidateReferences();
+            var errors = ResourceAddressablesAuthoring.Validate(settings);
+            if (errors.Length != 0)
+            {
+                throw new InvalidOperationException(string.Join("\n", errors));
+            }
+            var entries = new List<AddressableAssetEntry>();
+            settings.GetAllAssets(entries, false, group => group.GetSchema<BundledAssetGroupSchema>() is { IncludeInBuild: true });
+            var message = Check(example.message, typeof(TextAsset));
+            Check(example.data, typeof(ResourceStartupExampleData));
+            Check(example.prefab, typeof(GameObject));
+            if (example.bindCoreResourceProvider && !string.IsNullOrEmpty(example.contentProjectId))
+            {
+                CheckNamed(message, example.contentProjectId + "/message");
+            }
+            if (example.preview != null && !string.IsNullOrEmpty(example.preview.AssetGUID))
+            {
+                Check(example.preview, typeof(Texture2D));
+            }
+            if (example.audioCue != null && !string.IsNullOrEmpty(example.audioCue.AssetGUID))
+            {
+                var cue = Check(example.audioCue, typeof(AudioClip), requiresGuid: false);
+                CheckNamed(cue, example.contentProjectId + "/cue");
+                if (!string.IsNullOrEmpty(example.audioPreloadLabel))
+                {
+                    if (!cue.parentGroup.GetSchema<BundledAssetGroupSchema>().IncludeLabelsInCatalog ||
+                        !settings.GetLabels().Contains(example.audioPreloadLabel) || !cue.labels.Contains(example.audioPreloadLabel))
+                    {
+                        throw new InvalidOperationException("Publish and assign the cue's exact preload Label: " + example.audioPreloadLabel);
+                    }
+                }
+            }
+            if (example.scene != null && !string.IsNullOrEmpty(example.scene.AssetGUID))
+            {
+                Check(example.scene, typeof(SceneAsset));
+                if (AssetDatabase.GUIDToAssetPath(example.scene.AssetGUID) == example.gameObject.scene.path)
+                {
+                    throw new InvalidOperationException("Keep the application owner in a neutral Bootstrap scene, outside the Scope-owned business scene.");
+                }
             }
 
-            EditorGUILayout.LabelField("Content Key Provider", example.ContentKeyProvider == null ? "Not injected" : "Injected (runtime only)");
-            using (new EditorGUI.DisabledScope(Application.isPlaying))
+            AddressableAssetEntry Check(AssetReference reference, Type expected, bool requiresGuid = true)
             {
-                if (GUILayout.Button("Build And Publish Example Bundle"))
+                var path = AssetDatabase.GUIDToAssetPath(reference.AssetGUID);
+                var actual = AssetDatabase.GetMainAssetTypeAtPath(path);
+                var matches = entries.Where(entry => entry.guid == reference.AssetGUID).ToArray();
+                if (actual == null || !expected.IsAssignableFrom(actual) || matches.Length != 1)
                 {
-                    Build(example);
+                    throw new InvalidOperationException("Select one included official entry of type " + expected.Name + ": " + path);
                 }
-
-                if (GUILayout.Button("Preflight Selected Built-In Release"))
+                if (requiresGuid && !matches[0].parentGroup.GetSchema<BundledAssetGroupSchema>().IncludeGUIDInCatalog)
                 {
-                    Debug.Log(PreflightBuiltIn(example).ToString());
+                    throw new InvalidOperationException("Publish the GUID used by this AssetReference: " + path);
                 }
-
-                if (GUILayout.Button("Deploy Selected Release To Built-In"))
-                {
-                    var deployment = DeployBuiltIn(example);
-                    Debug.Log("Built-in=" + deployment.RelativeDirectory + " / repeat=" + deployment.IsRepeat + "; select Bundles and save the example scene explicitly.");
-                }
-                if (GUILayout.Button("Recover Built-In Deployment"))
-                {
-                    var recovered = ResourceBuiltInDeployer.Recover(Project(example.projectId), Target(example.platform));
-                    Debug.Log(recovered == null ? "No installed deployment to confirm; a pending private stage was aborted if present. Preflight before deploying again." :
-                        "Confirmed built-in=" + recovered.RelativeDirectory);
-                }
+                return matches[0];
             }
-            using (new EditorGUI.DisabledScope(!Application.isPlaying))
-            {
-                if (GUILayout.Button("Run Selected Mode"))
-                {
-                    example.Begin(CreateConfiguration(example));
-                }
 
-                if (GUILayout.Button("Stop / Retry Shutdown"))
+            static void CheckNamed(AddressableAssetEntry entry, string address)
+            {
+                // 跨条目的已发布键冲突由上面的通用校验处理；本条目的同名 Label 不构成第二个位置。
+                if (entry.address != address || !entry.parentGroup.GetSchema<BundledAssetGroupSchema>().IncludeAddressInCatalog)
                 {
-                    example.StopExample();
+                    throw new InvalidOperationException("Publish this entry with the exact address used by the bridge: " + address);
                 }
             }
         }
 
-        /// <summary>查找唯一匹配稳定标识的正式项目，拒绝缺失或重复身份以免操作其他项目。</summary>
-        /// <param name="id">样例明确选择的项目标识。</param>
-        /// <returns>借读的项目配置资产，不转移其销毁责任。</returns>
-        private static ResourceProject Project(string id)
-        {
-            var matches = AssetDatabase.FindAssets("t:ResourceProject")
-                .Select(x => AssetDatabase.LoadAssetAtPath<ResourceProject>(AssetDatabase.GUIDToAssetPath(x)))
-                .Where(x => x && x.projectId == id).ToArray();
-            if (matches.Length != 1)
-            {
-                throw new InvalidOperationException("Exactly one formal ResourceProject must match the sample ProjectId.");
-            }
-
-            return matches[0];
-        }
-
-        /// <summary>按样例显式模式装配模拟或 Bundle 配置，不启动会话，也不在失败时切换来源。</summary>
-        /// <param name="example">提供模式、项目及确切发布选择的样例组件。</param>
-        /// <returns>模拟模式下的正式项目配置，或样例所选快照的 Bundle 配置。</returns>
-        public static ResourceConfiguration CreateConfiguration(ResourceStartupExample example) =>
-            example.mode == ResourceLoadMode.EditorSimulation
-                ? ResourceEditorSimulation.CreateConfiguration(example.mode, new[] { Project(example.projectId) })
-                : example.CreateBundleConfiguration();
-
-        /// <summary>仅供非生产开发，显式绑定当前Project/KeyId与进程变量名；Play/域重载后重新调用，不持久化密钥。</summary>
-        /// <param name="example">接收运行时密钥提供者的样例组件，其项目须唯一匹配正式定义。</param>
-        /// <param name="environmentVariable">含规范 Base64 编码的 32 字节密钥的进程环境变量名，不是密钥本身。</param>
-        public static void UseDevelopmentContentKeyFromEnvironment(ResourceStartupExample example, string environmentVariable)
-        {
-            var project = Project(example.projectId);
-            example.ContentKeyProvider = ResourceEditorOperations.ContentKeyFromEnvironment(project.projectId, project.contentKeyId, environmentVariable);
-        }
-
-        /// <summary>按当前活动平台构建并本地发布所选项目，将样例指向成功发布的确切非内置快照。</summary>
-        /// <param name="example">提供项目、应用兼容标识及可选内容密钥来源，并接收发布选择的样例组件。</param>
-        /// <returns>本次成功发布的版本；未确认发布成功时抛出构建或发布阶段的错误。</returns>
-        /// <remarks>不切换或同步样例的 mode、platform；调用方须确保平台匹配并显式保存场景，构建发布目录不会在停止样例时删除。</remarks>
-        public static ResourceRelease Build(ResourceStartupExample example)
-        {
-            var report = ResourceEditorOperations.BuildAndPublish(Project(example.projectId), example.appCompatibility, provider: example.ContentKeyProvider);
-            var release = report.Release ?? throw new InvalidOperationException(report.Summary, report.BuildError ?? report.PublicationError);
-            Undo.RecordObject(example, "Select explicit sample release");
-            example.snapshotDirectory = release.DirectoryPath;
-            example.catalogDigest = release.Catalog.CatalogDigest;
-            example.useBuiltIn = false;
-            EditorUtility.SetDirty(example);
-            EditorSceneManager.MarkSceneDirty(example.gameObject.scene);
-            return release;
-        }
-
-        /// <summary>将所选平台文本转换为构建目标并校验文本往返一致，供确切发布定位使用。</summary>
-        /// <param name="platform">样例保存的平台文本。</param>
-        /// <returns>与输入文本往返一致的构建目标。</returns>
-        private static BuildTarget Target(string platform) => Enum.TryParse<BuildTarget>(platform, out var target) && target.ToString() == platform
-            ? target : throw new InvalidOperationException("Select an explicit supported build platform.");
-
-        /// <summary>只读预检样例明确选择的本地发布及其内置部署目标，不取密钥或执行部署。</summary>
-        /// <param name="example">以项目、平台、兼容标识和摘要共同选择确切发布的样例组件。</param>
-        /// <returns>所选版本的部署计划，不代表内置文件已经写入。</returns>
-        public static ResourceBuiltInPlan PreflightBuiltIn(ResourceStartupExample example) => ResourceBuiltInDeployer.Preflight(
-            ResourcePublisher.ReadVersion(Project(example.projectId), Target(example.platform), example.appCompatibility, example.catalogDigest));
-
-        /// <summary>只部署Inspector已选择的确切发布；不保存用户Scene、不启动或切换运行会话。</summary>
-        /// <param name="example">提供发布身份并在部署成功后启用 useBuiltIn 的样例组件。</param>
-        /// <returns>正式部署器确认的内置部署结果，不代表 Player 已构建或资源会话已启动。</returns>
-        public static ResourceBuiltInDeployment DeployBuiltIn(ResourceStartupExample example)
-        {
-            var result = ResourceBuiltInDeployer.Deploy(PreflightBuiltIn(example));
-            Undo.RecordObject(example, "Use explicitly deployed built-in resources");
-            example.useBuiltIn = true;
-            EditorUtility.SetDirty(example);
-            EditorSceneManager.MarkSceneDirty(example.gameObject.scene);
-            return result;
-        }
-
-        /// <summary>将用户的创建菜单操作转交独立样例创建入口。</summary>
         [MenuItem("YLFramework/Samples/Create Resource Startup Example")]
-        private static void CreateMenu() => Create();
-
-        /// <summary>用户显式创建独立示例。只新建GUID，不改已有Scene/资源；脏场景拒绝而非自动保存。</summary>
-        /// <returns>本次新建的样例根目录，包含内容资产、Project.asset 与 Example.unity。</returns>
-        /// <remarks>
-        /// 创建后切换到新场景，但不构建、发布、部署或启动会话；运行前仍需明确选择模式与配置。
-        /// 生成目录由使用方管理，停止运行只结算样例运行时责任，不删除这些资产。
-        /// </remarks>
-        public static string Create()
+        private static void CreateMenu()
         {
-            if (EditorApplication.isPlayingOrWillChangePlaymode)
-            {
-                throw new InvalidOperationException("Create the example in Edit Mode.");
-            }
+            var folder = Create(AddressableAssetSettingsDefaultObject.GetSettings(false));
+            Debug.Log("Created " + folder + ". Existing scenes were not saved or closed. Open its Bootstrap scene explicitly before Play or a Player build.");
+        }
 
-            for (var i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
-            {
-                if (UnityEngine.SceneManagement.SceneManager.GetSceneAt(i).isDirty)
-                {
-                    throw new InvalidOperationException("Save or discard dirty scenes before creating the sample.");
-                }
-            }
-
+        /// <summary>显式创建独立样例内容与官方 Group；只保存本次新建场景，不接管现有资产、配置或场景。</summary>
+        /// <remarks>要求已保存的官方默认 Settings、分组及场景；不会修改启动策略、Profile 或 Player 场景列表。</remarks>
+        public static string Create(AddressableAssetSettings settings)
+        {
+            ResourceEditorOperations.ValidateBuild(settings);
             var folder = AssetDatabase.GenerateUniqueAssetPath("Assets/YLResourceStartupExample");
+            if (Directory.Exists(folder) || File.Exists(folder) || File.Exists(folder + ".meta"))
+            {
+                throw new IOException("Choose a new sample output; existing identities are never adopted: " + folder);
+            }
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
             AssetDatabase.CreateFolder(folder, "Content");
             var content = folder + "/Content";
-            File.WriteAllText(content + "/Message.txt", "Hello from ResourceStartup", new UTF8Encoding(false));
-            WriteTone(content + "/Tone.wav");
-            AssetDatabase.ImportAsset(content + "/Message.txt", ImportAssetOptions.ForceSynchronousImport);
-            AssetDatabase.ImportAsset(content + "/Tone.wav", ImportAssetOptions.ForceSynchronousImport);
-            var data = CreateInstance<ResourceStartupExampleData>();
-            data.text = "Explicit compiled sample type";
-            AssetDatabase.CreateAsset(data, content + "/Data.asset");
-            var project = CreateInstance<ResourceProject>();
-            project.projectId = "startup-example-" + Guid.NewGuid().ToString("N").Substring(0, 8);
-            project.displayName = "Resource Startup Example";
-            project.sourceDirectories.Add(new ResourceSourceDirectory { guid = AssetDatabase.AssetPathToGUID(content) });
-            project.groups.Add(new ResourceGroup
+            var messagePath = content + "/Message.txt";
+            var previewPath = content + "/Preview.png";
+            var cuePath = content + "/Cue.wav";
+            using (var output = new FileStream(messagePath, FileMode.CreateNew, FileAccess.Write))
+            using (var writer = new StreamWriter(output, new UTF8Encoding(false)))
             {
-                id = "startup-content",
-                packing = ResourcePacking.Together,
-                selections = new List<ResourceSelection>
+                writer.Write("Hello from official Addressables");
+            }
+            AssetDatabase.ImportAsset(messagePath, ImportAssetOptions.ForceSynchronousImport);
+            WritePreview(previewPath);
+            WriteCue(cuePath);
+            AssetDatabase.ImportAsset(previewPath, ImportAssetOptions.ForceSynchronousImport);
+            AssetDatabase.ImportAsset(cuePath, ImportAssetOptions.ForceSynchronousImport);
+            var data = CreateInstance<ResourceStartupExampleData>();
+            data.text = "Scope-owned borrowed data";
+            var dataPath = content + "/Data.asset";
+            AssetDatabase.CreateAsset(data, dataPath);
+            var previous = SceneManager.GetActiveScene();
+            var businessPath = content + "/Business.unity";
+            var prefabPath = content + "/ScopedPrefab.prefab";
+            var business = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                SceneManager.SetActiveScene(business);
+                var marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                marker.name = "Authored Business Scene Marker";
+                marker.transform.position = Vector3.left * 2;
+                var camera = new GameObject("Business Camera", typeof(Camera));
+                camera.transform.position = new Vector3(0, 1, -8);
+                var light = new GameObject("Business Light", typeof(Light));
+                light.GetComponent<Light>().type = LightType.Directional;
+                light.transform.rotation = Quaternion.Euler(45, -30, 0);
+                var template = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                template.name = "Scope Created Prefab";
+                try
                 {
-                    new() { guid = AssetDatabase.AssetPathToGUID(content + "/Message.txt"), address = "message" },
-                    new() { guid = AssetDatabase.AssetPathToGUID(content + "/Data.asset"), address = "data" },
-                    new() { guid = AssetDatabase.AssetPathToGUID(content + "/Tone.wav"), address = "tone" }
+                    if (!PrefabUtility.SaveAsPrefabAsset(template, prefabPath))
+                    {
+                        throw new IOException("Unity did not create the sample Prefab.");
+                    }
                 }
-            });
-            AssetDatabase.CreateAsset(project, folder + "/Project.asset");
-            AssetDatabase.SaveAssetIfDirty(project);
-            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            var go = new GameObject("Resource Startup Example", typeof(AudioListener));
-            var example = go.AddComponent<ResourceStartupExample>();
-            example.projectId = project.projectId;
-            example.platform = EditorUserBuildSettings.activeBuildTarget.ToString();
-            EditorSceneManager.SaveScene(scene, folder + "/Example.unity");
+                finally
+                {
+                    DestroyImmediate(template);
+                }
+                if (!EditorSceneManager.SaveScene(business, businessPath))
+                {
+                    throw new IOException("Unity did not save the new business scene.");
+                }
+            }
+            finally
+            {
+                EditorSceneManager.CloseScene(business, true);
+                if (previous.IsValid() && previous.isLoaded)
+                {
+                    SceneManager.SetActiveScene(previous);
+                }
+            }
+            var id = "startup-example-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            var group = settings.CreateGroup(id, false, false, false, null, typeof(BundledAssetGroupSchema), typeof(ContentUpdateGroupSchema));
+            var bundles = group.GetSchema<BundledAssetGroupSchema>();
+            bundles.BuildPath.SetVariableByName(settings, AddressableAssetSettings.kLocalBuildPath);
+            bundles.LoadPath.SetVariableByName(settings, AddressableAssetSettings.kLocalLoadPath);
+            bundles.IncludeInBuild = true;
+            bundles.IncludeAddressInCatalog = true;
+            bundles.IncludeGUIDInCatalog = true;
+            bundles.IncludeLabelsInCatalog = true;
+            group.GetSchema<ContentUpdateGroupSchema>().StaticContent = false;
+            var cueLabel = id + "/audio-warmup";
+            foreach (var item in new[] { (messagePath, "message"), (dataPath, "data"), (prefabPath, "prefab"), (businessPath, "scene"),
+                (previewPath, "preview"), (cuePath, "cue") })
+            {
+                var entry = settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(item.Item1), group);
+                entry.SetAddress(id + "/" + item.Item2);
+                if (item.Item2 == "cue")
+                {
+                    entry.SetLabel(cueLabel, true, true);
+                }
+            }
+            foreach (var schema in group.Schemas)
+            {
+                AssetDatabase.SaveAssetIfDirty(schema);
+            }
+            AssetDatabase.SaveAssetIfDirty(group);
+            AssetDatabase.SaveAssetIfDirty(settings);
+
+            var bootstrap = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            SceneManager.SetActiveScene(bootstrap);
+            var owner = new GameObject("Resource Startup Owner");
+            var example = owner.AddComponent<ResourceStartupExample>();
+            example.message = new AssetReferenceT<TextAsset>(AssetDatabase.AssetPathToGUID(messagePath));
+            example.data = new AssetReferenceT<ResourceStartupExampleData>(AssetDatabase.AssetPathToGUID(dataPath));
+            example.prefab = new AssetReferenceGameObject(AssetDatabase.AssetPathToGUID(prefabPath));
+            example.scene = new AssetReference(AssetDatabase.AssetPathToGUID(businessPath));
+            example.preview = new AssetReferenceT<Texture2D>(AssetDatabase.AssetPathToGUID(previewPath));
+            example.audioCue = new AssetReferenceT<AudioClip>(AssetDatabase.AssetPathToGUID(cuePath));
+            example.audioPreloadLabel = cueLabel;
+            example.contentProjectId = id;
+            Validate(example, settings);
+            if (!EditorSceneManager.SaveScene(bootstrap, folder + "/Bootstrap.unity"))
+            {
+                throw new IOException("Unity did not save the new Bootstrap scene.");
+            }
             Selection.activeObject = example;
             return folder;
         }
 
-        /// <summary>生成一秒单声道 PCM 测试音，并在退出时关闭本次输出流。</summary>
-        /// <param name="path">本次新建内容目录中的 WAV 输出路径。</param>
-        private static void WriteTone(string path)
+        private static void WritePreview(string path)
         {
-            const int Rate = 8000;
-            using var output = new BinaryWriter(File.Create(path));
-            output.Write(Encoding.ASCII.GetBytes("RIFF"));
-            output.Write(36 + Rate * 2);
-            output.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
-            output.Write(16);
-            output.Write((short)1);
-            output.Write((short)1);
-            output.Write(Rate);
-            output.Write(Rate * 2);
-            output.Write((short)2);
-            output.Write((short)16);
-            output.Write(Encoding.ASCII.GetBytes("data"));
-            output.Write(Rate * 2);
-            for (var i = 0; i < Rate; i++)
+            const int Size = 16;
+            var texture = new Texture2D(Size, Size, TextureFormat.RGBA32, false);
+            try
             {
-                output.Write((short)(Math.Sin(i * 2 * Math.PI * 220 / Rate) * 4096));
+                var pixels = new Color32[Size * Size];
+                for (var y = 0; y < Size; y++)
+                {
+                    for (var x = 0; x < Size; x++)
+                    {
+                        var light = (x / 4 + y / 4) % 2 == 0;
+                        pixels[y * Size + x] = light ? new Color32(152, 224, 194, 255) : new Color32(24, 68, 63, 255);
+                    }
+                }
+                texture.SetPixels32(pixels);
+                texture.Apply();
+                var png = texture.EncodeToPNG();
+                using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+                output.Write(png, 0, png.Length);
+            }
+            finally { DestroyImmediate(texture); }
+        }
+
+        private static void WriteCue(string path)
+        {
+            const int SampleRate = 16000;
+            const int SampleCount = SampleRate / 5;
+            using var writer = new BinaryWriter(new FileStream(path, FileMode.CreateNew, FileAccess.Write));
+            writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+            writer.Write(36 + SampleCount * sizeof(short));
+            writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+            writer.Write(16);
+            writer.Write((short)1); // PCM mono.
+            writer.Write((short)1);
+            writer.Write(SampleRate);
+            writer.Write(SampleRate * sizeof(short));
+            writer.Write((short)sizeof(short));
+            writer.Write((short)16);
+            writer.Write(Encoding.ASCII.GetBytes("data"));
+            writer.Write(SampleCount * sizeof(short));
+            for (var index = 0; index < SampleCount; index++)
+            {
+                var fade = Math.Min(1.0, (double)Math.Min(index, SampleCount - index - 1) / (SampleRate / 100));
+                writer.Write((short)(Math.Sin(2 * Math.PI * 440 * index / SampleRate) * fade * (short.MaxValue / 10)));
+            }
+        }
+
+        private void Run(Func<string> action)
+        {
+            try
+            {
+                _message = action();
+                _messageType = MessageType.Info;
+            }
+            catch (Exception error) when (!(error is ExitGUIException))
+            {
+                _message = error.ToString();
+                _messageType = MessageType.Error;
             }
         }
     }

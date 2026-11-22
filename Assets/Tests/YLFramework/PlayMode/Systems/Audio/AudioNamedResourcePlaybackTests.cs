@@ -1,11 +1,16 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.ResourceLocators;
+using UnityEngine.ResourceManagement.ResourceLocations;
+using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.TestTools;
 using YLFramework.Audio;
 using YLFramework.Resource;
@@ -13,12 +18,18 @@ using Object = UnityEngine.Object;
 
 namespace YLFramework.Tests.Audio
 {
+    [Category("YL.Resource.Addressables.Regression")]
     public class AudioNamedResourcePlaybackTests
     {
         private string _folder;
         private GameObject _listener;
         private float _timeScale;
         private ResourceSystem _resources;
+        private ResourceStartup _startup;
+        private ResourceLocationMap _locator;
+        private ClipProvider _provider;
+        private AssetLease<AudioClip> _warm;
+        private string _project;
         private string[] _names;
         private int _nextClip;
         private readonly bool[] _hadKeys = new bool[6];
@@ -29,9 +40,10 @@ namespace YLFramework.Tests.Audio
             "KEY_AUDIO_MANAGER_SOUND_ON", "KEY_AUDIO_MANAGER_MUSIC_ON", "KEY_AUDIO_MANAGER_VOICE_ON",
             "KEY_AUDIO_MANAGER_SOUND_VOLUME", "KEY_AUDIO_MANAGER_MUSIC_VOLUME", "KEY_AUDIO_MANAGER_VOICE_VOLUME"
         };
-        [SetUp]
-        public void SetUp()
+        [UnitySetUp]
+        public IEnumerator SetUp()
         {
+            Assert.That(ResourceSystem.Current, Is.Null, "Never replace an external Resource authority.");
             AudioKit.Shutdown();
             _timeScale = Time.timeScale;
             for (var i = 0; i < 6; i++)
@@ -49,18 +61,20 @@ namespace YLFramework.Tests.Audio
             AudioKit.Settings.IsVoiceOn.SetValueWithoutCallback(true);
             AudioKit.PlaySoundMode = AudioKit.PlaySoundModes.EveryOne;
             _folder = "Assets/Tests/YLFramework/Fixtures/Audio/Named-" + Guid.NewGuid().ToString("N");
+            _project = "audio86b-" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets/Tests/YLFramework/Fixtures/Audio", Path.GetFileName(_folder));
-            AssetDatabase.CreateFolder(_folder, "Resources");
+            AssetDatabase.CreateFolder(_folder, "Clips");
             _nextClip = 0;
             _names = Enumerable.Range(0, 8).Select(i => "audio86b-" + Guid.NewGuid().ToString("N")).ToArray();
-            var entries = _names.Select((name, i) => new ResourceCatalogEntry("clip-" + i, new ResourceAddress("audio86b", "clip/" + i),
-                new YLFramework.Resource.ResourceLocation(ResourceSourceId.Resources, name, typeof(AudioClip)))).ToList();
-            entries.Add(new ResourceCatalogEntry("missing", new ResourceAddress("audio86b", "missing"),
-                new YLFramework.Resource.ResourceLocation(ResourceSourceId.Resources, "missing-" + Guid.NewGuid().ToString("N"), typeof(AudioClip))));
-            using (var initialize = ResourceSystem.InitializeAsync(new ResourceConfiguration(new[] { new ResourceCatalog("audio86b", entries) })))
-            {
-                _resources = initialize.TakeResult();
-            }
+            _startup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: false);
+            using var start = _startup.StartAsync();
+            yield return WaitFor(() => start.IsDone, "official Resource startup");
+            Assert.That(start.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), start.Error?.ToString());
+            _resources = start.TakeResult().Resources;
+            _locator = new ResourceLocationMap(_project);
+            _provider = new ClipProvider(_project);
+            Addressables.ResourceManager.ResourceProviders.Add(_provider);
+            Addressables.AddResourceLocator(_locator);
 
             if (Object.FindObjectsOfType<AudioListener>().Length == 0)
             {
@@ -72,17 +86,41 @@ namespace YLFramework.Tests.Audio
         public IEnumerator TearDown()
         {
             AudioKit.Shutdown();
+            ReleaseWarm();
+            _provider?.FinishPending();
             Time.timeScale = _timeScale;
-            var deadline = Time.realtimeSinceStartupAsDouble + 10;
-            while (_resources.GetDiagnosticsSnapshot().ProducerCount != 0 && Time.realtimeSinceStartupAsDouble < deadline)
+            if (_startup != null)
             {
-                yield return null;
-            }
-
-            using (var shutdown = _resources.ShutdownAsync())
-            {
-                yield return shutdown;
+                using var shutdown = _startup.StopAsync();
+                yield return WaitFor(() => shutdown.IsDone, "Resource stop after Audio shutdown");
                 Assert.That(shutdown.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), shutdown.Error?.ToString());
+                Assert.That(shutdown.TakeResult(), Is.True);
+            }
+            if (_resources != null)
+            {
+                var diagnostics = _resources.GetDiagnostics();
+                Assert.That(diagnostics.LeaseCount, Is.Zero);
+                Assert.That(diagnostics.ScopeCount, Is.Zero);
+                Assert.That(diagnostics.RequestCount, Is.Zero);
+                Assert.That(diagnostics.PendingWorkCount, Is.Zero);
+                Assert.That(diagnostics.DrainingHandleCount, Is.Zero);
+                Assert.That(diagnostics.Errors, Is.Empty);
+            }
+            if (_provider != null)
+            {
+                Assert.That(_provider.PendingCount, Is.Zero);
+                Assert.That(_provider.LiveCount, Is.Zero);
+                Assert.That(_provider.Releases, Is.EqualTo(_provider.Provides), "Every official provider operation must actually be released.");
+            }
+            if (_locator != null)
+            {
+                Addressables.RemoveResourceLocator(_locator);
+                _locator = null;
+            }
+            if (_provider != null)
+            {
+                Addressables.ResourceManager.ResourceProviders.Remove(_provider);
+                _provider = null;
             }
             if (_listener)
             {
@@ -90,6 +128,8 @@ namespace YLFramework.Tests.Audio
             }
 
             AssetDatabase.DeleteAsset(_folder);
+            _resources = null;
+            _startup = null;
             for (var i = 0; i < 3; i++)
             {
                 if (_hadKeys[i])
@@ -117,7 +157,7 @@ namespace YLFramework.Tests.Audio
         {
             var index = _nextClip++;
             var name = _names[index];
-            var path = _folder + "/Resources/" + name + ".wav";
+            var path = _folder + "/Clips/" + name + ".wav";
             WriteWave(path, seconds);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
             var importer = (AudioImporter)AssetImporter.GetAtPath(path);
@@ -128,7 +168,10 @@ namespace YLFramework.Tests.Audio
             settings.compressionFormat = compression;
             importer.defaultSampleSettings = settings;
             importer.SaveAndReimport();
-            return new AudioClipAddress(_resources.GetAudioClipProvider("audio86b"), "clip/" + index);
+            Assert.That(AssetDatabase.LoadAssetAtPath<AudioClip>(path), Is.Not.Null);
+            var key = _project + "/clip/" + index;
+            _locator.Add(key, new ResourceLocationBase(key, path, _provider.ProviderId, typeof(AudioClip)) { Data = new ClipContent(path) });
+            return new AudioClipAddress(_resources.GetAudioClipProvider(_project), "clip/" + index);
         }
         internal static void WriteWave(string path, int seconds)
         {
@@ -166,28 +209,132 @@ namespace YLFramework.Tests.Audio
             Assert.IsTrue(request.IsAssetReady);
             Assert.IsTrue(request.IsDataReady);
         }
-        private void AssertResourcesReturned(AudioClipAddress address, AudioClip clip, int otherLeases = 0)
+        private string OfficialKey(AudioClipAddress address) => _project + "/" + address.Key;
+
+        private IEnumerator Warm(AudioClipAddress address)
         {
-            Assert.That(_resources.GetDiagnosticsSnapshot().LeaseCount, Is.EqualTo(otherLeases), address.Key);
-            Assert.IsTrue(clip, "Resources is a shared borrowed source; returning a lease must not unload another user's Clip.");
+            Assert.That(_warm, Is.Null);
+            using var request = _resources.AcquireAsync<AudioClip>(OfficialKey(address));
+            yield return WaitFor(() => request.IsDone, "explicit async warmup");
+            Assert.That(request.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), request.Error?.ToString());
+            _warm = request.TakeResult();
+        }
+
+        private void ReleaseWarm()
+        {
+            _warm?.Dispose();
+            _warm = null;
+        }
+
+        private IEnumerator AssertResourcesReturned(AudioClipAddress address, AudioClip clip, int otherLeases = 0)
+        {
+            var key = OfficialKey(address);
+            yield return WaitFor(() => _resources.GetDiagnostics().LeaseCount == otherLeases &&
+                _resources.GetDiagnostics().DrainingHandleCount == 0 && _provider.PendingCount == 0 && _provider.LiveFor(key) == 0,
+                "official provider release for " + key);
+            Assert.That(_resources.GetDiagnostics().LeaseCount, Is.EqualTo(otherLeases), address.Key);
+            Assert.That(_provider.ReleasesFor(key), Is.EqualTo(_provider.ProvidesFor(key)).And.GreaterThan(0), address.Key);
+            bool loaded = _resources.TryAcquireLoaded<AudioClip>(key, out var unexpected);
+            using (unexpected)
+            {
+                Assert.That(loaded, Is.False, "The retired Audio entry must not leave a hidden hot YL lease.");
+            }
+            Assert.IsTrue(clip, "Returning the provider reference must not destroy the fixture's independently owned imported AudioClip.");
+        }
+
+        private static IEnumerator WaitFor(Func<bool> completed, string operation)
+        {
+            var deadline = Time.realtimeSinceStartupAsDouble + 15;
+            while (!completed() && Time.realtimeSinceStartupAsDouble < deadline)
+            {
+                yield return null;
+            }
+            Assert.That(completed(), Is.True, operation + " timed out.");
+        }
+
+        private sealed class ClipContent
+        {
+            internal readonly string Path;
+            internal AudioClip Clip;
+            internal ClipContent(string path) => Path = path;
+        }
+
+        // The fixture owns the imported asset; the provider owns only its official operation reference.
+        private sealed class ClipProvider : ResourceProviderBase
+        {
+            private readonly List<ProvideHandle> _pending = new();
+            private readonly Dictionary<string, int> _provides = new();
+            private readonly Dictionary<string, int> _releases = new();
+            private readonly Dictionary<string, int> _live = new();
+            internal bool Delay;
+            internal int Provides => _provides.Values.Sum();
+            internal int Releases => _releases.Values.Sum();
+            internal int LiveCount => _live.Values.Sum();
+            internal int PendingCount => _pending.Count;
+            internal int ProvidesFor(string key) => _provides.TryGetValue(key, out var count) ? count : 0;
+            internal int ReleasesFor(string key) => _releases.TryGetValue(key, out var count) ? count : 0;
+            internal int LiveFor(string key) => _live.TryGetValue(key, out var count) ? count : 0;
+            internal ClipProvider(string id) => m_ProviderId = id;
+
+            public override void Provide(ProvideHandle handle)
+            {
+                var key = handle.Location.PrimaryKey;
+                _provides[key] = ProvidesFor(key) + 1;
+                handle.SetWaitForCompletionCallback(() => throw new InvalidOperationException("Audio tests must not synchronously block an official producer."));
+                if (Delay) _pending.Add(handle);
+                else Complete(handle);
+            }
+
+            internal void FinishPending()
+            {
+                Delay = false;
+                var pending = _pending.ToArray();
+                _pending.Clear();
+                foreach (var handle in pending) Complete(handle);
+            }
+
+            private void Complete(ProvideHandle handle)
+            {
+                var content = (ClipContent)handle.Location.Data;
+                content.Clip = AssetDatabase.LoadAssetAtPath<AudioClip>(content.Path);
+                Assert.That(content.Clip, Is.Not.Null, content.Path);
+                var key = handle.Location.PrimaryKey;
+                _live[key] = LiveFor(key) + 1;
+                handle.Complete(content.Clip, true, null);
+            }
+
+            public override void Release(IResourceLocation location, object asset)
+            {
+                var key = location.PrimaryKey;
+                Assert.That(asset, Is.SameAs(((ClipContent)location.Data).Clip));
+                Assert.That(LiveFor(key), Is.GreaterThan(0), "Release must return a real outstanding official operation.");
+                _live[key] = LiveFor(key) - 1;
+                _releases[key] = ReleasesFor(key) + 1;
+            }
         }
 
         [UnityTest]
         public IEnumerator RealResourcesSyncDisabledReplayPauseAndIdleRelease()
         {
             var address = CreateClip();
+            var cold = Assert.Throws<ResourceException>(() => { using var unexpected = address.Provider.Load(address.Key); });
+            Assert.That(cold.Kind, Is.EqualTo(ResourceError.InProgress));
+            Assert.That(_provider.Provides, Is.Zero, "Cold synchronous access must not start an official producer.");
+            yield return Warm(address);
             AudioKit.ClipCacheCapacity = 1;
             AudioKit.ClipCacheIdleSeconds = .1;
             var handle = AudioKit.PlayMusicNamed(address);
+            ReleaseWarm();
             var clip = handle.Voice.Clip;
             Assert.IsTrue(handle.IsValid);
-            Assert.Greater(_resources.GetDiagnosticsSnapshot().LeaseCount, 0);
+            Assert.Greater(_resources.GetDiagnostics().LeaseCount, 0);
             AudioKit.Settings.IsMusicOn.Value = false;
             Time.timeScale = 0;
             yield return new WaitForSecondsRealtime(.2f);
             Assert.IsTrue(clip);
             Assert.IsTrue(handle.IsValid);
-            Assert.Greater(_resources.GetDiagnosticsSnapshot().LeaseCount, 0);
+            Assert.Greater(_resources.GetDiagnostics().LeaseCount, 0);
+            Assert.That(_provider.ReleasesFor(OfficialKey(address)), Is.Zero);
             AudioKit.Settings.IsMusicOn.Value = true;
             Assert.IsTrue(handle.IsPlaying);
             handle.Pause();
@@ -198,45 +345,73 @@ namespace YLFramework.Tests.Audio
             Assert.IsTrue(clip, "Idle cache owns the backend lease.");
             var reused = AudioKit.PlayMusicNamed(address);
             Assert.AreSame(clip, reused.Voice.Clip);
+            Assert.That(_provider.ProvidesFor(OfficialKey(address)), Is.EqualTo(1), "An idle cache hit must retain the original backend operation.");
             reused.Stop();
             yield return new WaitForSecondsRealtime(.2f);
-            AssertResourcesReturned(address, clip);
+            yield return AssertResourcesReturned(address, clip);
         }
 
         [UnityTest]
         public IEnumerator RealResourcesSharedCancelLateShutdownAndRetry()
         {
             var address = CreateClip();
+            _provider.Delay = true;
             var canceled = AudioKit.PlaySoundAsync(address, AudioSoundOptions.MusicDefaults);
             var live = AudioKit.PlaySoundAsync(address, AudioSoundOptions.MusicDefaults);
             canceled.Cancel();
+            yield return WaitFor(() => _provider.PendingCount == 1, "shared official Audio producer");
+            Assert.That(_provider.ProvidesFor(OfficialKey(address)), Is.EqualTo(1));
+            Assert.That(live.IsDone, Is.False, "Canceling a sibling must not consume the shared producer.");
+            _provider.FinishPending();
             yield return WaitAccepted(live);
             Assert.AreEqual(AudioPlayEnd.Canceled, canceled.EndReason);
             var clip = live.Handle.Voice.Clip;
             Assert.IsTrue(clip);
             live.Cancel();
-            AssertResourcesReturned(address, clip);
-            var late = AudioKit.PlayMusicAsync(address);
+            yield return AssertResourcesReturned(address, clip);
+            _provider.Delay = true;
+            var lateStarts = 0;
+            var late = AudioKit.PlayMusicAsync(address, onStarted: (_, _) => lateStarts++);
+            yield return WaitFor(() => _provider.PendingCount == 1, "late Audio producer");
             AudioKit.Shutdown();
             Assert.AreEqual(AudioPlayEnd.Shutdown, late.EndReason);
-            yield return null;
-            yield return null;
-            yield return null;
+            Assert.That(_resources.IsAvailable, Is.True, "Audio shutdown must not stop its externally owned Resource startup.");
+            Assert.That(_provider.ReleasesFor(OfficialKey(address)), Is.EqualTo(1), "The second, pending operation still owes its own release.");
+            AudioKit.Settings.IsMusicOn.SetValueWithoutCallback(true);
+            Assert.That(_locator.Locate(OfficialKey(address), typeof(AudioClip), out var locations), Is.True);
+            // Bridge the native completion until the new Audio request has accepted its independent lease.
+            var independent = Addressables.ResourceManager.ProvideResource<AudioClip>(locations.Single());
+            AudioPlayRequest retry = null;
+            try
+            {
+                retry = AudioKit.PlayMusicAsync(address);
+                Assert.That(retry.IsDone, Is.False);
+                Assert.That(_provider.ProvidesFor(OfficialKey(address)), Is.EqualTo(2), "Restarting Audio must not replace the still-pending official operation.");
+                _provider.FinishPending();
+                yield return WaitAccepted(retry);
+            }
+            finally
+            {
+                Addressables.ResourceManager.Release(independent);
+            }
             Assert.IsFalse(late.Handle.IsValid);
-            var retry = AudioKit.PlayMusicAsync(address);
-            yield return WaitAccepted(retry);
+            Assert.That(lateStarts, Is.Zero);
+            Assert.That(late.EndReason, Is.EqualTo(AudioPlayEnd.Shutdown));
             Assert.IsTrue(retry.Handle.IsPlaying);
+            Assert.That(_resources.GetDiagnostics().LeaseCount, Is.EqualTo(1), "The retired Audio entry must return only its own late lease.");
+            Assert.That(_provider.ReleasesFor(OfficialKey(address)), Is.EqualTo(1), "The new Audio owner still retains the shared official operation.");
             retry.Cancel();
-            yield return null;
-            Assert.That(_resources.GetDiagnosticsSnapshot().RecordCount, Is.Zero);
+            yield return AssertResourcesReturned(address, clip);
         }
 
         [UnityTest]
         public IEnumerator RealResourcesMissingAssetFailsAndCanRetryWithoutStoppingExistingMusic()
         {
             var valid = CreateClip();
+            yield return Warm(valid);
             var playing = AudioKit.PlayMusicNamed(valid);
-            var invalid = new AudioClipAddress(_resources.GetAudioClipProvider("audio86b"), "missing");
+            ReleaseWarm();
+            var invalid = new AudioClipAddress(_resources.GetAudioClipProvider(_project), "missing");
             var request = AudioKit.PlayMusicAsync(invalid);
             var deadline = Time.realtimeSinceStartupAsDouble + 5;
             while (!request.IsDone && Time.realtimeSinceStartupAsDouble < deadline)
@@ -271,7 +446,8 @@ namespace YLFramework.Tests.Audio
                 Assert.AreEqual(AudioPlayEnd.Completed, request.EndReason);
                 Assert.IsTrue(handle.IsValid, "Preserve the existing natural callback window; the original Voice is finalized after return.");
                 Assert.AreEqual(request.Handle, handle);
-                Assert.Greater(_resources.GetDiagnosticsSnapshot().LeaseCount, 0);
+                Assert.Greater(_resources.GetDiagnostics().LeaseCount, 0);
+                Assert.That(_provider.LiveFor(OfficialKey(address)), Is.EqualTo(1));
                 Assert.AreEqual(AudioDataLoadState.Loaded, clip.loadState);
                 request.Cancel();
                 Assert.AreEqual(AudioPlayEnd.Completed, request.EndReason);
@@ -287,7 +463,7 @@ namespace YLFramework.Tests.Audio
 
             Assert.AreEqual(1, callbacks);
             Assert.AreEqual(AudioPlayEnd.Completed, request.EndReason);
-            AssertResourcesReturned(address, finishedClip);
+            yield return AssertResourcesReturned(address, finishedClip);
         }
 
         [UnityTest]
@@ -315,7 +491,7 @@ namespace YLFramework.Tests.Audio
                 Assert.AreEqual(1, starts);
                 TestContext.WriteLine("Named Resource {0}: Loaded before Started, timeSamples={1}", type, source.timeSamples);
                 request.Cancel();
-                AssertResourcesReturned(address, loaded);
+                yield return AssertResourcesReturned(address, loaded);
             }
         }
 
@@ -324,19 +500,26 @@ namespace YLFramework.Tests.Audio
         {
             var first = CreateClip();
             var second = CreateClip();
+            yield return Warm(first);
             var old = AudioKit.PlayMusicNamed(first);
+            ReleaseWarm();
             var clip = old.Voice.Clip;
             // native 回调可在长导入帧的 Update 前完成；先冻结尾轨，避免用旧帧 delta 吞掉观察窗口。
             var next = AudioKit.CrossFadeMusicAsync(second, .2f, onStarted: (_, _) => old.Pause());
             yield return WaitAccepted(next);
             Assert.IsTrue(old.IsValid);
             Assert.IsTrue(clip);
+            Assert.That(_resources.GetDiagnostics().LeaseCount, Is.EqualTo(2), "Foreground and fading tail retain separate backend leases.");
+            Assert.That(_provider.LiveFor(OfficialKey(first)), Is.EqualTo(1));
+            Assert.That(_provider.LiveFor(OfficialKey(second)), Is.EqualTo(1));
             old.Resume();
             yield return new WaitForSecondsRealtime(.3f);
             Assert.IsFalse(old.IsValid);
-            AssertResourcesReturned(first, clip, 1);
+            yield return AssertResourcesReturned(first, clip, 1);
             Assert.IsTrue(next.Handle.IsValid);
+            var nextClip = next.Handle.Voice.Clip;
             next.Cancel();
+            yield return AssertResourcesReturned(second, nextClip);
             var caller = new GameObject("named-one-shot-owner");
             try
             {
@@ -353,7 +536,7 @@ namespace YLFramework.Tests.Audio
                 }
 
                 Assert.AreEqual(AudioPlayEnd.Completed, shot.EndReason);
-                AssertResourcesReturned(first, shotClip);
+                yield return AssertResourcesReturned(first, shotClip);
             }
             finally
             {

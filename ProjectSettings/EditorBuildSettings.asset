@@ -8,5 +8,6 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/YLFrameworkDev.unity
     guid: 0eb1b4d84338d5b4484aaed76bf6b765
-  m_configObjects: {}
+  m_configObjects:
+    com.unity.addressableassets: {fileID: 11400000, guid: c421b52f73697a24386e5d07eac50484, type: 2}
   m_UseUCBPForAssetBundles: 0

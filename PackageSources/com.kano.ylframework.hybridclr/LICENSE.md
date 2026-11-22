@@ -41,7 +41,7 @@ SOFTWARE.
   the README for the exact native version gates. Native source/patch deliveries
   must retain their original upstream license texts independently.
 - Newtonsoft.Json retains its own license. Main-package notices, including the
-  bundled BouncyCastle license, are in the
+  historical BouncyCastle attribution, are in the
   [main package license](../com.kano.ylframework/LICENSE.md).
 - MiniExcel and DOTween are not dependencies of this adapter. Unity APIs remain
   subject to Unity's terms.

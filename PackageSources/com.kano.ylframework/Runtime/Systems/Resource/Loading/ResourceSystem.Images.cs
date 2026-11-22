@@ -1,192 +1,251 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.IO;
-using System.Text;
+using System.Threading;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.ResourceManagement.AsyncOperations;
+using UnityEngine.ResourceManagement.ResourceLocations;
 
 namespace YLFramework.Resource
 {
     public sealed partial class ResourceSystem
     {
-        // 仅作为直接图片请求的会话身份；不注册、修改或发布 Catalog v1。
-        private readonly ResourceCatalog _imageCatalog = new("runtime-images", Array.Empty<ResourceCatalogEntry>());
-        private readonly LinkedList<AssetRecord> _idleImages = new();
+        private sealed class ImageHold
+        {
+            // 活跃时仅借读同一官方 operation；只有 IdleNode 非空时才拥有一份额外 Acquire pin。
+            internal AsyncOperationHandle Handle;
+            internal string Key;
+            internal int Leases;
+            internal long Bytes;
+            internal double IdleSince;
+            internal LinkedListNode<ImageHold> IdleNode;
+        }
+
+        private readonly Dictionary<string, ImageHold> _imageHolds = new(StringComparer.Ordinal);
+        private readonly LinkedList<ImageHold> _idleImages = new();
+        private AddressablesImageProvider _imageProvider;
+        private AddressablesImageProvider.Context _imageContext;
+        private IDisposable _imageCacheTick;
         private long _idleImageBytes;
-        private readonly LinkedList<AssetRecord> _imageLoadQueue = new();
-        private int _runningImageLoads;
-        private bool _isPumpingImageLoads;
+        private bool _imagesRetired;
 
-        /// <summary>在会话可用时按图片并发上限启动排队记录，禁止递归泵送。</summary>
-        private void PumpImageLoads()
+        /// <summary>本方明确持有官方 Handle 的 idle 图片数，不包含活跃业务 Lease。</summary>
+        public int CachedImageCount
         {
-            if (_isPumpingImageLoads)
+            get
             {
-                return;
-            }
-
-            _isPumpingImageLoads = true;
-            try
-            {
-                while (IsAvailable && _imageLoadQueue.First != null && _runningImageLoads < _configuration.Images.MaximumConcurrentLoads)
-                {
-                    var record = _imageLoadQueue.First.Value;
-                    _imageLoadQueue.RemoveFirst();
-                    record.ImageQueueNode = null;
-                    record.IsImageLoadRunning = true;
-                    _runningImageLoads++;
-                    try
-                    {
-                        StartSourceOperation(record);
-                    }
-                    catch (Exception error)
-                    {
-                        ReleaseImageLoadSlot(record);
-                        if (record.IsLoading)
-                        {
-                            CompleteRecord(record, default, error);
-                        }
-                        else
-                        {
-                            throw;
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                _isPumpingImageLoads = false;
+                CheckThread();
+                return _idleImages.Count;
             }
         }
 
-        /// <summary>单次归还本记录占用的图片生产并发槽。</summary>
-        private void ReleaseImageLoadSlot(AssetRecord record)
+        /// <summary>idle Handle 保活的无 mip RGBA 估算字节数，不代表 native memory。</summary>
+        public long CachedImageEstimatedBytes
         {
-            if (!record.IsImageLoadRunning)
+            get
             {
-                return;
+                CheckThread();
+                return _idleImageBytes;
             }
-
-            record.IsImageLoadRunning = false;
-            _runningImageLoads--;
         }
 
-        /// <summary>按完整 HTTP(S) URL 或绝对本地路径取得图片。每人独立请求/租约，同一原始定位共享生产。</summary>
-        /// <remarks>刷新远端内容请使用显式版本 URL；不会偷偷改写大小写或增加 query。闲置缓存不拥有活跃消费者。</remarks>
-        /// <param name="location">完整 HTTP(S) URL 或绝对本地图片路径。</param>
-        /// <returns>成功后可单次领取纹理租约的请求，不直接交付裸纹理所有权。</returns>
-        public ResourceRequest<AssetLease<Texture2D>> AcquireImageAsync(string location) => AcquireImageRequest(location, false);
-
-        /// <summary>仅本地冷取得或已 Ready 的远端图片可同步取得；在途请求返回 InProgress。</summary>
-        /// <param name="location">完整 HTTP(S) URL 或绝对本地图片路径。</param>
-        /// <returns>调用方负责归还的纹理租约。</returns>
-        /// <exception cref="ResourceException">定位、来源、会话或同步取得条件不满足。</exception>
-        public AssetLease<Texture2D> AcquireImage(string location)
-        {
-            using var request = AcquireImageRequest(location, true);
-            if (request.Status != ResourceRequestStatus.Succeeded)
-            {
-                throw request.Error;
-            }
-
-            return request.TakeResult();
-        }
-
-        /// <summary>按未经改写的定位及来源建立图片身份，再复用统一资产取得链。</summary>
-        private ResourceRequest<AssetLease<Texture2D>> AcquireImageRequest(string location, bool synchronous)
+        /// <summary>只注册本方唯一 Provider；重复调用不新增，不替换其他消费者的 Provider。</summary>
+        private void InitializeImageProvider()
         {
             CheckThread();
-            var request = new ResourceRequest<AssetLease<Texture2D>>(lease => lease.Dispose());
-            if (!IsAvailable)
+            if (_imageContext != null)
             {
-                return Fail(request, ResourceError.SessionUnavailable, "ResourceSystem is not available.");
+                return;
             }
-
-            ResourceCatalogEntry entry;
-            try
+            var providers = Addressables.ResourceManager.ResourceProviders;
+            foreach (var provider in providers)
             {
-                if (string.IsNullOrWhiteSpace(location))
+                if (!string.Equals(provider.ProviderId, AddressablesImageProvider.Id, StringComparison.Ordinal))
                 {
-                    throw new ArgumentException("An exact URL or fully qualified image file is required.");
+                    continue;
                 }
-
-                var source = Path.IsPathFullyQualified(location) ? ResourceSourceId.LocalTexture : ResourceSourceId.UrlTexture;
-                var id = ResourceCatalogCodec.Digest(Encoding.UTF8.GetBytes(source + "\n" + location));
-                var address = new ResourceAddress(_imageCatalog.ProjectId, id);
-                entry = new ResourceCatalogEntry(id, address, new ResourceLocation(source, location, typeof(Texture2D)));
-                _sources[source].Validate(entry);
+                if (provider is not AddressablesImageProvider imageProvider)
+                {
+                    throw new ResourceException(ResourceError.ConfigurationConflict, "The dynamic image Provider ID is already owned by another Provider.");
+                }
+                _imageProvider = imageProvider;
+                break;
             }
-            catch (Exception error) when (error is ArgumentException || error is IOException || error is NotSupportedException)
+            if (_imageProvider == null)
             {
-                return Fail(request, ResourceError.InvalidAddress, "Invalid image location.", cause: error);
+                _imageProvider = new AddressablesImageProvider();
+                providers.Add(_imageProvider);
             }
-            TrimImageCache();
-            return AcquireEntry<Texture2D>(_imageCatalog, entry, entry.Address, synchronous, request, true);
+            _imageContext = new AddressablesImageProvider.Context(Configuration.Images, routine => Run(routine));
         }
 
-        /// <summary>只释放闲置图片。活跃 Lease、其他来源、外部 Texture 均不受影响。</summary>
-        public void ClearImageCache()
+        /// <summary>按精确 URL 或绝对本地 PNG/JPEG 路径取得统一 Lease；取消只结束本消费者等待。</summary>
+        /// <remarks>冷加载始终异步。等待 IO 槽时取消不启动加载；已交给 Addressables 的操作继续排空。</remarks>
+        public ResourceRequest<AssetLease<Texture2D>> AcquireImageAsync(string location, CancellationToken cancellation = default)
+        {
+            CheckThread();
+            try
+            {
+                RequireAvailable();
+                InitializeImageProvider();
+                var resourceLocation = AddressablesImageProvider.CreateLocation(location, _imageContext);
+                TrimImageCache();
+                _businessStarted = true;
+                var request = Track(new ResourceRequest<AssetLease<Texture2D>>(lease => lease.Dispose()), resourceLocation.PrimaryKey);
+                BindCancellation(request, cancellation);
+                if (!request.IsDone)
+                {
+                    Run(AcquireImageRoutine(resourceLocation, request), error => Fail(request, error));
+                }
+                return request;
+            }
+            catch (ResourceException error)
+            {
+                return Failure<AssetLease<Texture2D>>(error);
+            }
+            catch (NotSupportedException error)
+            {
+                return Failure<AssetLease<Texture2D>>(new ResourceException(ResourceError.Unsupported,
+                    "This platform does not support the requested dynamic image input.", error));
+            }
+            catch (ArgumentException error)
+            {
+                return Failure<AssetLease<Texture2D>>(new ResourceException(ResourceError.InvalidAddress,
+                    "Invalid dynamic image location.", error));
+            }
+        }
+
+        private IEnumerator AcquireImageRoutine(IResourceLocation location, ResourceRequest<AssetLease<Texture2D>> request)
+        {
+            var key = location.InternalId;
+            // 未调用 ProvideResource 就没有官方 operation；预期取消无需发送 IO 或制造 SDK 失败。
+            while (!request.IsDone)
+            {
+                if (_imageHolds.TryGetValue(key, out var hold) && hold.Handle.IsValid() || _imageProvider.CanStart(key, _imageContext))
+                {
+                    RequireAvailable();
+                    yield return AcquireLocationRoutine(location, key, request);
+                    yield break;
+                }
+                yield return null;
+            }
+        }
+
+        // 由统一 AssetLease 构造/Retain/Dispose 调用，不观察或反射官方全局引用计数。
+        internal void OnImageLeaseAdded(IResourceLocation location, AsyncOperationHandle handle)
+        {
+            if (!(location?.Data is AddressablesImageProvider.Input input) || !ReferenceEquals(input.Owner, _imageContext))
+            {
+                return;
+            }
+            if (!_imageHolds.TryGetValue(location.InternalId, out var hold))
+            {
+                hold = new ImageHold { Key = location.InternalId, Handle = handle };
+                _imageHolds.Add(hold.Key, hold);
+            }
+            hold.Leases++;
+            if (hold.IdleNode != null)
+            {
+                var cached = hold.Handle;
+                RemoveIdleImage(hold);
+                hold.Handle = handle;
+                Addressables.ResourceManager.Release(cached);
+            }
+        }
+
+        internal void OnImageLeaseReleased(IResourceLocation location)
+        {
+            if (!(location?.Data is AddressablesImageProvider.Input input) || !ReferenceEquals(input.Owner, _imageContext))
+            {
+                return;
+            }
+            var hold = _imageHolds[location.InternalId];
+            if (--hold.Leases != 0)
+            {
+                return;
+            }
+            var options = Configuration.Images;
+            var texture = hold.Handle.IsValid() ? hold.Handle.Result as Texture2D : null;
+            var bytes = texture ? (long)texture.width * texture.height * 4 : 0;
+            if (_imagesRetired || !IsAvailable || !texture || options.IdleCapacity == 0 ||
+                options.IdleCapacityBytes < bytes || options.IdleTimeToLive == TimeSpan.Zero)
+            {
+                _imageHolds.Remove(hold.Key);
+                return;
+            }
+            // 此钩子先于最后一份业务 Handle 的 Release，先明确 Acquire 才能延续官方 operation。
+            Addressables.ResourceManager.Acquire(hold.Handle);
+            hold.Bytes = bytes;
+            hold.IdleSince = Time.realtimeSinceStartupAsDouble;
+            hold.IdleNode = _idleImages.AddLast(hold);
+            _idleImageBytes += bytes;
+            _imageCacheTick ??= AddTick(TrimImageCache);
+            TrimImageCache();
+        }
+
+        /// <summary>只归还本方 idle Handle；不会撤销活跃 Lease 或销毁外部 Texture。</summary>
+        public void ClearIdleImageCache()
         {
             CheckThread();
             while (_idleImages.First != null)
             {
-                ReleaseRecord(_idleImages.First.Value);
+                ReleaseIdleImage(_idleImages.First.Value);
             }
-
-            CheckDrain();
+            RemoveImageCacheTickIfIdle();
         }
 
-        /// <summary>将合格的零租约图片纳入闲置缓存，并按容量和期限裁剪。</summary>
-        private bool TryCacheImage(AssetRecord record)
-        {
-            var options = _configuration.Images;
-            if (!record.IsImageCacheEligible || !IsAvailable || !record.Asset || options.IdleCapacityBytes == 0 || options.IdleCapacity == 0 || options.IdleTimeToLive == TimeSpan.Zero)
-            {
-                return false;
-            }
-
-            var texture = (Texture2D)record.Asset;
-            record.ImageBytes = (long)texture.width * texture.height * 4;
-            if (record.ImageBytes > options.IdleCapacityBytes)
-            {
-                return false;
-            }
-
-            record.IdleSince = Time.realtimeSinceStartupAsDouble;
-            record.ImageCacheNode = _idleImages.AddLast(record);
-            _idleImageBytes += record.ImageBytes;
-            InstallInstanceCleanup();
-            TrimImageCache();
-            return true;
-        }
-
-        /// <summary>移除闲置缓存节点并结算估算字节数，不自行释放资产。</summary>
-        private void RemoveIdleImage(AssetRecord record)
-        {
-            if (record.ImageCacheNode == null)
-            {
-                return;
-            }
-
-            _idleImages.Remove(record.ImageCacheNode);
-            record.ImageCacheNode = null;
-            _idleImageBytes -= record.ImageBytes;
-        }
-
-        /// <summary>按闲置先后淘汰已销毁、过期或超容量的缓存图片。</summary>
         private void TrimImageCache()
         {
+            var options = Configuration.Images;
             var now = Time.realtimeSinceStartupAsDouble;
             while (_idleImages.First != null)
             {
-                var record = _idleImages.First.Value;
-                if (record.Asset && _idleImages.Count <= _configuration.Images.IdleCapacity && _idleImageBytes <= _configuration.Images.IdleCapacityBytes &&
-                    now - record.IdleSince < _configuration.Images.IdleTimeToLive.TotalSeconds)
+                var hold = _idleImages.First.Value;
+                if (!_imagesRetired && hold.Handle.IsValid() && hold.Handle.Result is Texture2D texture && texture &&
+                    _idleImages.Count <= options.IdleCapacity && _idleImageBytes <= options.IdleCapacityBytes &&
+                    now - hold.IdleSince < options.IdleTimeToLive.TotalSeconds)
                 {
                     break;
                 }
-
-                ReleaseRecord(record);
+                ReleaseIdleImage(hold);
             }
+            RemoveImageCacheTickIfIdle();
         }
+
+        private void RemoveIdleImage(ImageHold hold)
+        {
+            _idleImages.Remove(hold.IdleNode);
+            hold.IdleNode = null;
+            _idleImageBytes -= hold.Bytes;
+        }
+
+        private void ReleaseIdleImage(ImageHold hold)
+        {
+            RemoveIdleImage(hold);
+            _imageHolds.Remove(hold.Key);
+            var handle = hold.Handle;
+            hold.Handle = default;
+            Addressables.ResourceManager.Release(handle);
+        }
+
+        private void RemoveImageCacheTickIfIdle()
+        {
+            if (_idleImages.Count != 0)
+            {
+                return;
+            }
+            var tick = _imageCacheTick;
+            _imageCacheTick = null;
+            tick?.Dispose();
+        }
+
+        private void RetireImages()
+        {
+            _imagesRetired = true;
+            ClearIdleImageCache();
+        }
+
+        private bool HasImageWork => _imageContext != null && _imageContext.WorkCount != 0;
     }
 }

@@ -62,8 +62,8 @@ namespace YLFramework.Resource
         {
             get;
         }
-        /// <summary>发生失败的资源来源标识；有意保留既有 API，不等同于基类异常的诊断来源字符串。</summary>
-        public new ResourceSourceId? Source
+        /// <summary>发生失败的资源来源标识；未提供时为 null。基类 Source 仍是异常诊断来源。</summary>
+        public ResourceSourceId? SourceId
         {
             get;
         }
@@ -72,13 +72,13 @@ namespace YLFramework.Resource
         /// <param name="message">面向诊断的错误说明。</param>
         /// <param name="cause">原始原因，可为 null。</param>
         /// <param name="address">相关资源地址，可为 null。</param>
-        /// <param name="source">相关来源标识，可为 null。</param>
+        /// <param name="sourceId">相关来源标识，可为 null。</param>
         public ResourceException(ResourceError kind, string message, Exception cause = null,
-            ResourceAddress? address = null, ResourceSourceId? source = null) : base(message, cause)
+            ResourceAddress? address = null, ResourceSourceId? sourceId = null) : base(message, cause)
         {
             Kind = kind;
             Address = address;
-            Source = source;
+            SourceId = sourceId;
         }
     }
 }

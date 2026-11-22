@@ -83,7 +83,11 @@ namespace YLFramework.Testing
                         bool tmpCode = Text(package, "id") == "com.kano.ylframework.localization" &&
                             name == "YLFramework.Localization.TMP" && Text(version, "name") == "com.unity.textmeshpro" &&
                             Text(version, "expression") == "1.0.0" && Text(version, "define") == "YL_LOCALIZATION_TMP";
-                        if (tmpCode)
+                        bool legacyPlayerData = Text(package, "id") == "com.kano.ylframework" && name == "YLFramework.Editor" &&
+                            path == "Editor/YLFramework.Editor.asmdef" && !(bool)assembly["player"] && defines.Count == 0 &&
+                            Text(version, "name") == "com.unity.addressables" && Text(version, "expression") == "[1.25.0]" &&
+                            Text(version, "define") == "YL_ADDRESSABLES_LEGACY_PLAYER_DATA";
+                        if (tmpCode || legacyPlayerData)
                         {
                             if (defines.Contains(Text(version, "define")) || !versionDefines.Add(Text(version, "define")))
                                 throw Error("A native code condition cannot be a catalog assembly gate.");

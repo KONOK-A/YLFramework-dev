@@ -76,9 +76,9 @@ namespace YLFramework.Integrations.HybridCLR
         /// <summary>每个 Resource 项目内固定的代码清单路径。</summary>
         public const string ManifestPath = "hybridclr/manifest.json";
 
-        /// <summary>描述格式版本，当前只接受版本 1。</summary>
+        /// <summary>Addressables 代码合同，仅接受新版；旧清单与基座须重新构建。</summary>
         [UnityEngine.Scripting.Preserve, JsonProperty(Order = 0)]
-        public int SchemaVersion { get; set; } = 1;
+        public int SchemaVersion { get; set; } = 2;
         /// <summary>拥有清单及全部代码资源的 Resource 项目身份。</summary>
         [UnityEngine.Scripting.Preserve, JsonProperty(Order = 1)]
         public string ProjectId
@@ -231,6 +231,13 @@ namespace YLFramework.Integrations.HybridCLR
         /// <returns>以 hybridclr 开头、以 .dll.bytes 结尾的相对路径。</returns>
         public static string PayloadAddress(string name, bool aot) => "hybridclr/" + (aot ? "metadata/" : "assemblies/") + name + ".dll.bytes";
 
+        /// <summary>将业务命名空间与规范代码路径投影为官方唯一 address，不使用旧冒号分隔格式。</summary>
+        public static string ResourceKey(string projectId, string path)
+        {
+            _ = new ResourceAddress(projectId, path);
+            return projectId + "/" + path;
+        }
+
         // 摘要排除自身 ID，避免代码包身份递归依赖自身。
         private string ComputePackageId()
         {
@@ -251,7 +258,7 @@ namespace YLFramework.Integrations.HybridCLR
         // 校验版本、资源边界、完整身份、预算和依赖图，并按需要求规范顺序。
         private void ValidateStructure(bool ordered)
         {
-            if (SchemaVersion != 1 || HybridCLRVersion != "9.0.3" || Platform != "StandaloneWindows64" ||
+            if (SchemaVersion != 2 || HybridCLRVersion != "9.0.3" || Platform != "StandaloneWindows64" ||
                 string.IsNullOrWhiteSpace(UnityVersion) || UnityVersion.Length > 64)
             {
                 throw new InvalidDataException("Unsupported HybridCLR schema, package version, platform or Unity version: schema=" +

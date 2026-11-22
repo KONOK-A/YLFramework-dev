@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_yl-multidirectory-legacy-20261018__main
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_yl-multidirectory-legacy-20261018__main
+  m_GUID: 53d1f2b241cf9cf469f937f18087f237
+  m_SerializeEntries:
+  - m_GUID: 6b880057d99b5b848ae70e14f4c98431
+    m_Address: yl-multidirectory-legacy-20261018/message.txt
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-multidirectory-legacy-20261018/main
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: 26079f66971e88943b34508a50f1d47d, type: 2}
+    - {fileID: 11400000, guid: c2232b4a5bdbf664b9642ed83a57c1fe, type: 2}

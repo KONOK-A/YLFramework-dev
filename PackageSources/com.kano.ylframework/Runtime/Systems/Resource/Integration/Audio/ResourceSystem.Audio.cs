@@ -17,11 +17,6 @@ namespace YLFramework.Resource
             }
 
             ResourceAddress.ValidateId(projectId, nameof(projectId));
-            if (!_catalogs.ContainsKey(projectId))
-            {
-                throw new ResourceException(ResourceError.AddressNotFound, "Unknown resource project: " + projectId);
-            }
-
             if (!_audioProviders.TryGetValue(projectId, out var provider))
             {
                 _audioProviders.Add(projectId, provider = new Audio.ResourceAudioClipProvider(this, projectId));

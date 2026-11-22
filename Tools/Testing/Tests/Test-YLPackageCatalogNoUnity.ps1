@@ -120,17 +120,17 @@ try {
         Check ($gameplay.Count -eq 1) 'The complete Gameplay installation unit is missing from the maintained catalog.'
         $root = Join-Path $repository 'PackageSources/com.kano.ylframework.gameplay'
         $manifest = Read-YLPackageEvidenceJson (Join-Path $root 'package.json')
-        Check ($manifest.dependencies.Count -eq 2 -and $manifest.dependencies['com.kano.ylframework'] -ceq '0.1.0-preview.1' -and
-            $manifest.dependencies['com.unity.nuget.newtonsoft-json'] -ceq '3.2.1') 'Gameplay must declare only its actual main and Newtonsoft dependencies.'
+        Check ($manifest.dependencies.Count -eq 3 -and $manifest.dependencies['com.kano.ylframework'] -ceq '0.1.0-preview.1' -and
+            $manifest.dependencies['com.unity.addressables'] -ceq '1.25.0' -and $manifest.dependencies['com.unity.nuget.newtonsoft-json'] -ceq '3.2.1') 'Gameplay must declare its main, Addressables and Newtonsoft dependencies only.'
         foreach ($domain in @('Skill', 'Buff', 'Mission', 'Equipment')) {
             $runtime = Read-YLPackageEvidenceJson (Join-Path $root "Runtime/$domain/YLFramework.$domain.asmdef")
-            Check ($runtime.name -ceq "YLFramework.$domain" -and ($runtime.references -join ',') -ceq 'YLFramework.Runtime' -and $runtime.overrideReferences) "$domain must not reference another gameplay runtime or rely on implicit vendor assemblies."
+            Check ($runtime.name -ceq "YLFramework.$domain" -and ($runtime.references -join ',') -ceq 'YLFramework.Runtime,Unity.Addressables' -and $runtime.overrideReferences) "$domain must use only the main runtime and Addressables, not another gameplay runtime or an implicit vendor assembly."
             $expected = if ($domain -cin @('Buff', 'Mission')) { 'Newtonsoft.Json.dll' } else { '' }
             Check (($runtime.precompiledReferences -join ',') -ceq $expected) "$domain must declare only its actual JSON binary consumption."
         }
         $editor = Read-YLPackageEvidenceJson (Join-Path $root 'Editor/YLFramework.Gameplay.Editor.asmdef')
         Check ($editor.name -ceq 'YLFramework.Gameplay.Editor' -and ($editor.includePlatforms -join ',') -ceq 'Editor' -and
-            ($editor.references -join ',') -ceq 'YLFramework.Runtime,YLFramework.Editor,YLFramework.Skill,YLFramework.Buff,YLFramework.Mission,YLFramework.Equipment' -and
+            ($editor.references -join ',') -ceq 'YLFramework.Runtime,YLFramework.Editor,YLFramework.Skill,YLFramework.Buff,YLFramework.Mission,YLFramework.Equipment,Unity.Addressables.Editor' -and
             ($editor.precompiledReferences -join ',') -ceq 'Newtonsoft.Json.dll') 'Gameplay authoring must own all four domains, shared helpers and its actual clipboard JSON binary consumption.'
         $adapter = Read-YLPackageEvidenceJson (Join-Path $repository 'PackageSources/com.kano.ylframework.excel/Editor/Gameplay/YLFramework.Domain.Excel.Editor.asmdef')
         Check (@($adapter.references) -ccontains 'YLFramework.Gameplay.Editor') 'The optional ExcelGameplay authoring consumer must declare its real Gameplay Editor dependency.'
@@ -332,6 +332,38 @@ try {
     if (-not [IO.File]::Exists($contractSource)) { throw 'RED: the compiled package catalog/source-set contract is missing.' }
     $references = @([IO.Directory]::EnumerateFiles((Join-Path $PSHOME 'ref'), '*.dll')) + @([Newtonsoft.Json.Linq.JObject].Assembly.Location)
     Add-Type -Path $contractSource -ReferencedAssemblies $references -CompilerOptions @('/langversion:9.0', '/nowarn:1701')
+    Case 'Legacy player-data checks apply to Addressables 1.25.0 without gating the main Editor assembly' {
+        $definition = @($catalog.packages | Where-Object id -CEQ 'com.kano.ylframework')[0].assemblies | Where-Object name -CEQ 'YLFramework.Editor'
+        Check (-not $definition.player -and $definition.defineConstraints.Count -eq 0 -and $definition.versionDefines.Count -eq 1 -and
+            $definition.versionDefines[0].name -ceq 'com.unity.addressables' -and $definition.versionDefines[0].expression -ceq '[1.25.0]' -and
+            $definition.versionDefines[0].define -ceq 'YL_ADDRESSABLES_LEGACY_PLAYER_DATA') 'The Registry catalog must exactly mirror the main Editor code condition.'
+        $inputs = [Newtonsoft.Json.Linq.JArray]::Parse('[{"name":"com.kano.ylframework","version":"0.1.0-preview.1"}]')
+        $json = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $catalog -Depth 40))
+        $plan = [YLFramework.Testing.PackageCatalogContract]::Definitions($json, $inputs, 'Package', '')
+        $editor = @($plan | Where-Object { [string]$_['name'] -ceq 'YLFramework.Editor' })
+        Check ($editor.Count -eq 1 -and [bool]$editor[0]['enabled'].Value -and -not [bool]$editor[0]['player'].Value) 'The Editor must remain present without the legacy code path.'
+    }
+    foreach ($fault in @('other-package', 'other-assembly', 'other-version', 'other-symbol', 'assembly-gate', 'player')) {
+        Case "Both catalog readers refuse legacy Addressables code condition: $fault" {
+            $bad = Clone $catalog
+            $main = @($bad.packages | Where-Object id -CEQ 'com.kano.ylframework')[0]
+            $editor = @($main.assemblies | Where-Object name -CEQ 'YLFramework.Editor')[0]
+            $editor.versionDefines = @(@{name='com.unity.addressables'; expression='[1.25.0]'; define='YL_ADDRESSABLES_LEGACY_PLAYER_DATA'})
+            switch ($fault) {
+                'other-package' { $editor.versionDefines[0].name = 'com.unknown.sdk' }
+                'other-assembly' { $main.assemblies[0].versionDefines = $editor.versionDefines; $editor.versionDefines = @() }
+                'other-version' { $editor.versionDefines[0].expression = '[1.25.0,3.0.0)' }
+                'other-symbol' { $editor.versionDefines[0].define = 'OTHER_MACRO' }
+                'assembly-gate' { $editor.defineConstraints = @('YL_ADDRESSABLES_LEGACY_PLAYER_DATA') }
+                'player' { $editor.player = $true }
+            }
+            $path = Join-Path $root 'InvalidAddressablesCatalog.json'
+            $text = ConvertTo-Json -InputObject $bad -Depth 40
+            [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
+            Reject { Read-YLPackageCatalog -Path $path } 'catalog|condition|define'
+            Reject { [YLFramework.Testing.PackageCatalogContract]::Validate([Newtonsoft.Json.Linq.JObject]::Parse($text)) } 'catalog|condition|define'
+        }
+    }
     Case 'Compiled catalog retains TMP as a code condition, not a fabricated package gate' {
         $inputs = [Newtonsoft.Json.Linq.JArray]::Parse('[{"name":"com.kano.ylframework","version":"0.1.0-preview.1"},{"name":"com.kano.ylframework.localization","version":"0.1.0-preview.1"}]')
         $json = [Newtonsoft.Json.Linq.JObject]::Parse((ConvertTo-Json -InputObject $tmpCatalog -Depth 40))

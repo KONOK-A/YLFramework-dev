@@ -1,11 +1,10 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.AddressableAssets.Settings;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using YLFramework.Editor.Resource;
 using YLFramework.Integrations.HybridCLR.Editor;
 
 namespace YLFramework.Samples.HybridCLR.Editor
@@ -18,11 +17,17 @@ namespace YLFramework.Samples.HybridCLR.Editor
         /// <param name="persistentBaselineDirectory">写入 Profile 的持久基线目录，后续构建另行检查边界和归属。</param>
         /// <returns>已保存并关联代码、配置和真实热更 Prefab 的样例 Profile。</returns>
         /// <remarks>调用前须已加载 Entry 样例程序集；官方热更登记及原生环境仍由接收工程显式准备。</remarks>
-        public static HybridCLRBuildProfile Create(string assetDirectory, string persistentBaselineDirectory)
+        public static HybridCLRBuildProfile Create(string assetDirectory, string persistentBaselineDirectory,
+            AddressableAssetSettings settings, AddressableAssetGroup codeGroup, AddressableAssetGroup sampleGroup)
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling || EditorApplication.isUpdating)
             {
                 throw new InvalidOperationException("Create sample assets in a settled Editor.");
+            }
+            if (!settings || !codeGroup || !sampleGroup || codeGroup.Settings != settings || sampleGroup.Settings != settings ||
+                codeGroup.ReadOnly || sampleGroup.ReadOnly)
+            {
+                throw new ArgumentException("Explicitly select existing writable official code/sample groups belonging to the same Settings.");
             }
 
             if (string.IsNullOrEmpty(assetDirectory) || !assetDirectory.StartsWith("Assets/", StringComparison.Ordinal) ||
@@ -68,43 +73,22 @@ namespace YLFramework.Samples.HybridCLR.Editor
 
                 EditorSceneManager.ClosePreviewScene(preview);
             }
-            var project = UnityEngine.ScriptableObject.CreateInstance<ResourceProject>();
-            project.projectId = "hybridclr-example-" + Guid.NewGuid().ToString("N").Substring(0, 12);
-            project.sourceDirectories.Add(new ResourceSourceDirectory { guid = AssetDatabase.AssetPathToGUID(assetDirectory + "/Generated") });
-            project.sourceDirectories.Add(new ResourceSourceDirectory { guid = AssetDatabase.AssetPathToGUID(assetDirectory + "/Data") });
-            project.groups.Add(new ResourceGroup
-            {
-                id = "code",
-                selections = new List<ResourceSelection>
-                { new ResourceSelection { guid = AssetDatabase.AssetPathToGUID(assetDirectory + "/Generated/hybridclr"), extensions = new[] { ".bytes", ".json" } } }
-            });
-            project.groups.Add(new ResourceGroup
-            {
-                id = "configuration",
-                selections = new List<ResourceSelection>
-                { new ResourceSelection { guid = AssetDatabase.AssetPathToGUID(textPath), address = "sample/message.json" } }
-            });
-            project.groups.Add(new ResourceGroup
-            {
-                id = "prefab",
-                selections = new List<ResourceSelection>
-                { new ResourceSelection { guid = AssetDatabase.AssetPathToGUID(prefabPath), address = "sample/hot-view" } }
-            });
-            AssetDatabase.CreateAsset(project, assetDirectory + "/Project.asset");
-            var recipe = UnityEngine.ScriptableObject.CreateInstance<ResourceBuildRecipe>();
-            recipe.project = project;
-            recipe.target = BuildTarget.StandaloneWindows64;
-            recipe.action = ResourceBuildAction.BuildAndPublish;
-            recipe.appContentCompatibilityId = "hybridclr-base-v1";
-            AssetDatabase.CreateAsset(recipe, assetDirectory + "/Recipe.asset");
             var profile = UnityEngine.ScriptableObject.CreateInstance<HybridCLRBuildProfile>();
-            profile.recipe = recipe;
+            profile.schemaVersion = 2;
+            profile.addressableSettings = settings;
+            profile.codeGroup = codeGroup;
+            profile.projectId = "hybridclr-example-" + Guid.NewGuid().ToString("N").Substring(0, 12);
+            profile.target = BuildTarget.StandaloneWindows64;
+            profile.appContentCompatibilityId = "hybridclr-aa-base-v2";
             profile.development = EditorUserBuildSettings.development;
             profile.generatedAssetDirectory = assetDirectory + "/Generated";
             profile.baselineDirectory = persistentBaselineDirectory;
             AssetDatabase.CreateAsset(profile, assetDirectory + "/Profile.asset");
-            AssetDatabase.SaveAssetIfDirty(project);
-            AssetDatabase.SaveAssetIfDirty(recipe);
+            Undo.RecordObjects(new UnityEngine.Object[] { settings, sampleGroup }, "Register HybridCLR Sample Entries");
+            settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(textPath), sampleGroup).SetAddress(profile.projectId + "/sample/message.json");
+            settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(prefabPath), sampleGroup).SetAddress(profile.projectId + "/sample/hot-view");
+            AssetDatabase.SaveAssetIfDirty(sampleGroup);
+            AssetDatabase.SaveAssetIfDirty(settings);
             AssetDatabase.SaveAssetIfDirty(profile);
             return profile;
         }

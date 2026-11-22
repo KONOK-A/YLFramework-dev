@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using HybridCLR.Installer;
 using HybridCLR.Settings;
@@ -10,6 +12,9 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.SceneManagement;
+using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
+using UnityEditor.AddressableAssets;
 using UnityEngine;
 using YLFramework.Integrations.HybridCLR.Editor;
 using YLFramework.Samples.HybridCLR.Editor;
@@ -66,12 +71,13 @@ namespace YLFramework.Testing
                     localRuntime = global::HybridCLR.SettingsUtil.LocalUnityDataDir
                 };
             }
-            if ((string)request["phase"] != "HybridBuild")
+            bool patch = (string)request["phase"] == "HybridPatch";
+            if ((string)request["phase"] != "HybridBuild" && !patch)
             {
                 throw new ArgumentException("Unknown explicit HybridCLR phase.");
             }
 
-            if (Directory.Exists("Assets/S") || File.Exists("Assets/YLTestingDistribution/DistributionScene.unity"))
+            if (!patch && (Directory.Exists("Assets/S") || File.Exists("Assets/YLTestingDistribution/DistributionScene.unity")))
             {
                 throw new InvalidOperationException("Only fresh owned sample assets and a new build scene are allowed.");
             }
@@ -79,28 +85,40 @@ namespace YLFramework.Testing
             {
                 AssetDatabase.CreateFolder("Assets", "StreamingAssets");
             }
-            var profile = HybridCLRExampleAssets.Create("Assets/S", (string)request["baseline"]);
-            // 发布快照保留完整项目身份；短身份绑定本轮，使 Player 内旁车路径保持在 Mono 预算内。
-            profile.recipe.project.projectId = "hs-" + ((string)request["resultId"]).Substring(0, 8);
-            EditorUtility.SetDirty(profile.recipe.project);
-            AssetDatabase.SaveAssetIfDirty(profile.recipe.project);
+            HybridCLRBuildProfile profile;
+            if (patch) profile = AssetDatabase.LoadAssetAtPath<HybridCLRBuildProfile>("Assets/S/Profile.asset");
+            else
+            {
+                if (Directory.Exists("Assets/A")) throw new InvalidOperationException("Unknown official AA settings output exists.");
+                AssetDatabase.CreateFolder("Assets", "A");
+                var settings = AddressableAssetSettings.Create("Assets/A", "Settings", true, true);
+                var code = settings.CreateGroup("NativeCode", false, false, false, null, typeof(BundledAssetGroupSchema), typeof(ContentUpdateGroupSchema));
+                var sample = settings.CreateGroup("NativeSample", false, false, false, null, typeof(BundledAssetGroupSchema), typeof(ContentUpdateGroupSchema));
+                profile = HybridCLRExampleAssets.Create("Assets/S", (string)request["baseline"], settings, code, sample);
+            }
+            if (!profile || profile.schemaVersion != 2 || !profile.addressableSettings || !profile.codeGroup)
+                throw new InvalidOperationException("The saved schema2 official Addressables profile is required.");
+            if (!patch) ConfigureOfficialContent(profile, request);
             profile.hotUpdateAssemblies = new[] { _hotAssemblies[0] };
             EditorUtility.SetDirty(profile);
             AssetDatabase.SaveAssetIfDirty(profile);
-            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            var type = Type.GetType("YLFramework.Testing.HybridCLRSmoke, YLTesting.PlayerSmoke", true);
-            var probe = new GameObject("YL.HybridCLRSmoke").AddComponent(type);
-            type.GetField("resultId").SetValue(probe, (string)request["resultId"]);
-            type.GetField("hostId").SetValue(probe, (string)request["hostId"]);
             const string scenePath = "Assets/YLTestingDistribution/DistributionScene.unity";
-            if (!EditorSceneManager.SaveScene(scene, scenePath))
+            if (!patch)
             {
-                throw new IOException("The owned HybridCLR build scene was not saved.");
+                var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                var type = Type.GetType("YLFramework.Testing.HybridCLRSmoke, YLTesting.PlayerSmoke", true);
+                var probe = new GameObject("YL.HybridCLRSmoke").AddComponent(type);
+                type.GetField("resultId").SetValue(probe, (string)request["resultId"]);
+                type.GetField("hostId").SetValue(probe, (string)request["hostId"]);
+                if (!EditorSceneManager.SaveScene(scene, scenePath))
+                {
+                    throw new IOException("The owned HybridCLR build scene was not saved.");
+                }
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, true) };
             }
-            EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, true) };
             // Single 场景切换会卸载未被原生对象引用的资产，正式预检读取保存后的新句柄。
             profile = AssetDatabase.LoadAssetAtPath<HybridCLRBuildProfile>("Assets/S/Profile.asset");
-            if (!profile || !profile.recipe || !profile.recipe.project)
+            if (!profile || profile.schemaVersion != 2 || !profile.addressableSettings || !profile.codeGroup)
             {
                 throw new InvalidOperationException("The owned saved sample inputs did not reload.");
             }
@@ -114,7 +132,7 @@ namespace YLFramework.Testing
             {
                 throw new InvalidOperationException("The short Player output must have its own leased cache owner.");
             }
-            var report = HybridCLRBuildPipeline.BuildBasePlayer(profile, new BuildPlayerOptions
+            var report = patch ? HybridCLRBuildPipeline.PublishPatch(profile) : HybridCLRBuildPipeline.BuildBasePlayer(profile, new BuildPlayerOptions
             {
                 scenes = new[] { scenePath },
                 target = BuildTarget.StandaloneWindows64,
@@ -134,7 +152,7 @@ namespace YLFramework.Testing
                     diagnostics = stage.Diagnostics
                 }).ToArray()
             });
-            if (!report.HasSucceeded || report.PlayerBuild == null || report.PlayerBuild.summary.totalErrors != 0 ||
+            if (!report.HasSucceeded || (!patch && (report.PlayerBuild == null || report.PlayerBuild.summary.totalErrors != 0)) ||
                 report.BaselineDirectory == null || report.Manifest == null || report.Manifest.AotMetadata.Length == 0)
             {
                 throw new InvalidOperationException("The real HybridCLR base pipeline did not close: " + report.Summary);
@@ -148,7 +166,7 @@ namespace YLFramework.Testing
             var runtime = Assembly.ReflectionOnlyLoadFrom(Path.Combine(managed, "YLFramework.Runtime.dll"));
             var references = runtime.GetReferencedAssemblies().Select(reference => reference.Name).ToArray();
             var rejectedReferences = references.Where(name => !Regex.IsMatch(name,
-                @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json|BouncyCastle\.Cryptography)$") ||
+                @"^(?:mscorlib|netstandard|System(?:\.[A-Za-z0-9_]+)*|UnityEngine(?:\.[A-Za-z0-9_]+)*|Unity\.ugui|Unity\.Addressables|Unity\.ResourceManager|Unity\.Profiling\.Core|Microsoft\.CSharp|Microsoft\.Win32\.Primitives|Newtonsoft\.Json)$") ||
                 Regex.IsMatch(name, "TestRunner|Tests|Editor|Analyzer", RegexOptions.IgnoreCase)).ToArray();
             if (rejectedReferences.Length != 0)
             {
@@ -161,13 +179,22 @@ namespace YLFramework.Testing
                 unityVersion = Application.unityVersion,
                 projectId = report.Manifest.ProjectId,
                 compatibilityId = report.Manifest.AppContentCompatibilityId,
-                catalogDigest = report.Release.Catalog.CatalogDigest,
+                inputHash = (string)request[patch ? "patchInputHash" : "inputHash"],
+                contentHash = ContentHash((string)request["runtimeCache"]),
+                addressablesVersion = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Single(package => package.name == "com.unity.addressables").version,
+                sampleVersion = patch ? "v2" : "v1",
+                manifestSchemaVersion = report.Manifest.SchemaVersion,
+                manifestAddress = profile.projectId + "/" + YLFramework.Integrations.HybridCLR.HybridCLRManifest.ManifestPath,
+                manifestSha256 = Hash(File.ReadAllBytes(profile.generatedAssetDirectory.TrimEnd('/') + "/" + YLFramework.Integrations.HybridCLR.HybridCLRManifest.ManifestPath)),
                 codePackageId = report.Manifest.CodePackageId,
                 nativeVariant = (string)request["nativeVariant"],
                 cacheRoot = (string)request["runtimeCache"],
                 cacheOwnerId = (string)request["cacheOwnerId"],
                 metadataAssemblies = report.Manifest.AotMetadata.Select(payload => payload.Name).ToArray(),
                 assemblies = report.Manifest.HotUpdateAssemblies.Select(payload => payload.Name).ToArray()
+                ,
+                payloads = report.Manifest.AotMetadata.Select(payload => Payload("AotMetadata", payload)).Concat(
+                    report.Manifest.HotUpdateAssemblies.Select(payload => Payload("HotUpdate", payload))).ToArray()
             };
             var receipt = Path.Combine(output, "hybrid-runtime.json");
             WriteNew(receipt, evidence);
@@ -178,13 +205,74 @@ namespace YLFramework.Testing
                 smoke = true,
                 buildOptions = "None",
                 hybridClr = evidence,
-                executable = report.PlayerBuild.summary.outputPath,
+                executable = Path.Combine(playerRoot, "YLDistribution.exe"),
                 receipt,
                 baseline = report.BaselineDirectory,
-                errors = report.PlayerBuild.summary.totalErrors,
-                warnings = report.PlayerBuild.summary.totalWarnings,
-                runtimeReferences = references
+                errors = report.PlayerBuild?.summary.totalErrors ?? 0,
+                warnings = report.PlayerBuild?.summary.totalWarnings ?? 0,
+                runtimeReferences = references,
+                contentHash = evidence.contentHash,
+                addressablesVersion = evidence.addressablesVersion,
+                publication = patch ? "PublishPatch" : "BuildBasePlayer"
             };
+        }
+
+        private static object Payload(string role, YLFramework.Integrations.HybridCLR.HybridCLRPayload payload) => new
+        {
+            role,
+            name = payload.Name,
+            address = payload.Address,
+            sha256 = payload.Sha256,
+            length = payload.Length,
+            mvid = payload.Mvid,
+            fullName = payload.Identity
+        };
+
+        private static void ConfigureOfficialContent(HybridCLRBuildProfile profile, JObject request)
+        {
+            var root = Path.GetFullPath((string)request["runtimeCache"]);
+            if (Directory.Exists(root)) throw new InvalidOperationException("Do not replace an existing official AA publication root.");
+            Directory.CreateDirectory(root);
+            var settings = profile.addressableSettings;
+            if (!AssetDatabase.IsValidFolder("Assets/AddressableAssetsData")) AssetDatabase.CreateFolder("Assets", "AddressableAssetsData");
+            AddressableAssetSettingsDefaultObject.Settings = settings;
+            settings.BuildRemoteCatalog = true;
+            settings.DisableCatalogUpdateOnStartup = true;
+            settings.OverridePlayerVersion = "native-" + ((string)request["resultId"]).Substring(0, 8);
+            settings.BuildAddressablesWithPlayerBuild = AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer;
+            settings.profileSettings.CreateValue("Smoke.Build", root.Replace('\\', '/'));
+            settings.profileSettings.CreateValue("Smoke.Load", new Uri(root.TrimEnd('\\', '/') + Path.DirectorySeparatorChar).AbsoluteUri.TrimEnd('/'));
+            settings.RemoteCatalogBuildPath.SetVariableByName(settings, "Smoke.Build");
+            settings.RemoteCatalogLoadPath.SetVariableByName(settings, "Smoke.Load");
+            foreach (var group in settings.groups.Where(group => group && !group.ReadOnly))
+            {
+                var bundle = group.GetSchema<BundledAssetGroupSchema>();
+                if (!bundle) continue;
+                bundle.UseDefaultSchemaSettings = false;
+                bundle.BuildPath.SetVariableByName(settings, "Smoke.Build");
+                bundle.LoadPath.SetVariableByName(settings, "Smoke.Load");
+                var update = group.GetSchema<ContentUpdateGroupSchema>();
+                if (update) update.StaticContent = false;
+                EditorUtility.SetDirty(bundle);
+                if (update) EditorUtility.SetDirty(update);
+            }
+            EditorUtility.SetDirty(settings);
+            AssetDatabase.SaveAssets();
+        }
+
+        private static string ContentHash(string root)
+        {
+            var rows = Directory.GetFiles(root, "*", SearchOption.AllDirectories).Select(path => new
+            {
+                path = path.Substring(root.TrimEnd('\\', '/').Length + 1).Replace('\\', '/'),
+                hash = Hash(File.ReadAllBytes(path))
+            }).OrderBy(row => row.path, StringComparer.Ordinal);
+            return Hash(Encoding.UTF8.GetBytes(string.Concat(rows.Select(row => row.path + "\0" + row.hash + "\n"))));
+        }
+        private static string Hash(byte[] bytes)
+        {
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
         }
 
         private static void WriteNew(string path, object value)

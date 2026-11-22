@@ -14,13 +14,40 @@ function Get-YLNativeTestAssembly {
         foreach ($declaration in $package['assemblies']) { $null = $absent.Add($declaration['name']) }
     }
     if ('com.kano.ylframework.localization' -cnotin $PackageIds) {
-        foreach ($name in @('Unity.Localization', 'Unity.Localization.Editor', 'Unity.Addressables', 'Unity.Addressables.Editor', 'Unity.ResourceManager')) {
+        foreach ($name in @('Unity.Localization', 'Unity.Localization.Editor')) {
             $null = $absent.Add($name)
         }
+    }
+    if ('com.kano.ylframework' -cnotin $PackageIds -and 'com.kano.ylframework.localization' -cnotin $PackageIds) {
+        foreach ($name in @('Unity.Addressables', 'Unity.Addressables.Editor', 'Unity.ResourceManager')) { $null = $absent.Add($name) }
     }
     $copy = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $Assembly -Depth 25) -AsHashtable -NoEnumerate
     $copy['references'] = @($Assembly['references'] | Where-Object { -not $absent.Contains($_) })
     return ,$copy
+}
+
+function Get-YLUnityAddressablesVersion([object] $EditorProfile) {
+    $null = Get-YLUnityPackageInputs $EditorProfile
+    $expected = if ($EditorProfile.version.StartsWith('2022.', [StringComparison]::Ordinal)) { '1.25.0' } else { '2.10.3' }
+    if ($null -eq $EditorProfile.PSObject.Properties['addressables'] -or $EditorProfile.addressables -cne $expected) {
+        throw 'The exact Editor profile must declare its verified Addressables version.'
+    }
+    return $expected
+}
+
+function Assert-YLUnityAddressablesVersion {
+    param([string] $ExpectedVersion, [Collections.IDictionary] $Lock, [object] $Response)
+    if (-not $Lock.Contains('dependencies') -or -not $Lock.dependencies.Contains('com.unity.addressables')) {
+        throw 'Addressables is absent from the actual host package resolution.'
+    }
+    $entry = $Lock.dependencies['com.unity.addressables']
+    if ($entry.version -cne $ExpectedVersion -or $entry.source -cne 'registry' -or
+        $null -eq $Response.PSObject.Properties['addressablesVersion'] -or
+        $null -eq $Response.PSObject.Properties['addressablesSource'] -or
+        $Response.addressablesVersion -cne $ExpectedVersion -or $Response.addressablesSource -cne 'Registry') {
+        throw 'Actual Addressables package version/source differs from the declared host profile.'
+    }
+    return [ordered]@{ requested = $ExpectedVersion; resolved = $entry.version; source = $entry.source; loaded = $Response.addressablesVersion }
 }
 
 function Get-YLUnityPackageInputs([object] $EditorProfile) {
@@ -43,6 +70,51 @@ function Get-YLHostManagedPath([object] $HostRecord, [string] $Relative) {
     $path = Get-YLTestPath (Join-Path $HostRecord.path $Relative)
     if (-not $path.StartsWith($HostRecord.path + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Host input is outside the owned host.' }
     return $path
+}
+
+function Get-YLPackedCatalogProfile([string] $Module, [object] $EditorProfile) {
+    if ($Module -cnotin @('ResourcePackedCatalog', 'ResourcePackedCatalogBinary')) { return }
+    $addressables = Get-YLUnityAddressablesVersion $EditorProfile
+    $legacyBinary = $Module -ceq 'ResourcePackedCatalogBinary'
+    if ($legacyBinary -and $addressables -cne '1.25.0') { throw 'ResourcePackedCatalogBinary requires a pinned Unity 2022 Editor and Registry Addressables 1.25.0.' }
+    $define = if ($legacyBinary) { 'ENABLE_BINARY_CATALOG' } else { '' }
+    $symbolIdentity = if ($legacyBinary) { $define } else { 'None' }
+    $encoding = if ($addressables -ceq '1.25.0' -and -not $legacyBinary) { 'json' } else { 'binary' }
+    return [pscustomobject]@{ define = $define; expectedEncoding = $encoding; keySuffix = "-$Module-Win64-Defines$symbolIdentity-$encoding" }
+}
+
+function Initialize-YLPackedBinarySettings([object] $HostRecord) {
+    $settings = Get-YLHostManagedPath $HostRecord 'ProjectSettings/ProjectSettings.asset'
+    if (-not [IO.File]::Exists($settings)) {
+        if ([IO.Path]::Exists((Get-YLHostManagedPath $HostRecord 'Library'))) { throw 'Refusing to reseed a compiled host without its original ENABLE_BINARY_CATALOG settings.' }
+        # Player settings apply to Editor and runtime assemblies. Unity 2022's csc.rsp does not cover Editor scripts.
+        $seed = [Text.Encoding]::UTF8.GetBytes("%YAML 1.1`n%TAG !u! tag:unity3d.com,2011:`n--- !u!129 &1`nPlayerSettings:`n  m_ObjectHideFlags: 0`n  serializedVersion: 26`n  scriptingDefineSymbols:`n    Standalone: ENABLE_BINARY_CATALOG`n")
+        $stream = [IO.File]::Open($settings, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        try { $stream.Write($seed, 0, $seed.Length) } finally { $stream.Dispose() }
+    }
+    $text = [IO.File]::ReadAllText($settings)
+    if ($text -cnotmatch '(?m)^  scriptingDefineSymbols:\r?\n    Standalone: ENABLE_BINARY_CATALOG\r?$') {
+        throw 'Owned binary host lost its exact Standalone ENABLE_BINARY_CATALOG settings; preserving the existing file.'
+    }
+    return $settings
+}
+
+function Read-YLPackedCatalogEncoding([string] $Log, [object] $Packed, [string] $AddressablesVersion) {
+    $legacyBinary = $Packed.define -ceq 'ENABLE_BINARY_CATALOG'
+    $extension = if ($Packed.expectedEncoding -ceq 'binary') { '.bin' } else { '.json' }
+    $catalogs = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($line in [IO.File]::ReadAllLines($Log)) {
+        if (-not $line.StartsWith('[PackedContract] Addressables ', [StringComparison]::Ordinal)) { continue }
+        if ($line -cnotmatch '^\[PackedContract\] Addressables (?<version>\d+\.\d+\.\d+), ENABLE_BINARY_CATALOG=(?<binary>True|False), ENABLE_JSON_CATALOG=False, runtime catalog=(?<catalog>.+)$' -or
+            $Matches.version -cne $AddressablesVersion -or $Matches.binary -cne $legacyBinary.ToString() -or
+            [IO.Path]::GetExtension($Matches.catalog) -cne $extension) {
+            throw 'Packed catalog encoding or compiled test symbols contradict the pinned profile.'
+        }
+        $null = $catalogs.Add($Matches.catalog)
+    }
+    if ($catalogs.Count -eq 0) { throw 'Missing Packed catalog encoding in the Unity test log.' }
+    return [ordered]@{ encoding = $Packed.expectedEncoding; catalogs = @($catalogs); log = $Log
+        logSha256 = (Get-FileHash -LiteralPath $Log -Algorithm SHA256).Hash.ToLowerInvariant() }
 }
 
 function Assert-YLUnityResponseIdentity {
@@ -179,6 +251,7 @@ function Invoke-YLUnitySuite {
         [string] $Unity, [string] $WorkspaceRoot, [string] $Action, [string] $Suite, [string] $Module,
         [int] $TimeoutSeconds, [string] $Selection, [string] $DOTweenArchive, [bool] $KeepArtifacts, [Collections.IDictionary] $Summary
     )
+    $packed = Get-YLPackedCatalogProfile -Module $Module -EditorProfile $EditorProfile
     $sources = Get-SelectedSources -Native -EditorProfile $EditorProfile
     $sessionScene = 'prepareSessionScene' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSessionScene
     $desktop = $Suite -ceq 'Special' -and 'interactiveDesktop' -cin $Definition.PSObject.Properties.Name -and $Definition.interactiveDesktop
@@ -195,10 +268,14 @@ function Invoke-YLUnitySuite {
         $nativeTools += $DOTweenArchive
     } elseif ($DOTweenArchive) { throw 'An ordinary native module cannot deploy a DOTween SDK.' }
     if ($hybridClr) {
-        if ($Module -cne 'HybridCLR' -or $Suite -cne 'Daily' -or $Definition.nativeLayout -cne 'Framework') { throw 'PrerequisiteNotMet: HybridCLR SDK requires the explicit Daily Framework module.' }
+        if ($Module -cnotin @('HybridCLR', 'ResourceAddressablesHybridCLR') -or $Suite -cne 'Daily' -or $Definition.nativeLayout -cne 'Framework' -or
+            ('com.kano.ylframework.hybridclr' -cnotin @($Definition.packageInputs))) { throw 'PrerequisiteNotMet: HybridCLR SDK requires its explicit Daily Framework integration module and package.' }
         $hybridSdk = Get-YLIntegrationHybridSdk -Repository $Repository
     }
     $profile = "Unity-$($EditorProfile.version)-UTF$($EditorProfile.testFramework)-UGUI$($EditorProfile.ugui)-$Suite-$($Definition.nativeLayout)-Graphics$($Definition.graphics)-IsolatedModes"
+    $addressablesVersion = if ($Definition.nativeLayout -ceq 'Framework') { Get-YLUnityAddressablesVersion $EditorProfile } else { $null }
+    if ($addressablesVersion) { $profile += '-AA' + $addressablesVersion }
+    if ($packed) { $profile += $packed.keySuffix }
     if ($sessionScene) { $profile += '-SessionScenes' }
     if ($desktop) { $profile += '-Desktop' }
     if ($dotween) { $profile += '-ApprovedDOTween-InitializeOnce' }
@@ -207,6 +284,8 @@ function Invoke-YLUnitySuite {
     $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $Repository
     $repositoryKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Repository.ToLowerInvariant()))).Substring(0, 12)
     $hostKey = "Unity-$($EditorProfile.version)-$Suite-$Module-$repositoryKey"
+    if ($addressablesVersion) { $hostKey += '-AA' + $addressablesVersion }
+    if ($packed) { $hostKey += $packed.keySuffix }
     if ($dotween) { $hostKey += '-SdkInitializeOnce' }
     if ($hybridClr) { $hostKey += '-HybridClrGitSdk' }
     $hasSamples = 'sampleInputs' -cin $Definition.PSObject.Properties.Name -and @($Definition.sampleInputs).Count -gt 0
@@ -300,6 +379,7 @@ function Invoke-YLUnitySuite {
             'com.unity.modules.jsonserialize' = '1.0.0'
         }
         if ($Definition.nativeLayout -ceq 'Framework') {
+            $dependencies['com.unity.addressables'] = $addressablesVersion
             $packageInputs = @(Get-YLUnityPackageInputs -EditorProfile $EditorProfile)
             $projectManifest = [IO.File]::ReadAllText((Join-Path $Repository $packageInputs[0])) | ConvertFrom-Json -DateKind String
             foreach ($dependency in $projectManifest.dependencies.PSObject.Properties | Where-Object { $_.Name.StartsWith('com.unity.modules.', [StringComparison]::Ordinal) }) {
@@ -327,6 +407,14 @@ function Invoke-YLUnitySuite {
             foreach ($relative in $sdk.files.Keys) { $files['Assets/Plugins/Demigiant/DOTween/' + $relative] = [IO.File]::ReadAllBytes((Join-Path $sdk.root $relative)) }
         }
         Sync-YLUnityHost -HostRecord $hostRecord -Files $files -Identity $identity -EditorVersion $EditorProfile.version
+        if ($packed) {
+            $Summary.host['fullKey'] = $fullHostKey
+            $Summary['packedCatalog'] = [ordered]@{
+                category = $Definition.category; buildTarget = 'Win64'; expectedEncoding = $packed.expectedEncoding
+                scriptingDefines = @(if ($packed.define) { $packed.define }); settings = $null; evidence = $null
+            }
+            if ($packed.define) { $Summary.packedCatalog.settings = Initialize-YLPackedBinarySettings -HostRecord $hostRecord }
+        }
         if ($dotween) {
             $settings = Get-YLHostManagedPath $hostRecord 'ProjectSettings/ProjectSettings.asset'
             $created = -not [IO.File]::Exists($settings)
@@ -353,6 +441,10 @@ function Invoke-YLUnitySuite {
                 disableDomainReload = ($Suite -ceq 'Special' -and 'disableDomainReload' -cin $Definition.PSObject.Properties.Name -and $Definition.disableDomainReload)
                 prepareSceneTemplates = ('prepareSceneTemplates' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSceneTemplates)
                 prepareSessionScene = ($sessionScene -and $Mode -cne 'PlayMode')
+                prepareAddressablesContent = ('prepareAddressablesContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareAddressablesContent)
+                prepareAddressablesConsumerContent = ('prepareAddressablesConsumerContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareAddressablesConsumerContent)
+                prepareCoreContent = ('prepareCoreContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareCoreContent)
+                prepareLocalizationContent = ('prepareLocalizationContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareLocalizationContent)
                 interactiveDesktop = $desktop
             }
             $requestPath = Join-Path $output 'request.json'
@@ -361,6 +453,10 @@ function Invoke-YLUnitySuite {
             try {
                 $arguments = @(if ($desktop) { '-ylTestInteractive' } else { '-batchmode' })
                 if (-not $Definition.graphics) { $arguments += '-nographics' }
+                if ($packed) {
+                    if ($packed.define) { $null = Initialize-YLPackedBinarySettings -HostRecord $hostRecord }
+                    $arguments += @('-buildTarget', 'Win64')
+                }
                 $arguments += @('-projectPath', $hostRecord.path, '-executeMethod', 'YLFramework.Testing.Editor.YLTestEntry.Execute',
                     '-ylTestRequest', $requestPath, '-logFile', $unityLog)
                 $fact = Invoke-TestingProcess -Exe $Unity -Arguments $arguments
@@ -368,6 +464,10 @@ function Invoke-YLUnitySuite {
                 Assert-YLUnityResponseIdentity -Response $response -Request $request -UnityVersion $EditorProfile.version
                 if ($hybridClr) { $null = Get-YLIntegrationHybridSdk -Repository $hostRecord.path }
                 $Summary.unity.actualVersion = $response.unityVersion
+                if ($addressablesVersion) {
+                    $actualLock = [IO.File]::ReadAllText((Join-Path $hostRecord.path 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable -DateKind String
+                    $Summary['addressables'] = Assert-YLUnityAddressablesVersion -ExpectedVersion $addressablesVersion -Lock $actualLock -Response $response
+                }
                 if ($response.isBatchMode -isnot [bool] -or $response.isBatchMode -eq $desktop) { throw 'The actual Editor desktop/batch mode differs from the explicit host profile.' }
                 $Summary.unity['isBatchMode'] = $response.isBatchMode
                 $Summary.unity['testFrameworkVersion'] = $response.testFrameworkVersion
@@ -377,7 +477,7 @@ function Invoke-YLUnitySuite {
                     $Summary['excludedTests'] = @($response.excludedTests)
                     $Summary['graphics'] = [bool]$Definition.graphics
                 }
-                return [pscustomobject]@{ response = $response; process = $fact; output = $output }
+                return [pscustomobject]@{ response = $response; process = $fact; output = $output; log = $unityLog }
             } finally {
                 if ($Operation -ceq 'Run') {
                     $Summary['xml'] = @($Summary.xml + @(@('EditMode', 'PlayMode') | ForEach-Object { Join-Path $output "results-$_.xml" } | Where-Object { [IO.File]::Exists($_) }) | Select-Object -Unique)
@@ -445,7 +545,9 @@ function Invoke-YLUnitySuite {
                         toolchain = @(Compare-Object -ReferenceObject @($effective.toolchain | ForEach-Object { [pscustomobject]$_ }) -DifferenceObject @($current.toolchain | ForEach-Object { [pscustomobject]$_ }) -Property path, sha256 -CaseSensitive | Select-Object path, sha256, SideIndicator)
                     }
                 }
-                Read-YLTestXml -Path (Join-Path $execution.output "results-$mode.xml") -Selection $actualSelection -InputIdentity $current -Mode $mode -ProcessResult $execution.process
+                $result = Read-YLTestXml -Path (Join-Path $execution.output "results-$mode.xml") -Selection $actualSelection -InputIdentity $current -Mode $mode -ProcessResult $execution.process
+                if ($packed) { $Summary.packedCatalog.evidence = Read-YLPackedCatalogEncoding -Log $execution.log -Packed $packed -AddressablesVersion $addressablesVersion }
+                $result
             })
             $total = ($modes | Measure-Object -Property total -Sum).Sum
             $Summary['testResult'] = [ordered]@{ status = 'Passed'; total = $total; passed = $total; failed = 0; skipped = 0; modes = @($modes) }

@@ -84,6 +84,7 @@
       "depth": 0,
       "source": "local",
       "dependencies": {
+        "com.unity.addressables": "1.25.0",
         "com.unity.ugui": "1.0.0",
         "com.unity.nuget.newtonsoft-json": "3.2.1",
         "com.unity.modules.animation": "1.0.0",
@@ -299,7 +300,7 @@
     },
     "com.unity.addressables": {
       "version": "2.10.3",
-      "depth": 2,
+      "depth": 0,
       "source": "registry",
       "dependencies": {
         "com.unity.profiling.core": "1.0.2",
@@ -446,7 +447,7 @@
     },
     "com.unity.profiling.core": {
       "version": "1.0.3",
-      "depth": 3,
+      "depth": 1,
       "source": "registry",
       "dependencies": {},
       "url": "https://packages.unity.com"
@@ -485,7 +486,7 @@
     },
     "com.unity.scriptablebuildpipeline": {
       "version": "2.6.2",
-      "depth": 3,
+      "depth": 1,
       "source": "registry",
       "dependencies": {
         "com.unity.test-framework": "1.4.5",

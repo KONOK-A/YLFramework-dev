@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_yl-resource-multidirectory-modern-20261018__scenes
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_yl-resource-multidirectory-modern-20261018__scenes
+  m_GUID: 991a4418c12573c42931aa0c7136e172
+  m_SerializeEntries:
+  - m_GUID: a29fa44e37acc1941a6d332f557327cc
+    m_Address: yl-resource-multidirectory-modern-20261018/scenes/Representative.unity
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-resource-multidirectory-modern-20261018/scenes
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: 18c3aac214892ed4283255a7f03e23d0, type: 2}
+    - {fileID: 11400000, guid: e2929b2b3c7f7814b9398517a0ba61de, type: 2}

@@ -241,6 +241,60 @@ namespace YLFramework.Testing.Editor
                     throw new InvalidOperationException("The owned preparation scene is no longer empty and clean.");
                 }
             }
+            if (_request.prepareLocalizationContent && _request.action == "Run")
+            {
+                foreach (var typeName in new[] { "YLFramework.Tests.Resource.ResourceAddressablesTestContent", "YLFramework.Tests.Resource.ResourceLocalizationFixture" })
+                {
+                    var builder = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType(typeName, false)).SingleOrDefault(type => type != null);
+                    if (builder == null)
+                        throw new InvalidOperationException("The declared Localization content builder was not compiled: " + typeName);
+                    try
+                    {
+                        var method = builder.GetMethod("Build");
+                        method.Invoke(null, method.GetParameters().Length == 0 ? null : new object[] { false });
+                    }
+                    catch (System.Reflection.TargetInvocationException error) when (error.InnerException != null)
+                    {
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+                        throw;
+                    }
+                }
+            }
+            if (_request.prepareAddressablesContent || _request.prepareAddressablesConsumerContent)
+            {
+                var builder = AppDomain.CurrentDomain.GetAssemblies()
+                    .Select(assembly => assembly.GetType("YLFramework.Tests.Resource.ResourceAddressablesTestContent", false))
+                    .SingleOrDefault(type => type != null);
+                if (builder == null)
+                    throw new InvalidOperationException("The declared official Addressables content builder was not compiled.");
+                try
+                {
+                    if (_request.prepareCoreContent || _request.prepareAddressablesConsumerContent)
+                        builder.GetMethod("BuildForConsumers").Invoke(null, null);
+                    else if (_request.prepareSessionScene)
+                        builder.GetMethod("BuildForSessions").Invoke(null, null);
+                    else
+                        builder.GetMethod("Build").Invoke(null, new object[] { true });
+                }
+                catch (System.Reflection.TargetInvocationException error) when (error.InnerException != null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+                    throw;
+                }
+            }
+            if (_request.prepareCoreContent)
+            {
+                var builder = Type.GetType("YLFramework.Core.Editor.Tests.CoreSmokeAssetFixture, YLFramework.Core.Tests.Fixtures.Editor", true);
+                try
+                {
+                    builder.GetMethod("BuildContent").Invoke(null, null);
+                }
+                catch (System.Reflection.TargetInvocationException error) when (error.InnerException != null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+                    throw;
+                }
+            }
             if (string.IsNullOrEmpty(_request.sortingLayer) || SortingLayer.layers.Any(layer => layer.name == _request.sortingLayer))
             {
                 return;
@@ -500,6 +554,8 @@ namespace YLFramework.Testing.Editor
                 {
                     var graph = CompilationPipeline.GetAssemblies(AssembliesType.Editor);
                     var runtime = graph.FirstOrDefault(assembly => assembly.name == "YLFramework.Runtime");
+                    var addressables = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages()
+                        .SingleOrDefault(package => package.name == "com.unity.addressables");
                     var project = Path.GetDirectoryName(Application.dataPath);
                     var sourcePrefixes = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages()
                         .Where(package => package.name.StartsWith("com.kano.ylframework", StringComparison.Ordinal))
@@ -524,6 +580,8 @@ namespace YLFramework.Testing.Editor
                         inputHash = _request.inputHash,
                         unityVersion = Application.unityVersion,
                         testFrameworkVersion = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(TestRunnerApi).Assembly).version,
+                        addressablesVersion = addressables?.version ?? string.Empty,
+                        addressablesSource = addressables?.source.ToString() ?? string.Empty,
                         isBatchMode = Application.isBatchMode,
                         tests = _tests.ToArray(),
                         excludedTests = _excludedTests.ToArray(),
@@ -679,6 +737,10 @@ namespace YLFramework.Testing.Editor
             public bool disableDomainReload;
             public bool prepareSceneTemplates;
             public bool prepareSessionScene;
+            public bool prepareAddressablesContent;
+            public bool prepareAddressablesConsumerContent;
+            public bool prepareCoreContent;
+            public bool prepareLocalizationContent;
             public bool interactiveDesktop;
             public string output = string.Empty;
             public TestRow[] tests = Array.Empty<TestRow>();
@@ -703,6 +765,8 @@ namespace YLFramework.Testing.Editor
             public string inputHash;
             public string unityVersion;
             public string testFrameworkVersion;
+            public string addressablesVersion;
+            public string addressablesSource;
             public bool isBatchMode;
             public TestRow[] tests;
             public TestRow[] excludedTests;

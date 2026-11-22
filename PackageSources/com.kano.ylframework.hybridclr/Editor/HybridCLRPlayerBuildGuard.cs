@@ -12,11 +12,12 @@ namespace YLFramework.Integrations.HybridCLR.Editor
         private static bool _isActive;
         private static bool _scriptsOnly;
         private static string _fingerprint;
+        private static string _addressablesLink;
         /// <summary>在较早的预构建回调中检查本管线显式上下文。</summary>
         public int callbackOrder => -1000;
 
         // 建立唯一的剥离或正式 Player 构建作用域，并固定进入时的全局设置指纹。
-        internal static IDisposable Enter(HybridCLRBuildProfile selected, bool strip)
+        internal static IDisposable Enter(HybridCLRBuildProfile selected, bool strip, string addressablesLink = null)
         {
             if (_isActive)
             {
@@ -26,6 +27,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             _fingerprint = HybridCLRBuildPipeline.SettingsFingerprint(selected);
             _profile = selected;
             _scriptsOnly = strip;
+            _addressablesLink = addressablesLink;
             _isActive = true;
             return new Scope();
         }
@@ -44,6 +46,10 @@ namespace YLFramework.Integrations.HybridCLR.Editor
             }
 
             HybridCLRBuildPipeline.ValidateEnvironment(_profile);
+            if (!_scriptsOnly)
+            {
+                HybridCLRBuildPipeline.RequireAddressablesLink(_addressablesLink);
+            }
 #if UNITY_EDITOR_WIN
             if (!_scriptsOnly)
             {
@@ -51,7 +57,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
                 UnityEditor.WindowsStandalone.UserBuildSettings.createSolution);
             }
 #endif
-            if (report.summary.platform != _profile.recipe.target ||
+            if (report.summary.platform != _profile.target ||
                 ((report.summary.options & UnityEditor.BuildOptions.Development) != 0) != _profile.development ||
                 UnityEditor.EditorUserBuildSettings.buildScriptsOnly != _scriptsOnly ||
                 _fingerprint != HybridCLRBuildPipeline.SettingsFingerprint(_profile))
@@ -74,6 +80,7 @@ namespace YLFramework.Integrations.HybridCLR.Editor
                 _isDisposed = true;
                 _profile = null;
                 _fingerprint = null;
+                _addressablesLink = null;
                 _scriptsOnly = false;
                 _isActive = false;
             }

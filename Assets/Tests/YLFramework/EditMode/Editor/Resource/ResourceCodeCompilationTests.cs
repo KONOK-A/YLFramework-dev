@@ -4,15 +4,13 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
-using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.AddressableAssets.Settings;
 using UnityEditor.Compilation;
 using UnityEngine;
 using UnityEngine.TestTools;
 using YLFramework.Editor.Resource;
-using YLFramework.Resource;
-using YLFramework.Tests.ResourceBuild;
 
 namespace YLFramework.Tests.ResourceEditor
 {
@@ -23,7 +21,7 @@ namespace YLFramework.Tests.ResourceEditor
         private static string Output => SessionState.GetString(Key + ".Output", "");
         private const string GeneratedAssembly = "YLFramework.Generated.ResourceNames";
         private static string ConsumerAssembly => "YLFramework.Tests.ResourceNamesConsumer63." +
-              Path.GetFileName(SessionState.GetString(Key, "")).Replace("Release82b-", "");
+              Path.GetFileName(SessionState.GetString(Key, "")).Replace("YLGeneratorInputs-", "");
 
         [SetUp]
         public void ReserveIsolatedOutput()
@@ -53,7 +51,7 @@ namespace YLFramework.Tests.ResourceEditor
             Assert.IsEmpty(SessionState.GetString(Key, ""));
             Assert.IsFalse(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output)) || File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output)) || File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output + ".meta")));
             var output = Output;
-            var root = "Assets/Tests/YLFramework/Fixtures/Release82b-" + Guid.NewGuid().ToString("N");
+            var root = ResourceAddressablesGeneratorFixture.InputPrefix + Guid.NewGuid().ToString("N");
             Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(Output));
             try
             {
@@ -63,6 +61,7 @@ namespace YLFramework.Tests.ResourceEditor
                 Assert.AreEqual("// independently recreated user source", File.ReadAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Output + "/User.cs")));
 
                 Directory.CreateDirectory(global::YLFramework.Testing.PackageTestPaths.Physical(root));
+                // Unimported byte sentinels test cleanup ownership, not AssetDatabase GUID facts.
                 File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(root + ".meta"), "probe identity");
                 File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(Output + ".meta"), "output identity");
                 RecordOwned();
@@ -114,11 +113,10 @@ namespace YLFramework.Tests.ResourceEditor
             yield return ResourceGeneratorTestWait.Clear("Compile generated references and both consumers");
             VerifyCompiledAndUpdate();
             yield return new RecompileScripts();
-            yield return ResourceGeneratorTestWait.Clear("Compile updated generated aliases");
+            yield return ResourceGeneratorTestWait.Clear("Compile updated official labels");
             Assert.IsFalse(EditorUtility.scriptCompilationFailed);
             var generated = AppDomain.CurrentDomain.GetAssemblies().Single(x => x.GetName().Name == GeneratedAssembly);
-            var name = "YLFramework.Resources." + SessionState.GetString(Key + ".Class", "") + "+Aliases";
-            Assert.AreEqual("new-alias", generated.GetType(name, true).GetField("NewAlias").GetRawConstantValue());
+            Assert.AreEqual("new-label", generated.GetType("YLFramework.Resources.ResourceNames+Labels", true).GetField("NewLabel").GetRawConstantValue());
         }
 
         // Test Framework 恢复 iterator 时不保留跨 Domain Reload 的闭包对象，验证局部值在普通方法中重建。
@@ -127,22 +125,26 @@ namespace YLFramework.Tests.ResourceEditor
             var root = SessionState.GetString(Key, "");
             Assert.IsFalse(EditorUtility.scriptCompilationFailed);
             var generated = AppDomain.CurrentDomain.GetAssemblies().Single(x => x.GetName().Name == GeneratedAssembly);
-            var catalog = Catalog(root);
-            var project = AssetDatabase.LoadAssetAtPath<ResourceProject>(root + "/Project.asset");
-            var simulation = new ResourceEditorSimulation(new[] { project }, new[] { catalog });
+            var settings = AssetDatabase.LoadAssetAtPath<AddressableAssetSettings>(root + ResourceAddressablesGeneratorFixture.SettingsRelativePath);
+            Assert.That(settings, Is.Not.Null);
             foreach (var assemblyName in new[] { ConsumerAssembly, "Assembly-CSharp" })
             {
                 var assembly = AppDomain.CurrentDomain.GetAssemblies().Single(x => x.GetName().Name == assemblyName);
                 var consumer = assembly.GetType("YLFramework.Tests.GeneratedConsumer82c." +
                      (assemblyName == ConsumerAssembly ? "Explicit" : "Predefined"), true);
-                var address = (ResourceAddress)consumer.GetMethod("Address").Invoke(null, null);
-                Assert.AreEqual("entry.txt", address.Path);
-                Assert.AreEqual("first release content", simulation.Load<TextAsset>(address).text);
-                var sub = (ResourceAddress)consumer.GetMethod("Sprite").Invoke(null, null);
-                Assert.AreEqual("Left", simulation.Load<Sprite>(sub).name);
-                Assert.AreEqual("entry", consumer.GetMethod("Group").Invoke(null, null));
-                Assert.AreEqual("stable-alias", consumer.GetMethod("Alias").Invoke(null, null));
-                Assert.AreEqual(simulation.Resolve(address).AssetId, simulation.GetGroup(project.projectId, "entry").Single().AssetId);
+                var address = (string)consumer.GetMethod("Address").Invoke(null, null);
+                Assert.AreEqual("entry.txt", address);
+                var entry = settings.DefaultGroup.entries.Single(value => value.address == address);
+                Assert.That(entry.AssetPath, Is.EqualTo(ResourceAddressablesGeneratorFixture.InputPath(root, 0)));
+                Assert.That(entry.guid, Is.EqualTo(AssetDatabase.AssetPathToGUID(entry.AssetPath)));
+                Assert.AreEqual(ResourceAddressablesGeneratorFixture.FirstContent, AssetDatabase.LoadAssetAtPath<TextAsset>(entry.AssetPath).text);
+                var secondary = (string)consumer.GetMethod("SecondaryAddress").Invoke(null, null);
+                Assert.That(secondary, Is.EqualTo("secondary/item"));
+                var secondaryEntry = settings.DefaultGroup.entries.Single(value => value.address == secondary);
+                Assert.That(secondaryEntry.guid, Is.EqualTo(AssetDatabase.AssetPathToGUID(ResourceAddressablesGeneratorFixture.InputPath(root, 1))));
+                Assert.That(AssetDatabase.LoadAssetAtPath<TextAsset>(secondaryEntry.AssetPath).text, Is.EqualTo("generator input 1"));
+                Assert.AreEqual("stable-label", consumer.GetMethod("Label").Invoke(null, null));
+                Assert.That(entry.labels, Does.Contain("stable-label"));
             }
             var graph = CompilationPipeline.GetAssemblies().Single(x => x.name == GeneratedAssembly);
             CollectionAssert.AreEqual(new[] { Output + "/YLResourceReferences.cs" }, graph.sourceFiles.Select(x => x.Replace('\\', '/')).ToArray());
@@ -152,6 +154,7 @@ namespace YLFramework.Tests.ResourceEditor
             Assert.AreEqual(ConsumerAssembly, Path.GetFileNameWithoutExtension(CompilationPipeline.GetAssemblyNameFromScriptPath(root + "/Consumer/Explicit.cs")));
             Assert.AreEqual("Assembly-CSharp", Path.GetFileNameWithoutExtension(CompilationPipeline.GetAssemblyNameFromScriptPath(root + "/Predefined.cs")));
             var consumerGraph = CompilationPipeline.GetAssemblies().Single(x => x.name == ConsumerAssembly);
+            CollectionAssert.AreEqual(new[] { GeneratedAssembly }, consumerGraph.assemblyReferences.Select(assembly => assembly.name).ToArray());
             CollectionAssert.AreEqual(new[] { root + "/Consumer/Explicit.cs" }, consumerGraph.sourceFiles.Select(x => x.Replace('\\', '/')).ToArray());
             CollectionAssert.Contains(CompilationPipeline.GetAssemblies().Single(x => x.name == "Assembly-CSharp").sourceFiles
                 .Select(x => x.Replace('\\', '/')).ToArray(), root + "/Predefined.cs");
@@ -164,30 +167,52 @@ namespace YLFramework.Tests.ResourceEditor
             var folderMeta = File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(Output + ".meta"));
             var time = File.GetLastWriteTimeUtc(path);
             RequireOwned();
-            Assert.IsFalse(ResourceCodeGenerator.GenerateReferences(new[] { catalog }, Output));
+            Assert.IsFalse(ResourceCodeGenerator.GenerateReferences(settings, Output));
             CollectionAssert.AreEqual(before, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path)));
             Assert.AreEqual(time, File.GetLastWriteTimeUtc(path));
+            var mutableInputs = new[] { AssetDatabase.GetAssetPath(settings), AssetDatabase.GetAssetPath(settings.DefaultGroup) }
+                .Select(PhysicalInputPath).ToHashSet(StringComparer.Ordinal);
+            Assert.That(mutableInputs, Has.Count.EqualTo(2));
+            CollectionAssert.AreEquivalent(mutableInputs,
+                Directory.GetFiles(PhysicalInputPath(root), "*", SearchOption.AllDirectories).Select(PhysicalInputPath).Where(mutableInputs.Contains),
+                "The mutable whitelist must identify exactly the persisted Settings and Group, not their metas or relative path aliases.");
+            var protectedInputs = ProtectedInputPaths().ToDictionary(input => input, File.ReadAllBytes, StringComparer.Ordinal);
+
+            // AssetDatabase uses '/', while Directory enumeration uses native separators. Compare one file identity on both sides.
+            string PhysicalInputPath(string input) => Path.GetFullPath(global::YLFramework.Testing.PackageTestPaths.Physical(input));
+
+            string[] ProtectedInputPaths() => Directory.GetFiles(PhysicalInputPath(root), "*", SearchOption.AllDirectories).Select(PhysicalInputPath)
+                .Where(input => !mutableInputs.Contains(input)).Concat(new[] { PhysicalInputPath(root + ".meta") })
+                .OrderBy(input => input, StringComparer.Ordinal).ToArray();
+
+            void AssertInputsUnchanged()
+            {
+                CollectionAssert.AreEquivalent(protectedInputs.Keys, ProtectedInputPaths(), "Only the owned Settings and Group may change when authoring a new label.");
+                foreach (var input in protectedInputs)
+                    CollectionAssert.AreEqual(input.Value, File.ReadAllBytes(input.Key), input.Key);
+            }
 
             // 加入真实的规范化碰撞，公共入口必须在写入之前拒绝，且旧有效产物仍可用。
-            var data = JObject.Parse(Encoding.UTF8.GetString(ResourceCatalogCodec.Write(catalog)));
-            data.Remove("BuildId");
-            data["Assets"].First(x => (string)x["Address"] == "A.prefab")["Address"] = "entry_txt";
-            var collision = ResourceCodeGenerationTests.Read(data);
-            Assert.Throws<InvalidOperationException>(() => ResourceCodeGenerator.GenerateReferences(new[] { collision }, Output));
+            var secondaryInput = settings.DefaultGroup.entries.Single(value => value.address == "secondary/item");
+            secondaryInput.SetAddress("entry_txt", false);
+            Assert.Throws<InvalidOperationException>(() => ResourceCodeGenerator.GenerateReferences(settings, Output));
             CollectionAssert.AreEqual(before, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path)));
-
-            data = JObject.Parse(Encoding.UTF8.GetString(ResourceCatalogCodec.Write(catalog)));
-            data.Remove("BuildId");
-            data["Assets"].First(x => (string)x["Address"] == "entry.txt")["Aliases"] = new JArray("new-alias", "stable-alias");
-            var updated = ResourceCodeGenerationTests.Read(data);
+            secondaryInput.SetAddress("secondary/item", false);
+            settings.AddLabel("new-label", false);
+            foreach (var entry in settings.DefaultGroup.entries)
+                entry.SetLabel("new-label", true, false, false);
+            ResourceAddressablesGeneratorFixture.Save(settings);
+            AssertInputsUnchanged();
+            RecordOwned();
             RequireOwned();
             using (var locked = new FileStream(global::YLFramework.Testing.PackageTestPaths.Physical(path), FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                Assert.Throws<IOException>(() => ResourceCodeGenerator.GenerateReferences(new[] { updated }, Output));
+                Assert.Throws<IOException>(() => ResourceCodeGenerator.GenerateReferences(settings, Output));
             }
 
             CollectionAssert.AreEqual(before, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path)));
-            Assert.IsTrue(ResourceCodeGenerator.GenerateReferences(new[] { updated }, Output));
+            Assert.IsTrue(ResourceCodeGenerator.GenerateReferences(settings, Output));
+            AssertInputsUnchanged();
             RecordOwned();
             CollectionAssert.AreEqual(meta, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(path + ".meta")));
             CollectionAssert.AreEqual(asmMeta, File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(asmdef + ".meta")));
@@ -195,50 +220,36 @@ namespace YLFramework.Tests.ResourceEditor
             Assert.IsFalse(Directory.GetFiles(global::YLFramework.Testing.PackageTestPaths.Physical(Output)).Any(x => Path.GetFileName(x).StartsWith(".yl-names-")));
         }
 
-        private static ResourceCatalogDocument Catalog(string root) => ResourceCatalogCodec.Read(File.ReadAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(root + "/catalog.json")),
-            SessionState.GetString(Key + ".Project", ""), EditorUserBuildSettings.activeBuildTarget.ToString(), Application.unityVersion, "fixture-v1");
-
         private static IEnumerator Prepare()
         {
             Assert.IsFalse(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output)) || File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output)) || File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output + ".meta")), "Do not take over existing generated/user assets.");
-            var fixture = new ResourceReleaseFixture();
+            var root = ResourceAddressablesGeneratorFixture.InputPrefix + Guid.NewGuid().ToString("N");
+            ResourceAddressablesGeneratorFixture.CreateInputs(root);
+            var inputFingerprint = ResourceAddressablesGeneratorFixture.Fingerprint(root);
             bool prepared = false;
             try
             {
-                var root = fixture.Folder;
-                yield return ResourceGeneratorTestWait.Clear("Import release fixture before its build");
-                var project = fixture.Project;
-                ResourceEditorSimulationTests.Aliases(project.groups[0].selections[0], "stable-alias");
-                EditorUtility.SetDirty(project);
-                AssetDatabase.SaveAssetIfDirty(project);
-                yield return ResourceGeneratorTestWait.Clear("Save release authoring data before its build");
-                var result = fixture.Build();
-                var catalog = ResourceCatalogBuilder.Create(result, "fixture-v1");
-                fixture.AssertProtected();
-                // 编译消费只需 immutable Catalog 和源夹具，不保留这个测试已完整验证的私有 Workspace。
-                Directory.Delete(global::YLFramework.Testing.PackageTestPaths.Physical(Path.GetDirectoryName(result.WorkspacePath)), true);
-                File.WriteAllBytes(global::YLFramework.Testing.PackageTestPaths.Physical(root + "/catalog.json"), ResourceCatalogCodec.Write(catalog));
-                var generatedSource = (string)ResourceEditorTests.Invoke(typeof(ResourceCodeGenerator), "GenerateCatalogs", new[] { catalog }, "YLFramework.Resources");
-                var declaration = System.Text.RegularExpressions.Regex.Match(generatedSource, @"(?m)^    public static class (?<name>[A-Za-z_][A-Za-z0-9_]*)$");
-                Assert.That(declaration.Success, Is.True);
-                var type = declaration.Groups["name"].Value;
+                yield return ResourceGeneratorTestWait.Clear("Import real Addressables generator inputs");
+                Assert.That(ResourceAddressablesGeneratorFixture.Fingerprint(root), Is.EqualTo(inputFingerprint));
+                using var fixture = new ResourceAddressablesGeneratorFixture(root, new[] { "entry.txt", "secondary/item" }, new[] { "stable-label" }, persisted: true);
+                inputFingerprint = ResourceAddressablesGeneratorFixture.Fingerprint(root);
                 AssetDatabase.CreateFolder(root, "Consumer");
+                inputFingerprint = ResourceAddressablesGeneratorFixture.Fingerprint(root);
                 yield return ResourceGeneratorTestWait.Clear("Prepare consumer folder before resource generation");
-                var full = "YLFramework.Resources." + type;
-                var body = "public static YLFramework.Resource.ResourceAddress Address() => new YLFramework.Resource.ResourceAddress(" + full + ".ProjectId," + full + ".Addresses.EntryTxt);" +
-                    "public static YLFramework.Resource.ResourceAddress Sprite() => new YLFramework.Resource.ResourceAddress(" + full + ".ProjectId," + full + ".SubAssets.SpritesPngLeft.Address," + full + ".SubAssets.SpritesPngLeft.Key);" +
-                    "public static string Group() => " + full + ".Groups.Entry; public static string Alias() => " + full + ".Aliases.StableAlias;";
-                Assert.IsTrue(ResourceCodeGenerator.GenerateReferences(new[] { catalog }, Output));
+                Assert.That(ResourceAddressablesGeneratorFixture.Fingerprint(root), Is.EqualTo(inputFingerprint));
+                const string Full = "YLFramework.Resources.ResourceNames";
+                var body = "public static string Address() => " + Full + ".Addresses.EntryTxt;" +
+                    "public static string SecondaryAddress() => " + Full + ".Addresses.SecondaryItem;" +
+                    "public static string Label() => " + Full + ".Labels.StableLabel;";
+                Assert.IsTrue(ResourceCodeGenerator.GenerateReferences(fixture.Settings, Output));
                 File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(root + "/Consumer/Explicit.cs"), "namespace YLFramework.Tests.GeneratedConsumer82c { public static class Explicit { " + body + " } }");
                 File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(root + "/Predefined.cs"), "namespace YLFramework.Tests.GeneratedConsumer82c { public static class Predefined { " + body + " } }");
-                var consumerAssembly = "YLFramework.Tests.ResourceNamesConsumer63." + Path.GetFileName(root).Replace("Release82b-", "");
+                var consumerAssembly = "YLFramework.Tests.ResourceNamesConsumer63." + Path.GetFileName(root).Replace("YLGeneratorInputs-", "");
                 File.WriteAllText(global::YLFramework.Testing.PackageTestPaths.Physical(root + "/Consumer/Consumer.asmdef"), "{\"name\":\"" + consumerAssembly + "\",\"references\":[\"" +
-                    GeneratedAssembly + "\",\"YLFramework.Runtime\"],\"autoReferenced\":false,\"overrideReferences\":true,\"precompiledReferences\":[],\"noEngineReferences\":true}");
+                    GeneratedAssembly + "\"],\"autoReferenced\":false,\"overrideReferences\":true,\"precompiledReferences\":[],\"noEngineReferences\":true}");
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
                 // Only a complete output authorizes recovery after a Domain Reload; preparation failures remain owned by the live fixture.
                 SessionState.SetString(Key, root);
-                SessionState.SetString(Key + ".Project", catalog.ProjectId);
-                SessionState.SetString(Key + ".Class", type);
                 RecordOwned();
                 prepared = true;
             }
@@ -246,7 +257,7 @@ namespace YLFramework.Tests.ResourceEditor
             {
                 if (!prepared)
                 {
-                    fixture.Dispose();
+                    ResourceAddressablesGeneratorFixture.DeleteInputs(root, inputFingerprint);
                 }
             }
         }
@@ -268,7 +279,7 @@ namespace YLFramework.Tests.ResourceEditor
             var root = SessionState.GetString(Key, "");
             Assert.AreEqual(TestContext.CurrentContext.Test.FullName, SessionState.GetString(Key + ".OutputOwner", ""),
                 "Only the original test may validate or clean up this probe.");
-            Assert.IsTrue(root.StartsWith("Assets/Tests/YLFramework/Fixtures/Release82b-", StringComparison.Ordinal) && Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(root)));
+            Assert.IsTrue(root.StartsWith(ResourceAddressablesGeneratorFixture.InputPrefix, StringComparison.Ordinal) && Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(root)));
             Assert.IsTrue(Output.StartsWith("Assets/Tests/YLFramework/Fixtures/ResourceNamesCompile-", StringComparison.Ordinal));
             Assert.IsTrue(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output)), "Generated output disappeared; refuse to take over replacement assets.");
             Assert.AreEqual(SessionState.GetString(Key + ".Fingerprint", ""), Fingerprint(),
@@ -279,8 +290,6 @@ namespace YLFramework.Tests.ResourceEditor
         {
             SessionState.EraseString(Key);
             SessionState.EraseString(Key + ".Fingerprint");
-            SessionState.EraseString(Key + ".Project");
-            SessionState.EraseString(Key + ".Class");
             SessionState.EraseString(Key + ".Output");
             SessionState.EraseString(Key + ".OutputOwner");
         }
@@ -291,7 +300,10 @@ namespace YLFramework.Tests.ResourceEditor
             var root = SessionState.GetString(Key, "");
             if (string.IsNullOrEmpty(root))
             {
-                Assert.IsFalse(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output)) || File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output)) || File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output + ".meta")));
+                if (!string.IsNullOrEmpty(Output))
+                {
+                    Assert.IsFalse(Directory.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output)) || File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output)) || File.Exists(global::YLFramework.Testing.PackageTestPaths.Physical(Output + ".meta")));
+                }
                 ClearState();
                 yield break;
             }

@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_yl-core-resource__views
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_yl-core-resource__views
+  m_GUID: 06a36d2de696f5c45877dff506a47065
+  m_SerializeEntries:
+  - m_GUID: a3c3587da9b5fae4180a91c5c9da8de6
+    m_Address: yl-core-resource/YLCoreSmokeView
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-core-resource/views
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: ba04e1f8332fc9d4c827750a8a980c97, type: 2}
+    - {fileID: 11400000, guid: 2cb718a9c49ebd443bfff3a821e7694c, type: 2}

@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: YLResource_yl-core-resource__text
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: YLResource_yl-core-resource__text
+  m_GUID: 833a16f9b793ac04793c2676fc2d94a8
+  m_SerializeEntries:
+  - m_GUID: 6af15cc176f17ae4eac7982647833d79
+    m_Address: yl-core-resource/YLCoreSmokeRows
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-core-resource/text
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 8162f1fe877c7ce4ea034eb92281eac6
+    m_Address: yl-core-resource/YLCoreInvalidRows
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-core-resource/text
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: af1b6478cdec35143a7796c15d1a0ab0
+    m_Address: yl-core-resource/YLCoreEmptyRows
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-core-resource/text
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: b23527a3f74eb8f4b83bb000326630ec
+    m_Address: yl-core-resource/YLCoreBlankRows
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - yl-core-resource/text
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: f5e1b459864e8bc4ba5c3b59b2d9aafc, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: cc46ae14c19b18547b394fa64e802df4, type: 2}
+    - {fileID: 11400000, guid: 3ce790d0bd6dabb428222442ccaf8d60, type: 2}

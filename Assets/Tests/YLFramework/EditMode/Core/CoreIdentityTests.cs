@@ -191,7 +191,8 @@ namespace YLFramework.Core.Tests
             Assert.That(references, Does.Not.Contain("YLFramework.Foundation.Runtime"));
             Assert.That(references, Does.Not.Contain("YLFramework.Core.Runtime"));
             Assert.That(references, Does.Not.Contain("YLFramework.Utilities.ZipTool"));
-            var platformReferences = new[] { "netstandard", "mscorlib", "System", "System.Core", "Newtonsoft.Json", "BouncyCastle.Cryptography" };
+            var platformReferences = new[] { "netstandard", "mscorlib", "System", "System.Core", "Newtonsoft.Json",
+                "Unity.Addressables", "Unity.ResourceManager", "Unity.Profiling.Core" };
             Assert.That(references.All(name => platformReferences.Contains(name) ||
                 name == "UnityEngine.UI" || name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
                 name.StartsWith("UnityEditor.", StringComparison.Ordinal)), Is.True, string.Join(", ", references));

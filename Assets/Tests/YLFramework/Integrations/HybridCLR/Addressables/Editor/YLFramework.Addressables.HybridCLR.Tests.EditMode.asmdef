@@ -1,0 +1,27 @@
+{
+    "name": "YLFramework.Addressables.HybridCLR.Tests.EditMode",
+    "rootNamespace": "YLFramework.HybridCLR.Tests.EditMode",
+    "references": [
+        "YLFramework.Runtime",
+        "YLFramework.Editor",
+        "YLFramework.HybridCLR",
+        "YLFramework.HybridCLR.Editor",
+        "Unity.Addressables",
+        "Unity.Addressables.Editor",
+        "HybridCLR.Editor",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": ["nunit.framework.dll", "Newtonsoft.Json.dll"],
+    "autoReferenced": false,
+    "defineConstraints": ["UNITY_INCLUDE_TESTS", "YL_HYBRIDCLR_9_0_3", "YL_HYBRIDCLR_PACKAGE"],
+    "versionDefines": [
+        {"name": "com.code-philosophy.hybridclr", "expression": "[9.0.3,9.0.4)", "define": "YL_HYBRIDCLR_9_0_3"},
+        {"name": "com.kano.ylframework.hybridclr", "expression": "0.1.0-preview.1", "define": "YL_HYBRIDCLR_PACKAGE"}
+    ],
+    "noEngineReferences": false
+}

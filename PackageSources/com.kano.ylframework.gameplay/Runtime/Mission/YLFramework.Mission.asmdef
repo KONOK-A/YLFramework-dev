@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Mission",
     "rootNamespace": "YLFramework.Mission",
-    "references": ["YLFramework.Runtime"],
+    "references": ["YLFramework.Runtime", "Unity.Addressables"],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

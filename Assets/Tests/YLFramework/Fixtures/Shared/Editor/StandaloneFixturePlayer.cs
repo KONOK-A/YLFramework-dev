@@ -1,9 +1,16 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.AddressableAssets;
+using UnityEditor.AddressableAssets.Settings;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
 using UnityEngine.SceneManagement;
 using YLFramework.Editor.Resource;
 
@@ -24,6 +31,7 @@ namespace YLFramework.Testing.EditorFixtures
         [Serializable]
         public sealed class Report
         {
+            public int schemaVersion;
             public string status;
             public string error;
             public string unityVersion;
@@ -31,12 +39,19 @@ namespace YLFramework.Testing.EditorFixtures
             public bool isEditor;
             public string runtimeAssembly;
             public string catalogDigest;
+            public string contentHash;
+            public bool ledgerMeasured;
+            public string resourceState;
             public int pid;
             public int leaseCount;
             public int recordCount;
+            public int scopeCount;
+            public int requestCount;
+            public int pendingWorkCount;
+            public int drainingHandleCount;
         }
 
-        public static void BuildAndRun(string output, string assetRoot, string expectedRuntime, ResourceRelease release, Action<Scene> populate,
+        public static void BuildAndRun(string output, string assetRoot, string expectedRuntime, ResourceEditorBuildReport content, Action<Scene> populate,
             string[] extraScriptingDefines = null, bool graphics = false,
             ScriptingImplementation scriptingBackend = ScriptingImplementation.Mono2x, bool developmentBuild = true)
         {
@@ -77,11 +92,12 @@ namespace YLFramework.Testing.EditorFixtures
             string locator = Path.Combine(output, "standalone-player-location.txt");
             Assert.That(File.Exists(locator), Is.False);
             File.WriteAllText(locator, player);
-            if (release != null)
+            if (content != null)
             {
-                var deployed = ResourceBuiltInDeployer.Deploy(ResourceBuiltInDeployer.Preflight(release));
-                Assert.That(deployed.Snapshot.Document.CatalogDigest, Is.EqualTo(release.Catalog.CatalogDigest));
+                ResourceEditorOperations.ValidateBuild(AddressableAssetSettingsDefaultObject.GetSettings(false));
             }
+            var contentFiles = content == null ? null : ReadContent(content);
+            var contentHash = contentFiles == null ? null : HashContent(contentFiles);
             const string Empty = "Assets/YLTestingProfile/Empty.unity";
             Assert.That(File.Exists(PackageTestPaths.Physical(Empty)), Is.True);
             for (int index = 0; index < SceneManager.sceneCount; index++)
@@ -114,6 +130,12 @@ namespace YLFramework.Testing.EditorFixtures
             {
                 PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, backend);
                 Assert.That(EditorSceneManager.OpenScene(Empty, OpenSceneMode.Single).path, Is.EqualTo(Empty));
+            }
+            if (contentFiles != null)
+            {
+                CollectionAssert.AreEquivalent(contentFiles, ContentFiles(Path.Combine(player, "P_Data/StreamingAssets/aa")),
+                    "The Player must contain the exact official AA bytes that were built and frozen.");
+                CollectionAssert.AreEquivalent(contentFiles, ReadContent(content), "Official content changed during the Player build.");
             }
             string managed = Path.Combine(player, "P_Data/Managed");
             if (scriptingBackend == ScriptingImplementation.Mono2x)
@@ -170,18 +192,74 @@ namespace YLFramework.Testing.EditorFixtures
                 Assert.That(report.platform, Is.EqualTo("WindowsPlayer"));
                 Assert.That(report.unityVersion, Is.EqualTo(Application.unityVersion));
                 Assert.That(report.runtimeAssembly, Is.EqualTo(expectedRuntime));
-                if (release == null)
+                Assert.That(report.catalogDigest, Is.Null.Or.Empty, "No private publication digest is accepted.");
+                if (content == null)
                 {
-                    Assert.That(report.catalogDigest, Is.Null.Or.Empty, "A resource-free probe must report no catalog, never a fabricated digest.");
+                    Assert.That(report.recordCount, Is.Zero, "The existing resource-free process result contract is unchanged.");
                 }
                 else
                 {
-                    Assert.That(report.catalogDigest, Is.EqualTo(release.Catalog.CatalogDigest));
+                    Assert.That(report.schemaVersion, Is.EqualTo(2));
+                    Assert.That(report.contentHash, Is.EqualTo(contentHash));
+                    Assert.That(report.ledgerMeasured, Is.True);
+                    Assert.That(report.resourceState, Is.EqualTo("Closed"));
+                    Assert.That(report.scopeCount, Is.Zero);
+                    Assert.That(report.requestCount, Is.Zero);
+                    Assert.That(report.pendingWorkCount, Is.Zero);
+                    Assert.That(report.drainingHandleCount, Is.Zero);
                 }
                 Assert.That(report.leaseCount, Is.Zero);
-                Assert.That(report.recordCount, Is.Zero);
                 previousPid = process.Id;
             }
+        }
+
+        /// <summary>Fingerprint actual official local content, not a private publication protocol.</summary>
+        public static string ContentHash(ResourceEditorBuildReport content) => HashContent(ReadContent(content));
+
+        private static Dictionary<string, string> ReadContent(ResourceEditorBuildReport content)
+        {
+            Assert.That(content, Is.Not.Null);
+            var settings = AddressableAssetSettingsDefaultObject.GetSettings(false);
+            Assert.That(settings, Is.Not.Null);
+            Assert.That(content.Target, Is.EqualTo(BuildTarget.StandaloneWindows64));
+            Assert.That(content.IsContentUpdate, Is.False, "A new fixture Player needs a complete official content build.");
+            Assert.That(content.SettingsGuid, Is.EqualTo(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(settings))));
+            Assert.That(content.ProfileId, Is.EqualTo(settings.activeProfileId));
+            Assert.That(settings.BuildAddressablesWithPlayerBuild, Is.EqualTo(AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer),
+                "Explicitly disable a second automatic content build before freezing the Player's content.");
+            Assert.That(content.Result, Is.Not.Null);
+            Assert.That(content.Result.Error, Is.Null.Or.Empty);
+            Assert.That(File.Exists(content.Result.OutputPath), Is.True);
+            Assert.That(File.Exists(content.ContentStatePath), Is.True);
+            return ContentFiles(Path.GetFullPath(Addressables.BuildPath));
+        }
+
+        private static Dictionary<string, string> ContentFiles(string directory)
+        {
+            Assert.That(Directory.Exists(directory), Is.True, directory);
+            var result = Directory.GetFiles(directory, "*", SearchOption.AllDirectories).ToDictionary(
+                path => path.Substring(directory.TrimEnd('/', '\\').Length + 1).Replace('\\', '/'),
+                path =>
+                {
+                    for (var cursor = path; cursor != null; cursor = Path.GetDirectoryName(cursor))
+                    {
+                        Assert.That((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) == 0, Is.True);
+                    }
+                    using var stream = File.OpenRead(path);
+                    using var sha = SHA256.Create();
+                    return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                }, StringComparer.Ordinal);
+            Assert.That(result.Count, Is.GreaterThan(0));
+            Assert.That(result.Keys.Any(path => path.EndsWith("settings.json", StringComparison.Ordinal)), Is.True);
+            return result;
+        }
+
+        private static string HashContent(Dictionary<string, string> files)
+        {
+            using var algorithm = SHA256.Create();
+            var bytes = Encoding.UTF8.GetBytes(string.Join("\n", files.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => pair.Key + "=" + pair.Value)));
+            return BitConverter.ToString(algorithm.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
         }
     }
 }

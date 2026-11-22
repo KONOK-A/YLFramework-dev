@@ -16,14 +16,278 @@ $cache = New-YLTestDirectory -Workspace $workspace -Kind Cache -Key Entry
 $checks = 0
 try {
     $references = @([IO.Directory]::EnumerateFiles((Join-Path $PSHOME 'ref'), '*.dll')) + @([Newtonsoft.Json.Linq.JObject].Assembly.Location)
-    $diagnostics = @(Add-Type -Path @((Join-Path $PSScriptRoot '../DistributionEntry.cs'), (Join-Path $PSScriptRoot '../PackageCatalogContract.cs'), (Join-Path $PSScriptRoot 'DistributionUnityStubs.cs')) -ReferencedAssemblies $references -CompilerOptions @('/define:UNITY_EDITOR', '/langversion:9.0') -IgnoreWarnings 3>&1)
+    $sceneStubs = @'
+namespace UnityEngine.SceneManagement
+{
+    public sealed class SceneState { public int handle; public bool valid = true, loaded = true, dirty; public string path = ""; }
+    public struct Scene
+    {
+        public SceneState state;
+        public int handle => state == null ? 0 : state.handle;
+        public bool IsValid() => state != null && state.valid;
+        public bool isLoaded => state != null && state.loaded;
+        public bool isDirty => state != null && state.dirty;
+        public string path => state == null ? "" : state.path;
+    }
+    public static class SceneManager { public static Scene Active; public static Scene GetActiveScene() => Active; }
+}
+namespace UnityEditor.SceneManagement
+{
+    public enum NewSceneSetup { EmptyScene }
+    public enum NewSceneMode { Single }
+    public static class EditorSceneManager
+    {
+        public static int NextHandle, SaveCalls;
+        public static bool SaveResult = true, CreateFile = true, ChangeActive, Invalidate, Unload, WrongPath, RemainDirty, ThrowOnSave;
+        public static UnityEngine.SceneManagement.Scene NewScene(NewSceneSetup setup, NewSceneMode mode)
+        {
+            var scene = new UnityEngine.SceneManagement.Scene { state = new UnityEngine.SceneManagement.SceneState { handle = ++NextHandle } };
+            UnityEngine.SceneManagement.SceneManager.Active = scene;
+            return scene;
+        }
+        public static bool SaveScene(UnityEngine.SceneManagement.Scene scene, string path)
+        {
+            SaveCalls++;
+            if (ThrowOnSave) throw new System.IO.IOException("NoUnity exact SaveScene exception");
+            if (!SaveResult) return false;
+            if (CreateFile) System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(UnityEngine.Application.dataPath), path), "owned NoUnity scene fixture");
+            scene.state.path = WrongPath ? "Assets/Foreign.unity" : path;
+            scene.state.dirty = RemainDirty;
+            if (Invalidate) scene.state.valid = false;
+            if (Unload) scene.state.loaded = false;
+            if (ChangeActive) NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            return true;
+        }
+    }
+}
+'@
+    $originalStubs = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'DistributionUnityStubs.cs'))
+    $sceneBlock = [regex]::new('namespace UnityEditor\.SceneManagement\s*\{.*?(?=namespace UnityEditor\.Compilation)', [Text.RegularExpressions.RegexOptions]::Singleline)
+    if ($sceneBlock.Matches($originalStubs).Count -ne 1) { throw 'The known NoUnity Scene stub surface changed; do not patch another namespace.' }
+    $fixtureStubs = Join-Path $sandbox 'DistributionUnityStubs.cs'
+    [IO.File]::WriteAllText($fixtureStubs, $sceneBlock.Replace($originalStubs, ($sceneStubs + "`n")), [Text.UTF8Encoding]::new($false))
+    $diagnostics = @(Add-Type -Path @((Join-Path $PSScriptRoot '../DistributionEntry.cs'), (Join-Path $PSScriptRoot '../PackageCatalogContract.cs'), $fixtureStubs) -ReferencedAssemblies $references -CompilerOptions @('/define:UNITY_EDITOR', '/langversion:9.0') -IgnoreWarnings 3>&1)
     foreach ($diagnostic in @($diagnostics | ForEach-Object { $_.ToString() } | Sort-Object -Unique)) { Write-Warning $diagnostic }
+    $parseOptions = [Microsoft.CodeAnalysis.CSharp.CSharpParseOptions]::Default.WithPreprocessorSymbols([string[]]@('UNITY_EDITOR'))
+    $sourceTree = [Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree]::ParseText([IO.File]::ReadAllText((Join-Path $PSScriptRoot '../DistributionEntry.cs')), $parseOptions)
+    $calls = @($sourceTree.GetRoot().DescendantNodes() | Where-Object { $_.GetType().Name -ceq 'InvocationExpressionSyntax' })
+    $prepareCalls = @($calls | Where-Object { $_.Expression.ToString() -ceq 'PrepareAddressablesSmoke' })
+    $newSceneCalls = @($calls | Where-Object { $_.Expression.ToString() -ceq 'EditorSceneManager.NewScene' })
+    $saveCalls = @($calls | Where-Object { $_.Expression.ToString() -ceq 'SaveOwnedBuildScene' })
+    $buildCalls = @($calls | Where-Object { $_.Expression.ToString() -ceq 'BuildPipeline.BuildPlayer' })
+    if ($prepareCalls.Count -ne 1 -or $newSceneCalls.Count -ne 1 -or $saveCalls.Count -ne 1 -or $buildCalls.Count -ne 1) { throw 'Expected one exact bare build scene pipeline.' }; $checks++
+    if ($prepareCalls[0].SpanStart -ge $newSceneCalls[0].SpanStart -or $newSceneCalls[0].SpanStart -ge $saveCalls[0].SpanStart) { throw 'AA/SBP must complete before acquiring the new owned scene identity.' }; $checks++
+    if ($saveCalls[0].SpanStart -ge $buildCalls[0].SpanStart) { throw 'Native Player build must not start before exact owned scene save validation.' }; $checks++
     $method = [YLFramework.Testing.DistributionEntry].GetMethod('ValidateInvocation', [Reflection.BindingFlags]'NonPublic,Static')
+    $referenceGuard = [YLFramework.Testing.DistributionEntry].GetMethod('RejectReferences', [Reflection.BindingFlags]'NonPublic,Static')
+    $sdkBoundary = [YLFramework.Testing.DistributionEntry].GetMethod('OfficialEditorPackage', [Reflection.BindingFlags]'NonPublic,Static')
+    foreach ($mapping in @(@('Unity.Addressables.DocExampleCode.Editor.Tests', 'com.unity.addressables'),
+        @('UnityEditor.TestRunner', 'com.unity.test-framework'), @('UnityEngine.TestRunner', 'com.unity.test-framework'))) {
+        if ($sdkBoundary.Invoke($null, [object[]]@($mapping[0])) -cne $mapping[1]) { throw 'The exact official Editor-only SDK mapping changed.' }; $checks++
+    }
+    foreach ($name in @('Unity.Unknown.Editor.Tests', 'Unity.Addressables.Tests', 'YLFramework.Tests', 'Unity.ResourceManager.Tests')) {
+        $rejected = $false
+        try { $null = $sdkBoundary.Invoke($null, [object[]]@($name)) } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Unknown Editor SDK test names were broadly admitted.' }; $checks++
+    }
+    $null = $referenceGuard.Invoke($null, [object[]]@(,([string[]]@('Unity.Addressables.dll', 'Unity.ResourceManager', 'Unity.Profiling.Core.dll')))); $checks++
+    foreach ($reference in @('Unity.Anything', 'Unity.Addressables.Editor', 'Unity.ScriptableBuildPipeline.Editor', 'Unity.ResourceManager.Tests', 'nunit.framework')) {
+        $rejected = $false
+        try { $null = $referenceGuard.Invoke($null, [object[]]@(,([string[]]@($reference)))) } catch { $rejected = $true }
+        if (-not $rejected) { throw "The Runtime reference guard was broadened for $reference" }; $checks++
+    }
     if ($null -eq $method) { throw 'DistributionEntry must validate typed v2 ownership before it acquires process exit authority.' }
     [UnityEngine.Application]::dataPath = (Join-Path $hostRecord.path 'Assets').Replace('\', '/')
     $null = [IO.Directory]::CreateDirectory([UnityEngine.Application]::dataPath)
+    $saveScene = [YLFramework.Testing.DistributionEntry].GetMethod('SaveOwnedBuildScene', [Reflection.BindingFlags]'NonPublic,Static')
+    if ($null -eq $saveScene) { throw 'Build must validate and preserve concrete owned Scene identities around SaveScene.' }
+    $sceneAsset = 'Assets/YLTestingDistribution/DistributionScene.unity'
+    $scenePhysical = Join-Path $hostRecord.path $sceneAsset
+    $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($scenePhysical))
+    $sceneFixtureRoot = (Get-Location).Path
+    function Reset-SceneFixture {
+        foreach ($path in @($scenePhysical, ($scenePhysical + '.meta'))) {
+            if ([IO.File]::Exists($path)) { [IO.File]::Delete($path) }
+            if ([IO.Directory]::Exists($path)) { [IO.Directory]::Delete($path) }
+        }
+        $null = [UnityEditor.AssetDatabase]::Guids.Remove($sceneAsset)
+        [UnityEditor.SceneManagement.EditorSceneManager]::SaveCalls = 0
+        [UnityEditor.SceneManagement.EditorSceneManager]::SaveResult = $true
+        [UnityEditor.SceneManagement.EditorSceneManager]::CreateFile = $true
+        foreach ($name in @('ChangeActive', 'Invalidate', 'Unload', 'WrongPath', 'RemainDirty', 'ThrowOnSave')) {
+            [UnityEditor.SceneManagement.EditorSceneManager].GetField($name).SetValue($null, $false)
+        }
+        return [UnityEditor.SceneManagement.EditorSceneManager]::NewScene([UnityEditor.SceneManagement.NewSceneSetup]::EmptyScene, [UnityEditor.SceneManagement.NewSceneMode]::Single)
+    }
+    try {
+        Set-Location -LiteralPath $hostRecord.path
+        $scene = Reset-SceneFixture
+        $beforeHandle = $scene.handle
+        try { $saved = $saveScene.Invoke($null, [object[]]@($scene)) }
+        catch { Write-Verbose $_.Exception.InnerException.ToString(); throw }
+        if ([UnityEditor.SceneManagement.EditorSceneManager]::SaveCalls -ne 1 -or -not [IO.File]::Exists($scenePhysical) -or
+            [int]$saved['beforeSave']['scene']['handle'] -ne $beforeHandle -or [int]$saved['afterSave']['scene']['handle'] -ne $beforeHandle) {
+            throw 'The owned scene did not preserve its exact identity through one real fixture save.'
+        }; $checks++
+        foreach ($fault in @('invalid', 'unloaded', 'inactive', 'foreign-saved-scene', 'existing-target', 'existing-meta', 'directory-target', 'asset-guid',
+            'save-false', 'save-throws', 'no-output', 'changed-active', 'invalid-after', 'unloaded-after', 'wrong-path-after', 'dirty-after')) {
+            $scene = Reset-SceneFixture
+            switch -CaseSensitive ($fault) {
+                'invalid' { $scene.state.valid = $false }
+                'unloaded' { $scene.state.loaded = $false }
+                'inactive' { $null = [UnityEditor.SceneManagement.EditorSceneManager]::NewScene([UnityEditor.SceneManagement.NewSceneSetup]::EmptyScene, [UnityEditor.SceneManagement.NewSceneMode]::Single) }
+                'foreign-saved-scene' { $scene.state.path = 'Assets/Foreign.unity' }
+                'existing-target' { [IO.File]::WriteAllText($scenePhysical, 'unknown scene must survive') }
+                'existing-meta' { [IO.File]::WriteAllText($scenePhysical + '.meta', 'unknown metadata must survive') }
+                'directory-target' { $null = [IO.Directory]::CreateDirectory($scenePhysical) }
+                'asset-guid' { [UnityEditor.AssetDatabase]::Guids[$sceneAsset] = '1234567890abcdef1234567890abcdef' }
+                'save-false' { [UnityEditor.SceneManagement.EditorSceneManager]::SaveResult = $false }
+                'save-throws' { [UnityEditor.SceneManagement.EditorSceneManager]::ThrowOnSave = $true }
+                'no-output' { [UnityEditor.SceneManagement.EditorSceneManager]::CreateFile = $false }
+                'changed-active' { [UnityEditor.SceneManagement.EditorSceneManager]::ChangeActive = $true }
+                'invalid-after' { [UnityEditor.SceneManagement.EditorSceneManager]::Invalidate = $true }
+                'unloaded-after' { [UnityEditor.SceneManagement.EditorSceneManager]::Unload = $true }
+                'wrong-path-after' { [UnityEditor.SceneManagement.EditorSceneManager]::WrongPath = $true }
+                'dirty-after' { [UnityEditor.SceneManagement.EditorSceneManager]::RemainDirty = $true }
+            }
+            $rejected = $false
+            try { $null = $saveScene.Invoke($null, [object[]]@($scene)) } catch {
+                $cause = $_.Exception.GetBaseException()
+                if ($_.Exception.InnerException.Data['ownedBuildScene'] -eq $null) { throw "Scene failure lost its concrete identity evidence: $fault" }
+                $rejected = $true
+            }
+            if (-not $rejected) { throw "The owned scene save guard accepted $fault" }
+            if ($fault -cin @('invalid', 'unloaded', 'inactive', 'foreign-saved-scene', 'existing-target', 'existing-meta', 'directory-target', 'asset-guid') -and
+                [UnityEditor.SceneManagement.EditorSceneManager]::SaveCalls -ne 0) { throw 'A rejected or unknown scene reached SaveScene.' }
+            if ($fault -ceq 'existing-target' -and [IO.File]::ReadAllText($scenePhysical) -cne 'unknown scene must survive') { throw 'Unknown scene bytes were overwritten.' }
+            if ($fault -ceq 'existing-meta' -and [IO.File]::ReadAllText($scenePhysical + '.meta') -cne 'unknown metadata must survive') { throw 'Unknown metadata bytes were overwritten.' }
+            $checks++
+        }
+    } finally { Set-Location -LiteralPath $sceneFixtureRoot; $null = Reset-SceneFixture }
     $output = Join-Path $result.path 'Inspect'; $null = [IO.Directory]::CreateDirectory($output)
     $manifest = Join-Path $hostRecord.path 'Packages/manifest.json'; $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($manifest)); [IO.File]::WriteAllText($manifest, '{"dependencies":{}}')
+    $sdkCore = [YLFramework.Testing.DistributionEntry].GetMethod('CaptureOfficialEditorSdkNodeCore', [Reflection.BindingFlags]'NonPublic,Static')
+    if ($null -eq $sdkCore) { throw 'The exact native projectResolution/BuiltIn-source verifier is missing.' }
+    $sdkHost = New-YLTestDirectory -Workspace $workspace -Kind Host -Key EditorSdk
+    $editorContents = Join-Path $sandbox 'Editor/Data'
+    $origin = Join-Path $editorContents 'Resources/PackageManager/BuiltInPackages/com.unity.test-framework'
+    $fingerprint = 'b' * 40
+    $materialized = Join-Path $sdkHost.path ('Library/PackageCache/com.unity.test-framework@' + $fingerprint.Substring(0, 12))
+    $aaRoot = Join-Path $sdkHost.path 'Library/PackageCache/com.unity.addressables@aaaaaaaaaaaa'
+    $sourceRelative = 'UnityEngine.TestRunner/Runner.cs'
+    $copiedSource = Join-Path $materialized $sourceRelative; $installedSource = Join-Path $origin $sourceRelative
+    foreach ($directory in @([IO.Path]::GetDirectoryName($copiedSource), [IO.Path]::GetDirectoryName($installedSource), (Join-Path $aaRoot 'Editor/DocExampleCode'),
+        (Join-Path $sdkHost.path 'Packages'), (Join-Path $sdkHost.path 'Library/PackageManager'))) { $null = [IO.Directory]::CreateDirectory($directory) }
+    $sdkManifest = Join-Path $sdkHost.path 'Packages/manifest.json'
+    $sdkLock = Join-Path $sdkHost.path 'Packages/packages-lock.json'
+    $resolutionPath = Join-Path $sdkHost.path 'Library/PackageManager/projectResolution.json'
+    $sdkPackage = [UnityEditor.PackageManager.PackageInfo]::new()
+    $aa = [UnityEditor.PackageManager.PackageInfo]::new()
+    $sdkAssembly = [UnityEditor.Compilation.Assembly]::new()
+    function Write-SdkFixture([string] $Path, [object] $Value) {
+        [IO.File]::WriteAllText($Path, (ConvertTo-Json -InputObject $Value -Depth 20), [Text.UTF8Encoding]::new($false))
+    }
+    function Reset-SdkFixture {
+        $sdkPackage.name = 'com.unity.test-framework'; $sdkPackage.version = '1.6.0'; $sdkPackage.source = [UnityEditor.PackageManager.PackageSource]::BuiltIn
+        $sdkPackage.isDirectDependency = $false; $sdkPackage.assetPath = 'Packages/com.unity.test-framework'; $sdkPackage.resolvedPath = $materialized
+        $sdkPackage.errors = @(); $sdkPackage.registry = $null
+        $aa.name = 'com.unity.addressables'; $aa.version = '2.10.3'; $aa.source = [UnityEditor.PackageManager.PackageSource]::Registry
+        $aa.resolvedPath = $aaRoot; $aa.assetPath = 'Packages/com.unity.addressables'; $aa.isDirectDependency = $false
+        $aa.registry = [UnityEditor.PackageManager.RegistryInfo]::new(); $aa.registry.url = 'https://packages.unity.com'
+        $dependency = [UnityEditor.PackageManager.DependencyInfo]::new(); $dependency.name = 'com.unity.test-framework'; $dependency.version = '1.4.5'
+        $aa.dependencies = @($dependency)
+        $sdkAssembly.name = 'UnityEngine.TestRunner'; $sdkAssembly.sourceFiles = @('Packages/com.unity.test-framework/' + $sourceRelative)
+        $script:sdkLockValue = @{ dependencies = @{
+            'com.unity.test-framework' = @{ version = '1.6.0'; source = 'builtin'; depth = 2 }
+            'com.unity.addressables' = @{ version = '2.10.3'; source = 'registry'; depth = 1; url = 'https://packages.unity.com' }
+        } }
+        $script:resolutionValue = @{ context = @{ projectPath = (Join-Path $sdkHost.path 'Packages'); unityVersion = [UnityEngine.Application]::unityVersion }
+            outputs = @{ 'com.unity.test-framework@1.6.0' = @{ name = 'com.unity.test-framework'; version = '1.6.0'; source = 'builtin'
+                resolvedPath = $materialized; fingerprint = $fingerprint; testable = $false } } }
+        $script:cachePackageValue = @{ name = 'com.unity.test-framework'; version = '1.6.0'; _fingerprint = $fingerprint; _upm = @{ copied = $true } }
+        $script:originPackageValue = @{ name = 'com.unity.test-framework'; version = '1.6.0' }
+        Write-SdkFixture $sdkManifest @{ dependencies = @{} }
+        Write-SdkFixture $sdkLock $sdkLockValue
+        Write-SdkFixture $resolutionPath $resolutionValue
+        Write-SdkFixture (Join-Path $materialized 'package.json') $cachePackageValue
+        Write-SdkFixture (Join-Path $origin 'package.json') $originPackageValue
+        Write-SdkFixture (Join-Path $aaRoot 'package.json') @{ name = 'com.unity.addressables'; version = '2.10.3' }
+        [IO.File]::WriteAllText($copiedSource, '// exact installed source'); [IO.File]::WriteAllText($installedSource, '// exact installed source')
+        [IO.File]::WriteAllText((Join-Path $aaRoot 'Editor/DocExampleCode/Example.cs'), '// official registry SDK source')
+    }
+    function Invoke-SdkFixture {
+        $parameters = [object[]]::new(4)
+        $parameters[0] = $sdkAssembly; $parameters[1] = [UnityEditor.PackageManager.PackageInfo[]]@($aa, $sdkPackage)
+        $parameters[2] = [string]$sdkHost.path; $parameters[3] = [string]$editorContents
+        try { return ,$sdkCore.Invoke($null, $parameters) }
+        catch {
+            $cause = $_.Exception.GetBaseException()
+            Write-Verbose $cause.ToString()
+            if ($null -ne $cause.Data['officialEditorSdkFailure']) { Write-Verbose $cause.Data['officialEditorSdkFailure'].ToString() }
+            throw $cause
+        }
+    }
+    Reset-SdkFixture
+    $observedSdk = Invoke-SdkFixture
+    if ([string]$observedSdk['sourceProofMode'] -cne 'BuiltinMaterialized' -or [string]$observedSdk['resolvedPath'] -cne $materialized -or
+        [string]$observedSdk['packageManifestSha256'] -ceq [string]$observedSdk['installedManifestSha256'] -or
+        [string]$observedSdk['sources'][0]['sha256'] -cne [string]$observedSdk['sources'][0]['installedSha256']) {
+        throw 'A genuine materialized BuiltIn copy was not proved independently of injected UPM manifest bytes.'
+    }; $checks++
+    $sdkAssembly.name = 'Unity.Addressables.DocExampleCode.Editor.Tests'
+    $sdkAssembly.sourceFiles = @('Packages/com.unity.addressables/Editor/DocExampleCode/Example.cs')
+    $observedSdk = Invoke-SdkFixture
+    if ([string]$observedSdk['sourceProofMode'] -cne 'OfficialRegistry') { throw 'AA DocExample acquired the BuiltIn exception.' }; $checks++
+    foreach ($fault in @('lock-source', 'lock-version', 'direct', 'manifest-direct', 'assetPath', 'errors', 'context-project', 'context-version',
+        'missing-output', 'duplicate-package-output', 'row-source', 'row-version', 'row-testable', 'row-fingerprint', 'row-root', 'package-root',
+        'cache-name', 'cache-version', 'cache-fingerprint', 'origin-name', 'origin-version', 'cached-source', 'installed-source', 'foreign-source', 'aa-builtin')) {
+        Reset-SdkFixture
+        $row = $resolutionValue.outputs['com.unity.test-framework@1.6.0']
+        switch -CaseSensitive ($fault) {
+            'lock-source' { $sdkLockValue.dependencies['com.unity.test-framework'].source = 'registry' }
+            'lock-version' { $sdkLockValue.dependencies['com.unity.test-framework'].version = '1.5.0' }
+            'direct' { $sdkPackage.isDirectDependency = $true }
+            'manifest-direct' { Write-SdkFixture $sdkManifest @{ dependencies = @{ 'com.unity.test-framework' = '1.6.0' } } }
+            'assetPath' { $sdkPackage.assetPath = 'Packages/com.vendor.fake' }
+            'errors' { $errorRow = [UnityEditor.PackageManager.Error]::new(); $errorRow.message = 'actual package resolution error'; $sdkPackage.errors = @($errorRow) }
+            'context-project' { $resolutionValue.context.projectPath = $repository }
+            'context-version' { $resolutionValue.context.unityVersion = 'wrong Editor' }
+            'missing-output' { $resolutionValue.outputs.Clear() }
+            'duplicate-package-output' { $resolutionValue.outputs['com.unity.test-framework@1.5.0'] = $row.Clone() }
+            'row-source' { $row.source = 'registry' }
+            'row-version' { $row.version = '1.5.0' }
+            'row-testable' { $row.testable = $true }
+            'row-fingerprint' { $row.fingerprint = 'c' * 40 }
+            'row-root' { $row.resolvedPath = $repository }
+            'package-root' { $sdkPackage.resolvedPath = $origin }
+            'cache-name' { $cachePackageValue.name = 'com.vendor.fake' }
+            'cache-version' { $cachePackageValue.version = '1.5.0' }
+            'cache-fingerprint' { $cachePackageValue._fingerprint = 'c' * 40 }
+            'origin-name' { $originPackageValue.name = 'com.vendor.fake' }
+            'origin-version' { $originPackageValue.version = '1.5.0' }
+            'cached-source' { [IO.File]::AppendAllText($copiedSource, 'changed') }
+            'installed-source' { [IO.File]::AppendAllText($installedSource, 'changed') }
+            'foreign-source' { $sdkAssembly.sourceFiles = @($manifest) }
+            'aa-builtin' { $sdkAssembly.name = 'Unity.Addressables.DocExampleCode.Editor.Tests'; $aa.source = [UnityEditor.PackageManager.PackageSource]::BuiltIn }
+        }
+        Write-SdkFixture $sdkLock $sdkLockValue; Write-SdkFixture $resolutionPath $resolutionValue
+        Write-SdkFixture (Join-Path $materialized 'package.json') $cachePackageValue; Write-SdkFixture (Join-Path $origin 'package.json') $originPackageValue
+        $rejected = $false
+        try { $null = Invoke-SdkFixture } catch {
+            if ($_.Exception -isnot [InvalidOperationException]) { throw }
+            $evidence = $_.Exception.Data['officialEditorSdkFailure']
+            if ($null -eq $evidence) { throw "SDK rejection omitted actual structured diagnostics: $fault" }
+            foreach ($field in @('assembly', 'source', 'isDirectDependency', 'assetPath', 'resolvedPath', 'version', 'errors', 'lock', 'editorRoot')) {
+                if ($null -eq $evidence.Property($field)) { throw "SDK failure diagnostics omitted $field" }
+            }
+            if ($fault -cin @('cached-source', 'installed-source') -and
+                ($evidence['sources'].Count -ne 1 -or [string]$evidence['sources'][0]['sha256'] -ceq [string]$evidence['sources'][0]['installedSha256'])) {
+                throw 'Source mismatch diagnostics lost the actual cached/installed SHA pair.'
+            }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw "Materialized BuiltIn SDK provenance guard accepted $fault" }; $checks++
+    }
     $valid = @{ schemaVersion = 2; hostId = $hostRecord.id; resultId = $result.id; resultRoot = $result.path; output = $output; unityVersion = '2022.3.62f3'
         phase = 'Inspect'; packageOrigin = 'File'; backend = 'Mono'; smoke = $false; hybridCLR = $false; manifestSha256 = (Get-FileHash -LiteralPath $manifest).Hash; packages = @(@{name = 'com.kano.ylframework'; version = '0.1.0-preview.1'}) }
     $fixtureCatalog = Get-YLFixturePackageCatalog

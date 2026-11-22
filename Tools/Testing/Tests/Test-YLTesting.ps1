@@ -46,7 +46,8 @@ function Assert-Rejected([scriptblock] $Action, [string] $Pattern) {
 
 function Assert-ResourceCurrentPlayerIsolation([Collections.IDictionary] $Probe) {
     Assert-That ($Probe.name -ceq 'YLFramework.Tests.ResourceCurrent.Player' -and
-        @($Probe.references).Count -eq 1 -and $Probe.references[0] -ceq 'YLFramework.Runtime') 'ResourceCurrent Player isolation requires only its actual main runtime reference.'
+        @($Probe.references).Count -eq 2 -and $Probe.references -ccontains 'YLFramework.Runtime' -and
+        $Probe.references -ccontains 'Unity.Addressables') 'ResourceCurrent Player isolation requires only the actual runtime and official Addressables references.'
     Assert-That (@($Probe.defineConstraints).Count -eq 1 -and
         $Probe.defineConstraints[0] -ceq 'UNITY_EDITOR || YL_RESOURCE_CURRENT_ACCEPTANCE') 'ResourceCurrent Player isolation requires the exact Editor-or-explicit-acceptance condition.'
     Assert-That (@($Probe.precompiledReferences).Count -eq 0 -and
@@ -117,6 +118,103 @@ function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minut
 
 try {
     if ($Group -in @('All', 'Workspace')) {
+        Test-Case 'Main Resource declares Addressables directly and references the public runtime assemblies' {
+            $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $manifest = Read-YLPackageEvidenceJson (Join-Path $root 'PackageSources/com.kano.ylframework/package.json')
+            Assert-That ($manifest.dependencies.Contains('com.unity.addressables') -and
+                $manifest.dependencies['com.unity.addressables'] -ceq '1.25.0') 'The main product must own its minimum Addressables dependency without Localization.'
+            $runtime = Read-YLPackageEvidenceJson (Join-Path $root 'PackageSources/com.kano.ylframework/Runtime/YLFramework.Runtime.asmdef')
+            foreach ($name in @('Unity.Addressables', 'Unity.ResourceManager')) {
+                Assert-That (@($runtime.references) -ccontains $name) "The main runtime must reference $name directly."
+            }
+            $editor = Read-YLPackageEvidenceJson (Join-Path $root 'PackageSources/com.kano.ylframework/Editor/YLFramework.Editor.asmdef')
+            Assert-That (@($editor.references) -ccontains 'Unity.Addressables.Editor') 'Authoring requires the official Editor assembly.'
+        }
+        Test-Case 'Main-only native test projection keeps Addressables but not Localization' {
+            $assembly = @{ name = 'YLFramework.Tests.EditMode'; references = @('YLFramework.Runtime', 'Unity.Addressables', 'Unity.ResourceManager', 'Unity.Addressables.Editor', 'Unity.Localization', 'Unity.Localization.Editor') }
+            $copy = Get-YLNativeTestAssembly -Assembly $assembly -PackageIds @('com.kano.ylframework') -Catalog (Read-YLPackageCatalog)
+            Assert-That (($copy.references -join ',') -ceq 'YLFramework.Runtime,Unity.Addressables,Unity.ResourceManager,Unity.Addressables.Editor') 'Addressables cannot disappear when the optional Localization product is absent.'
+            Assert-That ($assembly.references.Count -eq 6) 'Projection changed the source assembly.'
+        }
+        Test-Case 'Addressables native profiles and resolved package evidence are exact' {
+            $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = [IO.File]::ReadAllText((Join-Path $root 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
+            foreach ($editor in $configuration.editors) {
+                $expected = if ($editor.version.StartsWith('2022.', [StringComparison]::Ordinal)) { '1.25.0' } else { '2.10.3' }
+                Assert-That ((Get-YLUnityAddressablesVersion $editor) -ceq $expected) 'The host version pin must follow its exact declared Editor profile.'
+            }
+            $locked = @{ dependencies = @{ 'com.unity.addressables' = @{ version = '2.10.3'; source = 'registry' } } }
+            $response = [pscustomobject]@{ addressablesVersion = '2.10.3'; addressablesSource = 'Registry' }
+            $evidence = Assert-YLUnityAddressablesVersion -ExpectedVersion '2.10.3' -Lock $locked -Response $response
+            Assert-That ($evidence.requested -ceq '2.10.3' -and $evidence.resolved -ceq '2.10.3') 'Actual resolution evidence was not returned.'
+            $locked.dependencies['com.unity.addressables'].version = '1.25.0'
+            Assert-Rejected { Assert-YLUnityAddressablesVersion -ExpectedVersion '2.10.3' -Lock $locked -Response $response } 'Addressables|version'
+            $locked.dependencies['com.unity.addressables'].version = '2.10.3'
+            $response.addressablesVersion = '1.25.0'
+            Assert-Rejected { Assert-YLUnityAddressablesVersion -ExpectedVersion '2.10.3' -Lock $locked -Response $response } 'Addressables|version'
+        }
+        Test-Case 'Packed catalog is an explicit, isolated three-case matrix' {
+            $config = Read-YLPackageEvidenceJson ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../TestSuites.json')))
+            $editors = @($config.editors | ForEach-Object { [pscustomobject]$_ })
+            $unity2022 = $editors | Where-Object version -CEQ '2022.3.62f3'
+            $unity6 = $editors | Where-Object version -CEQ '6000.3.27f1'
+            foreach ($name in @('ResourcePackedCatalog', 'ResourcePackedCatalogBinary')) {
+                $entry = @($config.modules | Where-Object name -CEQ $name)
+                Assert-That ($entry.Count -eq 1 -and ($entry[0].suites -join ',') -ceq 'Special' -and
+                    $entry[0].specialCategory -ceq 'YL.Resource.Addressables.PackedContract') 'Packed catalog must be opt-in with the real test category.'
+            }
+            $json = Get-YLPackedCatalogProfile -Module ResourcePackedCatalog -EditorProfile $unity2022
+            $binary = Get-YLPackedCatalogProfile -Module ResourcePackedCatalogBinary -EditorProfile $unity2022
+            $modern = Get-YLPackedCatalogProfile -Module ResourcePackedCatalog -EditorProfile $unity6
+            Assert-That ($json.expectedEncoding -ceq 'json' -and $json.define -ceq '' -and
+                $binary.expectedEncoding -ceq 'binary' -and $binary.define -ceq 'ENABLE_BINARY_CATALOG' -and
+                $modern.expectedEncoding -ceq 'binary' -and $modern.define -ceq '') 'The modern package must never masquerade as legacy binary evidence.'
+            Assert-That ($binary.keySuffix -cne $json.keySuffix -and $binary.keySuffix.Contains('ENABLE_BINARY_CATALOG')) 'The binary compile symbol must distinguish owned host and input identities.'
+            Assert-Rejected { Get-YLPackedCatalogProfile -Module ResourcePackedCatalogBinary -EditorProfile $unity6 } '1\.25\.0'
+            Assert-That ($null -eq (Get-YLPackedCatalogProfile -Module ResourceAddressables -EditorProfile $unity2022)) 'The ordinary module must not acquire a new compile profile.'
+        }
+        Test-Case 'Packed catalog definitions accept the native Special dispatcher projection' {
+            $configuration = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../TestSuites.json')) | ConvertFrom-Json -DateKind String
+            foreach ($name in @('ResourcePackedCatalog', 'ResourcePackedCatalogBinary')) {
+                $definition = $configuration.modules | Where-Object name -CEQ $name
+                $definition.category = $definition.specialCategory
+                $definition.assemblies = @()
+                $definition.excludedCategories = @()
+                Assert-That ($definition.category -ceq 'YL.Resource.Addressables.PackedContract' -and
+                    $definition.assemblies.Count -eq 0 -and $definition.excludedCategories.Count -eq 0) "Special projection failed for $name."
+            }
+        }
+        Test-Case 'Packed binary seeds only a cold owned host and never repairs drift' {
+            $hostRecord = @{ path = Join-Path $sandbox 'PackedHost' }
+            $null = [IO.Directory]::CreateDirectory((Join-Path $hostRecord.path 'ProjectSettings'))
+            $settings = Initialize-YLPackedBinarySettings -HostRecord $hostRecord
+            $original = [IO.File]::ReadAllText($settings)
+            Assert-That ($original -cmatch '(?m)^  scriptingDefineSymbols:\r?\n    Standalone: ENABLE_BINARY_CATALOG\r?$') 'Expected Standalone symbol before the first compiler launch.'
+            $null = [IO.Directory]::CreateDirectory((Join-Path $hostRecord.path 'Library'))
+            $null = Initialize-YLPackedBinarySettings -HostRecord $hostRecord
+            [IO.File]::WriteAllText($settings, $original.Replace('ENABLE_BINARY_CATALOG', 'OTHER'))
+            Assert-Rejected { Initialize-YLPackedBinarySettings -HostRecord $hostRecord } 'ENABLE_BINARY_CATALOG'
+            Assert-That ([IO.File]::ReadAllText($settings).Contains('Standalone: OTHER')) 'A reused host must not be rewritten to repair drift.'
+            [IO.File]::Delete($settings)
+            Assert-Rejected { Initialize-YLPackedBinarySettings -HostRecord $hostRecord } 'compiled host'
+            Assert-That (-not [IO.File]::Exists($settings)) 'Do not silently reseed a compiled host.'
+        }
+        Test-Case 'Packed catalog evidence rejects missing, wrong or contradictory log markers' {
+            $log = Join-Path $sandbox 'packed-unity.log'
+            $packed = @{ expectedEncoding = 'binary'; define = 'ENABLE_BINARY_CATALOG' }
+            $marker = '[PackedContract] Addressables 1.25.0, ENABLE_BINARY_CATALOG=True, ENABLE_JSON_CATALOG=False, runtime catalog=Library/aa/Windows/catalog.bin'
+            [IO.File]::WriteAllText($log, "Unity build`r`n$marker`r`nstack trace`r`n")
+            $evidence = Read-YLPackedCatalogEncoding -Log $log -Packed $packed -AddressablesVersion '1.25.0'
+            Assert-That ($evidence.encoding -ceq 'binary' -and $evidence.log -ceq $log -and
+                $evidence.logSha256 -ceq (Get-FileHash -LiteralPath $log).Hash.ToLowerInvariant()) 'Evidence must point to the exact Unity log.'
+            Assert-Rejected { Read-YLPackedCatalogEncoding -Log $log -Packed $packed -AddressablesVersion '2.10.3' } 'encoding'
+            [IO.File]::AppendAllText($log, $marker.Replace('.bin', '.json') + "`n")
+            Assert-Rejected { Read-YLPackedCatalogEncoding -Log $log -Packed $packed -AddressablesVersion '1.25.0' } 'encoding'
+            [IO.File]::WriteAllText($log, $marker.Replace('CATALOG=True', 'CATALOG=False'))
+            Assert-Rejected { Read-YLPackedCatalogEncoding -Log $log -Packed $packed -AddressablesVersion '1.25.0' } 'symbols'
+            [IO.File]::WriteAllText($log, "Expected $marker")
+            Assert-Rejected { Read-YLPackedCatalogEncoding -Log $log -Packed $packed -AddressablesVersion '1.25.0' } 'encoding'
+        }
         Test-Case 'Action automatic session gates never open an interactive visual window' {
             . (Join-Path $PSScriptRoot '../Common/Packages.ps1')
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
@@ -227,6 +325,17 @@ try {
                 -not $http.autoReferenced -and ($http.defineConstraints -join ',') -ceq 'UNITY_INCLUDE_TESTS') 'The isolated HTTP tests must not acquire optional products or enter ordinary Players.'
             Assert-That ('Assets/Tests/YLFramework/EditMode/Systems/Http/HttpSessionTests.cs' -cin $core.editTests -and
                 'YL.Special.CoreSession' -cin $core.excludedCategories -and $core.specialCategory -ceq 'YL.Special.CoreSession') 'HTTP real session discovery requires its original source in Core and the explicit Daily-excluded two-Play category.'
+        }
+
+        Test-Case 'Core compiles its Addressables fixture without running the other module lifecycle tests' {
+            $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+            $configuration = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Tools/Testing/TestSuites.json')
+            $core = @($configuration.modules | Where-Object name -CEQ 'Core')[0]
+            $resource = @($configuration.modules | Where-Object name -CEQ 'ResourceAddressables')[0]
+            $fixture = 'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs'
+            Assert-That ($core.prepareAddressablesConsumerContent -and $fixture -cin $core.editTests -and
+                'YL.Resource.Addressables' -cin $core.excludedCategories) 'Core must retain the packed preparation helper without rebuilding the separate ownership scenes within its own test session.'
+            Assert-That ($fixture -cin $resource.editTests -and $resource.category -ceq 'YL.Resource.Addressables') 'The resource ownership tests must still be selected by their native resource module.'
         }
         Test-Case 'Core real UI acceptance has a separately selected two-Play native session and original scene inputs' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
@@ -464,32 +573,24 @@ try {
                 Assert-That ([regex]::Matches([IO.File]::ReadAllText($metadata), '(?m)^guid: [0-9a-f]{32}\s*$').Count -eq 1) "Unity cannot import a malformed standalone fixture identity: $metadata"
             }
         }
-        Test-Case 'ResourceUpdates selects its real transaction signature TLS and native crypto sources explicitly' {
+        Test-Case 'ResourceUpdates and ResourceCurrentPublication select only official Addressables workflows' {
             $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
             $modules = @($configuration.modules | Where-Object name -CEQ 'ResourceUpdates')
-            Assert-That ($modules.Count -eq 1) 'The original Resource update tests have no explicit native entry.'
+            Assert-That ($modules.Count -eq 1) 'There must be exactly one native ResourceUpdates entry.'
             $definition = $modules[0]
             Assert-That (($definition.suites -join ',') -ceq 'Special' -and $definition.specialBackend -ceq 'SessionNative' -and
                 ($definition.specialModes -join ',') -ceq 'EditMode' -and $definition.specialCategory -ceq 'YL.Special.ResourceUpdates' -and
                 @($definition.assemblies).Count -eq 0 -and $definition.category -ceq '') 'Resource updates require one explicit native category, not a Daily or broad assembly selection.'
             Assert-That ($definition.nativeLayout -ceq 'Framework' -and $definition.prepareSessionScene -and $definition.prepareSceneTemplates -and
-                $definition.shortHostKey -and $definition.graphics) 'Real bundle and coroutine update tests require their saved owned scene and native host.'
+                $definition.shortHostKey -and $definition.graphics) 'Official catalog and download tests require their saved owned scene and native host.'
             $closure = @(Get-YLUpmPackages -Repository $repository -Ids @($definition.packageInputs))
             Assert-That (($closure.id -join ',') -ceq 'com.kano.ylframework') 'Resource updates cannot acquire Audio, Localization, DataAssets or other optional products.'
-            $expected = @('ArtifactStoreQueryTests.cs', 'ResourceUpdateTests.cs', 'ResourceUpdateTests.Native.cs', 'ResourceUpdateTests.Query.cs',
-                'ResourceUpdateTests.Recovery.cs', 'ResourceUpdateTests.Remote.cs', 'ResourceUpdateTests.RemoteDownload.cs',
-                'ResourceUpdateTests.RemoteReview.cs', 'ResourceUpdateTests.RemoteSecurity.cs', 'ResourceContentUpdateTests.cs',
-                'ResourceContentUpdateTests.CheckIO.cs', 'ResourceContentUpdateTests.Encrypted.cs', 'ResourceContentUpdateTests.RemoteIO.cs',
-                'ResourceSignatureTests.cs', 'ResourceDownloadTests.cs', 'ResourceDownloadTests.Tls.cs',
-                'ResourceContentTests.cs', 'ResourceContentTests.Envelope.cs', 'ResourceContentTests.Native.cs') |
-                ForEach-Object { 'Assets/Tests/YLFramework/EditMode/Systems/Resource/' + $_ }
-            $expected += @('ResourceContentBuildTests.cs', 'ResourceContentBuildTests.Publishing.cs') |
-                ForEach-Object { 'Assets/Tests/YLFramework/EditMode/Editor/Resource/' + $_ }
-            $expected += 'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceUpdateTests.ControlRecords.cs'
-            Assert-That ((($definition.editTests | Sort-Object) -join ',') -ceq (($expected | Sort-Object) -join ',')) 'Current updates must retain every original baseline source and the explicit v2 control regression partial.'
+            $expected = 'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesUpdateTests.cs'
+            $ownership = 'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs'
+            Assert-That (($definition.editTests -join ',') -ceq $expected) 'ResourceUpdates must select the official catalog update suite only.'
             Assert-That (@($definition.sourceEnvironment).Count -eq 0 -and
-                ($definition.outputEnvironment -join ',') -ceq 'YL_TEST_OUTPUT_ROOT') 'TLS credentials must inherit the explicit process environment; sourceEnvironment replaces values with repository paths and cannot forward credentials.'
+                ($definition.outputEnvironment -join ',') -ceq 'YL_TEST_OUTPUT_ROOT') 'ResourceUpdates must not need legacy release paths or credentials.'
             $tokens = $null; $errors = $null
             $syntax = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'Tools/Testing/Invoke-YLTests.ps1'), [ref]$tokens, [ref]$errors)
             Assert-That ($errors.Count -eq 0) 'The maintained test entry does not parse.'
@@ -497,35 +598,31 @@ try {
             . ([scriptblock]::Create($function.Extent.Text))
             $profile = @($configuration.editors | Where-Object version -CEQ '6000.3.27f1')[0]
             $selected = Get-SelectedSources -Native -EditorProfile $profile
-            Assert-That ((($selected.tests | Sort-Object) -join ',') -ceq (($expected | Sort-Object) -join ',')) 'The actual source selector differs from the declared baseline.'
-            foreach ($source in $expected + @('Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs',
-                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs',
-                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceTlsServer.cs',
-                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs',
-                'Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs')) {
+            Assert-That (($selected.tests -join ',') -ceq $expected) 'The actual selector must execute the official catalog update suite.'
+            foreach ($source in @($expected, $ownership, 'Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs')) {
                 Assert-That (@($selected.inputs) -ccontains $source -and @($selected.inputs) -ccontains ($source + '.meta')) "The actual native input identity lost source or metadata: $source"
             }
             foreach ($source in @('Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCurrentPublicationTests.cs',
                 'Assets/Tests/YLFramework/Fixtures/ResourceCurrent/ResourceCurrentPlayerProbe.cs')) {
                 Assert-That (@($selected.inputs) -cnotcontains $source) "Author asset/Player acceptance remains a separate native selection: $source"
             }
-            foreach ($type in @('ArtifactStoreQueryTests', 'ResourceUpdateTests', 'ResourceContentUpdateTests', 'ResourceSignatureTests', 'ResourceDownloadTests', 'ResourceContentTests', 'ResourceContentBuildTests')) {
-                $source = @($expected | Where-Object { [IO.Path]::GetFileName($_) -ceq ($type + '.cs') })[0]
-                Assert-That ([IO.File]::ReadAllText((Join-Path $repository $source)).Contains('[Category("YL.Special.ResourceUpdates")]')) "The declared native class would be silently unselected: $type"
-            }
+            Assert-That ([IO.File]::ReadAllText((Join-Path $repository $expected)).Contains('[Category("YL.Special.ResourceUpdates")]')) 'The official update tests would be silently unselected.'
+            Assert-That (@($selected.inputs | Where-Object { $_ -cmatch '/(?:ArtifactStoreQueryTests|ResourceContent(?:Update|Build)?Tests|ResourceSignatureTests|ResourceDownloadTests|ResourceUpdateTests)(?:[./]|$)' }).Count -eq 0) 'The official update host must not compile retired private tests.'
             $definition = @($configuration.modules | Where-Object name -CEQ 'ResourceCurrentPublication')[0]
             Assert-That ($definition.specialBackend -ceq 'SessionNative' -and $definition.specialCategory -ceq 'YL.Special.ResourceCurrent' -and
                 $definition.nativeLayout -ceq 'Framework' -and ($definition.packageInputs -join ',') -ceq 'com.kano.ylframework') 'Current Resource authors and actual Players require their own main-only native selection.'
             $selected = Get-SelectedSources -Native -EditorProfile $profile
-            foreach ($source in @('Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCurrentPublicationTests.cs',
-                'Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceEditorTests.cs',
+            $current = 'Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCurrentPublicationTests.cs'
+            Assert-That (($selected.tests -join ',') -ceq $current -and [IO.File]::ReadAllText((Join-Path $repository $current)).Contains('[Category("YL.Special.ResourceCurrent")]')) 'The special cohort must actually execute the current Player test.'
+            foreach ($source in @($current, $ownership,
+                'Assets/Tests/YLFramework/Fixtures/Shared/Editor/StandaloneFixturePlayer.cs',
                 'Assets/Tests/YLFramework/Fixtures/ResourceCurrent/ResourceCurrentPlayerProbe.cs',
                 'Assets/Tests/YLFramework/Fixtures/ResourceCurrent/YLFramework.Tests.ResourceCurrent.Player.asmdef')) {
                 Assert-That (@($selected.inputs) -ccontains $source -and @($selected.inputs) -ccontains ($source + '.meta')) "Actual current author/Player source identity is missing: $source"
             }
             Assert-That (@($selected.inputs | Where-Object { $_.StartsWith('Assets/Tests/YLFramework/Fixtures/', [StringComparison]::Ordinal) -and $_ -cmatch '\.(png|jpg|tga|spriteatlasv2?)$' }).Count -eq 0 -and
                 @($selected.inputs | Where-Object { $_ -cmatch '/(NamespaceMigration|ResourceV1~)/' }).Count -eq 0) 'The current producer cannot import historical textures or frozen Resource migration originals.'
-            Assert-That (@($definition.nativeFixtureInputs | Where-Object { $_.EndsWith('.asset', [StringComparison]::Ordinal) }).Count -eq 18) 'Current maintained author bytes must be an exact 18-asset input, not a whole historical fixture directory.'
+            Assert-That (@($definition.nativeFixtureInputs | Where-Object { $_ -cnotin @('Assets/Tests/YLFramework/Fixtures/Shared', 'Assets/Tests/YLFramework/Fixtures/ResourceCurrent') }).Count -eq 0) 'Current Player acceptance must not copy or write frozen migration originals.'
             $probe = Read-YLPackageEvidenceJson (Join-Path $repository 'Assets/Tests/YLFramework/Fixtures/ResourceCurrent/YLFramework.Tests.ResourceCurrent.Player.asmdef')
             Assert-ResourceCurrentPlayerIsolation $probe
         }
@@ -583,14 +680,15 @@ try {
             $selected = Get-SelectedSources -Native -EditorProfile $profile
             Assert-That (@($selected.tests).Count -eq 2 -and @($selected.tests) -ccontains $source -and @($selected.tests) -ccontains $current) 'The actual native selector must execute the original fixture and the current saved input.'
             foreach ($relative in @($source, $current, 'Assets/Tests/YLFramework/Acceptance/Core/AudioAcceptanceEntry.cs', 'Assets/Tests/YLFramework/EditMode/Systems/Audio/AudioCoreTests.cs',
-                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceSessionTests.cs',
-                'Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCatalogBuildTests.cs',
-                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCatalogCodecTests.cs',
+                'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs',
                 'Assets/Tests/YLFramework/Fixtures/Shared/Editor/StandaloneFixturePlayer.cs',
                 'Assets/Tests/YLFramework/EditMode/YLFramework.Tests.EditMode.asmdef')) {
                 Assert-That (@($selected.inputs) -ccontains $relative -and @($selected.inputs) -ccontains ($relative + '.meta')) "The native closure lost source or independent metadata: $relative"
             }
-            Assert-That ([IO.File]::ReadAllText((Join-Path $repository $current)).Contains('graphics: true')) 'Real audible Players must opt into graphics, not inherit the headless default.'
+            $caller = [IO.File]::ReadAllText((Join-Path $repository $current))
+            Assert-That ($caller.Contains('extraScriptingDefines: new[] { "YL_UI_ACCEPTANCE" }') -and $caller.Contains('graphics: true')) 'Real audible Players must compile their opt-in probe and use graphics.'
+            $acceptance = Read-YLPackageEvidenceJson (Join-Path $repository 'Assets/Tests/YLFramework/Acceptance/Core/YLFramework.UI.Acceptance.asmdef')
+            Assert-That (($acceptance.defineConstraints -join ',') -ceq 'UNITY_EDITOR || YL_UI_ACCEPTANCE' -and -not $acceptance.autoReferenced) 'The Audio probe still needs to stay outside ordinary Players.'
         }
         Test-Case 'Historical snapshot producers are not current test selectors or export commands' {
             $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
@@ -665,9 +763,20 @@ try {
             $domain = @($configuration.modules | Where-Object name -CEQ 'Domain')[0]
             Assert-That (($equipment.suites -join ',') -ceq 'Special' -and $equipment.specialCategory -ceq 'YL.Special.EquipmentSession') 'Equipment must retain its own session/admission evidence, not another Daily gameplay copy.'
             Assert-That (($domain.suites -join ',') -ceq 'Quick,Special' -and $domain.specialCategory -ceq 'YL.Special.Session') 'Domain must retain Quick and real combination sessions without repeating Gameplay Daily.'
+            $domainTests = 'Assets/Tests/YLFramework/PlayMode/Systems/Domain'
+            $crossPackage = "$domainTests/AddressablesConsumerMigrationTests.cs"
+            foreach ($independent in @($gameplay, $domain)) {
+                Assert-That ($independent.playTests -cnotcontains $domainTests -and $independent.playTests -cnotcontains $crossPackage -and
+                    $independent.playTests -ccontains "$domainTests/DomainHostSceneTests.cs" -and
+                    $independent.playTests -ccontains "$domainTests/DomainResourceLeaseTests.cs" -and
+                    $independent.playTests -ccontains "$domainTests/DomainReviewExitTests.cs" -and
+                    $independent.playTests -ccontains "$domainTests/AddressablesDomainResourceFixture.cs") 'Gameplay-only hosts must keep their tests without compiling the DataAssets combination.'
+            }
+            $combined = @($configuration.modules | Where-Object name -CEQ 'ResourceAddressablesConsumers')[0]
+            Assert-That ($combined.playTests -ccontains $crossPackage -and $combined.packageInputs -ccontains 'com.kano.ylframework.data-assets') 'The DataAssets+Gameplay test belongs to the explicit combined host.'
             Assert-That (@($equipment.editTests) -ccontains 'Assets/Tests/YLFramework/EditMode/Editor/Equipment/EquipmentSettingsAdmissionTests.cs') 'The unique settings admission gate disappeared during the Daily move.'
             $tools = Read-YLPackageEvidenceJson (Join-Path $repoRoot 'Assets/Tests/YLFramework/Fixtures/Authoring/YLFramework.Tests.Tools.Editor.asmdef')
-            Assert-That (($tools.references -join ',') -ceq 'YLFramework.Runtime,YLFramework.Editor,YLFramework.Equipment,YLFramework.Equipment.Acceptance.Player,YLFramework.Tests.Fixtures') 'Authoring tools must reference retained consumers without forcing DataAssets, Localization or Save.'
+            Assert-That (($tools.references -join ',') -ceq 'YLFramework.Runtime,YLFramework.Editor,YLFramework.Equipment,YLFramework.Equipment.Acceptance.Player,YLFramework.Tests.Fixtures,Unity.Addressables,Unity.Addressables.Editor') 'Authoring tools must reference retained consumers and the two official Addressables assemblies, without forcing DataAssets, Localization or Save.'
             $authoring = [IO.File]::ReadAllText((Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/Domain/DomainAuthoringTests.cs'))
             Assert-That (-not $authoring.Contains('YLFramework.DataAssets.')) 'Pure Gameplay authoring still directly consumes optional DataAssets.'
             $dataAuthoring = [IO.File]::ReadAllText((Join-Path $repoRoot 'Assets/Tests/YLFramework/EditMode/Editor/DataAssets/DataAssetAuthoringTests.cs'))
@@ -704,7 +813,17 @@ try {
                 $path = 'Assets/Tests/YLFramework/EditMode/Editor/Data/' + $file
                 Assert-That (@($selected.tests) -ccontains $path -and [IO.File]::ReadAllText((Join-Path $repository $path)).Contains('[Category("YL.Module.Data")]')) "A current composition consumer silently disappeared: $path"
             }
-            Assert-That (@($selected.inputs) -ccontains 'Assets/Tests/YLFramework/EditMode/Editor/DataAssets/DataAssetSessionAndPublicationTests.cs' -and @($selected.inputs) -ccontains 'Assets/Tests/YLFramework/EditMode/Editor/Localization/LocalizationSessionAndPublicationTests.cs' -and $definition.specialCategory -ceq 'YL.Special.Session') 'Daily deduplication cannot remove the distinct combined session/publication inputs.'
+            $combined = 'Assets/Tests/YLFramework/EditMode/Editor/Data/DataDomainReloadSessionTests.cs'
+            Assert-That ($definition.specialCategory -ceq 'YL.Special.DataComposition' -and $definition.disableDomainReload -and
+                $combined -cin $selected.inputs -and [IO.File]::ReadAllText((Join-Path $repository $combined)).Contains('[Category("YL.Special.DataComposition")]')) 'Data Special must select the real combined two-Play case, not standalone publication in a wider package closure.'
+            $standaloneTests = [ordered]@{ DataAssets = 'DataAssetSessionAndPublicationTests.cs'; Localization = 'LocalizationSessionAndPublicationTests.cs' }
+            foreach ($feature in $standaloneTests.Keys) {
+                $standalone = @($configuration.modules | Where-Object name -CEQ $feature)[0]
+                $source = "Assets/Tests/YLFramework/EditMode/Editor/$feature/$($standaloneTests[$feature])"
+                Assert-That ($source -cin $selected.inputs -and $standalone.specialCategory -ceq 'YL.Special.Session' -and
+                    ("Assets/Tests/YLFramework/EditMode/Editor/$feature" -cin $standalone.editTests) -and
+                    [IO.File]::ReadAllText((Join-Path $repository $source)).Contains('[Category("YL.Special.Session")]')) "The isolated $feature publication and session must still be runnable in their own native selector."
+            }
             Assert-That (@($selected.inputs | Where-Object { $_.StartsWith('Assets/Tests/YLFramework/Fixtures/Authoring/', [StringComparison]::Ordinal) }).Count -eq 0) 'Current Data must not acquire optional Equipment tools or the historical Data player just to audit their source.'
             $composition = [IO.File]::ReadAllText((Join-Path $repository 'Assets/Tests/YLFramework/EditMode/Editor/Data/DataSourceOwnershipTests.cs'))
             Assert-That ($composition.Contains('AuthoredDataAndLanguageColdReadFeedOneExplicitStoreDictionary')) 'The current Data/Language author-to-Save consumer is missing.'
@@ -802,6 +921,27 @@ try {
             Assert-Rejected { Get-YLTestEditorProfile -Editors $editors -VersionInfo $info } 'Unsupported|ambiguous'
             $info.ProductVersion = '2022.3.62f3_96770f904ca7'
             Assert-Rejected { Get-YLTestEditorProfile -Editors ($editors + $editors[1]) -VersionInfo $info } 'Unsupported|ambiguous'
+        }
+        Test-Case 'Resource Addressables Player rejects invalid entry requests before creating a workspace' {
+            $entry = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../Invoke-YLResourceAddressablesPlayer.ps1'))
+            Assert-That ([IO.File]::Exists($entry)) 'The maintained Resource Addressables Player entry is missing.'
+            $root = Join-Path $sandbox 'Resource Player [invalid]'
+            $fakeUnity = Join-Path $sandbox 'Unity.exe'
+            [IO.File]::WriteAllBytes($fakeUnity, [IO.File]::ReadAllBytes((Join-Path $PSHOME 'pwsh.exe')))
+            $options = @{ Unity = $fakeUnity; Profile = 'Unity6'; WorkspaceRoot = $root }
+            Assert-Rejected { & $entry @options -ScopeCloseBenchmark } 'Scope close measurement requires .*Release.*Graphics'
+            Assert-Rejected { & $entry @options -ScopeCloseBenchmark -BuildFlavor Development -Graphics } 'Scope close measurement requires .*Release.*Graphics'
+            Assert-Rejected { & $entry @options } 'Unsupported or ambiguous Unity build'
+            Assert-That (-not [IO.Path]::Exists($root)) 'Invalid Resource Addressables Player requests must not write test outputs.'
+        }
+        Test-Case 'Player profile dependencies must come from the fingerprinted JSON bytes' {
+            . (Join-Path $common 'Packages.ps1')
+            $lockPath = Join-Path $sandbox 'player-profile-lock.json'
+            [IO.File]::WriteAllText($lockPath, '{"dependencies":{"pin":"1.0.0"}}')
+            $hash = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash
+            Assert-That ((Read-YLPackageEvidenceJson $lockPath -ExpectedSha256 $hash).dependencies.pin -ceq '1.0.0') 'The frozen pin was not read.'
+            [IO.File]::WriteAllText($lockPath, '{"dependencies":{"pin":"2.0.0"}}')
+            Assert-Rejected { Read-YLPackageEvidenceJson $lockPath -ExpectedSha256 $hash } 'SHA-256 mismatch'
         }
         Test-Case 'workspace initialization is explicit, reusable and preserves repository identity' {
             $unicode = [string][char]0x6D4B + [char]0x8BD5
@@ -1036,9 +1176,9 @@ try {
                 'Assets/Tests/YLFramework/Infrastructure/Editor/YLTestEntry.cs' = 'class Entry {}'
                 'Assets/Tests/YLFramework/Infrastructure/Editor/YLFramework.Tests.Infrastructure.Editor.asmdef' = '{"name":"Fixture.Entry"}'
                 'Packages/manifest.json' = '{"dependencies":{"com.unity.modules.jsonserialize":"1.0.0","com.unity.modules.audio":"1.0.0","com.unity.modules.accessibility":"1.0.0","com.unity.modules.adaptiveperformance":"1.0.0","com.unity.modules.vectorgraphics":"1.0.0","com.unity.render-pipelines.universal":"17.3.0"}}'
-                'Packages/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.2"}}}'
+                'Packages/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.2"},"com.unity.addressables":{"version":"2.10.3","source":"registry"}}}'
                 'Tools/Testing/Profiles/Unity2022/manifest.json' = '{"dependencies":{"com.unity.modules.jsonserialize":"1.0.0","com.unity.modules.audio":"1.0.0","com.unity.render-pipelines.universal":"14.0.12"}}'
-                'Tools/Testing/Profiles/Unity2022/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.1"}}}'
+                'Tools/Testing/Profiles/Unity2022/packages-lock.json' = '{"dependencies":{"com.unity.nuget.newtonsoft-json":{"version":"3.2.1"},"com.unity.addressables":{"version":"1.25.0","source":"registry"}}}'
                 'Unity.exe' = 'native-editor-fixture'
             }
             if ($NativeSdk -ceq 'HybridCLR') {
@@ -1118,6 +1258,11 @@ try {
                 $project = $Arguments[[Array]::IndexOf($Arguments, '-projectPath') + 1]
                 $packagePrefix = if ($EditorVersion -ceq '6000.3.27f1') { 'Packages' } else { 'Tools/Testing/Profiles/Unity2022' }
                 [IO.File]::Copy((Join-Path $repository "$packagePrefix/packages-lock.json"), (Join-Path $project 'Packages/packages-lock.json'), $true)
+                if ($Fault -ceq 'addressables-lock-version') {
+                    $changed = [IO.File]::ReadAllText((Join-Path $project 'Packages/packages-lock.json')) | ConvertFrom-Json -AsHashtable
+                    $changed.dependencies['com.unity.addressables'].version = '0.0.0'
+                    [IO.File]::WriteAllText((Join-Path $project 'Packages/packages-lock.json'), (ConvertTo-Json -InputObject $changed -Depth 10))
+                }
                 if ($NativeSdk -ceq 'HybridCLR') {
                     $locked = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText((Join-Path $project 'Packages/packages-lock.json'))) -AsHashtable
                     $locked.dependencies[$sdkId] = (ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($sdkLockPath)) -AsHashtable).dependencies[$sdkId]
@@ -1132,6 +1277,8 @@ try {
                     schemaVersion = 1; hostId = $request.hostId; inputHash = $request.inputHash; unityVersion = $editor.version
                     status = $(if ($request.action -ceq 'Run') { 'Passed' } else { 'Completed' }); isBatchMode = $true
                     testFrameworkVersion = $editor.testFramework; runtimeReferences = @(); compiledInputs = @(); excludedTests = @(); tests = $tests
+                    addressablesVersion = $(if ($Fault -ceq 'addressables-loaded-version') { '0.0.0' } else { Get-YLUnityAddressablesVersion $editor })
+                    addressablesSource = 'Registry'
                 }
                 if ($request.action -ceq 'Run') {
                     $mode = $request.tests[0].mode
@@ -1176,6 +1323,8 @@ try {
                 $dependencies = $fixture.manifest.dependencies
                 Assert-That ($dependencies.'com.unity.nuget.newtonsoft-json' -ceq $case.newtonsoft) 'The host took Newtonsoft from the wrong source project lock.'
                 Assert-That ($dependencies.'com.unity.ugui' -ceq $case.ugui -and $dependencies.'com.unity.test-framework' -ceq $case.utf) 'The target Editor package profile was lost.'
+                $addressables = if ($case.unity6) { '2.10.3' } else { '1.25.0' }
+                Assert-That ($dependencies.'com.unity.addressables' -ceq $addressables -and $fixture.summary.addressables.resolved -ceq $addressables) 'The exact Addressables profile pin or real resolution verification was lost.'
                 foreach ($module in @('com.unity.modules.accessibility', 'com.unity.modules.adaptiveperformance', 'com.unity.modules.vectorgraphics')) {
                     Assert-That (($module -cin $dependencies.PSObject.Properties.Name) -eq $case.unity6) 'Unity 6-only built-in modules crossed the target Editor package boundary.'
                 }
@@ -1190,6 +1339,12 @@ try {
                 $packageFiles = @($fixture.summary.inputIdentity.files.path | Where-Object { $_ -match '^(?:Packages|Tools/Testing/Profiles/Unity2022)/' } | Sort-Object)
                 Assert-That (($packageFiles -join ',') -ceq "$($case.prefix)/manifest.json,$($case.prefix)/packages-lock.json") 'Input identity does not bind the actual selected source Packages, or still binds the other engine project.'
                 Assert-That ($fixture.summary.status -ceq 'Passed' -and $fixture.summary.testResult.total -eq 2 -and $fixture.calls -eq 3) 'Source-package identity did not survive discovery and both declared execution modes.'
+            }
+        }
+
+        foreach ($fault in @('addressables-lock-version', 'addressables-loaded-version')) {
+            Test-Case "Native Framework rejects actual $fault rather than using the declared version as evidence" {
+                Assert-Rejected { Invoke-NativePackageFixture -Fault $fault } 'Addressables.*version'
             }
         }
 
@@ -1367,8 +1522,8 @@ try {
             $guard = $ast.Find({ param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Clauses[0].Item1.Extent.Text -ceq '$Group -in @(''Player'', ''All'')' }, $true)
             Assert-That ($null -ne $guard) 'The production Player graph guard is missing.'
             $body = [scriptblock]::Create(($guard.Clauses[0].Item2.Statements.Extent.Text -join "`n"))
-            $allowed = @('mscorlib', 'netstandard', 'System.Core', 'UnityEngine.CoreModule', 'UnityEngine.UI', 'Microsoft.Win32.Primitives', 'Microsoft.Win32.Primitives.dll', 'Newtonsoft.Json.dll', 'BouncyCastle.Cryptography.dll')
-            foreach ($extra in @('', 'ThirdParty.Runtime', 'MiniExcel.dll', 'Microsoft.Win32.Unrelated.dll', 'Microsoft.Win32.Primitives.Extra', 'Microsoft.Win32.Primitives.Extra.dll', 'UnityEditor.CoreModule', 'YLFramework.Editor', 'YLFramework.Tests.PlayMode', 'YLFramework.Runtime.Extra')) {
+            $allowed = @('mscorlib', 'netstandard', 'System.Core', 'UnityEngine.CoreModule', 'UnityEngine.UI', 'Unity.Addressables', 'Unity.ResourceManager', 'Unity.Profiling.Core', 'Microsoft.Win32.Primitives', 'Microsoft.Win32.Primitives.dll', 'Newtonsoft.Json.dll')
+            foreach ($extra in @('', 'ThirdParty.Runtime', 'MiniExcel.dll', 'BouncyCastle.Cryptography.dll', 'Microsoft.Win32.Unrelated.dll', 'Microsoft.Win32.Primitives.Extra', 'Microsoft.Win32.Primitives.Extra.dll', 'UnityEditor.CoreModule', 'YLFramework.Editor', 'YLFramework.Tests.PlayMode', 'YLFramework.Runtime.Extra', 'Unity.Addressables.Editor', 'Unity.ResourceManager.Tests', 'Unity.Profiling.Core.Editor', 'Unity.Unrelated')) {
                 $graph = [pscustomobject]@{ player = @([pscustomobject]@{ name = 'YLFramework.Runtime'; sources = @('PackageSources/com.kano.ylframework/Runtime/Product.cs'); references = $allowed + @($extra | Where-Object { $_ }); precompiled = @() }) }
                 $violations = @(& { param($graph, $body) $failures = [Collections.Generic.List[string]]::new(); . $body; $failures.ToArray() } $graph $body)
                 Assert-That (($violations.Count -eq 0) -eq ($extra -ceq '')) "Runtime graph dependency admission is wrong for '$extra'."
@@ -1417,82 +1572,98 @@ try {
             $fixture = New-ResultFixture
             $process = $fixture.process | Select-Object *, @{ Name = 'pid'; Expression = { 42 } }
             $path = Join-Path $fixture.root 'player.json'
+            $smokeIdentity = @{ InputHash = ('c' * 64); ContentHash = ('d' * 64); AddressablesVersion = '1.25.0' }
             $valid = @{
-                schemaVersion = 1; purpose = 'YLTesting.PlayerSmoke'; status = 'Passed'
+                schemaVersion = 2; purpose = 'YLTesting.PlayerSmoke'; status = 'Passed'
                 resultId = 'result-1'; hostId = 'host-1'; unityVersion = '2022.3.62f3'; pid = 42
                 isEditor = $false; platform = 'WindowsPlayer'; frames = 2; error = ''; backend = 'Mono'
-                recordCount = 0; leaseCount = 0
+                inputHash = $smokeIdentity.InputHash; contentHash = $smokeIdentity.ContentHash; addressablesVersion = $smokeIdentity.AddressablesVersion
+                ledgerMeasured = $true; resourceState = 'Closed'; cleanupErrors = @()
+                leaseCount = 0; scopeCount = 0; requestCount = 0; pendingWorkCount = 0; drainingHandleCount = 0
                 stages = @('Started', 'ResourceLoaded', 'EventLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown')
             }
             Write-YLTestJson -Path $path -Value $valid
-            $accepted = Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -ProcessResult $process
+            $accepted = Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -ProcessResult $process @smokeIdentity
             Assert-That ($accepted.status -ceq 'Passed') 'A complete matching Player run was not accepted.'
             foreach ($change in @(
                 @{ resultId = 'stale' }, @{ hostId = 'foreign' }, @{ unityVersion = '6000.3.27f1' }, @{ pid = 43 }, @{ pid = '42' },
                 @{ resultId = $true }, @{ hostId = $true }, @{ unityVersion = $true }, @{ purpose = $true }, @{ status = $true },
-                @{ schemaVersion = $true }, @{ schemaVersion = '1' }, @{ platform = $true },
+                @{ schemaVersion = $true }, @{ schemaVersion = 1 }, @{ schemaVersion = '2' }, @{ platform = $true },
                 @{ isEditor = $true }, @{ isEditor = 'false' }, @{ platform = 'WindowsEditor' },
                 @{ backend = 'IL2CPP' }, @{ backend = '' }, @{ backend = $true },
                 @{ frames = 0 }, @{ frames = '2' }, @{ status = 'Failed' }, @{ error = 'runtime error' },
-                @{ recordCount = 1 }, @{ recordCount = '0' }, @{ leaseCount = 1 }, @{ stages = @('Started', 'Shutdown') },
+                @{ scopeCount = 1 }, @{ requestCount = 1 }, @{ pendingWorkCount = 1 }, @{ drainingHandleCount = 1 },
+                @{ leaseCount = '0' }, @{ leaseCount = 1 }, @{ ledgerMeasured = $false }, @{ ledgerMeasured = 'true' },
+                @{ resourceState = 'Running' }, @{ inputHash = ('e' * 64) }, @{ contentHash = ('f' * 64) }, @{ addressablesVersion = '2.10.3' },
+                @{ cleanupErrors = @('release failed') }, @{ stages = @('Started', 'Shutdown') },
                 @{ stages = @('Started', 'ResourceLoaded', 'EventLifecycle', 'BusyOwnerProtected', 'ResourceReleased', 'Shutdown', 'Shutdown') }
                 @{ stages = @($true, $true, $true, $true, $true, $true) }
             )) {
                 $invalid = $valid.Clone()
                 foreach ($entry in $change.GetEnumerator()) { $invalid[$entry.Key] = $entry.Value }
                 [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $invalid -Depth 10))
-                Assert-Rejected { Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -ProcessResult $process } 'smoke'
+                Assert-Rejected { Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -ProcessResult $process @smokeIdentity } 'smoke|schema2'
             }
             $native = $valid.Clone()
             $native.backend = 'IL2CPP'
             [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $native -Depth 10))
-            $acceptedNative = Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -Backend IL2CPP -ProcessResult $process
+            $acceptedNative = Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -Backend IL2CPP -ProcessResult $process @smokeIdentity
             Assert-That ($acceptedNative.backend -ceq 'IL2CPP') 'The actual native backend was not accepted.'
             [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $valid -Depth 10))
             $process.exitCode = 1
-            Assert-Rejected { Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -ProcessResult $process } 'process|exit'
+            Assert-Rejected { Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -ProcessResult $process @smokeIdentity } 'process|exit'
             $process.exitCode = 0
             $process.forcedCleanup = $true
-            Assert-Rejected { Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -ProcessResult $process } 'process'
+            Assert-Rejected { Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -ProcessResult $process @smokeIdentity } 'process'
         }
 
         Test-Case 'HybridCLR smoke requires real native mode and the exact metadata/code/sample evidence' {
             $fixture = New-ResultFixture
             $process = $fixture.process | Select-Object *, @{ Name = 'pid'; Expression = { 42 } }
             $path = Join-Path $fixture.root 'hybrid.json'
-            $expected = [pscustomobject]@{ codePackageId = ('a' * 64); nativeVariant = 'Official2022'; metadataAssemblies = @('mscorlib'); assemblies = @('Hot.Entry', 'Hot.Support') }
+            $smokeIdentity = @{ InputHash = ('c' * 64); ContentHash = ('d' * 64); AddressablesVersion = '1.25.0' }
+            $payloads = @(@('Metadata', 'mscorlib'), @('Code', 'Hot.Entry'), @('Code', 'Hot.Support') | ForEach-Object {
+                [pscustomobject]@{ role = $_[0]; name = $_[1]; address = ('hybridclr/' + $_[1] + '.bytes'); sha256 = ('e' * 64); length = 4L; mvid = 'e8f0678f-3d6b-474a-b18c-8d68944b857b'; fullName = ($_[1] + ', Version=1.0.0.0, Culture=neutral, PublicKeyToken=null') }
+            })
+            $expected = [pscustomobject]@{ codePackageId = ('a' * 64); nativeVariant = 'Official2022'; metadataAssemblies = @('mscorlib'); assemblies = @('Hot.Entry', 'Hot.Support'); sampleVersion = 'v1'; manifestAddress = 'hybridclr/manifest'; manifestSha256 = ('f' * 64); payloads = $payloads }
             $detail = @{
                 mode = 'Native'; isSimulation = $false; codePackageId = $expected.codePackageId; nativeVariant = 'Official2022'
                 metadataAssemblies = @('mscorlib'); assemblies = @('Hot.Entry', 'Hot.Support'); reflectionCount = 3
                 message = 'v1: YL Resource configuration; dependency-count=2'; asyncResult = 'v1-async'; prefabMarker = 'v1-prefab'
                 repeatedLoadReused = $true; wrongBaseRejected = $true
+                sampleVersion = $expected.sampleVersion; manifestSchemaVersion = 2; manifestAddress = $expected.manifestAddress; manifestSha256 = $expected.manifestSha256
+                payloads = $payloads
             }
             $valid = @{
-                schemaVersion = 1; purpose = 'YLTesting.PlayerSmoke'; status = 'Passed'; backend = 'IL2CPP'
+                schemaVersion = 2; purpose = 'YLTesting.PlayerSmoke'; status = 'Passed'; backend = 'IL2CPP'
                 resultId = 'result-1'; hostId = 'host-1'; unityVersion = '2022.3.62f3'; pid = 42; isEditor = $false
-                platform = 'WindowsPlayer'; graphicsDevice = 'Direct3D11'; frames = 2; error = ''; recordCount = 0; leaseCount = 0
-                stages = @('Started', 'HybridCLRMetadata', 'HybridCLRModule', 'HybridCLRReflection', 'HybridCLRShutdown'); hybridClr = $detail
+                platform = 'WindowsPlayer'; graphicsDevice = 'Direct3D11'; frames = 2; error = ''; leaseCount = 0
+                scopeCount = 0; requestCount = 0; pendingWorkCount = 0; drainingHandleCount = 0
+                ledgerMeasured = $true; resourceState = 'Closed'; cleanupErrors = @()
+                inputHash = $smokeIdentity.InputHash; contentHash = $smokeIdentity.ContentHash; addressablesVersion = $smokeIdentity.AddressablesVersion
+                stages = @('Started', 'HybridCLRMetadata', 'HybridCLRModule', 'HybridCLRReflection', 'HybridCLRShutdown'); startupCatalogUpdated = $false; hybridClr = $detail
             }
             Write-YLTestJson -Path $path -Value $valid
-            $accepted = Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -Backend IL2CPP -HybridCLR $expected -ProcessResult $process
+            $accepted = Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -Backend IL2CPP -HybridCLR $expected -ProcessResult $process @smokeIdentity
             Assert-That ($accepted.hybridClr.mode -ceq 'Native') 'A matching native HybridCLR run was not accepted.'
             foreach ($change in @(
                 @{ mode = 'EditorSimulation' }, @{ isSimulation = $true }, @{ codePackageId = ('b' * 64) },
                 @{ nativeVariant = 'foreign' }, @{ metadataAssemblies = @() }, @{ metadataAssemblies = @('other') },
                 @{ assemblies = @('Hot.Entry', 'Hot.Entry') }, @{ reflectionCount = 0 }, @{ message = 'simulated' },
                 @{ asyncResult = 'v2-async' }, @{ prefabMarker = 'missing' }, @{ repeatedLoadReused = $false }, @{ wrongBaseRejected = $false }
+                @{ sampleVersion = 'v2' }, @{ manifestSchemaVersion = 1 }, @{ manifestSha256 = ('a' * 64) }, @{ payloads = @() }
                 @{ mode = $true }, @{ nativeVariant = $true }, @{ message = $true }, @{ asyncResult = $true }, @{ prefabMarker = $true }
             )) {
                 $invalid = $detail.Clone()
                 foreach ($entry in $change.GetEnumerator()) { $invalid[$entry.Key] = $entry.Value }
                 $valid.hybridClr = $invalid
                 [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $valid -Depth 10))
-                Assert-Rejected { Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -Backend IL2CPP -HybridCLR $expected -ProcessResult $process } 'HybridCLR'
+                Assert-Rejected { Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -Backend IL2CPP -HybridCLR $expected -ProcessResult $process @smokeIdentity } 'HybridCLR|native'
             }
             $valid.hybridClr = $detail
             $valid.graphicsDevice = 'Null'
             [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $valid -Depth 10))
-            Assert-Rejected { Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -Backend IL2CPP -HybridCLR $expected -ProcessResult $process } 'HybridCLR'
+            Assert-Rejected { Read-YLPlayerSmoke -Path $path -ResultId 'result-1' -HostId 'host-1' -UnityVersion '2022.3.62f3' -Backend IL2CPP -HybridCLR $expected -ProcessResult $process @smokeIdentity } 'HybridCLR'
         }
 
         Test-Case 'input identity is deterministic and includes metadata, toolchain and profile' {
