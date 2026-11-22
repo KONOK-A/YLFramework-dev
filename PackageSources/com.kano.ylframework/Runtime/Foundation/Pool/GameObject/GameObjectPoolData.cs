@@ -80,7 +80,8 @@ namespace YLFramework.Pooling
             var count = 0;
             foreach (var instance in _queue)
             {
-                if (instance) count++;
+                if (instance)
+                    count++;
             }
             return count;
         }

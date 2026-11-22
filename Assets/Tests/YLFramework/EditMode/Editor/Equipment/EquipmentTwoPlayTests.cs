@@ -48,7 +48,8 @@ namespace YLFramework.Tests.Extensions.Equipment
         [UnityTearDown]
         public IEnumerator Restore()
         {
-            if (!_prepared) yield break;
+            if (!_prepared)
+                yield break;
             if (EditorApplication.isPlaying)
             {
                 yield return new ExitPlayMode();
@@ -65,14 +66,17 @@ namespace YLFramework.Tests.Extensions.Equipment
                 }
                 RemoveRound();
                 EnsureRestorableScenes();
-                if (_scenes.Length != 0) EditorSceneManager.RestoreSceneManagerSetup(_scenes);
-                else EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                if (_scenes.Length != 0)
+                    EditorSceneManager.RestoreSceneManagerSetup(_scenes);
+                else
+                    EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             }
             finally
             {
                 EditorSettings.enterPlayModeOptions = _reloadOptions;
                 EditorSettings.enterPlayModeOptionsEnabled = _wasReloadEnabled;
-                if (_folder != null) AssetDatabase.DeleteAsset(_folder);
+                if (_folder != null)
+                    AssetDatabase.DeleteAsset(_folder);
                 _prepared = false;
             }
         }
@@ -161,7 +165,9 @@ namespace YLFramework.Tests.Extensions.Equipment
             state.Provider = new RootProvider("Equipment.TwoPlay." + Guid.NewGuid().ToString("N"));
             state.Locator = new ResourceLocationMap(state.Provider.ProviderId);
             state.Locator.Add("eq-two-play/root", new ResourceLocationBase("eq-two-play/root", "eq-two-play/root", state.Provider.ProviderId, typeof(EquipmentsConfig))
-                { Data = state.Root });
+            {
+                Data = state.Root
+            });
             Addressables.ResourceManager.ResourceProviders.Add(state.Provider);
             Addressables.AddResourceLocator(state.Locator);
             state.Startup = new ResourceStartup(new ResourceConfiguration(), bindCoreResourceProvider: false);
@@ -212,11 +218,16 @@ namespace YLFramework.Tests.Extensions.Equipment
 
         private void RemoveRound()
         {
-            if (_round == null) return;
-            if (_round.Locator != null) Addressables.RemoveResourceLocator(_round.Locator);
-            if (_round.Provider != null) Addressables.ResourceManager.ResourceProviders.Remove(_round.Provider);
-            if (_round.Row) Object.DestroyImmediate(_round.Row);
-            if (_round.Root) Object.DestroyImmediate(_round.Root);
+            if (_round == null)
+                return;
+            if (_round.Locator != null)
+                Addressables.RemoveResourceLocator(_round.Locator);
+            if (_round.Provider != null)
+                Addressables.ResourceManager.ResourceProviders.Remove(_round.Provider);
+            if (_round.Row)
+                Object.DestroyImmediate(_round.Row);
+            if (_round.Root)
+                Object.DestroyImmediate(_round.Root);
             _round = null;
         }
 
@@ -233,7 +244,8 @@ namespace YLFramework.Tests.Extensions.Equipment
         private static IEnumerator Wait(Func<bool> complete, string operation)
         {
             double deadline = EditorApplication.timeSinceStartup + 30;
-            while (!complete() && EditorApplication.timeSinceStartup < deadline) yield return null;
+            while (!complete() && EditorApplication.timeSinceStartup < deadline)
+                yield return null;
             Assert.That(complete(), Is.True, operation + " timed out.");
         }
     }

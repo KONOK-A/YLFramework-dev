@@ -133,13 +133,19 @@ namespace YLFramework.Equipment.Acceptance
             foreach (var phase in new[] { Run(), Cleanup() })
             {
                 var work = Drive(phase);
-                try { while (work.MoveNext()) yield return work.Current; }
+                try
+                {
+                    while (work.MoveNext())
+                        yield return work.Current;
+                }
                 finally { (work as IDisposable)?.Dispose(); }
             }
             try
             {
-                if (_resources != null) MeasureLedger();
-                if (_runtimeError != null) RecordFailure(new InvalidOperationException(_runtimeError));
+                if (_resources != null)
+                    MeasureLedger();
+                if (_runtimeError != null)
+                    RecordFailure(new InvalidOperationException(_runtimeError));
                 Check(_runtimeError == null, "no-unexpected-runtime-error");
                 _result.resourceReturned = _resources != null && _result.ledgerMeasured && _result.resourceState == ResourceSystemState.Closed.ToString() &&
                     ResourceSystem.Current == null && _result.leaseCount == 0 && _result.scopeCount == 0 && _result.requestCount == 0 &&
@@ -152,8 +158,10 @@ namespace YLFramework.Equipment.Acceptance
             _result.passed = _result.error == null;
             _result.status = _result.passed ? "Passed" : "Failed";
             _result.checks = _checks.ToArray();
-            if (_result.passed) Debug.Log("YL_EQUIPMENT_PLAYER_PASS run=" + _result.run + "; backend=" + _result.backend + "; checks=" + _checks.Count);
-            else Debug.LogError("YL_EQUIPMENT_PLAYER_FAIL " + _result.run + " " + _result.error);
+            if (_result.passed)
+                Debug.Log("YL_EQUIPMENT_PLAYER_PASS run=" + _result.run + "; backend=" + _result.backend + "; checks=" + _checks.Count);
+            else
+                Debug.LogError("YL_EQUIPMENT_PLAYER_FAIL " + _result.run + " " + _result.error);
             Application.Quit(_result.passed ? 0 : 1);
         }
 
@@ -167,23 +175,34 @@ namespace YLFramework.Equipment.Acceptance
                 {
                     var current = stack.Peek();
                     bool next;
-                    try { next = current.MoveNext(); }
+                    try
+                    {
+                        next = current.MoveNext();
+                    }
                     catch (Exception error) { RecordFailure(error); break; }
                     if (!next)
                     {
                         stack.Pop();
-                        try { (current as IDisposable)?.Dispose(); }
+                        try
+                        {
+                            (current as IDisposable)?.Dispose();
+                        }
                         catch (Exception error) { RecordFailure(error); }
                     }
-                    else if (current.Current is IEnumerator child) stack.Push(child);
-                    else yield return current.Current;
+                    else if (current.Current is IEnumerator child)
+                        stack.Push(child);
+                    else
+                        yield return current.Current;
                 }
             }
             finally
             {
                 while (stack.Count != 0)
                 {
-                    try { (stack.Pop() as IDisposable)?.Dispose(); }
+                    try
+                    {
+                        (stack.Pop() as IDisposable)?.Dispose();
+                    }
                     catch (Exception error) { RecordFailure(error); }
                 }
             }
@@ -309,7 +328,10 @@ namespace YLFramework.Equipment.Acceptance
                 foreach (Action close in new Action[] { () => { if (_host != null) EquipmentManager.CloseHost(_host); },
                     () => { if (_other != null) EquipmentManager.CloseHost(_other); }, EquipmentManager.Shutdown })
                 {
-                    try { close(); }
+                    try
+                    {
+                        close();
+                    }
                     catch (Exception error) { RecordFailure(error); }
                 }
                 _result.managersClosed = (_host == null || _host.Equipments.Count == 0) && (_other == null || _other.Equipments.Count == 0) && EquipmentManager.GetConfig(_rootName) == null;
@@ -317,11 +339,15 @@ namespace YLFramework.Equipment.Acceptance
             }
             foreach (var task in new Task[] { _configLoad, _creation })
             {
-                if (task == null) continue;
+                if (task == null)
+                    continue;
                 double deadline = Time.realtimeSinceStartupAsDouble + 15;
-                while (!task.IsCompleted && Time.realtimeSinceStartupAsDouble < deadline) yield return null;
-                if (!task.IsCompleted) RecordFailure(new TimeoutException("Owned Equipment task cleanup"));
-                else _ = task.Exception;
+                while (!task.IsCompleted && Time.realtimeSinceStartupAsDouble < deadline)
+                    yield return null;
+                if (!task.IsCompleted)
+                    RecordFailure(new TimeoutException("Owned Equipment task cleanup"));
+                else
+                    _ = task.Exception;
             }
             _independent?.Dispose();
             _independent = null;
@@ -337,7 +363,8 @@ namespace YLFramework.Equipment.Acceptance
                 using var stop = _startup.StopAsync();
                 yield return Wait(() => stop.IsDone, "owned Resource stop");
                 CleanupCheck(stop.Status == ResourceRequestStatus.Succeeded, "owned-startup-stopped");
-                if (stop.Status == ResourceRequestStatus.Succeeded) CleanupCheck(stop.TakeResult(), "owned-stop-result");
+                if (stop.Status == ResourceRequestStatus.Succeeded)
+                    CleanupCheck(stop.TakeResult(), "owned-stop-result");
             }
         }
 
@@ -356,7 +383,10 @@ namespace YLFramework.Equipment.Acceptance
 
         private void CleanupCheck(bool condition, string name)
         {
-            try { Check(condition, name); }
+            try
+            {
+                Check(condition, name);
+            }
             catch (Exception error) { RecordFailure(error); }
         }
         private void Write()
@@ -373,7 +403,10 @@ namespace YLFramework.Equipment.Acceptance
         private void Quitting()
         {
             _result.quitObserved = true;
-            try { Write(); }
+            try
+            {
+                Write();
+            }
             catch (Exception error) { Debug.LogError("YL_EQUIPMENT_RESULT_WRITE_FAIL " + error); }
             Application.quitting -= Quitting;
         }
@@ -389,20 +422,25 @@ namespace YLFramework.Equipment.Acceptance
         private static IEnumerator Wait(Func<bool> complete, string operation)
         {
             double deadline = Time.realtimeSinceStartupAsDouble + 15;
-            while (!complete() && Time.realtimeSinceStartupAsDouble < deadline) yield return null;
-            if (!complete()) throw new TimeoutException(operation);
+            while (!complete() && Time.realtimeSinceStartupAsDouble < deadline)
+                yield return null;
+            if (!complete())
+                throw new TimeoutException(operation);
         }
 
         private static string ReadContentHash()
         {
             string root = Path.GetFullPath(Path.Combine(Application.streamingAssetsPath, "aa"));
-            if (!Directory.Exists(root)) throw new InvalidOperationException("Official local Addressables content is missing.");
+            if (!Directory.Exists(root))
+                throw new InvalidOperationException("Official local Addressables content is missing.");
             var files = Directory.GetFiles(root, "*", SearchOption.AllDirectories);
-            if (!files.Any(path => Path.GetFileName(path) == "settings.json")) throw new InvalidOperationException("Official runtime settings are missing.");
+            if (!files.Any(path => Path.GetFileName(path) == "settings.json"))
+                throw new InvalidOperationException("Official runtime settings are missing.");
             var entries = files.Select(path =>
             {
                 for (var cursor = path; cursor != null; cursor = Path.GetDirectoryName(cursor))
-                    if ((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Linked content is not frozen Player evidence.");
+                    if ((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0)
+                        throw new InvalidOperationException("Linked content is not frozen Player evidence.");
                 using var stream = File.OpenRead(path);
                 using var sha = SHA256.Create();
                 return (Path: path.Substring(root.Length + 1).Replace('\\', '/'), Digest: BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant());

@@ -103,7 +103,8 @@ namespace YLFramework.Tests.Extensions.Domain
             }
             if (_locator != null)
                 Addressables.RemoveResourceLocator(_locator);
-            if (_builtPrefab.IsValid()) Addressables.Release(_builtPrefab);
+            if (_builtPrefab.IsValid())
+                Addressables.Release(_builtPrefab);
             _builtPrefab = default;
             if (_provider != null)
                 Addressables.ResourceManager.ResourceProviders.Remove(_provider);
