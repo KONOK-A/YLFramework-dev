@@ -88,7 +88,8 @@ function Assert-YLFrozenCommittedFiles {
     foreach ($entry in $tree.Split([char]0, [StringSplitOptions]::RemoveEmptyEntries)) {
         if ($entry -cnotmatch '\A(100644|100755)\t([0-9a-f]{40})\t([^\t\r\n]+)\z') { throw 'Fixed inputs require regular committed Git blobs.' }
         $name = $Matches[3]
-        if ($FullPackageInventory -and $name -cmatch '\APackageSources/[^/]+/\.gitattributes\z') { continue }
+        # Parent folder metadata and package Git attributes are not npm/UPM payload files.
+        if ($FullPackageInventory -and $name -cmatch '\APackageSources/(?:[^/]+\.meta|[^/]+/\.gitattributes)\z') { continue }
         if (-not $paths.ContainsKey($name)) { throw "Release input inventory omits committed package input: $name" }
         $blobs.Add($name, $Matches[2])
     }

@@ -90,7 +90,10 @@ Reject { Get-YLFrozenEncryptionRelease $manifest $repo $offCommit } 'HEAD'
 $dirty = @(& git.exe --no-optional-locks -C $repo status --porcelain=v1 --untracked-files=all)
 if ($LASTEXITCODE -ne 0) { throw 'Could not observe the worktree.' }
 if ($dirty.Count) { Reject { Assert-YLFrozenSourceCommit -Repository $repo -SourceCommit $head } 'clean worktree' }
-else { Assert-YLFrozenSourceCommit -Repository $repo -SourceCommit $head; Check $true 'A clean true HEAD was rejected.' }
+else {
+    $fixed = Get-YLFrozenEncryptionRelease -Path $manifest -Repository $repo -SourceCommit $head
+    Check ($fixed.sourceCommit -ceq $head -and $fixed.packages.Count -eq $sources.Count) 'Clean fixed-commit admission did not verify the complete package inventory.'
+}
 $receipt = Join-Path $root 'fixture-only.json'
 Write-YLTestJson $receipt @{ purpose = 'YLResource.LocalEncryptionPack'; formalCandidate = $false; status = 'Packed' }
 Reject { Read-YLFrozenEncryptionRelease $receipt $repo $head } 'evidence fields'
