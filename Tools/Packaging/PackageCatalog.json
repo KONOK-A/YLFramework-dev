@@ -5,7 +5,9 @@
       "id": "com.kano.ylframework",
       "assemblies": [
         { "name": "YLFramework.Runtime", "path": "Runtime/YLFramework.Runtime.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
-        { "name": "YLFramework.Editor", "path": "Editor/YLFramework.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Editor", "path": "Editor/YLFramework.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [
+          { "name": "com.unity.addressables", "expression": "[1.25.0]", "define": "YL_ADDRESSABLES_LEGACY_PLAYER_DATA" }
+        ] },
         { "name": "YLFramework.Actions.DOTween", "path": "Runtime/Systems/Action/Integration/DOTween/YLFramework.Actions.DOTween.asmdef", "player": true, "defineConstraints": ["DOTWEEN"], "versionDefines": [] },
         { "name": "YLFramework.ResourceStartup.Sample", "path": "Samples~/ResourceStartup/Runtime/YLFramework.ResourceStartup.Sample.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
         { "name": "YLFramework.ResourceStartup.Sample.Editor", "path": "Samples~/ResourceStartup/Editor/YLFramework.ResourceStartup.Sample.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }

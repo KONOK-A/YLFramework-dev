@@ -61,7 +61,12 @@ function Read-YLPackageCatalog {
                     $assembly['name'] -ceq 'YLFramework.Localization.TMP' -and
                     $version['name'] -ceq 'com.unity.textmeshpro' -and $version['expression'] -ceq '1.0.0' -and
                     $version['define'] -ceq 'YL_LOCALIZATION_TMP'
-                if ($tmpCode) {
+                $legacyPlayerData = $package['id'] -ceq 'com.kano.ylframework' -and $assembly['name'] -ceq 'YLFramework.Editor' -and
+                    $path -ceq 'Editor/YLFramework.Editor.asmdef' -and -not $assembly['player'] -and $defines.Count -eq 0 -and
+                    $version['name'] -is [string] -and $version['name'] -ceq 'com.unity.addressables' -and
+                    $version['expression'] -is [string] -and $version['expression'] -ceq '[1.25.0]' -and
+                    $version['define'] -is [string] -and $version['define'] -ceq 'YL_ADDRESSABLES_LEGACY_PLAYER_DATA'
+                if ($tmpCode -or $legacyPlayerData) {
                     if ($defines.Contains($version['define']) -or -not $versionDefines.Add($version['define'])) {
                         throw 'A native code condition cannot be used as a package catalog assembly gate.'
                     }
