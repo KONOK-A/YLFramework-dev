@@ -34,17 +34,36 @@ namespace YLFramework.Resource.Encryption
         private readonly Dictionary<string, Task> _unloading = new Dictionary<string, Task>(StringComparer.Ordinal);
         private readonly List<EncryptedMountedBundle> _unconfirmed = new List<EncryptedMountedBundle>();
         private EncryptedDeliverySession _session;
-        internal int Pending { get; private set; }
-        internal int Mounted { get; private set; }
-        internal int Creates { get; private set; }
-        internal int Unloads { get; private set; }
-        internal int StreamsClosed { get; private set; }
+        internal int Pending
+        {
+            get; private set;
+        }
+        internal int Mounted
+        {
+            get; private set;
+        }
+        internal int Creates
+        {
+            get; private set;
+        }
+        internal int Unloads
+        {
+            get; private set;
+        }
+        internal int StreamsClosed
+        {
+            get; private set;
+        }
         internal int Unloading => _unloading.Count;
-        internal Exception UnloadFailure { get; private set; }
+        internal Exception UnloadFailure
+        {
+            get; private set;
+        }
 
         internal void Attach(EncryptedDeliverySession session)
         {
-            if (_session != null) throw new InvalidOperationException("The protected Addressables provider already has an owner.");
+            if (_session != null)
+                throw new InvalidOperationException("The protected Addressables provider already has an owner.");
             _session = session;
         }
 
@@ -76,7 +95,8 @@ namespace YLFramework.Resource.Encryption
             try
             {
                 owner.CheckUnchanged();
-                if (UnloadFailure != null) throw new InvalidOperationException("A protected Bundle could not complete native unload.", UnloadFailure);
+                if (UnloadFailure != null)
+                    throw new InvalidOperationException("A protected Bundle could not complete native unload.", UnloadFailure);
                 var location = handle.Location;
                 if (location.ResourceType == typeof(IAssetBundleResource))
                 {
@@ -88,7 +108,8 @@ namespace YLFramework.Resource.Encryption
                 {
                     var record = owner.ResolveMount(location);
                     string id = location.InternalId;
-                    if (_unloading.TryGetValue(id, out var unloading)) await unloading;
+                    if (_unloading.TryGetValue(id, out var unloading))
+                        await unloading;
                     var reader = await owner.Cache.OpenAuthenticatedAsync(record, owner.Keys);
                     EncryptedMountedBundle mounted = null;
                     try
@@ -98,7 +119,8 @@ namespace YLFramework.Resource.Encryption
                         var request = AssetBundle.LoadFromStreamAsync(reader, 0, UnityReadBufferBytes);
                         await NativeCompletion(request);
                         var bundle = request.assetBundle;
-                        if (!bundle) throw new IOException("Unity rejected the authenticated Bundle stream.");
+                        if (!bundle)
+                            throw new IOException("Unity rejected the authenticated Bundle stream.");
                         mounted = new EncryptedMountedBundle(id, bundle, reader);
                         Mounted++;
                         owner.CheckUnchanged();
@@ -108,8 +130,10 @@ namespace YLFramework.Resource.Encryption
                     {
                         if (result == null)
                         {
-                            if (mounted != null) await BeginUnload(mounted);
-                            else DisposeReader(reader);
+                            if (mounted != null)
+                                await BeginUnload(mounted);
+                            else
+                                DisposeReader(reader);
                         }
                     }
                 }
@@ -126,7 +150,8 @@ namespace YLFramework.Resource.Encryption
         /// <inheritdoc />
         public override void Release(IResourceLocation location, object asset)
         {
-            if (asset is EncryptedMountedBundle mounted) _ = BeginUnload(mounted);
+            if (asset is EncryptedMountedBundle mounted)
+                _ = BeginUnload(mounted);
         }
 
         private Task BeginUnload(EncryptedMountedBundle mounted)
@@ -162,7 +187,10 @@ namespace YLFramework.Resource.Encryption
 
         private static void DisposeReader(AuthenticatedBundleStream reader)
         {
-            try { reader.Dispose(); }
+            try
+            {
+                reader.Dispose();
+            }
             catch (IOException error) when (error is EncryptedBundleKeySourceException)
             {
                 // The native reader and file are closed, and the lease cleared its material before invoking application code.
@@ -172,8 +200,10 @@ namespace YLFramework.Resource.Encryption
 
         private static Task NativeCompletion(AsyncOperation operation)
         {
-            if (operation == null) throw new InvalidOperationException("Unity did not start the protected native Bundle operation.");
-            if (operation.isDone) return Task.CompletedTask;
+            if (operation == null)
+                throw new InvalidOperationException("Unity did not start the protected native Bundle operation.");
+            if (operation.isDone)
+                return Task.CompletedTask;
             var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             operation.completed += _ => completion.TrySetResult(true);
             return completion.Task;

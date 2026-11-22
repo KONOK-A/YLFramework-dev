@@ -20,15 +20,22 @@ namespace YLFramework.Resource.Encryption.Editor
         internal string ApplicationNamespace, ReleasePrefix, KeyId;
         internal bool Loopback;
         internal readonly Dictionary<string, EncryptedBundleBinding> Bindings = new Dictionary<string, EncryptedBundleBinding>(StringComparer.Ordinal);
-        internal string RoutesSha256 { get; private set; }
-        internal string CatalogName { get; private set; }
+        internal string RoutesSha256
+        {
+            get; private set;
+        }
+        internal string CatalogName
+        {
+            get; private set;
+        }
         private AddressableAssetsBuildContext _context;
         private Dictionary<ContentCatalogDataEntry, ContentCatalogDataEntry[]> _expected;
         private ContentCatalogDataEntry[] _authorOrder;
 
         protected override TResult DoBuild<TResult>(AddressablesDataBuilderInput input, AddressableAssetsBuildContext context)
         {
-            if (input.PreviousContentState != null) throw new InvalidDataException("Encrypted delivery does not support content updates.");
+            if (input.PreviousContentState != null)
+                throw new InvalidDataException("Encrypted delivery does not support content updates.");
             _context = context;
             CatalogName = input.RuntimeCatalogFilename;
             try
@@ -36,7 +43,8 @@ namespace YLFramework.Resource.Encryption.Editor
                 TResult result = base.DoBuild<TResult>(input, context);
                 if (result is AddressablesPlayerBuildResult built && string.IsNullOrEmpty(built.Error))
                 {
-                    if (_expected == null || Bindings.Count == 0) throw new InvalidDataException("Official Packed Builder produced no protected bundles.");
+                    if (_expected == null || Bindings.Count == 0)
+                        throw new InvalidDataException("Official Packed Builder produced no protected bundles.");
                     var rows = new List<string>();
                     var counts = new Dictionary<string, int>(StringComparer.Ordinal);
                     // Both pinned Packed Builders serialize locations in this stable InternalId order.
@@ -78,7 +86,8 @@ namespace YLFramework.Resource.Encryption.Editor
             }
 
             string output = base.ConstructAssetBundleName(group, schema, info, name);
-            if (group != ProtectedGroup) return output;
+            if (group != ProtectedGroup)
+                return output;
             string bundleName = Path.GetFileNameWithoutExtension(info.FileName);
             var location = _context.locations.Single(entry => entry.ResourceType == typeof(IAssetBundleResource) &&
                 entry.Data is AssetBundleRequestOptions option && option.BundleName == bundleName);
@@ -98,15 +107,18 @@ namespace YLFramework.Resource.Encryption.Editor
             {
                 var dependencies = _expected[asset];
                 int index = Array.IndexOf(dependencies, location);
-                if (index < 0) continue;
+                if (index < 0)
+                    continue;
                 hasOwner = true;
                 object key = location.Keys[0];
                 int catalogIndex = asset.Dependencies.IndexOf(key);
-                if (catalogIndex < 0) throw new InvalidDataException("Cannot split the official protected Bundle dependency.");
+                if (catalogIndex < 0)
+                    throw new InvalidDataException("Cannot split the official protected Bundle dependency.");
                 asset.Dependencies.Insert(catalogIndex + 1, mountId);
                 _expected[asset] = dependencies.Take(index + 1).Append(mount).Concat(dependencies.Skip(index + 1)).ToArray();
             }
-            if (!hasOwner) throw new InvalidDataException("A protected Bundle has no supported asset route.");
+            if (!hasOwner)
+                throw new InvalidDataException("A protected Bundle has no supported asset route.");
             _context.locations.Add(mount);
             return output;
         }

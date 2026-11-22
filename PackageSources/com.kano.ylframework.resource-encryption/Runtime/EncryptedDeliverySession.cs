@@ -44,9 +44,18 @@ namespace YLFramework.Resource.Encryption
             _transform = Transform;
         }
 
-        internal EncryptedBundleCache Cache { get; }
-        internal IEncryptedBundleKeySource Keys { get; }
-        internal EncryptedAssetBundleProvider Provider { get; }
+        internal EncryptedBundleCache Cache
+        {
+            get;
+        }
+        internal IEncryptedBundleKeySource Keys
+        {
+            get;
+        }
+        internal EncryptedAssetBundleProvider Provider
+        {
+            get;
+        }
 
         /// <summary>Call on Unity's main thread before publishing any YL or official Addressables resource consumer.</summary>
         public static Task<EncryptedDeliverySession> StartAsync(string dedicatedCipherCache, IEncryptedBundleKeySource keys,
@@ -131,7 +140,10 @@ namespace YLFramework.Resource.Encryption
         {
             private IDisposable _root;
             private FileStream _description, _settings, _catalog;
-            internal EncryptedBundleDescription Description { get; private set; }
+            internal EncryptedBundleDescription Description
+            {
+                get; private set;
+            }
 
             internal static ShippedFiles Open(string root, bool allowLoopback, CancellationToken token)
             {
@@ -156,13 +168,22 @@ namespace YLFramework.Resource.Encryption
 
             public void Dispose()
             {
-                try { _catalog?.Dispose(); }
+                try
+                {
+                    _catalog?.Dispose();
+                }
                 finally
                 {
-                    try { _settings?.Dispose(); }
+                    try
+                    {
+                        _settings?.Dispose();
+                    }
                     finally
                     {
-                        try { _description?.Dispose(); }
+                        try
+                        {
+                            _description?.Dispose();
+                        }
                         finally { _root?.Dispose(); }
                     }
                 }
@@ -171,7 +192,8 @@ namespace YLFramework.Resource.Encryption
 
         internal static string ReadText(FileStream file)
         {
-            if (file.Length > EncryptedBundleDescription.MaximumBytes) throw new InvalidDataException("Local metadata exceeds the supported size.");
+            if (file.Length > EncryptedBundleDescription.MaximumBytes)
+                throw new InvalidDataException("Local metadata exceeds the supported size.");
             using var text = new StreamReader(file, new UTF8Encoding(false, true), false, 4096, true);
             return text.ReadToEnd();
         }
@@ -198,7 +220,8 @@ namespace YLFramework.Resource.Encryption
 
         private string Transform(IResourceLocation location)
         {
-            if (location.ProviderId != _providerId || location.ResourceType != typeof(IAssetBundleResource)) return location.InternalId;
+            if (location.ProviderId != _providerId || location.ResourceType != typeof(IAssetBundleResource))
+                return location.InternalId;
             CheckUnchanged();
             return Cache.TryGetVerifiedPath(ResolveTransfer(location), out string path) ? path : location.InternalId;
         }
@@ -206,12 +229,15 @@ namespace YLFramework.Resource.Encryption
         /// <summary>Close only after all direct and YL resource handles have been released. Does not unload assets owned by anyone else.</summary>
         public Task CloseAsync()
         {
-            if (Environment.CurrentManagedThreadId != _thread) throw new InvalidOperationException("Close encrypted delivery on the Unity thread.");
-            if (_closed) return Cache.CloseAsync();
+            if (Environment.CurrentManagedThreadId != _thread)
+                throw new InvalidOperationException("Close encrypted delivery on the Unity thread.");
+            if (_closed)
+                return Cache.CloseAsync();
             if (Provider.Pending != 0 || Provider.Mounted != 0 || Provider.Unloading != 0 || Provider.UnloadFailure != null)
                 throw new InvalidOperationException("Release all protected Bundle owners and wait for native unload before closing delivery.");
             _closed = true;
-            if (Addressables.InternalIdTransformFunc == _transform) Addressables.InternalIdTransformFunc = null;
+            if (Addressables.InternalIdTransformFunc == _transform)
+                Addressables.InternalIdTransformFunc = null;
             Provider.Detach();
             return Cache.CloseAsync();
         }

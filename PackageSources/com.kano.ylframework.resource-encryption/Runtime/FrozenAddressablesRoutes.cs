@@ -66,11 +66,13 @@ namespace YLFramework.Resource.Encryption
             }
             string normalized = id.Replace('\\', '/');
             string prefix = localRoot.Replace('\\', '/').TrimEnd('/') + "/";
-            if (normalized.StartsWith(prefix, StringComparison.Ordinal)) normalized = RuntimeToken + "/" + normalized.Substring(prefix.Length);
+            if (normalized.StartsWith(prefix, StringComparison.Ordinal))
+                normalized = RuntimeToken + "/" + normalized.Substring(prefix.Length);
             var row = new JArray(normalized, provider, type.FullName + ", " + type.Assembly.GetName().Name);
             if (type == typeof(IAssetBundleResource))
             {
-                if (!(data is AssetBundleRequestOptions bundle)) throw new InvalidDataException("An official bundle location has no request options.");
+                if (!(data is AssetBundleRequestOptions bundle))
+                    throw new InvalidDataException("An official bundle location has no request options.");
                 row.Add(new JArray(bundle.BundleName, NoUnityCacheVersion(bundle.Hash) ? "" : bundle.Hash,
                     bundle.BundleSize, bundle.Crc, bundle.UseUnityWebRequestForLocalBundles));
             }
@@ -108,12 +110,15 @@ namespace YLFramework.Resource.Encryption
                 throw new InvalidDataException("The official metadata providers were not registered by default startup.");
             foreach (object key in catalog.Keys)
             {
-                if (!catalog.Locate(key, typeof(object), out var locations)) continue;
+                if (!catalog.Locate(key, typeof(object), out var locations))
+                    continue;
                 int candidateIndex = 0;
                 foreach (var location in locations)
                 {
-                    if (IsBundle(location.ResourceType)) continue;
-                    if (!(key is string alias)) throw new InvalidDataException("Published nonstring asset identifiers are not supported in encrypted mode.");
+                    if (IsBundle(location.ResourceType))
+                        continue;
+                    if (!(key is string alias))
+                        throw new InvalidDataException("Published nonstring asset identifiers are not supported in encrypted mode.");
                     var depends = location.Dependencies ?? Array.Empty<IResourceLocation>();
                     if (!IsSupportedAssetProvider(location.ProviderId, depends.Count))
                     {
@@ -130,7 +135,8 @@ namespace YLFramework.Resource.Encryption
                         {
                             if (dep.ResourceType == typeof(EncryptedMountedBundle))
                             {
-                                if (!mounts.ContainsKey(dep.InternalId)) throw new InvalidDataException("Unrecognized protected mount.");
+                                if (!mounts.ContainsKey(dep.InternalId))
+                                    throw new InvalidDataException("Unrecognized protected mount.");
                             }
                             else
                             {

@@ -97,12 +97,14 @@ namespace YLFramework.Resource.Encryption
                         physicalPath = Path.Combine(physicalPath, part);
                         continue;
                     }
-                    if (create && !Directory.Exists(current)) Directory.CreateDirectory(current);
+                    if (create && !Directory.Exists(current))
+                        Directory.CreateDirectory(current);
                     try
                     {
                         var handle = OpenChecked(current, ListDirectory, DirectoryShare, OpenExisting, directory: true);
                         pins.Handles.Add(handle);
-                        if (inspect) physicalPath = VolumePath(handle);
+                        if (inspect)
+                            physicalPath = VolumePath(handle);
                     }
                     catch (FileNotFoundException) when (inspect)
                     {
@@ -146,7 +148,8 @@ namespace YLFramework.Resource.Encryption
 
         internal static SafeFileHandle CreatePublicationDirectory(string path)
         {
-            if (!CreateDirectory(path, IntPtr.Zero)) throw Failure("Create fresh encrypted delivery directory");
+            if (!CreateDirectory(path, IntPtr.Zero))
+                throw Failure("Create fresh encrypted delivery directory");
             return OpenChecked(path, ListDirectory | DeleteAccess, DirectoryShare, OpenExisting, directory: true);
         }
 
@@ -177,7 +180,10 @@ namespace YLFramework.Resource.Encryption
 
         private static FileStream AsStream(SafeFileHandle handle, FileAccess access)
         {
-            try { return new OwnedFileStream(handle, access); }
+            try
+            {
+                return new OwnedFileStream(handle, access);
+            }
             catch { handle.Dispose(); throw; }
         }
 
@@ -189,7 +195,10 @@ namespace YLFramework.Resource.Encryption
 
             protected override void Dispose(bool disposing)
             {
-                try { base.Dispose(disposing); }
+                try
+                {
+                    base.Dispose(disposing);
+                }
                 finally { if (disposing) _owned?.Dispose(); }
             }
         }
@@ -201,12 +210,14 @@ namespace YLFramework.Resource.Encryption
             {
                 int code = Marshal.GetLastWin32Error();
                 handle.Dispose();
-                if (code == 2 || code == 3) throw new FileNotFoundException("Encrypted Bundle file or directory not found.");
+                if (code == 2 || code == 3)
+                    throw new FileNotFoundException("Encrypted Bundle file or directory not found.");
                 throw new IOException("Encrypted Bundle storage open failed for " + Path.GetFileName(path) + " (Win32 " + code + ").");
             }
             try
             {
-                if (!GetFileInformationByHandle(handle, out var info)) throw Failure("Encrypted Bundle storage identity");
+                if (!GetFileInformationByHandle(handle, out var info))
+                    throw Failure("Encrypted Bundle storage identity");
                 if ((info.Attributes & ReparsePoint) != 0 || ((info.Attributes & DirectoryBit) != 0) != directory || (!directory && info.Links != 1))
                 {
                     throw new EncryptedBundleIntegrityException("Encrypted Bundle storage refused a directory mismatch or link.");
@@ -227,7 +238,8 @@ namespace YLFramework.Resource.Encryption
             internal readonly List<SafeFileHandle> Handles = new List<SafeFileHandle>();
             public void Dispose()
             {
-                for (int index = Handles.Count - 1; index >= 0; index--) Handles[index].Dispose();
+                for (int index = Handles.Count - 1; index >= 0; index--)
+                    Handles[index].Dispose();
                 Handles.Clear();
             }
         }

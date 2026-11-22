@@ -99,10 +99,14 @@ namespace YLFramework.Resource.Encryption
             foreach (var record in description.Bundles)
             {
                 token.ThrowIfCancellationRequested();
-                if (_entries.ContainsKey(record.CipherSha256)) continue;
+                if (_entries.ContainsKey(record.CipherSha256))
+                    continue;
                 var entry = new Entry { Path = Path.Combine(_root, record.CipherSha256 + ".bin") };
                 _entries.Add(record.CipherSha256, entry);
-                try { entry.Verified = CheckExisting(entry.Path, record, token); }
+                try
+                {
+                    entry.Verified = CheckExisting(entry.Path, record, token);
+                }
                 catch (EncryptedBundleIntegrityException) { entry.Verified = false; }
             }
         }
@@ -122,11 +126,13 @@ namespace YLFramework.Resource.Encryption
 
         internal Task EnsureAsync(EncryptedBundleRecord record, CancellationToken observer = default)
         {
-            if (observer.IsCancellationRequested) return Task.FromCanceled(observer);
+            if (observer.IsCancellationRequested)
+                return Task.FromCanceled(observer);
             Task shared;
             lock (_gate)
             {
-                if (_closing != null) throw new ObjectDisposedException(nameof(EncryptedBundleCache));
+                if (_closing != null)
+                    throw new ObjectDisposedException(nameof(EncryptedBundleCache));
                 var entry = GetEntry(record);
                 if (entry.Shared == null || entry.Shared.IsCompleted)
                 {
@@ -141,7 +147,8 @@ namespace YLFramework.Resource.Encryption
 
         private Entry GetEntry(EncryptedBundleRecord record)
         {
-            if (!_description.Contains(record)) throw new InvalidOperationException("Bundle is not in the frozen description.");
+            if (!_description.Contains(record))
+                throw new InvalidOperationException("Bundle is not in the frozen description.");
             return _entries[record.CipherSha256];
         }
 
@@ -152,7 +159,10 @@ namespace YLFramework.Resource.Encryption
             {
                 if (CheckExisting(entry.Path, record, token))
                 {
-                    lock (_gate) { entry.Verified = true; }
+                    lock (_gate)
+                    {
+                        entry.Verified = true;
+                    }
                     return;
                 }
                 lock (_gate)
@@ -165,13 +175,19 @@ namespace YLFramework.Resource.Encryption
             }
             catch (EncryptedBundleIntegrityException)
             {
-                lock (_gate) { entry.Verified = false; }
+                lock (_gate)
+                {
+                    entry.Verified = false;
+                }
                 RemoveOnlyIfDamaged(entry.Path, record, token);
                 throw;
             }
 
             await DownloadAsync(entry.Path, record, token).ConfigureAwait(false);
-            lock (_gate) { entry.Verified = true; }
+            lock (_gate)
+            {
+                entry.Verified = true;
+            }
         }
 
         internal async Task<AuthenticatedBundleStream> OpenAuthenticatedAsync(EncryptedBundleRecord record, IEncryptedBundleKeySource keys,
@@ -189,12 +205,18 @@ namespace YLFramework.Resource.Encryption
                 }
                 catch (FileNotFoundException error)
                 {
-                    lock (_gate) { entry.Verified = false; }
+                    lock (_gate)
+                    {
+                        entry.Verified = false;
+                    }
                     throw new EncryptedBundleIntegrityException("Ciphertext disappeared before authentication.", error);
                 }
                 catch (EncryptedBundleIntegrityException)
                 {
-                    lock (_gate) { entry.Verified = false; }
+                    lock (_gate)
+                    {
+                        entry.Verified = false;
+                    }
                     RemoveOnlyIfDamaged(entry.Path, record, token);
                     throw;
                 }
@@ -204,9 +226,13 @@ namespace YLFramework.Resource.Encryption
         private bool CheckExisting(string path, EncryptedBundleRecord record, CancellationToken token)
         {
             FileStream open;
-            try { open = OwnedWindowsFiles.ReadPinned(path); }
+            try
+            {
+                open = OwnedWindowsFiles.ReadPinned(path);
+            }
             catch (FileNotFoundException) { return false; }
-            using (open) RecordVerifiedCipherHash(AuthenticatedBundleStream.ValidateCipher(open, record, token));
+            using (open)
+                RecordVerifiedCipherHash(AuthenticatedBundleStream.ValidateCipher(open, record, token));
             return true;
         }
 
@@ -215,11 +241,17 @@ namespace YLFramework.Resource.Encryption
         private static void RemoveOnlyIfDamaged(string path, EncryptedBundleRecord record, CancellationToken token)
         {
             FileStream isolated;
-            try { isolated = OwnedWindowsFiles.OpenRemovalPinned(path); }
+            try
+            {
+                isolated = OwnedWindowsFiles.OpenRemovalPinned(path);
+            }
             catch (FileNotFoundException) { return; }
             using (isolated)
             {
-                try { AuthenticatedBundleStream.ValidateCipher(isolated, record, token); }
+                try
+                {
+                    AuthenticatedBundleStream.ValidateCipher(isolated, record, token);
+                }
                 catch (EncryptedBundleIntegrityException) { OwnedWindowsFiles.DeleteOpen(isolated); }
             }
         }
@@ -263,9 +295,11 @@ namespace YLFramework.Resource.Encryption
                 {
                     int take = (int)Math.Min(buffer.Length, row.CipherLength - length + 1);
                     int count = await input.ReadAsync(buffer, 0, take, transfer).ConfigureAwait(false);
-                    if (count == 0) break;
+                    if (count == 0)
+                        break;
                     length += count;
-                    if (length > row.CipherLength) throw new EncryptedBundleIntegrityException("Download exceeded the frozen ciphertext length.");
+                    if (length > row.CipherLength)
+                        throw new EncryptedBundleIntegrityException("Download exceeded the frozen ciphertext length.");
                     part.Write(buffer, 0, count);
                 }
                 part.Flush(true);
@@ -276,7 +310,10 @@ namespace YLFramework.Resource.Encryption
             }
             catch (Exception error)
             {
-                try { OwnedWindowsFiles.DeleteOpen(part); }
+                try
+                {
+                    OwnedWindowsFiles.DeleteOpen(part);
+                }
                 catch (Exception cleanup) { throw new AggregateException("Ciphertext transfer and temporary cleanup both failed.", error, cleanup); }
                 throw;
             }
@@ -310,7 +347,10 @@ namespace YLFramework.Resource.Encryption
 
         private async Task CloseCoreAsync(Task[] pending)
         {
-            try { await Task.WhenAll(pending).ConfigureAwait(false); }
+            try
+            {
+                await Task.WhenAll(pending).ConfigureAwait(false);
+            }
             catch (Exception) { /* Each shared operation retains its own observed result. */ }
             finally
             {

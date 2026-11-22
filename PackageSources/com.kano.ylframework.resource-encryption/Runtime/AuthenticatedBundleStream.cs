@@ -17,7 +17,10 @@ namespace YLFramework.Resource.Encryption
         private readonly EncryptedBundleKeyLease _key;
         private IntPtr _reader;
         private long _position;
-        internal long PreAuthenticationCipherBytes { get; private set; }
+        internal long PreAuthenticationCipherBytes
+        {
+            get; private set;
+        }
         private bool _failed;
 
         [DllImport(Library, EntryPoint = "yl_seal", CallingConvention = CallingConvention.Cdecl)]
@@ -83,7 +86,10 @@ namespace YLFramework.Resource.Encryption
                     }
                     else
                     {
-                        try { cipher.Dispose(); }
+                        try
+                        {
+                            cipher.Dispose();
+                        }
                         finally { key?.Dispose(); }
                     }
                 }
@@ -166,8 +172,20 @@ namespace YLFramework.Resource.Encryption
         public override bool CanSeek => true;
         public override bool CanWrite => false;
         public override long Length => _length;
-        public override long Position { get { lock (_sync) { return _position; } } set => Seek(value, SeekOrigin.Begin); }
-        public override void Flush() { }
+        public override long Position
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _position;
+                }
+            }
+            set => Seek(value, SeekOrigin.Begin);
+        }
+        public override void Flush()
+        {
+        }
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
 
@@ -194,8 +212,10 @@ namespace YLFramework.Resource.Encryption
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            if (buffer == null) throw new ArgumentNullException(nameof(buffer));
-            if (offset < 0 || count < 0 || count > buffer.Length - offset) throw new ArgumentOutOfRangeException(nameof(count));
+            if (buffer == null)
+                throw new ArgumentNullException(nameof(buffer));
+            if (offset < 0 || count < 0 || count > buffer.Length - offset)
+                throw new ArgumentOutOfRangeException(nameof(count));
             lock (_sync)
             {
                 CheckReadable();
@@ -228,8 +248,10 @@ namespace YLFramework.Resource.Encryption
 
         private void CheckReadable()
         {
-            if (_reader == IntPtr.Zero) throw new ObjectDisposedException(nameof(AuthenticatedBundleStream));
-            if (_failed) throw new EncryptedBundleAuthenticationException();
+            if (_reader == IntPtr.Zero)
+                throw new ObjectDisposedException(nameof(AuthenticatedBundleStream));
+            if (_failed)
+                throw new EncryptedBundleAuthenticationException();
         }
 
         protected override void Dispose(bool disposing)
@@ -240,10 +262,16 @@ namespace YLFramework.Resource.Encryption
                 if (reader != IntPtr.Zero)
                 {
                     _reader = IntPtr.Zero;
-                    try { CloseNative(reader); }
+                    try
+                    {
+                        CloseNative(reader);
+                    }
                     finally
                     {
-                        try { _cipher.Dispose(); }
+                        try
+                        {
+                            _cipher.Dispose();
+                        }
                         finally { _key.Dispose(); }
                     }
                 }

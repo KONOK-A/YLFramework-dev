@@ -34,7 +34,8 @@ namespace YLFramework.Resource.Encryption.Editor
             BuildPlayerOptions player, string applicationNamespace, string privateRoot, string releaseRoot,
             IEncryptedBundleKeySource keys, bool allowLoopback)
         {
-            if (!settings || !group || group.Settings != settings || keys == null) throw new ArgumentException("A group, its settings and an authoring key source are required.");
+            if (!settings || !group || group.Settings != settings || keys == null)
+                throw new ArgumentException("A group, its settings and an authoring key source are required.");
             var auth = group.GetSchema<EncryptedBundleGroupSchema>();
             var packed = group.GetSchema<BundledAssetGroupSchema>();
             if (!auth || !packed || !packed.IncludeInBuild || packed.Compression != BundledAssetGroupSchema.BundleCompressionMode.LZ4 ||
@@ -62,7 +63,8 @@ namespace YLFramework.Resource.Encryption.Editor
                 throw new InvalidDataException("Encrypted release requires a fixed local Catalog, no startup update or initialization hooks, no Player content rebuild, and Windows x64 Release Mono or IL2CPP.");
             bool hasDirtyScene = Enumerable.Range(0, UnityEngine.SceneManagement.SceneManager.sceneCount)
                 .Any(index => UnityEngine.SceneManagement.SceneManager.GetSceneAt(index).isDirty);
-            if (hasDirtyScene) throw new InvalidOperationException("Save the selected build scenes before the encrypted build.");
+            if (hasDirtyScene)
+                throw new InvalidOperationException("Save the selected build scenes before the encrypted build.");
 
             privateRoot = OwnedWindowsFiles.LocalAbsolute(privateRoot);
             releaseRoot = OwnedWindowsFiles.LocalAbsolute(releaseRoot);
@@ -78,30 +80,35 @@ namespace YLFramework.Resource.Encryption.Editor
                 throw new InvalidDataException("Official Addressables output path is not the project's fixed Library/Temp layout.");
             // Inspect even when there is no ordinary local group. The official builder always writes here.
             string[] officialRoots = { library, buildReports, buildPath, bundleScratch };
-            foreach (string root in officialRoots) paths.Identity(root);
+            foreach (string root in officialRoots)
+                paths.Identity(root);
             string[] destinations = { privateRoot, releaseRoot, playerRoot };
             string[] reserved = { Application.dataPath, Path.Combine(project, "Packages"), Path.Combine(project, "ProjectSettings"),
                 Path.Combine(project, "Library"), Path.Combine(project, "Temp") };
             foreach (string root in destinations)
             {
                 foreach (string forbidden in reserved)
-                    if (Overlaps(paths.Identity(root), paths.Identity(forbidden))) throw new InvalidDataException("Encrypted output must not physically intersect project input or intermediate data: " + root);
+                    if (Overlaps(paths.Identity(root), paths.Identity(forbidden)))
+                        throw new InvalidDataException("Encrypted output must not physically intersect project input or intermediate data: " + root);
             }
             if (paths.Overlap(privateRoot, releaseRoot) || paths.Overlap(privateRoot, playerRoot) || paths.Overlap(releaseRoot, playerRoot) ||
                 Directory.Exists(privateRoot) || File.Exists(privateRoot) || Directory.Exists(releaseRoot) || File.Exists(releaseRoot) ||
-                Directory.Exists(playerRoot) || File.Exists(playerRoot)) throw new InvalidDataException("Use separate, fresh private, Player and immutable release paths.");
+                Directory.Exists(playerRoot) || File.Exists(playerRoot))
+                throw new InvalidDataException("Use separate, fresh private, Player and immutable release paths.");
             using var privateParent = OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(privateRoot), false);
             using var releaseParent = OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(releaseRoot), false);
             using var playerParent = OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(playerRoot), false);
             string inputRoot = Path.GetFullPath(packed.BuildPath.GetValue(settings));
             ProtectedAssetAudit.Relative(privateRoot, inputRoot);
-            if (!StrictlyBelow(paths.Identity(inputRoot), paths.Identity(privateRoot))) throw new InvalidDataException("Protected staging must physically belong to the private root.");
+            if (!StrictlyBelow(paths.Identity(inputRoot), paths.Identity(privateRoot)))
+                throw new InvalidDataException("Protected staging must physically belong to the private root.");
             string stateFolder = OwnedWindowsFiles.LocalAbsolute(settings.profileSettings.EvaluateString(settings.activeProfileId, settings.ContentStateBuildPath));
             ProtectedAssetAudit.Relative(privateRoot, stateFolder);
             if (!StrictlyBelow(paths.Identity(stateFolder), paths.Identity(privateRoot)))
                 throw new InvalidDataException("Official content state must physically belong to the private root.");
             string prefix = packed.LoadPath.GetValue(settings);
-            if (!prefix.EndsWith("/", StringComparison.Ordinal)) prefix += "/";
+            if (!prefix.EndsWith("/", StringComparison.Ordinal))
+                prefix += "/";
             _ = new EncryptedBundleBinding(applicationNamespace, prefix, group.Guid, "validate", new string('0', 32), packed.GetBundleCachedProviderId(),
                 "validate.bundle", auth.KeyId, 1, new string('0', 64), allowLoopback);
             if (!allowLoopback && !string.Equals(new Uri(prefix).Segments.Last().TrimEnd('/'), Path.GetFileName(releaseRoot), StringComparison.Ordinal))
@@ -111,7 +118,8 @@ namespace YLFramework.Resource.Encryption.Editor
             foreach (var other in settings.groups.Where(candidate => candidate && candidate != group))
             {
                 var schema = other.GetSchema<BundledAssetGroupSchema>();
-                if (!schema || !schema.IncludeInBuild) continue;
+                if (!schema || !schema.IncludeInBuild)
+                    continue;
                 string ordinary = Path.GetFullPath(schema.BuildPath.GetValue(settings));
                 string load = schema.LoadPath.GetValue(settings).TrimEnd('/') + "/";
                 bool local = BelowOrEqual(ordinary, buildPath) && BelowOrEqual(paths.Identity(ordinary), paths.Identity(buildPath));
@@ -127,9 +135,12 @@ namespace YLFramework.Resource.Encryption.Editor
             var audit = new ProtectedAssetAudit(group, auth.PublicDependencyGuids);
             foreach (string root in new[] { library, bundleScratch })
             {
-                if (!Directory.Exists(root)) continue;
+                if (!Directory.Exists(root))
+                    continue;
                 foreach (string file in ProtectedAssetAudit.EnumerateOwnedFiles(root))
-                    using (OwnedWindowsFiles.OpenRead(file)) { }
+                    using (OwnedWindowsFiles.OpenRead(file))
+                    {
+                    }
             }
             foreach (string root in officialRoots.Concat(ordinaryRoots).Append(privateRoot).Append(inputRoot).Append(stateFolder))
                 paths.Prepare(root);
@@ -194,7 +205,8 @@ namespace YLFramework.Resource.Encryption.Editor
                 foreach (string metadata in new[] { "catalog.hash", "AddressablesLink/link.xml" })
                 {
                     string officialFile = Path.Combine(buildPath, metadata);
-                    if (File.Exists(officialFile)) expectedStreaming.Add("aa/" + metadata, ProtectedAssetAudit.DigestFile(officialFile));
+                    if (File.Exists(officialFile))
+                        expectedStreaming.Add("aa/" + metadata, ProtectedAssetAudit.DigestFile(officialFile));
                 }
                 foreach (var result in output.AssetBundleBuildResults)
                 {
@@ -210,10 +222,13 @@ namespace YLFramework.Resource.Encryption.Editor
                             planned.BundleHash, planned.ProviderId, planned.RelativePath, planned.KeyId, planned.PlainLength, digest, builder.Loopback);
                         protectedInputs.Add(planned.RelativePath, (file, binding));
                     }
-                    else if (BelowOrEqual(file, buildPath)) expectedStreaming.Add("aa/" + ProtectedAssetAudit.Relative(buildPath, file), digest);
-                    else ordinaryInputs.Add(file, digest);
+                    else if (BelowOrEqual(file, buildPath))
+                        expectedStreaming.Add("aa/" + ProtectedAssetAudit.Relative(buildPath, file), digest);
+                    else
+                        ordinaryInputs.Add(file, digest);
                 }
-                if (protectedInputs.Count != builder.Bindings.Count) throw new InvalidDataException("The audited protected inventory is incomplete.");
+                if (protectedInputs.Count != builder.Bindings.Count)
+                    throw new InvalidDataException("The audited protected inventory is incomplete.");
 
                 paths.Prepare(playerRoot);
                 player.options |= BuildOptions.DetailedBuildReport | BuildOptions.StrictMode;
@@ -251,7 +266,10 @@ namespace YLFramework.Resource.Encryption.Editor
                 var binding = item.Binding;
                 using var source = OwnedWindowsFiles.OpenRead(item.Path);
                 using var cipher = OwnedWindowsFiles.CreateTemporaryPinned(Path.Combine(stage, binding.RelativePath));
-                try { AuthenticatedBundleStream.Seal(source, cipher, binding, key); }
+                try
+                {
+                    AuthenticatedBundleStream.Seal(source, cipher, binding, key);
+                }
                 catch (InvalidDataException error) { throw new InvalidDataException("Audited plaintext Bundle changed: " + binding.RelativePath, error); }
                 rows.Add(new EncryptedBundleRecord(binding, cipher.Length, AuthenticatedBundleStream.Hash(cipher, default)));
             }
@@ -281,15 +299,24 @@ namespace YLFramework.Resource.Encryption.Editor
                     ["releasePrefix"] = rows[0].Binding.ReleasePrefix,
                     ["descriptionSha256"] = AuthenticatedBundleStream.Hash(playerDescription, default),
                     ["catalogSha256"] = catalogHash,
-                    ["files"] = new JArray(rows.Select(row => new JObject { ["path"] = row.Binding.RelativePath,
-                        ["bytes"] = row.CipherLength, ["sha256"] = row.CipherSha256 }))
+                    ["files"] = new JArray(rows.Select(row => new JObject
+                    {
+                        ["path"] = row.Binding.RelativePath,
+                        ["bytes"] = row.CipherLength,
+                        ["sha256"] = row.CipherSha256
+                    }))
                 }.ToString(Formatting.Indented));
                 WriteNew(Path.Combine(privateRoot, "audit.json"), new JObject
                 {
-                    ["layoutSha256"] = ProtectedAssetAudit.DigestFile(layout), ["contentStateSha256"] = ProtectedAssetAudit.DigestFile(state),
-                    ["catalogSha256"] = catalogHash, ["settingsSha256"] = settingsHash, ["routesSha256"] = description.RoutesSha256,
-                    ["playerResult"] = report.summary.result.ToString(), ["playerBuildGuid"] = report.summary.guid.ToString(),
-                    ["playerExeSha256"] = ProtectedAssetAudit.DigestFile(report.summary.outputPath), ["protectedAssets"] = audit.Report()
+                    ["layoutSha256"] = ProtectedAssetAudit.DigestFile(layout),
+                    ["contentStateSha256"] = ProtectedAssetAudit.DigestFile(state),
+                    ["catalogSha256"] = catalogHash,
+                    ["settingsSha256"] = settingsHash,
+                    ["routesSha256"] = description.RoutesSha256,
+                    ["playerResult"] = report.summary.result.ToString(),
+                    ["playerBuildGuid"] = report.summary.guid.ToString(),
+                    ["playerExeSha256"] = ProtectedAssetAudit.DigestFile(report.summary.outputPath),
+                    ["protectedAssets"] = audit.Report()
                 }.ToString(Formatting.Indented));
                 CheckInventory(releaseRoot, names.Append(pending));
                 OwnedWindowsFiles.Publish(playerDescription, Path.Combine(aa, EncryptedBundleDescription.FileName));
@@ -299,10 +326,16 @@ namespace YLFramework.Resource.Encryption.Editor
             }
             finally
             {
-                try { FinishPending(manifest, committed); }
+                try
+                {
+                    FinishPending(manifest, committed);
+                }
                 finally
                 {
-                    try { FinishPending(playerDescription, committed); }
+                    try
+                    {
+                        FinishPending(playerDescription, committed);
+                    }
                     finally { foreach (var cipher in verified) cipher.Dispose(); }
                 }
             }
@@ -330,8 +363,11 @@ namespace YLFramework.Resource.Encryption.Editor
 
         private static void FinishPending(FileStream file, bool keep)
         {
-            if (file == null) return;
-            using (file) if (!keep) OwnedWindowsFiles.DeleteOpen(file);
+            if (file == null)
+                return;
+            using (file)
+                if (!keep)
+                    OwnedWindowsFiles.DeleteOpen(file);
         }
 
         private static bool Overlaps(string first, string second)
@@ -357,7 +393,8 @@ namespace YLFramework.Resource.Encryption.Editor
 
             internal string Identity(string path)
             {
-                if (_identities.TryGetValue(path, out string physical)) return physical;
+                if (_identities.TryGetValue(path, out string physical))
+                    return physical;
                 _owned.Add(OwnedWindowsFiles.InspectDirectory(path, out physical));
                 _identities.Add(path, physical);
                 return physical;
@@ -376,7 +413,8 @@ namespace YLFramework.Resource.Encryption.Editor
 
             public void Dispose()
             {
-                for (int i = _owned.Count - 1; i >= 0; i--) _owned[i].Dispose();
+                for (int i = _owned.Count - 1; i >= 0; i--)
+                    _owned[i].Dispose();
                 _owned.Clear();
             }
         }

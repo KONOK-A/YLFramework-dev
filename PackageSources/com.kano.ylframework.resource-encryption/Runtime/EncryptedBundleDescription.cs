@@ -36,16 +36,46 @@ namespace YLFramework.Resource.Encryption
             PlainSha256 = Hex(plainSha256, 64, "plainSha256");
         }
 
-        internal string Application { get; }
-        internal string ReleasePrefix { get; }
-        internal string GroupGuid { get; }
-        internal string BundleName { get; }
-        internal string BundleHash { get; }
-        internal string ProviderId { get; }
-        internal string RelativePath { get; }
-        internal string KeyId { get; }
-        internal long PlainLength { get; }
-        internal string PlainSha256 { get; }
+        internal string Application
+        {
+            get;
+        }
+        internal string ReleasePrefix
+        {
+            get;
+        }
+        internal string GroupGuid
+        {
+            get;
+        }
+        internal string BundleName
+        {
+            get;
+        }
+        internal string BundleHash
+        {
+            get;
+        }
+        internal string ProviderId
+        {
+            get;
+        }
+        internal string RelativePath
+        {
+            get;
+        }
+        internal string KeyId
+        {
+            get;
+        }
+        internal long PlainLength
+        {
+            get;
+        }
+        internal string PlainSha256
+        {
+            get;
+        }
         internal string Url => ReleasePrefix + RelativePath;
 
         internal byte[] AssociatedData()
@@ -139,9 +169,18 @@ namespace YLFramework.Resource.Encryption
             CipherSha256 = EncryptedBundleBinding.Hex(cipherSha256, 64, "cipherSha256");
         }
 
-        internal EncryptedBundleBinding Binding { get; }
-        internal long CipherLength { get; }
-        internal string CipherSha256 { get; }
+        internal EncryptedBundleBinding Binding
+        {
+            get;
+        }
+        internal long CipherLength
+        {
+            get;
+        }
+        internal string CipherSha256
+        {
+            get;
+        }
     }
 
     internal sealed class EncryptedBundleDescription
@@ -185,11 +224,26 @@ namespace YLFramework.Resource.Encryption
             Bundles = Array.AsReadOnly(items);
         }
 
-        internal string CatalogName { get; }
-        internal string CatalogSha256 { get; }
-        internal string SettingsSha256 { get; }
-        internal string RoutesSha256 { get; }
-        internal IReadOnlyList<EncryptedBundleRecord> Bundles { get; }
+        internal string CatalogName
+        {
+            get;
+        }
+        internal string CatalogSha256
+        {
+            get;
+        }
+        internal string SettingsSha256
+        {
+            get;
+        }
+        internal string RoutesSha256
+        {
+            get;
+        }
+        internal IReadOnlyList<EncryptedBundleRecord> Bundles
+        {
+            get;
+        }
 
         internal string Encode()
         {

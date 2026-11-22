@@ -30,27 +30,40 @@ namespace YLFramework.Testing.NativeP0
         {
             RequireKey(key);
             int result = ylp0_encrypt(source, destination, key);
-            if (result != 0) throw new IOException("Fixture Tink export failed: " + result);
+            if (result != 0)
+                throw new IOException("Fixture Tink export failed: " + result);
         }
 
         private static void RequireKey(byte[] key)
         {
-            if (key == null || key.Length != 32) throw new ArgumentException("Expected the random 256-bit fixture key.", nameof(key));
+            if (key == null || key.Length != 32)
+                throw new ArgumentException("Expected the random 256-bit fixture key.", nameof(key));
         }
 
         public P0NativeReadStream(string path, byte[] key)
         {
             RequireKey(key);
             _handle = ylp0_open(path, key, out _length);
-            if (_handle == IntPtr.Zero) throw new IOException("Fixture Tink reader refused the sealed file.");
+            if (_handle == IntPtr.Zero)
+                throw new IOException("Fixture Tink reader refused the sealed file.");
         }
 
         public override long Length => _length;
-        public override long Position { get { lock (_sync) return _position; } set => Seek(value, SeekOrigin.Begin); }
+        public override long Position
+        {
+            get
+            {
+                lock (_sync)
+                    return _position;
+            }
+            set => Seek(value, SeekOrigin.Begin);
+        }
         public override bool CanRead => true;
         public override bool CanSeek => true;
         public override bool CanWrite => false;
-        public override void Flush() { }
+        public override void Flush()
+        {
+        }
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
@@ -62,26 +75,37 @@ namespace YLFramework.Testing.NativeP0
                 long basis;
                 switch (origin)
                 {
-                    case SeekOrigin.Begin: basis = 0; break;
-                    case SeekOrigin.Current: basis = _position; break;
-                    case SeekOrigin.End: basis = _length; break;
-                    default: throw new ArgumentOutOfRangeException(nameof(origin));
+                    case SeekOrigin.Begin:
+                        basis = 0;
+                        break;
+                    case SeekOrigin.Current:
+                        basis = _position;
+                        break;
+                    case SeekOrigin.End:
+                        basis = _length;
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(origin));
                 }
                 long next = checked(basis + offset);
-                if (next < 0) throw new IOException("Cannot seek before the fixture stream.");
+                if (next < 0)
+                    throw new IOException("Cannot seek before the fixture stream.");
                 return _position = next;
             }
         }
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            if (buffer == null) throw new ArgumentNullException(nameof(buffer));
-            if (offset < 0 || count < 0 || count > buffer.Length - offset) throw new ArgumentOutOfRangeException(nameof(count));
+            if (buffer == null)
+                throw new ArgumentNullException(nameof(buffer));
+            if (offset < 0 || count < 0 || count > buffer.Length - offset)
+                throw new ArgumentOutOfRangeException(nameof(count));
             lock (_sync)
             {
                 EnsureOpen();
                 int goal = (int)Math.Min(count, Math.Max(0, _length - _position));
-                if (goal == 0) return 0;
+                if (goal == 0)
+                    return 0;
                 var pin = GCHandle.Alloc(buffer, GCHandleType.Pinned);
                 try
                 {
@@ -90,7 +114,8 @@ namespace YLFramework.Testing.NativeP0
                     {
                         int size = Math.Min(remaining, Limit);
                         int read = ylp0_read(_handle, _position, IntPtr.Add(pin.AddrOfPinnedObject(), offset), size);
-                        if (read != size) throw new IOException("Fixture Tink authentication or exact read failed: " + read);
+                        if (read != size)
+                            throw new IOException("Fixture Tink authentication or exact read failed: " + read);
                         _position += read;
                         offset += read;
                         remaining -= read;
@@ -103,7 +128,8 @@ namespace YLFramework.Testing.NativeP0
 
         private void EnsureOpen()
         {
-            if (_handle == IntPtr.Zero) throw new ObjectDisposedException(nameof(P0NativeReadStream));
+            if (_handle == IntPtr.Zero)
+                throw new ObjectDisposedException(nameof(P0NativeReadStream));
         }
 
         protected override void Dispose(bool disposing)
@@ -112,7 +138,8 @@ namespace YLFramework.Testing.NativeP0
             {
                 var old = _handle;
                 _handle = IntPtr.Zero;
-                if (old != IntPtr.Zero) ylp0_close(old);
+                if (old != IntPtr.Zero)
+                    ylp0_close(old);
             }
             base.Dispose(disposing);
         }

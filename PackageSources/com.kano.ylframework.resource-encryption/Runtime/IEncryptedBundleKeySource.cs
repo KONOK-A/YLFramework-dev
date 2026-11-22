@@ -42,7 +42,10 @@ namespace YLFramework.Resource.Encryption
 
         internal static EncryptedBundleKeyLease Rent(IEncryptedBundleKeySource source, string keyId)
         {
-            try { return source.OpenReadKey(keyId); }
+            try
+            {
+                return source.OpenReadKey(keyId);
+            }
             catch (Exception) { throw new EncryptedBundleKeySourceException("Encrypted Bundle key source could not open key " + keyId + "."); }
         }
 
@@ -61,7 +64,10 @@ namespace YLFramework.Resource.Encryption
                 onReturn = _onReturn;
                 _onReturn = null;
             }
-            try { onReturn?.Invoke(); }
+            try
+            {
+                onReturn?.Invoke();
+            }
             catch (Exception) { throw new EncryptedBundleKeySourceException("Encrypted Bundle key return callback failed after clearing the lease."); }
         }
     }

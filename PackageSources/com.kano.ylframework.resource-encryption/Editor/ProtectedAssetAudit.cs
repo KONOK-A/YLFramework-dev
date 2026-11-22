@@ -29,12 +29,15 @@ namespace YLFramework.Resource.Encryption.Editor
 
             foreach (string path in AssetDatabase.GetDependencies(entries.Select(entry => entry.AssetPath).ToArray(), true))
             {
-                if (!IsProjectAsset(path)) continue;
+                if (!IsProjectAsset(path))
+                    continue;
                 // Scripts are executable code, not serialized asset payloads.
-                if (AssetDatabase.GetMainAssetTypeAtPath(path) == typeof(MonoScript)) continue;
+                if (AssetDatabase.GetMainAssetTypeAtPath(path) == typeof(MonoScript))
+                    continue;
                 string guid = AssetDatabase.AssetPathToGUID(path);
                 EncryptedBundleBinding.Hex(guid, 32, "protected asset GUID");
-                if (exclusions.Remove(guid)) continue;
+                if (exclusions.Remove(guid))
+                    continue;
                 _protected.Add(guid, path);
                 _placement.Add(guid, new HashSet<string>(StringComparer.Ordinal));
             }
@@ -53,17 +56,21 @@ namespace YLFramework.Resource.Encryption.Editor
                     throw new InvalidDataException("The official report contains an ambiguous Bundle placement.");
                 foreach (var file in bundle.Files)
                 {
-                    foreach (var item in file.Assets) Record(item.Guid, item.AssetPath, "bundle " + bundle.Name + "/" + file.Name, protectedBundles.Contains(bundle.Name));
-                    foreach (var item in file.OtherAssets) Record(item.AssetGuid, item.AssetPath, "bundle " + bundle.Name + "/" + file.Name, protectedBundles.Contains(bundle.Name));
+                    foreach (var item in file.Assets)
+                        Record(item.Guid, item.AssetPath, "bundle " + bundle.Name + "/" + file.Name, protectedBundles.Contains(bundle.Name));
+                    foreach (var item in file.OtherAssets)
+                        Record(item.AssetGuid, item.AssetPath, "bundle " + bundle.Name + "/" + file.Name, protectedBundles.Contains(bundle.Name));
                 }
             }
-            if (!officialBundles.SetEquals(seen)) throw new InvalidDataException("Official Bundle outputs and actual Layout inventory do not match.");
+            if (!officialBundles.SetEquals(seen))
+                throw new InvalidDataException("Official Bundle outputs and actual Layout inventory do not match.");
             Check();
         }
 
         internal void AuditPlayer(BuildReport build, string[] scenes, string streamingRoot, Dictionary<string, string> allowed)
         {
-            if (build.packedAssets == null || build.packedAssets.Length == 0) throw new InvalidDataException("A detailed Player packed-assets report is required.");
+            if (build.packedAssets == null || build.packedAssets.Length == 0)
+                throw new InvalidDataException("A detailed Player packed-assets report is required.");
             int identified = 0;
             foreach (var packed in build.packedAssets)
             {
@@ -71,16 +78,21 @@ namespace YLFramework.Resource.Encryption.Editor
                 {
                     string guid = asset.sourceAssetGUID.ToString();
                     string path = asset.sourceAssetPath;
-                    if (!string.IsNullOrEmpty(path) && path.StartsWith("Assets/", StringComparison.Ordinal)) identified++;
-                    if (IsGeneratedPlayerMetadata(guid, path, packed.shortPath, asset.type)) continue;
+                    if (!string.IsNullOrEmpty(path) && path.StartsWith("Assets/", StringComparison.Ordinal))
+                        identified++;
+                    if (IsGeneratedPlayerMetadata(guid, path, packed.shortPath, asset.type))
+                        continue;
                     Record(guid, path, "Player packed " + packed.shortPath, false);
                 }
             }
-            if (identified == 0) throw new InvalidDataException("The detailed Player report does not identify project assets.");
+            if (identified == 0)
+                throw new InvalidDataException("The detailed Player report does not identify project assets.");
             var embedded = AssetDatabase.GetAllAssetPaths().Where(path => IsProjectAsset(path) &&
                 path.Split('/').Contains("Resources", StringComparer.OrdinalIgnoreCase) && !AssetDatabase.IsValidFolder(path));
-            foreach (string scene in scenes) AuditRoot(scene, "built-in scene " + scene);
-            foreach (string path in embedded) AuditRoot(path, "Resources " + path);
+            foreach (string scene in scenes)
+                AuditRoot(scene, "built-in scene " + scene);
+            foreach (string path in embedded)
+                AuditRoot(path, "Resources " + path);
             foreach (string path in EnumerateOwnedFiles(streamingRoot))
             {
                 string relative = Relative(streamingRoot, path);
@@ -88,7 +100,8 @@ namespace YLFramework.Resource.Encryption.Editor
                     throw new InvalidDataException("Cannot account for a file in actual StreamingAssets: " + relative);
                 allowed.Remove(relative);
             }
-            if (allowed.Count != 0) throw new InvalidDataException("Actual StreamingAssets missed expected official outputs.");
+            if (allowed.Count != 0)
+                throw new InvalidDataException("Actual StreamingAssets missed expected official outputs.");
             Check();
         }
 
@@ -105,9 +118,11 @@ namespace YLFramework.Resource.Encryption.Editor
 
         private static bool IsGeneratedPlayerMetadata(string guid, string path, string packedPath, Type assetType)
         {
-            if (HasGuid(guid)) return false;
+            if (HasGuid(guid))
+                return false;
             // These engine-created entries have no project GUID. Do not whitelist generated paths or arbitrary Unity asset types.
-            if (string.IsNullOrEmpty(path) && assetType?.FullName == "UnityEngine.PreloadData") return true;
+            if (string.IsNullOrEmpty(path) && assetType?.FullName == "UnityEngine.PreloadData")
+                return true;
             return (packedPath == "globalgamemanagers.assets" || packedPath == "globalgamemanagers.assets.resS") &&
                 ((path == "Built-in Texture2D: Splash Screen Unity Logo" && assetType == typeof(UnityEngine.Texture2D)) ||
                  (path == "Built-in Sprite: " && assetType == typeof(UnityEngine.Sprite)));
@@ -115,7 +130,8 @@ namespace YLFramework.Resource.Encryption.Editor
 
         private void Record(string guid, string path, string placement, bool isProtected)
         {
-            if (string.IsNullOrEmpty(path) && HasGuid(guid)) path = AssetDatabase.GUIDToAssetPath(guid);
+            if (string.IsNullOrEmpty(path) && HasGuid(guid))
+                path = AssetDatabase.GUIDToAssetPath(guid);
             if (IsProjectAsset(path))
             {
                 string resolved = AssetDatabase.AssetPathToGUID(path);
@@ -126,7 +142,8 @@ namespace YLFramework.Resource.Encryption.Editor
                 return;
             }
             if (guid == BuiltInExtra && path == "Resources/unity_builtin_extra" || guid == DefaultResources &&
-                (path == "Resources/unity default resources" || path == "Library/unity default resources")) return;
+                (path == "Resources/unity default resources" || path == "Library/unity default resources"))
+                return;
             throw new InvalidDataException("Build report contains an unattributed asset in " + placement + ": " + path + " [" + guid + "].");
         }
 
@@ -153,7 +170,8 @@ namespace YLFramework.Resource.Encryption.Editor
         {
             string prefix = Path.GetFullPath(parent).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
             string file = Path.GetFullPath(child);
-            if (!file.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Output does not belong to its declared root: " + file);
+            if (!file.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Output does not belong to its declared root: " + file);
             return file.Substring(prefix.Length).Replace('\\', '/');
         }
 
@@ -163,9 +181,13 @@ namespace YLFramework.Resource.Encryption.Editor
             foreach (string path in Directory.EnumerateFileSystemEntries(root))
             {
                 var attributes = File.GetAttributes(path);
-                if ((attributes & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException("Unowned link in build output: " + path);
-                if ((attributes & FileAttributes.Directory) == 0) yield return path;
-                else foreach (string file in EnumerateOwnedFiles(path)) yield return file;
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("Unowned link in build output: " + path);
+                if ((attributes & FileAttributes.Directory) == 0)
+                    yield return path;
+                else
+                    foreach (string file in EnumerateOwnedFiles(path))
+                        yield return file;
             }
         }
     }
