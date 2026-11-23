@@ -2,7 +2,7 @@
 
 > [文档首页](README.md) · [安装指南](Installation.md) · [代码规范](CodingStyle.md)
 
-本文解释当前产品分层、程序集依赖、装配与所有权。操作和 API 用法归各模块手册，源码仓库流程见源码当前的[贡献指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/CONTRIBUTING.md)。
+本文解释框架分层、程序集依赖、装配与所有权。操作和 API 用法见[模块手册](README.md#主包能力)。
 
 ## 产品边界
 
@@ -12,8 +12,8 @@
 | --- | --- |
 | Runtime / Editor | 正式框架实现与作者工具 |
 | Prefabs / Resources | 随包的默认模板与运行资产 |
-| `Documentation~` / `Samples~` | 按文件路径打开的说明，以及显式 Import 后才编译的样例 |
-| 选装包 | 配置、本地化、存档、状态机、二维移动、检测、玩法、红点、Excel、HybridCLR、远端资源加密 |
+| `Documentation~` / `Samples~` | 随包手册与可导入样例 |
+| 选装包 | 见[选装能力与包 ID](README.md#选装能力)；程序集依赖见下表 |
 | `Plugins/BouncyCastle/SOURCE.txt` | 旧加密实现的来源记录；不包含运行 DLL |
 | `Assets/Tests/YLFramework` / `Tools` | 源码仓库的测试和工具，不进入产品包 |
 | `Assets/YLFrameworkData` | 使用工程自己的配置与生成内容，不属于框架包输入 |
@@ -29,17 +29,7 @@ PackageSources/
     Editor/   Foundation/  Core/  Systems/  Common/  Tools/  Help/  Distribution/
     Plugins/  Prefabs/  Documentation~/  Samples~/ResourceStartup/
     package.json  README.md  CHANGELOG.md  LICENSE.md
-  com.kano.ylframework.data-assets/
-  com.kano.ylframework.localization/
-  com.kano.ylframework.save/
-  com.kano.ylframework.state-machine/
-  com.kano.ylframework.movement2d/
-  com.kano.ylframework.overlap/
-  com.kano.ylframework.gameplay/
-  com.kano.ylframework.reddot/
-  com.kano.ylframework.excel/
-  com.kano.ylframework.hybridclr/
-  com.kano.ylframework.resource-encryption/
+  <选装包 ID>/
 ```
 
 安装后的主包逻辑根是 `Packages/com.kano.ylframework`。`Documentation~` 与 `Samples~` 不进入 AssetDatabase，前者按实际磁盘路径打开，后者导入为使用工程副本后才编译。业务有 asmdef 时须显式引用所属程序集，`autoReferenced` 不能替代 asmdef 引用。
@@ -153,4 +143,4 @@ HybridCLR 复用唯一 ResourceSystem。构建流程完成生成、剥离、meta
 
 运行时先关闭 loader 启动的 Module，再 Dispose loader，最后关闭应用拥有的资源系统。Dispose 不卸载程序集，部分不可逆失败或同进程内容冲突要求重启。Native、EditorSimulation、EditorFast 是不同执行模式，详细用法见源码当前的 [HybridCLR 手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.hybridclr/Documentation~/README.md)。
 
-框架的测试与夹具不进入默认产品包。分层守卫、实际 Unity 编译、生命周期测试、独立安装与 Player 是不同证据；测试流程只维护在源码当前的[测试工具说明](https://github.com/KONOK-A/YLFramework-dev/blob/main/Tools/Testing/README.md)，架构页不记录阶段回执或测试数量。
+分层检查、Unity 编译、生命周期、独立安装与 Player 的验证范围见源码仓库的[测试工具说明](https://github.com/KONOK-A/YLFramework-dev/blob/main/Tools/Testing/README.md)。

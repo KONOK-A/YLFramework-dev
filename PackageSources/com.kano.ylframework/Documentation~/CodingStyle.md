@@ -4,7 +4,7 @@
 
 ## 命名
 
-先识别协议与序列化字段，再按访问级别命名；不能仅凭 public 判定 Unity 序列化资格。
+协议和序列化规则优先于访问级别；`public` 不等于可序列化。
 
 | 对象 | 规则 |
 |---|---|
@@ -44,8 +44,6 @@
 
 ## 格式工具
 
-以下仅适用于源码仓库，默认产品包不携带 `Tools`。从仓库根使用 PowerShell 7.6，执行 `Tools/CodeStyle/Format-YL.ps1 -Mode Check`；Apply 必须以 `-Paths` 指定本次任务的仓库相对路径。
+在源码仓库根用 PowerShell 7.6 运行 `Tools/CodeStyle/Format-YL.ps1 -Mode Check`；Apply 必须用 `-Paths` 限定本任务的仓库相对路径。产品包不含 `Tools`。
 
-工具按受维护源码范围工作，排除第三方实现、生成代码和 HybridCLR 本机测试输入。Check 只查编码与排版，不重命名、改语义或执行 IDE 命名建议；实际范围与 SDK 前置以脚本及对应版本锁为准。
-
-命名、结构、外部合同和可读性仍需语义审查。编译器诊断的独立构建与验证见 [Attributes](Modules/Attributes.md#重建与验证)，不把格式通过当作行为或 Analyzer 验收。
+Check 只查编码和排版，排除第三方实现、生成代码及 HybridCLR 本机测试输入；范围和 SDK 以脚本及版本锁为准。命名、结构、外部契约和可读性需另行审查，行为需测试；Analyzer 的构建与验证见 [Attributes](Modules/Attributes.md#重建与验证)。
