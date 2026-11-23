@@ -1,6 +1,6 @@
 # 测试工具说明
 
-本目录维护开发者侧的测试执行、隔离与结果检查，不是产品 Runtime 或使用工程的依赖。模块与工具链声明集中在 [TestSuites.json](TestSuites.json)，日常入口为 [Invoke-YLTests.ps1](Invoke-YLTests.ps1)。真实测试叶由 NUnit / Unity Test Framework 发现，不维护复制的测试数量表。
+日常入口：[Invoke-YLTests.ps1](Invoke-YLTests.ps1)。模块与工具链由 [TestSuites.json](TestSuites.json) 声明，实际用例由 NUnit / Unity Test Framework 发现。测试工具不随产品包分发。
 
 ## 选择验证层级
 
@@ -25,9 +25,19 @@ Unity 提供给编译器的候选引用可能同时出现在 `assemblyReferences
 
 ### 模块结项必需项
 
-框架模块开发和功能改动必须包含当前使用的受支持 Unity/实际目标平台的 **IL2CPP Player 构建及实际运行验收**。Editor、Mono Player 或 NoUnity CI 均不能替代；只构建成功、只声明后端或只生成报告也不算完成。缺少工具链、构建失败、Player 未运行或未普通退出时，IL2CPP 验收仍为未完成，不能宣布模块已全部结项。
+框架模块开发或功能改动结项，必须用当前受支持的 Unity 在实际目标平台**构建并运行 IL2CPP Player**，确认正常退出。缺工具链、只构建或只生成报告均算未完成；Editor、Mono Player 和 NoUnity CI 不能替代。
 
-优先复用现有 PlayerNative 与模块夹具；没有模块级入口时先补入口和对应回归，不退回到只跑 Daily。报告分列 Editor、IL2CPP 构建和 Player 运行，记录实际后端、裁剪/构建模式、目标、输入指纹与进程结果。此要求不意味着每次重跑全部 Unity 补丁/平台矩阵；纯文档修改仍按事实、链接与差异检查，不冒充发生了新的平台验收。
+优先复用 PlayerNative 与模块夹具；缺入口时补入口和回归，不用 Daily 替代。报告分列 Editor、IL2CPP 构建和 Player 运行，注明后端、裁剪/构建模式、目标、输入指纹与进程结果。无需遍历所有补丁与平台；纯文档改动只核对事实、链接和差异。
+
+### 离线文档检查
+
+在仓库根目录运行，无需启动 Unity：
+
+```powershell
+pwsh -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDocumentationNoUnity.ps1
+```
+
+脚本检查根 README、工具指南和包手册等受维护页面的导航、仓库链接与标题锚点。它不访问外部网站，不检查本机 Agent 指引，也不编译示例或验证 Unity 行为。
 
 ## 前置
 

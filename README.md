@@ -30,16 +30,13 @@ YLFramework 希望减少游戏项目中重复搭建基础设施的工作：小�
 
 本仓库 `YLFrameworkDev` 是框架的开发与验证宿主，不是游戏模板。使用框架不需要复制宿主的 `Assets`、`Packages` 或 `ProjectSettings`。
 
-## 文档与贡献
+## 文档
 
 | 我想做什么 | 从这里开始 |
 | --- | --- |
 | 用框架，或选择要装的模块 | [使用手册](PackageSources/com.kano.ylframework/Documentation~/README.md) |
-| 修改框架，确定源码、测试、文档放在哪里 | [贡献指南：熟悉仓库](CONTRIBUTING.md#熟悉仓库) · [架构说明](PackageSources/com.kano.ylframework/Documentation~/Architecture.md) |
-| 新增模块文档或整理开发计划 | [模块文档](CONTRIBUTING.md#模块文档) · [计划与交接](CONTRIBUTING.md#计划与交接) |
+| 了解模块分层、依赖与资源所有权 | [架构说明](PackageSources/com.kano.ylframework/Documentation~/Architecture.md) |
 | 跑测试、复核产物或打包 | [测试工具说明](Tools/Testing/README.md) · [打包与发行准备](Tools/Packaging/README.md) |
-
-欢迎通过 [Issues](https://github.com/KONOK-A/YLFramework-dev/issues)反馈可复现的问题或讨论功能需求，通过 Pull Request 提交改进。
 
 ## 许可证
 

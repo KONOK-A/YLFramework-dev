@@ -90,7 +90,7 @@ function Get-YLDocumentationReport([string[]] $PackageIds, [string[]] $Paths, [s
     $mainId = 'com.kano.ylframework'
     $mainDocs = "PackageSources/$mainId/Documentation~"
     $nav = "$mainDocs/README.md"
-    $top = @('README.md', 'CONTRIBUTING.md', 'Tools/Testing/README.md', 'Tools/Packaging/README.md')
+    $top = @('README.md', 'Tools/Testing/README.md', 'Tools/Packaging/README.md')
     $files = [Collections.Generic.HashSet[string]]::new($Paths, [StringComparer]::Ordinal)
     $directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $null = $directories.Add('')
@@ -196,7 +196,6 @@ function Test-YLDocumentationFixtures {
     $manifest = "$optional/package.json"
     $fixture = @{
         'README.md' = "[Guide]($nav)"
-        'CONTRIBUTING.md' = '# Contributing'
         'Tools/Testing/README.md' = '# Testing'
         'Tools/Packaging/README.md' = '# Packaging'
         "$main/package.json" = '{"name":"com.kano.ylframework"}'

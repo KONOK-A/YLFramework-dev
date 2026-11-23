@@ -86,4 +86,4 @@ YLFramework 为 Unity C# 项目提供按需组合的基础机制、业务与表�
 - 每个模块说明自己的初始化、线程、取消和释放责任。`YLFrameworkRoot` 是常驻宿主与默认 UI 入口，不会自动启动所有系统。
 - 同包文档使用相对链接；标示为源码仓库的跨包链接展示当前主线内容，不代表未来某个安装版本的固定快照。
 - `Documentation~` 不进入 AssetDatabase，请按实际包磁盘路径打开；Editor 的 `YLFramework/帮助` 提供模块指南与可取得的 API/XML 索引，详见 [Help](Modules/Help.md)。
-- 来源与许可见 [LICENSE](../LICENSE.md)。源码开发流程和测试工具见源码仓库的[贡献指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/CONTRIBUTING.md)，它们不随产品包安装。
+- 来源与许可见 [LICENSE](../LICENSE.md)。[测试工具](https://github.com/KONOK-A/YLFramework-dev/blob/main/Tools/Testing/README.md)位于源码仓库，不随产品包安装。
