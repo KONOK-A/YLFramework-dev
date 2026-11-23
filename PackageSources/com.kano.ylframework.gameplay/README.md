@@ -4,13 +4,13 @@
 
 ## 依赖与接入
 
-依赖主包 `com.kano.ylframework` 与 `com.unity.nuget.newtonsoft-json`，不依赖 DataAssets、Localization、Excel 或 Save。业务 asmdef 按需引用 `YLFramework.Skill`、`YLFramework.Buff`、`YLFramework.Mission`、`YLFramework.Equipment`；共享作者工具属于 Editor-only 的 `YLFramework.Gameplay.Editor`。
+依赖主包 `com.kano.ylframework`、Addressables 与 Json.NET，不依赖 DataAssets、Localization、Excel 或 Save。业务 asmdef 按需引用 `YLFramework.Skill`、`YLFramework.Buff`、`YLFramework.Mission`、`YLFramework.Equipment`；共享作者工具属于 Editor-only 的 `YLFramework.Gameplay.Editor`。
 
 当前源码接入显式提供主包和本包，步骤见[公共安装指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/Installation.md)，基础入门见[快速开始](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/QuickStart.md)。这些链接指向源码仓库当前文档。
 
 ## 开始使用
 
-创建对应的 `SkillsConfig/BuffsConfig/MissionsConfig/EquipmentsConfig`，通过各域作者窗口配置条目。`AddConfig` 借用已经加载的根；冷资源用 `await Manager.LoadConfigAsync(resources, address)`，同步 `LoadConfig` 仅用于 YL 已持有的热资源，未就绪抛 `ResourceException`，其 `Kind` 为 `ResourceError.InProgress`。`new ResourceAddress("game", "config/skills")` 对应官方 Addressables 地址 `game/config/skills`，无需挂载私有目录。
+创建对应的 `SkillsConfig/BuffsConfig/MissionsConfig/EquipmentsConfig`，通过各域作者窗口配置条目。`AddConfig` 借用已经加载的根；以技能为例，冷资源用 `await SkillManager.LoadConfigAsync(resources, address)`，其中 `resources` 来自应用已启动的 `ResourceStartup`，`new ResourceAddress("game", "config/skills")` 对应官方地址 `game/config/skills`。同步 `LoadConfig` 仅用于 YL 已持有的热资源，未就绪抛 `ResourceException`，其 `Kind` 为 `ResourceError.InProgress`。
 
 每个 Manager 独立持有自己取得的配置根 `AssetLease`，条目由本域借读。Skill / Buff / Equipment 宿主退出先 `CloseHost` 收尾自身实例，配置登记方再移除自己的根；全域退出才调用对应 `Shutdown()`，最后由应用停止共享 Resource。关闭 Resource Scope 不等于清除业务登记，也不能靠停 Resource 强收其他消费者的租约。
 

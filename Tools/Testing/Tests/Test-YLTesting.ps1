@@ -106,14 +106,24 @@ function New-ResultFixture {
     return [pscustomobject]@{ root = $root; paths = $paths; identity = $identity; selection = $selection; process = $process }
 }
 
-function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minute) {
-    $run = New-YLTestDirectory -Workspace $Workspace -Kind Result -Key 'Daily-Reddot-Mono'
+function New-RotationFixture([object] $Workspace, [string] $Status, [int] $Minute, [string] $Key = 'Daily-Reddot-Mono') {
+    $run = New-YLTestDirectory -Workspace $Workspace -Kind Result -Key $Key
     Write-YLTestJson -Path (Join-Path $run.path 'summary.json') -Value @{
         schemaVersion = 1; ownerId = $run.id; action = 'Run'; status = $Status
         suite = 'Daily'; module = 'Reddot'; profile = 'Mono'
         endUtc = ([DateTimeOffset]'2026-10-01T00:00:00Z').AddMinutes($Minute).ToString('o')
     }
     return $run
+}
+
+function New-LegacyWorkspaceFixture([string] $Root, [string] $Repository) {
+    $null = [IO.Directory]::CreateDirectory($Root)
+    $owner = [pscustomobject]@{
+        schemaVersion = 1; purpose = 'YLTesting.Workspace'; id = [Guid]::NewGuid().ToString('N')
+        root = $Root; repository = $Repository; createdUtc = [DateTime]::UtcNow.ToString('o')
+    }
+    Write-YLTestJson -Path (Join-Path $Root '.yl-workspace.json') -Value $owner
+    return $owner
 }
 
 try {
@@ -965,6 +975,157 @@ try {
             Assert-That ([IO.File]::ReadAllText($sentinel) -ceq 'preserve') 'Unknown input changed.'
             Assert-Rejected { Initialize-YLTestWorkspace -WorkspaceRoot $repository -Repository $repository } 'source|repository'
             Assert-Rejected { Initialize-YLTestWorkspace -WorkspaceRoot $sandbox -Repository $repository } 'source|repository'
+            Assert-Rejected { Initialize-YLTestWorkspace -WorkspaceRoot (Join-Path $repository 'Generated') -Repository $repository } 'source|repository'
+            Assert-That (-not [IO.Path]::Exists((Join-Path $repository 'Generated'))) 'Test outputs entered the source repository.'
+        }
+
+        Test-Case 'Archive below an owned workspace cannot become an active workspace' {
+            $outer = Initialize-YLTestWorkspace (Join-Path $sandbox 'Storage') $repository
+            $archive = Join-Path $outer.root 'Archive'
+            $null = [IO.Directory]::CreateDirectory($archive)
+            $target = Join-Path $archive 'FreshRun'
+            Assert-Rejected { Initialize-YLTestWorkspace $target $repository } 'archive'
+            Assert-That (-not [IO.Path]::Exists($target)) 'An active run was created in history storage.'
+            $usable = Initialize-YLTestWorkspace (Join-Path $outer.root 'ShortIsolated') $repository
+            Assert-That ([IO.Directory]::Exists($usable.root)) 'Short isolated workspaces outside Archive must still work.'
+        }
+
+        Test-Case 'managed results cannot contain new workspaces' {
+            $outer = Initialize-YLTestWorkspace (Join-Path $sandbox 'ResultBoundary') $repository
+            $run = New-YLTestDirectory $outer Result 'Daily'
+            $fixture = [IO.Directory]::CreateDirectory((Join-Path $run.path 'Fixture')).FullName
+            $target = Join-Path $fixture 'Short'
+            Assert-Rejected { Initialize-YLTestWorkspace $target $repository } 'result'
+            Assert-That (-not [IO.Path]::Exists($target)) 'Workspace initialization wrote inside a managed result.'
+        }
+
+        Test-Case 'a Cache fixture workspace is usable and protects its parent from recursive cleanup' {
+            $outer = Initialize-YLTestWorkspace (Join-Path $sandbox 'CacheBoundary') $repository
+            $fixture = New-YLTestDirectory $outer Cache 'UnitySafety'
+            $source = [IO.Directory]::CreateDirectory((Join-Path $fixture.path 'Source')).FullName
+            $child = Initialize-YLTestWorkspace (Join-Path $fixture.path 'Workspace') $source
+            $run = New-YLTestDirectory $child Result 'Daily'
+            $removed = Remove-YLTestDirectory $child $run.path -Apply
+            Assert-That ($removed.status -ceq 'Removed' -and -not [IO.Directory]::Exists($run.path)) 'The child workspace could not clean its own result.'
+            Assert-Rejected { Remove-YLTestDirectory $outer $fixture.path } 'nested workspace'
+            Assert-Rejected { Remove-YLTestDirectory $outer $fixture.path -Apply } 'nested workspace'
+            Assert-That ((Initialize-YLTestWorkspace $child.root $source).id -ceq $child.id) 'Cleanup changed the Cache fixture workspace.'
+        }
+
+        Test-Case 'Clean rejects legacy roots in source, Archive and managed Results without touching evidence' {
+            $base = Join-Path $sandbox 'CleanCli'
+            $source = Join-Path $base 'Repository'
+            $testing = Join-Path $source 'Tools/Testing'
+            foreach ($relative in @('Invoke-YLTests.ps1', 'TestSuites.json', 'Common/Workspace.ps1', 'Common/Process.ps1', 'Common/Results.ps1', 'Common/Packages.ps1')) {
+                $target = Join-Path $testing $relative
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+                [IO.File]::Copy((Join-Path $PSScriptRoot "../$relative"), $target)
+            }
+            $outer = New-LegacyWorkspaceFixture (Join-Path $base 'W') $source
+            $other = New-YLTestDirectory $outer Result 'Unrelated'
+            $pwsh = (Get-Process -Id $PID).Path
+            $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', (Join-Path $testing 'Invoke-YLTests.ps1'),
+                '-Action', 'Clean', '-Suite', 'Daily', '-Module', 'Reddot')
+            $key = 'Run-Daily-Reddot-Mono'
+            $violations = @(foreach ($case in @(
+                @{ root = (Join-Path $source 'Legacy'); reason = 'source repository' },
+                @{ root = (Join-Path $outer.root 'Archive/Legacy'); reason = 'archive' },
+                @{ root = (Join-Path $other.path 'Legacy'); reason = 'result' }
+            )) {
+                $legacy = New-LegacyWorkspaceFixture $case.root $source
+                $older = New-RotationFixture $legacy 'Passed' 0 $key
+                $null = New-RotationFixture $legacy 'Passed' 1 $key
+                $report = Join-Path $older.path 'summary.json'
+                $before = [IO.File]::ReadAllText($report)
+                $output = & $pwsh @arguments -WorkspaceRoot $legacy.root -Apply 2>&1
+                $code = $LASTEXITCODE
+                $summary = ($output | Where-Object { $_ -is [string] }) -join "`n" | ConvertFrom-Json -DateKind String
+                if ($code -ne 2 -or $summary.status -cne 'PrerequisiteNotMet' -or $summary.reason -notmatch $case.reason -or
+                    -not [IO.File]::Exists($report) -or [IO.File]::ReadAllText($report) -cne $before) {
+                    "Clean accepted or changed legacy $($case.reason) output (exit $code)."
+                }
+            })
+
+            $older = New-RotationFixture $outer 'Passed' 0 $key
+            $newer = New-RotationFixture $outer 'Passed' 1 $key
+            $missing = Join-Path $base 'NotCreated'
+            $null = & $pwsh @arguments -WorkspaceRoot $missing -Apply
+            Assert-That ($LASTEXITCODE -eq 0 -and -not [IO.Path]::Exists($missing)) 'Clean must not create a missing workspace.'
+            $null = & $pwsh @arguments -WorkspaceRoot $outer.root
+            Assert-That ($LASTEXITCODE -eq 0 -and [IO.Directory]::Exists($older.path)) 'Clean preview must leave eligible evidence untouched.'
+            $null = & $pwsh @arguments -WorkspaceRoot $outer.root -Apply
+            Assert-That ($LASTEXITCODE -eq 0 -and -not [IO.Directory]::Exists($older.path) -and [IO.Directory]::Exists($newer.path)) 'Clean did not rotate a valid independent workspace.'
+            foreach ($area in @('Hosts', 'Cache')) {
+                Assert-That (-not [IO.Path]::Exists((Join-Path $outer.root $area))) 'Clean must not initialize workspace areas.'
+            }
+            Assert-That ($violations.Count -eq 0) ($violations -join ' ')
+        }
+
+        Test-Case 'one-shot Player hosts cannot adopt a previous host on a key collision' {
+            $ws = Initialize-YLTestWorkspace (Join-Path $sandbox 'FreshPlayer') $repository
+            $old = New-YLTestDirectory $ws Host 'RAP01234567' -NewOnly
+            Assert-Rejected { New-YLTestDirectory $ws Host 'RAP01234567' -NewOnly } 'already exists|fresh'
+            Assert-That ((Get-YLTestDirectory $ws $old.path).id -ceq $old.id) 'The previous host was replaced.'
+        }
+
+        Test-Case 'interrupted candidate keeps a paired pin; a diagnostic keeps a durable host identity' {
+            $ws = Initialize-YLTestWorkspace (Join-Path $sandbox 'Interrupted') $repository
+            foreach ($formal in $false,$true) {
+                $h = New-YLTestDirectory $ws Host $(if ($formal) { 'RFD11112222' } else { 'RFD22221111' }) -NewOnly
+                $run = New-YLTestDirectory $ws Result 'FrozenEncryption'
+                Start-YLPlayerRetention $h $run -FormalCandidate:$formal
+                $ctx = Read-YLPackageEvidenceJson (Join-Path $run.path 'host-context.json')
+                Assert-That ($ctx.hostId -ceq $h.id -and $ctx.resultId -ceq $run.id -and $ctx.host -ceq $h.path) 'Interrupted run cannot be associated with its host.'
+                foreach ($dir in $h.path,$run.path) { Assert-That ([IO.File]::Exists((Join-Path $dir '.pinned')) -eq $formal) 'Incorrect pre-build protection.' }
+            }
+        }
+
+        Test-Case 'a diagnostic preserves its input and audit receipts before retiring the host, not key material' {
+            $ws = Initialize-YLTestWorkspace (Join-Path $sandbox 'DiagnosticEvidence') $repository
+            $h = New-YLTestDirectory $ws Host 'RFD12345678' -NewOnly
+            $run = New-YLTestDirectory $ws Result 'FrozenEncryption'
+            $summary = @{host=$h.path; hostId=$h.id; resultId=$run.id; status='Passed'}
+            $null = [IO.Directory]::CreateDirectory((Join-Path $h.path 'Private'))
+            foreach ($file in '.yl-inputs.json','fixture.json','Private/audit.json','fixture.key') { [IO.File]::WriteAllText((Join-Path $h.path $file), $file) }
+            $lease = Lock-YLTestDirectory $ws $h.path
+            $runLease = Lock-YLTestDirectory $ws $run.path
+            try { Complete-YLPlayerRun $ws $h $run $lease $summary }
+            finally { $lease.Dispose(); $runLease.Dispose() }
+            foreach ($file in '.yl-inputs.json','fixture.json','Private/audit.json') {
+                Assert-That ([IO.File]::ReadAllText((Join-Path $run.path "host-evidence/$file")) -ceq $file) "Lost original receipt: $file"
+            }
+            Assert-That (-not [IO.File]::Exists((Join-Path $run.path 'host-evidence/fixture.key'))) 'Key material was archived.'
+        }
+
+        Test-Case 'one-shot Player retention records the actual outcome without sweeping other runs' {
+            $ws = Initialize-YLTestWorkspace (Join-Path $sandbox 'PlayerRetention') $repository
+            $unrelated = New-YLTestDirectory $ws Host 'OtherHost'
+            foreach ($case in @(
+                @('RAP00000001','ResourceAAIL2CPP','execution.json','Passed',$false,$false,'Removed'),
+                @('RFD00000002','FrozenEncryption','frozen.json','Passed',$true,$false,'Pinned'),
+                @('RNC00000003','NativeDeliveryFinal','p0-c.json','Passed',$false,$true,'Pinned'),
+                @('RNC00000004','NativeDeliveryP0','p0-c.json','Incomplete',$false,$false,'Pinned'),
+                @('RAP00000005','ResourceAAIL2CPP','execution.json','Failed',$false,$false,'Pinned'),
+                @('RAP00000006','ResourceAAIL2CPP','execution.json',$true,$false,$false,'Pinned')
+            )) {
+                $h = New-YLTestDirectory $ws Host $case[0]; $run = New-YLTestDirectory $ws Result $case[1]
+                $data = Join-Path $h.path 'Player.exe'; [IO.File]::WriteAllText($data, 'generated')
+                $lease = Lock-YLTestDirectory $ws $h.path
+                $runLease = Lock-YLTestDirectory $ws $run.path
+                $summary = @{ status=$case[3]; host=$h.path; hostId=$h.id; resultId=$run.id; formalCandidate=$case[4] }
+                try { Complete-YLPlayerRun $ws $h $run $lease $summary -KeepArtifacts:$case[5] }
+                finally { $lease.Dispose(); $runLease.Dispose() }
+                $receipt = Read-YLPackageEvidenceJson (Join-Path $run.path $case[2])
+                $retention = Read-YLPackageEvidenceJson (Join-Path $run.path 'retention.json')
+                Assert-That ($retention.hostStatus -ceq $case[6] -and $receipt.status -ceq $case[3]) 'Incorrect retention or original run status.'
+                Assert-That ([IO.File]::Exists($data) -eq ($case[6] -ceq 'Pinned')) 'Wrong Player lifetime.'
+                Assert-That ([IO.File]::Exists((Join-Path $run.path '.pinned')) -eq ($case[6] -ceq 'Pinned')) 'Wrong result lifetime.'
+                if ($case[6] -ceq 'Pinned') {
+                    $pin = Read-YLPackageEvidenceJson (Join-Path $h.path '.pinned')
+                    Assert-That ($pin.resultId -ceq $run.id -and $pin.hostId -ceq $h.id) 'Missing host/result pin pairing.'
+                }
+            }
+            Assert-That ([IO.Directory]::Exists($unrelated.path)) 'Another run was swept.'
         }
 
         Test-Case 'workspace and container JSON identities reject boolean coercion' {
@@ -1022,6 +1183,24 @@ try {
             [IO.File]::WriteAllText((Join-Path $run.path '.pinned'), 'explicit retention')
             Assert-Rejected { Remove-YLTestDirectory -Workspace $workspace -Path $run.path -Apply } 'pinned'
             Assert-That ([IO.Directory]::Exists($run.path)) 'Protected result was deleted.'
+        }
+
+        Test-Case 'a protected nested fixture cannot be retired with a successful Player host' {
+            $ws = Initialize-YLTestWorkspace (Join-Path $sandbox 'NestedPlayerPin') $repository
+            $h = New-YLTestDirectory $ws Host 'RAP01234567' -NewOnly
+            $run = New-YLTestDirectory $ws Result 'ResourceAAIL2CPP'
+            $fixture = [IO.Directory]::CreateDirectory((Join-Path $h.path 'Fixture')).FullName
+            $pin = Join-Path $fixture '.pinned'; [IO.File]::WriteAllText($pin, 'do not retire')
+            $lease = Lock-YLTestDirectory $ws $h.path
+            $resultLease = Lock-YLTestDirectory $ws $run.path
+            try {
+                $s = @{ status='Passed'; host=$h.path; hostId=$h.id; resultId=$run.id }
+                Assert-Rejected { Complete-YLPlayerRun $ws $h $run $lease $s } 'protected|pinned'
+            } finally { $lease.Dispose(); $resultLease.Dispose() }
+            Assert-That ([IO.File]::ReadAllText($pin) -ceq 'do not retire') 'Nested evidence was touched.'
+            Assert-That ((Read-YLPackageEvidenceJson (Join-Path $run.path 'retention.json')).hostStatus -ceq 'CleanupFailed') 'Cleanup refusal was hidden.'
+            $terminal = Read-YLPackageEvidenceJson (Join-Path $run.path 'execution.json')
+            Assert-That ($terminal.status -ceq 'Failed' -and $terminal.runStatus -ceq 'Passed') 'Cleanup failure was published as an overall pass.'
         }
 
         Test-Case 'unknown, foreign and out-of-root cleanup targets are rejected' {
@@ -1778,6 +1957,25 @@ try {
                 $candidate = @(Get-YLTestRotation -Workspace $workspace -Key 'Daily-Reddot-Mono' | Where-Object { $_.path -ceq $record.path })[0]
                 Assert-That (-not $candidate.canRemove -and $candidate.reason.StartsWith('Excluded:')) "A boolean $field was classified as an ordinary result."
             }
+        }
+
+        Test-Case 'rotation excludes old results containing another workspace' {
+            $outer = Initialize-YLTestWorkspace (Join-Path $sandbox 'NestedRotation') $repository
+            $old = New-RotationFixture $outer 'Passed' 0
+            $ordinary = New-RotationFixture $outer 'Passed' 1
+            $newest = New-RotationFixture $outer 'Passed' 2
+            $child = New-LegacyWorkspaceFixture (Join-Path $old.path 'Workspace') $repository
+            $pin = New-YLTestDirectory $child Result 'ResourceAAIL2CPP'
+            $evidence = Join-Path $pin.path '.pinned'
+            [IO.File]::WriteAllText($evidence, 'keep child evidence')
+
+            $plan = @(Get-YLTestRotation $outer 'Daily-Reddot-Mono')
+            $removed = @(Invoke-YLTestRotation $outer 'Daily-Reddot-Mono')
+            Assert-That ([IO.File]::Exists($evidence) -and [IO.File]::ReadAllText($evidence) -ceq 'keep child evidence') 'Rotation deleted evidence inside an existing nested workspace.'
+            $excluded = @($plan | Where-Object { $_.path -ceq $old.path -and -not $_.canRemove -and $_.reason -match 'nested workspace' })
+            Assert-That ($excluded.Count -eq 1) 'The rotation preview did not exclude the nested workspace.'
+            Assert-That ($removed.Count -eq 1 -and $removed[0].path -ceq $ordinary.path -and
+                -not [IO.Directory]::Exists($ordinary.path) -and [IO.Directory]::Exists($newest.path)) 'The nested workspace changed ordinary rotation.'
         }
 
         Test-Case 'rotation retains one ordinary success and three failures including accepted outcomes' {

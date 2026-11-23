@@ -1,5 +1,7 @@
 # YLFramework 使用手册
 
+> [主包入口](../README.md)
+
 YLFramework 为 Unity C# 项目提供按需组合的基础机制、业务与表现系统、资源服务及编辑器工具。框架仍在开发中，文档以当前源码为准。
 
 ## 从这里开始
@@ -38,7 +40,7 @@ YLFramework 为 Unity C# 项目提供按需组合的基础机制、业务与表�
 | Module / MVC、View / Panel、UI 根与输入 | [UI](Modules/UI.md) |
 | 资产、实例、场景与图片加载 | [Resource 接入](Modules/Resource.md) |
 | 配置、图集、工作台与代码生成 | [Resource 作者工具](Modules/Resource/Authoring.md) |
-| 官方内容交付、启动更新与验证边界 | [Resource 交付](Modules/Resource/Delivery.md) |
+| 官方内容交付、启动更新与可选的远端 Bundle 加密 | [Resource 交付](Modules/Resource/Delivery.md) |
 | 播放、Options、句柄与关闭 | [Audio](Modules/Audio.md) |
 | 命名 Provider、素材库与资源租约 | [Audio 资源](Modules/Audio/Resources.md) |
 | 淡变、Mixer、组件与播放策略 | [Audio 进阶](Modules/Audio/Advanced.md) |
@@ -66,7 +68,7 @@ YLFramework 为 Unity C# 项目提供按需组合的基础机制、业务与表�
 | 能力包 | 用途与完整手册 |
 | --- | --- |
 | `com.kano.ylframework.data-assets` | [ScriptableObject 配置根、登记与作者工具](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.data-assets/Documentation~/README.md) |
-| `com.kano.ylframework.localization` | [语言根、回退与文本/图片显示](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.localization/Documentation~/README.md) |
+| `com.kano.ylframework.localization` | [官方 Locale、翻译表、回退与显示绑定](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.localization/Documentation~/README.md) |
 | `com.kano.ylframework.save` | [独立存档、槽位与恢复](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.save/Documentation~/README.md) |
 | `com.kano.ylframework.state-machine` | [配置式状态机、图与状态脚本](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.state-machine/Documentation~/README.md) |
 | `com.kano.ylframework.movement2d` | [二维角色与移动平台](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.movement2d/Documentation~/README.md) |
@@ -75,7 +77,7 @@ YLFramework 为 Unity C# 项目提供按需组合的基础机制、业务与表�
 | `com.kano.ylframework.reddot` | [红点聚合、已读状态与诊断](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.reddot/Documentation~/README.md) |
 | `com.kano.ylframework.excel` | [Excel 工作簿作者流程与 Gameplay 适配](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.excel/Documentation~/README.md) |
 | `com.kano.ylframework.hybridclr` | [HybridCLR 构建、补丁与运行时](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.hybridclr/Documentation~/README.md) |
-| `com.kano.ylframework.resource-encryption` | [Windows x64 远端 Bundle 加密交付](Modules/Resource/Delivery.md#可选的远端-bundle-加密)，普通资源项目不需要安装 |
+| `com.kano.ylframework.resource-encryption` | [Windows x64 远端 Bundle 加密手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.resource-encryption/Documentation~/README.md) · [与普通内容交付的区别](Modules/Resource/Delivery.md#可选的远端-bundle-加密) |
 
 包选择、依赖和条件适配见[安装指南](Installation.md#选择能力包)。轻量 FSM 属于主包，配置式 StateMachine 属于选装包，两者使用不同执行内核。
 

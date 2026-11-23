@@ -4,6 +4,7 @@
 param([Parameter(Mandatory)][ValidateSet('Unity6','Unity2022', IgnoreCase = $false)][string]$Profile,
     [Parameter(Mandatory)][string]$Unity, [Parameter(Mandatory)][string]$WorkspaceRoot, [string]$PackReceipt,
     [string]$ReleaseManifest, [string]$SourceCommit,
+    [switch] $KeepArtifacts,
     [ValidateSet('IL2CPP','Mono', IgnoreCase = $false)][string] $Backend = 'IL2CPP')
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,31 @@ function Invoke-NativeFixtureProcess([string]$Exe, [string]$Directory, [string[]
     foreach ($item in $Arguments) { $start.ArgumentList.Add($item) }
     if ($CacheRoot) { Set-YLFrozenUpmEnvironment -StartInfo $start -CacheRoot $CacheRoot -Cold:$Cold }
     Invoke-YLTestProcess -StartInfo $start -Log $Log -TimeoutMilliseconds $Timeout
+}
+
+function Save-P0NativeStageInputs {
+    param($HostRecord, [string] $ResultRoot, [ValidateSet('Installed','Removed', IgnoreCase = $false)][string] $Stage,
+        [Collections.IDictionary] $Build)
+    $files = @(
+        @{ source = "P0C/$Stage-request.json"; target = 'request.json'; hashField = 'requestSha256' }
+        @{ source = 'Packages/manifest.json'; target = 'Packages/manifest.json'; hashField = 'manifestSha256' }
+        @{ source = 'Packages/packages-lock.json'; target = 'Packages/packages-lock.json'; hashField = 'packageLockSha256' }
+    )
+    foreach ($file in $files) {
+        $bytes = [IO.File]::ReadAllBytes((Get-YLHostManagedPath $HostRecord $file.source))
+        $sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        $expected = $Build[$file.hashField]
+        if ($expected -isnot [string] -or $sha256 -cne $expected) { throw "$Stage input SHA-256 differs from the build receipt: $($file.source)" }
+        $file['bytes'] = $bytes
+    }
+    $snapshot = Join-Path $ResultRoot $Stage
+    foreach ($file in $files) {
+        $path = Get-YLTestPath (Join-Path $snapshot $file.target)
+        $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
+        $stream = [IO.File]::Open($path, 'CreateNew', 'Write', 'None')
+        try { $stream.Write($file.bytes); $stream.Flush($true) } finally { $stream.Dispose() }
+    }
+    return $snapshot
 }
 
 $source = Get-YLTestPath ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..')))
@@ -61,24 +87,25 @@ if ($Backend -ceq 'Mono' -and -not $finalArchive) { throw 'Mono package testing 
 $runKind = if ($finalArchive) { 'NativeDeliveryFinal' } else { 'NativeDeliveryP0' }
 $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $source
 $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key $runKind
-$hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key ('RNC' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key ('RNC' + [guid]::NewGuid().ToString('N').Substring(0, 8)) -NewOnly
 $runLease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
 $hostLease = $null
 $summary = [ordered]@{ purpose = $(if ($fixedRelease) { 'YLResource.NativeDelivery.LocalTarball' } else { 'YLResource.NativeDelivery.LocalFixture' });
     status = 'Incomplete'; packageSource = 'LocalTarball'; formalCandidate = $fixedRelease;
     profile = $Profile; backend = $Backend; unityVersion = $editor.version; addressablesVersion = $aa; host = $hostRecord.path; result = $run.path;
-    finalArchive = $finalArchive; artifacts = [ordered]@{}; evidence = [ordered]@{} }
+    hostId = $hostRecord.id; resultId = $run.id; finalArchive = $finalArchive; artifacts = [ordered]@{}; evidence = [ordered]@{} }
 if ($fixedRelease) {
     $summary['sourceCommit'] = $release.sourceCommit
     $summary['releaseManifestSha256'] = $packHash
     $summary['producer'] = $release.producer
 } else { $summary['packReceipt'] = $PackReceipt; $summary['packReceiptSha256'] = $packHash }
 $pc = Join-Path $hostRecord.path 'P0C'; $keyPath = Join-Path $pc 'fixture.key'
+$keyCreated = $false
+$failures = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
 try {
     $hostLease = Lock-YLTestDirectory -Workspace $workspace -Path $hostRecord.path
     Assert-YLUnityHostIdle $hostRecord
-    Write-YLTestJson -Path (Join-Path $hostRecord.path '.pinned') -Value @{ purpose = 'Preserve install/remove package evidence'; runId = $run.id }
-    Write-YLTestJson -Path (Join-Path $run.path '.pinned') -Value @{ purpose = 'Preserve install/remove package evidence'; hostId = $hostRecord.id }
+    Start-YLPlayerRetention $hostRecord $run -FormalCandidate:$fixedRelease -KeepArtifacts:$KeepArtifacts
     $null = [IO.Directory]::CreateDirectory($pc)
     $projection = [ordered]@{
         'Tools/Testing/P0NativePackageEntry.cs' = 'Assets/Editor/P0NativePackageEntry.cs'
@@ -91,10 +118,14 @@ try {
         'Tools/Testing/Common/Packages.ps1', 'Tools/Testing/UnityHost.ps1', 'Tools/Testing/TestSuites.json', 'Tools/Testing/PackageCatalogContract.cs',
         'Tools/Testing/Common/ResourceAddressablesPlayer.ps1', 'Tools/Testing/Common/ResourceAddressablesHeldExperiment.ps1',
         'Tools/Packaging/PackageCatalog.json', 'Tools/Packaging/Build-YLRegistryPackages.ps1')
+    if (-not $finalArchive) { $helpers += 'Assets/Tests/YLFramework/Acceptance/ResourceAddressables/P0NativeInterop.cs' }
     $identity = Get-YLTestInputIdentity -Repository $source -Paths (@($projection.Keys) + $helpers + $profilePins) `
         -Toolchain (@($Unity) + $module + $packSourcePath + @($packages.path)) -Profile "P0C-$Profile-$Backend-$packHash"
-    if ($fixedRelease) { Assert-YLFrozenCommittedFiles -Repository $source -SourceCommit $SourceCommit -Files $identity.files }
+    $identityPath = Join-Path $run.path 'input-identity.json'
+    Write-YLTestJson -Path $identityPath -Value $identity
+    $summary['inputIdentity'] = $identityPath
     $summary['inputHash'] = $identity.sha256
+    if ($fixedRelease) { Assert-YLFrozenCommittedFiles -Repository $source -SourceCommit $SourceCommit -Files $identity.files }
     $inputs = [ordered]@{}
     foreach ($file in $identity.files) {
         if (-not $projection.Contains($file.path)) { continue }
@@ -143,7 +174,8 @@ try {
         $key = [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
         try {
             [YLFramework.Testing.NativeP0.P0NativeReadStream]::Encrypt($clearPath, $cipherPath, $key)
-            $stagedKey = [IO.File]::Open($keyPath, 'CreateNew', 'Write', 'None')
+            $stagedKey = [IO.File]::Open((Get-YLTestPath $keyPath), 'CreateNew', 'Write', 'None')
+            $keyCreated = $true
             try { $stagedKey.Write($key) } finally { $stagedKey.Dispose() }
         } finally { [Array]::Clear($key, 0, $key.Length); [IO.File]::Delete($clearPath) }
         $summary['cipherSha256'] = Get-YLFrozenFileSha256 $cipherPath
@@ -192,6 +224,8 @@ try {
             $built.token -cne $token -or $built.stage -cne $stage -or $built.unityVersion -cne $editor.version -or
             $built.player -ine $player -or $built.mainSource -cne 'LocalTarball' -or
             $built.addressablesVersion -cne $aa -or $built.addressablesSource -cne 'Registry') { throw 'P0-C build or package identity differs.' }
+        # Removed replaces the same host manifest and package lock; retain Installed before advancing.
+        $row['inputEvidence'] = Save-P0NativeStageInputs -HostRecord $hostRecord -ResultRoot $run.path -Stage $stage -Build $built
         $extensionAssembly = if ($stage -ceq 'Installed') { if ($finalArchive) { 'YLFramework.Resource.Encryption' } else { 'YLFramework.ResourceEncryption.P0' } }
         $row['installedPackages'] = @(Assert-YLFrozenInstalledInputs -Build $built -Dependencies $deps -ProfileLock $profileLock -Packages $stagePackages `
             -HostRoot $hostRecord.path -CacheRoot $cacheRoot)
@@ -238,16 +272,29 @@ try {
         }
     }
     $summary.status = 'Passed'
-    "P0-C $Profile $Backend LocalTarball install/remove: $($run.path)\p0-c.json"
 } catch {
     $summary['failure'] = $_.Exception.Message
-    throw
+    $failures.Add($_)
 } finally {
     try {
-        if ([IO.File]::Exists($keyPath)) { [IO.File]::Delete((Get-YLTestPath $keyPath)) }
-        Write-YLTestJson -Path (Join-Path $run.path 'p0-c.json') -Value $summary
+        if ($null -ne $hostLease) {
+            if ($keyCreated) {
+                try { [IO.File]::Delete((Get-YLTestPath $keyPath)) }
+                catch {
+                    $summary.status = 'Failed'
+                    $summary['keyCleanupError'] = $_.Exception.Message
+                    $failures.Add($_)
+                }
+            }
+            Complete-YLPlayerRun $workspace $hostRecord $run $hostLease $summary -KeepArtifacts:$KeepArtifacts
+        } else { Write-YLTestJson -Path (Join-Path $run.path 'p0-c.json') -Value $summary }
+    } catch {
+        $failures.Add($_)
     } finally {
-        if ($null -ne $hostLease) { $hostLease.Dispose() }
-        $runLease.Dispose()
+        try { if ($null -ne $hostLease) { $hostLease.Dispose() } }
+        finally { $runLease.Dispose() }
     }
 }
+if ($failures.Count -eq 1) { throw $failures[0] }
+if ($failures.Count -gt 1) { throw [AggregateException]::new('P0 native delivery or finalization failed.', [Exception[]]$failures.Exception) }
+"P0-C $Profile $Backend LocalTarball install/remove: $($run.path)\p0-c.json"

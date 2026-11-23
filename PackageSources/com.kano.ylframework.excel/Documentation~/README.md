@@ -112,7 +112,7 @@ SO 默认只管理 owner 同文件的子资产；`assetFolder` 显式选择独�
 - SO 导入不是跨文件原子事务，也不提供通用 Undo 撤销保证；普通作者字段编辑的 Undo 不等于工作簿导入可整批 Undo。批量导入前使用版本控制或备份，不依赖预览成功替代提交验证。
 - List 只替换目标容器；JSON 使用临时文件替换目标文件。两者不与 SO 或其他工作簿组成原子事务，源文件哈希检查也不是持续文件锁。
 - 本包只用于 Editor。输出配置、工作簿与最近路径属于使用工程，更新或移除包不会自动覆盖 / 删除它们。
-- 同时安装 Gameplay 才启用领域适配，详见[Gameplay 工作簿](Gameplay.md)。Localization 没有由本包提供的导入流程。
+- 同时安装 Gameplay 才启用[领域工作簿](Gameplay.md)。官方本地化引用工作簿的入口归 Localization 的条件适配，详见源码仓库当前的[配置表引用](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.localization/Documentation~/README.md#配置表引用)，不是通用 Excel 导入菜单。
 
 ## 相关文档与来源
 

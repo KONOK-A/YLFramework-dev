@@ -12,7 +12,7 @@
 
 ## 最小数值用法
 
-以下同步演示可放在使用工程。进入 Play Mode 后，订阅先打印 3，Batch 结束后打印 4。方法退出即释放订阅与来源；长期业务应把两者保存在各自 owner 的字段中，在退出时释放。
+把以下脚本挂到活动物体。没有其他来源贡献到示例路径时，进入 Play Mode 后订阅先打印 3，Batch 结束后只打印最终值 4。方法退出即释放订阅与来源；长期业务应把两者保存在各自 owner 的字段中，在退出时释放。
 
 ```csharp
 using UnityEngine;
@@ -28,8 +28,8 @@ public sealed class ReddotExample : MonoBehaviour
 
         using (ReddotManager.BeginBatch())
         {
+            source.SetValue(5);
             source.SetValue(4);
-            ReddotManager.SetAggregation("Mail", ReddotAggregation.Max);
         }
     }
 }

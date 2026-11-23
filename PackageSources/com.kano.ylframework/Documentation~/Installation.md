@@ -8,10 +8,10 @@
 
 - 包声明的 Unity 基线为 `2022.3.62f3`，开发宿主为 `6000.3.27f1`；源码按 C# 9 维护。声明基线不等于所有补丁、平台与后端均已验证。
 - 获取源码需要 Git 与 Git LFS。Analyzer 和 Excel 后端等 DLL 必须是真实二进制，不能是 LFS 指针。
-- 主包声明 UGUI、Json.NET 及所用内置 Unity 模块，Registry 依赖由 UPM 解析。不要拷贝同名替身 DLL；不同 Editor 的实际解析版本可能不同。
+- 主包声明 Addressables、UGUI、Json.NET 及所用内置 Unity 模块，Registry 依赖由 UPM 解析。不要拷贝同名替身 DLL；实际解析版本以使用工程的 `Packages/packages-lock.json` 为准。
 - DOTween 和 HybridCLR 是显式选择的集成，按对应手册准备 SDK。普通主包接入不要求 MCP、Odin、MiniExcel 或 HybridCLR。
 
-主包正式依赖 Addressables（兼容底线 1.25.0；当前 Unity 6 验证 2.10.3），自定义程序集直接调用含 AssetReference 重载的 API 时需引用 `Unity.Addressables`。安装不初始化资源服务。平台、AOT、远端 Player 与 HybridCLR native 按[资源交付](Modules/Resource/Delivery.md)及集成手册分别验证，不能由 Editor 导入成功推导支持范围。版本事务与回滚不是当前资源交付的保证。
+主包声明的 Addressables 依赖版本为 `1.25.0`；开发宿主在 Unity 6 上使用 `2.10.3`。这些是配置与验证用过的版本，不是对所有中间或更高版本的兼容承诺。业务 asmdef 直接使用 `AssetReference` 等官方类型时另引用 `Unity.Addressables`。安装不初始化资源服务；从[资源制作与构建](Modules/Resource/Authoring.md)开始，目标平台与 Player 交付按[资源交付指南](Modules/Resource/Delivery.md)验证。
 
 ## 获取源码
 
@@ -99,7 +99,7 @@ Workspace/
 
 普通 Addressables 项目只装主包，不需要加密扩展、加密程序集或原生 DLL。有明确的远端 Bundle 加密需求时，先提供同一批次的主包，再在 Package Manager 选择 `PackageSources/com.kano.ylframework.resource-encryption/package.json`。使用已取得的本地 `.tgz` 时，从同一批次依次安装主包和扩展包，两者均用 `Add package from tarball...`。
 
-安装不会启用加密。要使用它，须显式配置远端组、构建配套 Player 和密文内容，并在应用启动时注入密钥。已验证的平台、Mono / IL2CPP 组合以及停用后重建要求，见[加密交付说明](Modules/Resource/Delivery.md#可选的远端-bundle-加密)。
+安装不会启用加密。要使用它，须显式配置远端组、构建配套 Player 和密文内容，并在应用启动时注入密钥。先读[加密与普通交付的区别](Modules/Resource/Delivery.md#可选的远端-bundle-加密)，详细步骤见加密包所带的 `Documentation~/README.md`。
 
 ## Git 接入
 

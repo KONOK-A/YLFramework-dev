@@ -6,13 +6,11 @@
 
 ## 命名播放
 
-先由应用显式启动并持有 `ResourceStartup`，再借用其 `Resources` 取得 Provider。启动与关闭见[资源管理](../Resource.md#初始化与关闭)，Audio 不隐式初始化或关闭 Resource。Provider 项目只是地址命名空间，不要求挂载旧 YL Catalog：下例的官方地址分别为 `game-audio/ui/click` 与 `game-audio/music/theme`，它们须已配置在官方 Addressables 内容中。
+先由应用显式启动并持有 `ResourceStartup`，再借用其 `Resources` 取得 Provider。见资源的[最小接入](../Resource.md#最小接入)和[停止顺序](../Resource.md#停止与诊断)，Audio 不隐式初始化或关闭 Resource。Provider 项目只是地址命名空间：下例的官方地址分别为 `game-audio/ui/click` 与 `game-audio/music/theme`，它们须已配置在官方 Addressables 内容中。
+
+以下是主线程方法体片段，asmdef 引用 `YLFramework.Runtime`，文件导入 `YLFramework.Audio` 和 `YLFramework.Resource`。`resources` 是应用启动后提供的 `ResourceSystem`；播放成功时可听到提示音，音乐起播后音量缩放为 0.8。
 
 ```csharp
-using YLFramework.Audio;
-using YLFramework.Resource;
-
-// resources 是已启动、由应用持有的 ResourceSystem。
 var provider = resources.GetAudioClipProvider("game-audio");
 var click = new AudioClipAddress(provider, "ui/click");
 AudioPlayRequest clickRequest = AudioKit.PlaySoundAsync(click); // 冷资源正常走异步。
@@ -20,10 +18,9 @@ AudioPlayRequest clickRequest = AudioKit.PlaySoundAsync(click); // 冷资源正�
 var music = new AudioClipAddress(provider, "music/theme");
 AudioPlayRequest request = AudioKit.PlayMusicAsync(music,
     onStarted: (clip, originalHandle) => originalHandle.SetVolumeScale(0.8f));
-// owner 退出或撤销本次播放时：
-clickRequest.Cancel();
-request.Cancel();
 ```
+
+调用方持有本次请求，在自身退出或撤销时再调用对应的 `Cancel()`，不要紧跟在播放调用后。应用关闭整个 Audio 会话的顺序见[生命周期与关闭](../Audio.md#生命周期与关闭)。
 
 | 用途 | 同步资产取得 | 异步资产取得 |
 |---|---|---|

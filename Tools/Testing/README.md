@@ -164,7 +164,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-P0NativeDeliv
 
 每轮分别预载 1、100、1000 个不同的 `TextAsset`，只测 `CloseAsync()`。`slices` 在实际清理步之后记录归还数和释放调用的累计时间。还有租约待还时，一步最多归还 32 份，少于 32 份必须已用到约 1 ms 的同步释放预算。`maxSliceReleaseTicks` 是各步累计释放时间的最大值，`closeWallTicks` 是调用者观察到的关闭总延迟；二者都不是完整 Unity 帧的峰值。一次不可抢占的释放可以越过时间阈值。
 
-本轮摘要为 `<WorkspaceRoot>/Results/ResourceAAIL2CPP/<run-id>/execution.json`，关联 `input-identity.json`、`build.json`、`player-summary.json`、各轮退出回执与日志。通过要求输入和工具指纹、实际内容与二进制、所有报告及普通进程退出均匹配，不能仅据构建完成或 NoUnity 自检判断。宿主和结果都用 `.pinned` 保留，失败不会清除或覆盖历史输入与证据。
+本轮摘要为 `<WorkspaceRoot>/Results/ResourceAAIL2CPP/<run-id>/execution.json`，关联 `input-identity.json`、`build.json`、`player-summary.json`、各轮退出回执与日志。通过要求输入和工具指纹、实际内容与二进制、所有报告及普通进程退出均匹配，不能仅据构建完成或 NoUnity 自检判断。需要事后重跑同一个 Player 或按原路径核对 Bundle 时，在上述命令加 `-KeepArtifacts`；只比较存入结果目录的测量值时不需要。
 
 ### Action 原生画面
 
@@ -187,11 +187,11 @@ $run = [guid]::NewGuid().ToString('N')
 
 ## 隔离与资产
 
-工作根不能是来源仓库、盘符根或其祖先。已存在但没有合法 owner 的目录不接管；工具通过 `.yl-workspace.json`、`.yl-owner.json` 与独占 `.lease` 绑定仓库和目录身份，拒绝链接、junction、越界和未知子项。
+工作根必须在来源仓库之外，不能是盘符根或来源仓库的祖先。日常使用同一工作根；历史 `Archive` 不作为活动工作根。已存在但没有合法 owner 的目录不接管；工具通过 `.yl-workspace.json`、`.yl-owner.json` 与独占 `.lease` 绑定仓库和目录身份，拒绝链接、junction、越界和未知子项。
 
 ```text
 <WorkspaceRoot>/
-  Hosts/    可复用的自有 Unity 宿主
+  Hosts/    可复用的自有 Unity 宿主，或专项每轮新建的一次性宿主
   Cache/    与输入和工具链指纹绑定的缓存
   Results/  每轮独立结果
 ```
@@ -218,7 +218,23 @@ Editor 编译、离线逻辑、EditMode、PlayMode、Player 构建、Player 运�
 
 ## 保留与清理
 
-每组保留最近 1 份普通通过和最近 3 份非通过记录；按 Suite、模块、完整 Editor 身份分组。`-KeepArtifacts` 固定本轮记录，使用中、固定、未知身份或不完整结果不能作为普通可删输出。
+**一次性 Player 专项**（Addressables、加密交付、原生包安装/移除）不复用 `RAP`、`RFD`、`RNC` 宿主，不扫描或清理其他轮次：
+
+| 本轮情况 | `Results/<组>/<run-id>` | 本轮 `Hosts` 子目录 |
+| --- | --- | --- |
+| 普通诊断通过 | 留原始日志、测量与终态回执 | 回执写入成功后自动回收，包括 Player、`Library` 和构建产物 |
+| `-KeepArtifacts`，或有效的 `-ReleaseManifest` + `-SourceCommit` 固定提交验收 | 固定 | 保留完整现场，不依赖后续重建 |
+| 非通过 | 留失败原因和已有证据 | 正常收尾时固定现场；进程被强制中断则不自动清理残留 |
+
+启动后可从结果目录的 `host-context.json` 对应到本轮宿主；正式验收或显式保留时，在构建前就写入成对的 `.pinned`。普通成功轮删除宿主前，先把已有的宿主输入清单、包清单/锁文件、加密请求与审计 JSON 复制到 `host-evidence/` 并核对哈希，不复制密钥。`retention.json` 记录实际处理状态：`Removed` 表示原报告中的宿主路径仅为运行时记录，不再是可用制品。若只有 `retirement-intent.json`，或状态为 `CleanupFailed`，应按记录的宿主 ID 核对现场，不能据此认定已删完。
+
+原生包安装/移除的原始请求、`manifest.json` 和 `packages-lock.json` 分别保存在本轮结果的 `Installed/`、`Removed/`，因此第二次构建不会覆盖第一阶段的输入证据。
+
+`run-outcome.json` 保存收尾前的运行结果。最终状态看 `execution.json`、`frozen.json` 或 `p0-c.json`：即使测试本身通过，回收失败也不会发布整体通过。
+
+既有 `.pinned`、历史结果、迁移输入和 `Archive` 不会被追溯清理。保留的失败现场应在问题关闭后按归属复核，不按目录年龄批量删除。专项结果报告本身不参加下面常规测试组的自动轮换。
+
+**常规 `Invoke-YLTests`** 沿用现有分组保留规则：每组最近 1 份普通通过和最近 3 份非通过记录；按 Suite、模块、完整 Editor 身份分组。`-KeepArtifacts` 固定本轮记录，使用中、固定、未知身份或不完整结果不能作为普通可删输出。
 
 清理默认仅预览，显式 `-Apply` 才处理当前组满足保留规则的自有输出：
 

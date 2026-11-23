@@ -1,12 +1,14 @@
 # Localization 使用手册
 
-官方 Localization 唯一拥有 Locale、翻译正文、表集合、Smart Strings、fallback 和 Addressables 内容。YL 只负责消费者作用域、业务变量和本组内容就绪，不再维护 YL 多语言根或第二份翻译数据库。
+> [包入口](../README.md)
+
+官方 Localization 拥有 Locale、翻译正文、表集合、Smart Strings、fallback 和 Addressables 内容。YL 负责消费者作用域、业务变量和本组内容就绪，不维护第二份翻译数据库。
 
 ## 安装与作者工作流
 
 - 主体程序集：`YLFramework.Localization`，namespace `YLFramework.Localization`。
 - TMP：独立 `YLFramework.Localization.TMP`；`LocalizationTMPSupport.IsAvailable` 如实反映实际 SDK。Unity 6 使用 UGUI 内置 TMP，2022 需安装对应 TMP 包。
-- 官方包当前声明 1.5.14。实际传递版本以 UPM lock 为准，不能手写解析结果。
+- 本包依赖主包、UGUI 和官方 Localization `1.5.14`，实际传递版本以 UPM lock 为准。安装方式见源码仓库当前的[安装指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/Installation.md)。
 - 用 `Edit/Project Settings/Localization` 配置官方设置、Locale、启动选择器和回退；用官方 Localization Tables 维护正文、CSV/XLIFF/Sheets、属性变体和伪本地化。
 - 本地化表、Locale、字体和 Sprite 走官方 Addressables。业务 DataAssets 根仍可走 YL Resource，但本地化内容不通过第二套 Provider 重复加载。
 
@@ -14,21 +16,40 @@
 
 ## 会话与数据
 
+把下面的 `LocalizedCountExample` 挂到活动对象，指定一个不受其他本地化组件控制的 UGUI `Text`，并选择包含 `{count:N0}` 的官方 Smart String 表项。自有 asmdef 引用 `YLFramework.Localization`、`YLFramework.Runtime`、`Unity.Localization` 和 `UnityEngine.UI`。配置成功后初次显示数值 5；可用按钮调用 `AddOne()` 并观察文本更新。
+
 ```csharp
+using UnityEngine;
 using UnityEngine.Localization;
+using UnityEngine.UI;
 using YLFramework.Binding;
 using YLFramework.Localization;
 
-var count = new BindableProperty<int>(5);
-var session = new LocalizationSession();
-session.BindString(reference, text => label.text = text,
-    binding => binding.BindVariable("count", count));
-count.Value++;
-// 由创建者在退出时调用；不关闭官方全局系统。
-session.Dispose();
+public sealed class LocalizedCountExample : MonoBehaviour
+{
+    [SerializeField] private Text label;
+    [SerializeField] private LocalizedString reference;
+    private readonly BindableProperty<int> _count = new(5);
+    private LocalizationSession _session;
+
+    private void OnEnable()
+    {
+        _session = new LocalizationSession();
+        _session.BindString(reference, text => label.text = text,
+            binding => binding.BindVariable("count", _count));
+    }
+
+    public void AddOne() => _count.Value++;
+
+    private void OnDisable()
+    {
+        _session?.Dispose();
+        _session = null;
+    }
+}
 ```
 
-示例 `reference` 是包含 `{count:N0}` 的官方 Smart String。初始变量先配置，再订阅/格式化；数值类型直接交给官方文化格式和复数规则，不提前 ToString。不轮询业务数据，使用 `IReadOnlyBindableProperty<T>.Register` / `IUnregister`。
+会话须保留到异步内容到达并完成使用；本例在组件停用时释放，不关闭官方全局系统。组件仍启用但未得到文本时，检查 `_session.Error` 和官方表配置。初始变量先配置，再订阅和格式化；数值直接交给官方文化格式和复数规则，不提前 `ToString()`。
 
 共享引用只作为模板：表项、fallback、Arguments 和既有变量语义保留；本轮新增业务变量在私有引用中。模板及 VariablesGroupAsset 不会被写入。已有官方变量是只读借入输入，不复制成第二份全局变量库。
 
@@ -46,7 +67,7 @@ protected override void OnOpen(LoadViewArgs args)
 }
 ```
 
-示例在正常 Panel 中使用 `YLFramework.Core` 与所持有的 model。只在钩子内借读 args，复制需要的数据；不要把参数容器捕获到 configure 委托。普通 View 在 OnLoaded 调用；普通 GameObject 可 AutoStart，或显式 BeginSession。
+这是 Panel 覆写片段，使用 `YLFramework.Core`；`group` 是面板上的 `LocalizationGroup`，`counter` 是组内已配置字符串引用的 `LocalizeText`，`model.Count` 是业务可观察属性。只在钩子内借读 `args`，不要把参数容器捕获到 configure 委托。普通 View 在 `OnLoaded` 调用；普通 GameObject 可 AutoStart，或显式 BeginSession。Panel 装配见源码仓库当前的 [UI 指南](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/Modules/UI.md)。
 
 - State 为 Inactive/Loading/Ready/Failed；Error 暴露失败，Retry 仅重试本轮。
 - 首次和切语言等待本组必要文本、图片、字体；先应用资产，再文本、合并布局，最后揭示内容。
@@ -58,7 +79,9 @@ protected override void OnOpen(LoadViewArgs args)
 
 ## 配置表引用
 
-安装可选 DataAssets/Excel 后，业务行直接保存官方引用：
+使用可选 [DataAssets](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.data-assets/Documentation~/README.md) 给业务行保存官方引用；只做引用校验不需要 Excel。若要预览和导出引用工作簿，再安装 [Excel](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.excel/Documentation~/README.md)。两条链接指向源码仓库当前文档。
+
+以下是 `ScriptableObjectData` 派生类的字段片段，引用 `YLFramework.Runtime`、`YLFramework.Localization`、`YLFramework.DataAssets` 和 `Unity.Localization`，导入 `UnityEngine.Localization` 与 `YLFramework.Localization`：
 
 ```csharp
 [LocalizedExcelReference] public LocalizedString title;
@@ -91,18 +114,10 @@ tableGuid 是官方**集合** GUID，不是某个语言表的 AssetDatabase GUID
 
 缺译遵循官方 fallback/缺译策略。官方把空单元格和格式化后的空值均视为缺译；若设置为只记录 warning、不显示缺译正文，得到的空输出仍可就绪，不会让本组永远 loading。
 
-## 旧内核迁移
-
-本版本直接淘汰旧 Manager/根/整数 ID/Append/Other 反射/Resource 图片协议，没有双轨开关或空壳。仓库内只有旧测试夹具，没有需要转换的真实作者资产；外部工程须先保全自己的数据。
-
-- 旧根/语言/条目改为官方集合、Locale 和稳定引用；正文交官方表。
-- 旧中文/English 固定候选链改为官方 Locale fallback 配置，不自动沿袭。
-- 旧 int PlayerPrefs 语言偏好不自动读入新系统，使用官方启动选择器/偏好流程。
-- Append/字符串拼接改为 Smart String 模板/变量；TextMesh/Other 需要消费方迁移，不再要求 TMP text/font 反射保留。
-- Resource 地址/URL 不是官方 Asset Table 资产 GUID，不能直接改几个字段伪装迁移；需明确迁移实际资产或由业务自管网络内容。
+语言偏好由官方 Locale 启动选择器负责。图片绑定使用官方 Asset Table，普通 Resource 地址或网络 URL 不能作为表项资产 GUID；自管网络图片时由业务持有独立加载责任。
 
 ## 样例
 
-Package Manager 的 `Basic UI` 提供完整官方资产/场景生成器、运行控制器和 Core Panel 模板；`DataAssets Excel` 提供业务行及完整引用工作流。生成器拒绝覆盖已有目录，拒绝自动保存未命名场景及已有 Addressables 脏修改。字体引用只借用用户明确选择、许可适用的项目资产。
+在 Package Manager 显式导入所需样例：[Basic UI](../Samples~/BasicUI/README.md) 提供官方资产/场景生成器、运行控制器和 Core Panel 模板；[DataAssets Excel](../Samples~/DataAssetsExcel/README.md) 提供业务行及引用工作流。生成器拒绝覆盖已有目录或自动保存用户的场景和 Addressables 修改；字体只借用用户明确选择、许可适用的项目资产。
 
 Player 发布必须实际构建官方 Addressables 内容。Editor 快速模式、No Unity 工具门禁、Mono 和 IL2CPP 是不同证据，不能互相冒充。
