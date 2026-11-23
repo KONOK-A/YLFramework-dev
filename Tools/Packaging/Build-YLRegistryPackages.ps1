@@ -452,6 +452,7 @@ function Read-YLRegistryTarball {
     Initialize-YLRegistryArchiveReader
     $contents = [Collections.Generic.Dictionary[string, byte[]]]::new([StringComparer]::Ordinal)
     $names = [Collections.Generic.Dictionary[string, bool]]::new([StringComparer]::OrdinalIgnoreCase)
+    $seenPaths = [Collections.Generic.SortedSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $file = [IO.File]::Open($Path, 'Open', 'Read', 'Read')
     $gzip = [IO.Compression.GZipStream]::new($file, [IO.Compression.CompressionMode]::Decompress, $true)
     $bounded = [YLRegistry.BoundedReadStream]::new($gzip, 512MB)
@@ -477,8 +478,14 @@ function Read-YLRegistryTarball {
                 $ancestor = $ancestor.Substring(0, $ancestor.LastIndexOf('/'))
                 if ($names.ContainsKey($ancestor) -and -not $names[$ancestor]) { throw "Tar file/directory collision: $name" }
             }
-            if (-not $directory -and @($names.Keys | Where-Object { $_.StartsWith($name + '/', [StringComparison]::OrdinalIgnoreCase) }).Count) { throw "Tar file/directory collision: $name" }
+            if (-not $directory) {
+                $prefix = $name + '/'
+                # '/' immediately precedes '0' in ordinal order. Exclude the inclusive upper bound with StartsWith.
+                $descendant = $seenPaths.GetViewBetween($prefix, $name + '0').Min
+                if ($null -ne $descendant -and $descendant.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Tar file/directory collision: $name" }
+            }
             $names.Add($name, $directory)
+            $null = $seenPaths.Add($name)
             if ($entry.Length -lt 0 -or $entry.Length -ge 512MB -or ($directory -and $entry.Length -ne 0)) { throw 'Invalid tar entry size.' }
             $size += $entry.Length
             if ($size -ge 512MB) { throw 'Tar payload size must be below 512 MiB.' }

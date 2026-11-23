@@ -22,22 +22,6 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
-// Test-only copy of the old verified-stream/path-delete mechanism, for a deterministic RED.
-public sealed class YLLegacyDeletionSubject : IDisposable
-{
-    private readonly string path;
-    public FileStream Stream { get; }
-    public YLLegacyDeletionSubject(string path, string expected)
-    {
-        this.path=path;
-        Stream=File.Open(path,FileMode.Open,FileAccess.ReadWrite,FileShare.Delete);
-        if(Convert.ToHexString(SHA256.HashData(Stream)).ToLowerInvariant()!=expected) { Stream.Dispose(); throw new IOException("SHA mismatch"); }
-        Stream.Position=0;
-    }
-    public void MarkForDeletion() { File.Delete(path); }
-    public void Dispose() { Stream.Dispose(); }
-    public void VerifyFinalAbsence() { if(File.Exists(path)) throw new IOException("The target name still exists."); }
-}
 public static class YLDeletionOsTests
 {
     [StructLayout(LayoutKind.Sequential)] private struct SecurityAttributes { public int Length; public IntPtr Descriptor; public int Inherit; }
@@ -105,11 +89,7 @@ function New-Fixture([string] $Name = 'target.asset') {
     return @{ path = $path; directory = $directory; sha = (Get-YLResourceMigrationHash $path); guid = ('1' * 32) }
 }
 function Open-Subject([object] $Fixture, [string] $Guid = '') {
-    if (Get-Command Open-YLResourceMigrationDeletion -ErrorAction SilentlyContinue) {
-        return Open-YLResourceMigrationDeletion -Path $Fixture.path -Sha256 $Fixture.sha -Guid $Guid
-    }
-    # Before the fix this executes exactly the old sharing/deletion semantics, not a missing-API error.
-    return [YLLegacyDeletionSubject]::new($Fixture.path, $Fixture.sha)
+    return Open-YLResourceMigrationDeletion -Path $Fixture.path -Sha256 $Fixture.sha -Guid $Guid
 }
 function New-ApplyFixture {
     $source = Join-Path $sandbox ([Guid]::NewGuid().ToString('N'))

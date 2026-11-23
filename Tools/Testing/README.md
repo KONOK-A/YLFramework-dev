@@ -272,6 +272,18 @@ Git 卫生只读 Git 索引，检查生成物、本机配置和不允许入库�
 
 ## CI 边界
 
-[Repository Tooling (No Unity)](../../.github/workflows/dotnet.yml) 在 Windows runner 执行 Git 卫生、格式、Analyzer 的 .NET 构建/测试、测试工具合同及固定提交包构建。不安装 Unity，不需要 Unity 许可证，也不证明框架已在 Unity、UTF 或 Player 通过。
+[Repository Tooling (No Unity)](../../.github/workflows/dotnet.yml) 是 `main` 的必需检查。PR 与主线执行相同测试，不按文件类型跳过。任何一组失败、取消或跳过，最终门禁均不得通过。
 
-Unity CI 需要另行提供 Editor、许可、SDK、包与短独占工作根。图形/OS/DSP、AOT/Player 和可选 SDK 仍有各自前置；缺失应报告未运行。上传本轮 summary、selection、XML 和必要脱敏日志，不用上传成功代替测试成功。
+| 门禁 | 能拦住什么 |
+| --- | --- |
+| 开发工具与宿主 | Git、文档、格式、Analyzer 真实 .NET 测试与部署一致性；宿主发现、测试选择、失败/取消回执及 UPM 集成回归。Analyzer 不以退出码代替本次执行的用例结果。 |
+| 包与资源迁移 | 拦截遗漏的包级 LFS 规则、孤立包元数据、重复 GUID 和缺失资产；检查 Registry 内容与生命周期。在临时夹具中验证预览不写源、部分 Apply 可恢复、Windows 删除不误删替换文件、Atlas 补充输入与原材料匹配。 |
+| 固定提交包 | 前两组并行通过后，按本轮 SHA 构建并审计包。只有 `main` 的 push 保存候选制品，不发布。 |
+
+排查失败时打开首个报错的任务和步骤，而不是只看汇总门禁。同一 PR 的新提交取消旧运行；主线按每次 push 保留验收记录。比较性能时分别看 PR 提交到门禁完成的时间、排队时间和各 runner 总用时，并行提速不等于节省计费分钟。此流程不安装 Unity，也不证明框架已在 Unity、UTF 或 Player 通过。
+
+**合入审查看什么：** 若改动 Runtime、Editor、序列化资产或程序集，在 PR 中列出受影响模块、对应提交、实际 Unity 版本、运行的用例及结果位置。模块功能结项还须给出[目标平台 IL2CPP 构建和运行](#模块结项必需项)的证据。缺前置就标为未运行，不能拿另一提交的绿色结果代替。
+
+若 PR 改门禁或测试本身，把实际执行的步骤与 `main` 对照，说明新增、删减或改为可跳过的检查；用一个应通过、一个应被拒绝的输入验证改变的判定。检查名称没变，不等于覆盖没变。
+
+这些 Unity 证据是审查项，不是这个 GitHub 检查自动执行的内容。Unity CI 需要另行提供 Editor、许可、SDK、包与短独占工作根；图形、DSP 和可选 SDK 仍有各自前置。

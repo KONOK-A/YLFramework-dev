@@ -6,7 +6,11 @@ Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 . (Join-Path $PSScriptRoot '../../Packaging/Build-YLRegistryPackages.ps1')
-$packages = @(Get-YLRegistryPackageSet -Root (Join-Path $repository 'PackageSources'))
+$sourceRoot = Join-Path $repository 'PackageSources'
+foreach ($meta in [IO.Directory]::EnumerateFiles($sourceRoot, '*.meta')) {
+    if (-not [IO.Path]::Exists($meta.Substring(0, $meta.Length - 5))) { throw "Orphan metadata in PackageSources: $([IO.Path]::GetFileName($meta))" }
+}
+$packages = @(Get-YLRegistryPackageSet -Root $sourceRoot)
 $ids = @($packages.id)
 $guids = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($id in $ids) {
