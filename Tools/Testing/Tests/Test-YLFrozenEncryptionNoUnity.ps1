@@ -75,7 +75,14 @@ $spec = New-YLRegistryReleaseManifest -SourceCommit $head -Toolchain @{ node = '
 Write-YLTestJson -Path $manifest -Value $spec
 # These are deliberately not asserted to be artifacts of the current Git commit. The strict entry also checks HEAD and cleanliness.
 $release = Read-YLFrozenEncryptionRelease -Path $manifest -Repository $repo -SourceCommit $head
-Check ($release.sourceCommit -ceq $head -and $release.packages.Count -eq $sources.Count -and $release.producer.kind -ceq 'Local') 'The complete test manifest did not pass semantic validation.'
+Check ($release.sourceCommit -ceq $head -and $release.packages.Count -eq $sources.Count) 'The complete test manifest did not pass semantic validation.'
+if ($env:GITHUB_ACTIONS -ceq 'true') {
+    Check ($release.producer.kind -ceq 'GitHubActions' -and $release.producer.repository -ceq $env:GITHUB_REPOSITORY -and
+        $release.producer.workflow -ceq $env:GITHUB_WORKFLOW -and $release.producer.runId -ceq $env:GITHUB_RUN_ID -and
+        $release.producer.runAttempt -ceq $env:GITHUB_RUN_ATTEMPT) 'The test manifest did not retain the actual Actions producer identity.'
+} else {
+    Check ($release.producer.kind -ceq 'Local') 'The local test manifest must not claim an Actions producer.'
+}
 Check ((@(Get-YLFrozenEncryptionClosure -Release $release).id -join ';') -ceq "$main;$extension" -and
     @(Get-YLFrozenEncryptionClosure -Release $release -Removed).Count -eq 1) 'The installed/removed own-package closure differs.'
 
