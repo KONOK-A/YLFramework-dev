@@ -470,20 +470,33 @@ namespace YLFramework.Tests
         [Test]
         public void SafeRawPrewarmMarksIdleWithoutLifecycleAndColdHotHooksRejectReturnDuringAllocation()
         {
-            SafeItem created = null;
-            _safe.SetFactoryMethod(() => created = new SafeItem());
-            Assert.That(_safe.Prewarm(1, PoolPrewarmMode.Raw), Is.EqualTo(1));
-            Assert.That(created.IsRecycled, Is.True);
-            Assert.That(created.Hooks, Is.Zero);
-            created.Allocated = () =>
+            var allocations = new List<SafeItem>();
+            var created = new List<SafeItem>();
+            _safe.SetFactoryMethod(() =>
             {
-                Assert.That(created.IsRecycled, Is.False);
-                Assert.That(_safe.Recycle(created), Is.False);
-            };
-            Assert.That(_safe.Allocate(), Is.SameAs(created));
-            _safe.Recycle(created);
-            Assert.That(_safe.Allocate(), Is.SameAs(created));
-            Assert.That(created.Hooks, Is.EqualTo(1));
+                var item = new SafeItem();
+                created.Add(item);
+                item.Allocated = () =>
+                {
+                    allocations.Add(item);
+                    Assert.That(item.IsRecycled, Is.False);
+                    Assert.That(_safe.Recycle(item), Is.False);
+                };
+                return item;
+            });
+            Assert.That(_safe.Prewarm(1, PoolPrewarmMode.Raw), Is.EqualTo(1));
+            Assert.That(created, Has.Count.EqualTo(1));
+            var hot = created[0];
+            Assert.That(allocations, Is.Empty);
+            Assert.That(hot.IsRecycled, Is.True);
+            Assert.That(hot.Hooks, Is.Zero);
+            Assert.That(_safe.Allocate(), Is.SameAs(hot));
+            var cold = _safe.Allocate();
+            Assert.That(cold, Is.Not.SameAs(hot));
+            Assert.That(_safe.Recycle(hot), Is.True);
+            Assert.That(_safe.Allocate(), Is.SameAs(hot));
+            CollectionAssert.AreEqual(new[] { hot, cold, hot }, allocations);
+            Assert.That(hot.Hooks, Is.EqualTo(1));
         }
 
         [Test]
@@ -505,18 +518,23 @@ namespace YLFramework.Tests
         [Test]
         public void ClearAttemptsEveryCallbackAndLeavesAllSnapshotObjectsRetired()
         {
-            using var pool = new ObjectPool<object>(() => new object());
-            pool.Prewarm(3);
-            var cleared = 0;
-            Assert.Throws<AggregateException>(() => pool.Clear(item =>
+            var expected = new Dictionary<object, Exception>();
+            using var pool = new ObjectPool<object>(() =>
             {
-                cleared++;
-                Assert.That(pool.Recycle(item), Is.False);
-                throw new InvalidOperationException();
+                var item = new object();
+                expected.Add(item, new InvalidOperationException("clear callback"));
+                return item;
+            });
+            pool.Prewarm(3);
+            var recycleResults = new List<bool>();
+            var failure = Assert.Throws<AggregateException>(() => pool.Clear(item =>
+            {
+                recycleResults.Add(pool.Recycle(item));
+                throw expected[item];
             }));
-            Assert.That(cleared, Is.EqualTo(3));
+            CollectionAssert.AreEqual(new[] { false, false, false }, recycleResults);
+            CollectionAssert.AreEquivalent(expected.Values, failure.InnerExceptions);
             Assert.That(pool.CurStoreCount, Is.Zero);
-            pool.Dispose();
         }
     }
 }

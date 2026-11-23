@@ -77,13 +77,14 @@ function With-FixtureAsset([string] $Relative, [scriptblock] $Action) {
         for ($i = $directories.Count - 1; $i -ge 0; $i--) { [IO.Directory]::Delete($directories[$i]) }
     }
 }
-function Fixture-Tar([string] $Id, [string] $Fault = '') {
+function Fixture-Tar([string] $Id, [string] $Fault = '', [System.Formats.Tar.TarEntry[]] $LeadingEntries = @()) {
     $root = Join-Path $sources $Id
     $path = Join-Path $run.path (([Guid]::NewGuid().ToString('N')) + '.tgz')
     $file = [IO.File]::Create($path)
     $gzip = [IO.Compression.GZipStream]::new($file, [IO.Compression.CompressionLevel]::Fastest, $false)
     $writer = [System.Formats.Tar.TarWriter]::new($gzip, [System.Formats.Tar.TarEntryFormat]::Pax, $false)
     try {
+        foreach ($entry in $LeadingEntries) { $writer.WriteEntry($entry) }
         foreach ($source in @(Get-YLTestTreeFiles $root)) {
             $relative = [IO.Path]::GetRelativePath($root, $source).Replace('\', '/')
             if ($relative -ceq '.gitattributes') { continue }
@@ -347,6 +348,25 @@ try {
             Reject { Read-YLRegistryTarball -Path $tar -Destination $destination } 'tar|path|link|duplicate|collision|entry|reserved'
             Check (-not [IO.Directory]::Exists($destination)) 'Unsafe tar created extraction output.'
         }
+    }
+    Case 'Tar audit rejects mixed-case ancestor files and child directories in either order' {
+        foreach ($ancestorFirst in @($true, $false)) {
+            $ancestor = [System.Formats.Tar.PaxTarEntry]::new([System.Formats.Tar.TarEntryType]::RegularFile, 'package/Documentation~/RegistryPath')
+            $child = [System.Formats.Tar.PaxTarEntry]::new([System.Formats.Tar.TarEntryType]::Directory, 'package/Documentation~/registrypath/Child/')
+            $entries = if ($ancestorFirst) { @($ancestor, $child) } else { @($child, $ancestor) }
+            $tar = Fixture-Tar 'com.kano.ylframework.excel' -LeadingEntries $entries
+            $destination = Join-Path $run.path "collision-ancestor-first-$ancestorFirst"
+            Reject { Read-YLRegistryTarball -Path $tar -Destination $destination } 'Tar file/directory collision:'
+            Check (-not [IO.Path]::Exists($destination)) "Collision created extraction output (ancestor first: $ancestorFirst)."
+        }
+    }
+    Case 'Tar audit accepts sibling filenames that share a prefix' {
+        $paths = @('Documentation~/registrypath0', 'Documentation~/RegistryPath', 'Documentation~/RegistryPath-sibling')
+        $entries = @(foreach ($path in $paths) {
+            [System.Formats.Tar.PaxTarEntry]::new([System.Formats.Tar.TarEntryType]::RegularFile, "package/$path")
+        })
+        $payload = Read-YLRegistryTarball -Path (Fixture-Tar 'com.kano.ylframework.excel' -LeadingEntries $entries)
+        foreach ($path in $paths) { Check ($path -cin $payload.files.path) "Sibling file is missing: $path" }
     }
     Case 'Truncated gzip is rejected' {
         $tar = Fixture-Tar 'com.kano.ylframework.excel'

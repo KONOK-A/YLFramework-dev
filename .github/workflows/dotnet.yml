@@ -11,28 +11,32 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
 
 jobs:
-  tooling:
-    name: Repository Tooling (No Unity)
+  development:
+    name: Development and test contracts
     runs-on: windows-2025
     timeout-minutes: 30
-    defaults:
-      run:
-        shell: pwsh
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      DOTNET_NOLOGO: '1'
     steps:
-      - name: Checkout
+      - &checkout
+        name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           lfs: false
 
-      - name: Check PowerShell and prepare tool output parent
+      - &prepare
+        name: Check PowerShell and prepare tool output parent
         run: |
           $version = $PSVersionTable.PSVersion
           if (-not $IsWindows -or $PSVersionTable.PSEdition -ne 'Core' -or
@@ -50,42 +54,31 @@ jobs:
       - name: Check repository documentation entry points offline
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDocumentationNoUnity.ps1
 
+      - name: Check Git index hygiene
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLGitHygiene.ps1
+
       - name: Install pinned .NET SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: Tools/YLFramework.Analyzers/global.json
           architecture: x64
 
-      - name: Install pinned registry packaging Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22.23.3
-
-      - name: Verify bundled npm identity
-        run: |
-          $node = (Get-Command node.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
-          $npm = Join-Path ([IO.Path]::GetDirectoryName($node)) 'node_modules/npm/bin/npm-cli.js'
-          $version = & $node $npm --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ($version -cne '10.9.9') { throw "Expected bundled npm 10.9.9; found $version" }
-
-      - name: Materialize approved product package binaries
+      - &binaries
+        name: Materialize approved product package binaries
         run: |
           git lfs pull --include="PackageSources/**/*.dll" --exclude=""
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Check Git index hygiene
-        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLGitHygiene.ps1
 
       - name: Check CSharp whitespace only
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/CodeStyle/Format-YL.ps1 -Mode Check
 
       - name: Build and test Analyzer on .NET
+        id: analyzer
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/YLFramework.Analyzers/build.ps1 -VerifyDeployment
 
       - name: Preserve reproducible build diagnostics on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
+        if: failure() && steps.analyzer.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: analyzer-build-diagnostics
           path: |
@@ -93,6 +86,7 @@ jobs:
             Temp/YLFramework.Analyzers/**/YLFramework.Analyzers.pdb
             Temp/YLFramework.Analyzers/**/YLFramework.Analyzers.AssemblyInfo.cs
             Temp/YLFramework.Analyzers/**/YLFramework.Analyzers.GeneratedMSBuildEditorConfig.editorconfig
+            Temp/YLFramework.Analyzers/TestResults/analyzers.trx
             Temp/YLFramework.Analyzers/build-info.json
             PackageSources/com.kano.ylframework/Runtime/Core/Analyzers/YLFramework.Analyzers.dll
           if-no-files-found: ignore
@@ -113,39 +107,95 @@ jobs:
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDistributionEntryNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLSampleHost.ps1 -TemporaryRoot $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test UPM integration and Git package resolution
+        run: |
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesGitNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesEntryNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test Analyzer deployment and reproducibility
+        run: |
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/YLFramework.Analyzers/Tests/Test-DeploymentContract.ps1 -TemporaryRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/YLFramework.Analyzers/Tests/Test-DeterministicBuild.ps1 -TemporaryRoot $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test development host contracts
+        run: |
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDevelopmentHostNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDevelopmentHostEntryNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/HybridCLR/Test-HybridCLRNativeSource.ps1 -TempRoot (Join-Path $env:RUNNER_TEMP ('yl-native-' + [Guid]::NewGuid().ToString('N')))
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Test Registry packaging and installation contracts, not Unity acceptance
+      - name: Test HybridCLR native source contract
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/HybridCLR/Test-HybridCLRNativeSource.ps1 -TempRoot (Join-Path $env:RUNNER_TEMP ('yl-native-' + [Guid]::NewGuid().ToString('N')))
+
+      - &clean
+        name: Verify repository inputs were not changed
         run: |
-          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLPackageCatalogNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+          $changes = @(git status --porcelain=v1 --untracked-files=all)
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($changes.Count -ne 0) { throw "CI changed repository paths: $($changes -join '; ')" }
+
+  registry:
+    name: Package and resource migration contracts
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - *prepare
+      - *binaries
+      - name: Check UPM source packages and cross-package asset identities
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLUpmPackages.ps1
+      - name: Test migration preview, apply and recovery
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLResourceMigration.ps1 -TemporaryRoot $env:RUNNER_TEMP
+      - name: Test Windows migration deletion on real files
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLResourceMigrationDeletion.ps1 -TemporaryRoot $env:RUNNER_TEMP
+      - name: Test Atlas supplement identity and recovery inputs
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLResourceSupplement.ps1 -TemporaryRoot $env:RUNNER_TEMP
+
+      - &node
+        name: Install pinned registry packaging Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.23.3
+          package-manager-cache: false
+
+      - name: Verify bundled npm identity
+        run: |
+          $node = (Get-Command node.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
+          $npm = Join-Path ([IO.Path]::GetDirectoryName($node)) 'node_modules/npm/bin/npm-cli.js'
+          $version = & $node $npm --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($version -cne '10.9.9') { throw "Expected bundled npm 10.9.9; found $version" }
+
+      - name: Package catalog
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLPackageCatalogNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+      - name: Registry package contents and real npm pack
+        run: |
           $nodeRoot = [IO.Path]::GetDirectoryName((Get-Command node.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source)
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryPackagesNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP -NodeRoot $nodeRoot
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryInstallationNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistrySdkNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryLifecycleNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryAuthoringNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Registry installation
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryInstallationNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+      - name: Registry SDK
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistrySdkNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+      - name: Registry lifecycle
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryLifecycleNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+      - name: Registry authoring
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryAuthoringNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+      - *clean
+
+  packages:
+    name: Fixed-commit packages
+    needs: [development, registry]
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - *prepare
+      - *binaries
+      - *node
 
       - name: Build and audit fixed-commit package artifacts
         id: registry-packages
@@ -157,19 +207,32 @@ jobs:
           if ($built.packageCount -ne $expectedCount -or $built.sourceCommit -cne $env:GITHUB_SHA) { throw 'Incomplete fixed-commit package build.' }
           "artifactPath=$($built.artifacts)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
 
+      - *clean
+
       - name: Preserve readonly main-push release candidate
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: yl-registry-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.registry-packages.outputs.artifactPath }}/*
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0 # Package tarballs are already compressed.
 
-      - name: Verify repository inputs were not changed
+  tooling:
+    name: Repository Tooling (No Unity)
+    needs: [development, registry, packages]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # A skipped required job can count as passing. Always report an explicit result.
+      - name: Require all three checks
+        env:
+          DEVELOPMENT: ${{ needs.development.result }}
+          REGISTRY: ${{ needs.registry.result }}
+          PACKAGES: ${{ needs.packages.result }}
         run: |
-          $changes = @(git status --porcelain=v1 --untracked-files=all)
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ($changes.Count -ne 0) {
-            throw "CI changed repository paths: $($changes -join '; ')"
+          if ($env:DEVELOPMENT -cne 'success' -or $env:REGISTRY -cne 'success' -or $env:PACKAGES -cne 'success') {
+            throw "Cannot accept this commit: development=$env:DEVELOPMENT, registry=$env:REGISTRY, packages=$env:PACKAGES"
           }

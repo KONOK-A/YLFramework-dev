@@ -13,11 +13,14 @@ $root = Join-Path (Get-YLTestPath $TemporaryRoot) ('yl-manifest-' + [Guid]::NewG
 $null = [IO.Directory]::CreateDirectory($root)
 $checks = 0
 function Save-Manifest([string] $Text) { [IO.File]::WriteAllText((Join-Path $root 'package.json'), $Text, [Text.UTF8Encoding]::new($false)) }
-function Reject-Manifest([scriptblock] $Action) {
-    $rejected = $false
-    try { & $Action | Out-Null } catch { $rejected = $true }
-    if (-not $rejected) { throw 'Untrusted UPM manifest metadata was accepted.' }
-    $script:checks++
+function Reject-Manifest([scriptblock] $Action, [type] $ErrorType, [string] $Reason) {
+    try { & $Action | Out-Null } catch {
+        $cause = $_.Exception.GetBaseException()
+        if ($cause -isnot $ErrorType -or $cause.Message -notmatch $Reason) { throw }
+        $script:checks++
+        return
+    }
+    throw "Malformed UPM manifest was accepted; expected $Reason."
 }
 try {
     [IO.File]::WriteAllText((Join-Path $root 'LICENSE.md'), 'fixture MIT', [Text.UTF8Encoding]::new($false))
@@ -26,10 +29,15 @@ try {
     Save-Manifest "{`r`n  `"dependencies`": {`"com.unity.ugui`":`"1.0.0`"},`r`n  `"version`": `"0.1.0-preview.1`",`r`n  `"name`": `"com.kano.ylframework`"`r`n}"
     if ((Get-DistributionPackageContent -Root $root).sha256 -cne $baseline) { throw 'Formatting or property order changed manifest semantics.' }; $checks++
     Save-Manifest '{"name":"com.kano.ylframework","version":"0.1.0-preview.1","dependencies":{"com.unity.ugui":"1.0.0"},"_fingerprint":"0123456789abcdef0123456789abcdef01234567"}'
-    Reject-Manifest { Get-DistributionPackageContent -Root $root }
+    $metadataError = [Management.Automation.RuntimeException]
+    Reject-Manifest { Get-DistributionPackageContent -Root $root } $metadataError 'fingerprint'
     if ((Get-DistributionPackageContent -Root $root -AllowManagedFingerprint).sha256 -cne $baseline) { throw 'A validated UPM-managed fingerprint changed public manifest semantics.' }; $checks++
+    Reject-Manifest { Get-DistributionPackageContent -Root $root -AllowManagedFingerprint -FingerprintSource LocalTarball } $metadataError 'fingerprint'
+    Save-Manifest '{"name":"com.kano.ylframework","version":"0.1.0-preview.1","dependencies":{"com.unity.ugui":"1.0.0"},"_fingerprint":"0123456789abcdef0123456789abcdef"}'
+    if ((Get-DistributionPackageContent -Root $root -AllowManagedFingerprint -FingerprintSource LocalTarball).sha256 -cne $baseline) { throw 'A valid local tarball fingerprint changed public manifest semantics.' }; $checks++
+    Reject-Manifest { Get-DistributionPackageContent -Root $root -AllowManagedFingerprint -FingerprintSource Git } $metadataError 'fingerprint'
     Save-Manifest '{"name":"com.kano.ylframework","version":"0.1.0-preview.1","_fingerprint":true}'
-    Reject-Manifest { Get-DistributionPackageContent -Root $root -AllowManagedFingerprint }
+    Reject-Manifest { Get-DistributionPackageContent -Root $root -AllowManagedFingerprint } $metadataError 'fingerprint'
     Save-Manifest '{"name":"com.kano.ylframework","version":"0.1.0-preview.2","dependencies":{"com.unity.ugui":"1.0.0"}}'
     if ((Get-DistributionPackageContent -Root $root).sha256 -ceq $baseline) { throw 'A changed package version was ignored.' }; $checks++
     Save-Manifest '{"name":"com.kano.ylframework","version":"0.1.0-preview.1","dependencies":{"com.unity.ugui":"2.0.0"}}'
@@ -45,6 +53,6 @@ try {
     Save-Manifest '{"name":"com.kano.ylframework","version":"0.1.0-preview.1","published":"2026-11-02T08:00:00+08:00"}'
     if ((Get-DistributionPackageContent -Root $root).sha256 -ceq $utc) { throw 'JSON date-looking strings were incorrectly interpreted as equal timestamps.' }; $checks++
     Save-Manifest '{"name":"com.kano.ylframework","version":"0.1.0-preview.1","version":"0.1.0-preview.2"}'
-    Reject-Manifest { Get-DistributionPackageContent -Root $root }
+    Reject-Manifest { Get-DistributionPackageContent -Root $root } ([Newtonsoft.Json.JsonReaderException]) "'version' already exists"
     "PASS: $checks manifest semantics, managed metadata and byte-exact payload contracts."
 } finally { [IO.Directory]::Delete($root, $true) }

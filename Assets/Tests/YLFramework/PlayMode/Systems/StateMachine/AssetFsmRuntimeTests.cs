@@ -263,21 +263,41 @@ namespace YLFramework.Tests.Extensions.Behavior
             transition.groupConditions.Add(new GroupCondition
             {
                 conditions = new List<FsmConditionData>
-            {
-                new FsmConditionData { parameterName = "Count", compareType = CompareType.Greater, targetValue = 1 },
-                new FsmConditionData { parameterName = "Fire", compareType = CompareType.Equal, targetValue = 1 }
-            }
+                {
+                    new FsmConditionData { parameterName = "Count", compareType = CompareType.Greater, targetValue = 1 },
+                    new FsmConditionData { parameterName = "Fire", compareType = CompareType.Equal, targetValue = 1 }
+                }
             });
             source.transitions.Add(transition);
-            var controller = Host(source, "Groups");
+            var baseGroup = Host(source, "BaseGroup");
+            var triggerGroup = Host(source, "TriggerGroup");
             yield return null;
-            controller.SetInt("Count", 2);
-            Assert.That(controller.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Idle"));
-            controller.SetTrigger("Fire");
-            Assert.That(controller.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Run"));
-            Assert.That(controller.GetTrigger("Fire"), Is.False);
-            Assert.That(controller.GetInt("Count"), Is.EqualTo(2));
-            Assert.That(controller.GetFloat("Speed"), Is.Zero);
+
+            baseGroup.SetFloat("Speed", 4f);
+            Assert.That(baseGroup.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Idle"), "Speed > 3 alone must not switch.");
+            baseGroup.SetFloat("Speed", 0f);
+            baseGroup.SetBool("Go", true);
+            Assert.That(baseGroup.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Idle"), "Go alone must not switch.");
+            baseGroup.SetFloat("Speed", 3f);
+            Assert.That(baseGroup.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Idle"), "Go with Speed == 3 must not switch.");
+            baseGroup.SetFloat("Speed", 4f);
+            Assert.That(baseGroup.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Run"), "Go and Speed > 3 must be sufficient.");
+
+            triggerGroup.SetInt("Count", 2);
+            Assert.That(triggerGroup.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Idle"), "Count > 1 alone must not switch.");
+            triggerGroup.SetInt("Count", 0);
+            triggerGroup.SetTrigger("Fire");
+            Assert.That(triggerGroup.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Idle"), "Fire alone must not switch.");
+            triggerGroup.SetBool("Go", true);
+            Assert.That(triggerGroup.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Idle"), "Go and Fire must not combine across groups.");
+            triggerGroup.SetBool("Go", false);
+            triggerGroup.SetInt("Count", 1);
+            yield return null;
+            Assert.That(triggerGroup.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Idle"), "Fire with Count == 1 must not switch.");
+            Assert.That(triggerGroup.GetTrigger("Fire"), Is.True, "Fire must stay set when no transition matches.");
+            triggerGroup.SetInt("Count", 2);
+            Assert.That(triggerGroup.GetCurrentStateInfo(0)?.Data.name, Is.EqualTo("Run"), "Count > 1 and the retained Fire must be sufficient.");
+            Assert.That(triggerGroup.GetTrigger("Fire"), Is.False, "The matching transition must consume Fire.");
         }
 
         [UnityTest]

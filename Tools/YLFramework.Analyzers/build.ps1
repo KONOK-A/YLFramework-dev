@@ -11,6 +11,60 @@ function Invoke-DotNet {
     if ($LASTEXITCODE -ne 0) { throw "dotnet failed ($LASTEXITCODE): $($Arguments -join ' ')" }
 }
 
+function Assert-AnalyzerTestResults {
+    param([string] $Path)
+    if (-not [IO.File]::Exists($Path)) { throw "Analyzer TRX '$Path' was not produced by this test run." }
+    $settings = [Xml.XmlReaderSettings]::new()
+    $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+    $settings.XmlResolver = $null
+    $document = [Xml.XmlDocument]::new()
+    $reader = $null
+    try {
+        $reader = [Xml.XmlReader]::Create($Path, $settings)
+        $document.Load($reader)
+    } catch { throw "Analyzer TRX '$Path' is not readable XML: $($_.Exception.Message)" }
+    finally { if ($null -ne $reader) { $reader.Dispose() } }
+
+    $ns = [Xml.XmlNamespaceManager]::new($document.NameTable)
+    $ns.AddNamespace('trx', 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010')
+    $summaries = $document.SelectNodes('/trx:TestRun/trx:ResultSummary', $ns)
+    if ($summaries.Count -ne 1 -or $summaries[0].GetAttribute('outcome') -cne 'Completed') {
+        throw "Analyzer TRX '$Path' must contain one completed TestRun summary."
+    }
+    $results = $document.SelectNodes('/trx:TestRun/trx:Results', $ns)
+    if ($results.Count -ne 1) { throw "Analyzer TRX '$Path' must contain one Results section with executed test cases." }
+    $cases = $results[0].SelectNodes('trx:UnitTestResult', $ns)
+    if ($cases.Count -eq 0 -or $cases.Count -ne $results[0].SelectNodes('*').Count -or
+        $cases.Count -ne $document.SelectNodes('//trx:UnitTestResult', $ns).Count) {
+        throw "Analyzer TRX '$Path' must contain a nonempty, flat set of UnitTestResult records."
+    }
+    $executions = [Collections.Generic.HashSet[guid]]::new()
+    foreach ($case in $cases) {
+        $name = $case.GetAttribute('testName')
+        $outcome = $case.GetAttribute('outcome')
+        if ($outcome -cne 'Passed') { throw "Analyzer TRX '$Path' contains a non-passing test: '$name' ($outcome)." }
+        $id = [guid]::Empty
+        if ([string]::IsNullOrWhiteSpace($name) -or -not [guid]::TryParse($case.GetAttribute('executionId'), [ref]$id) -or
+            $id -eq [guid]::Empty -or -not $executions.Add($id)) {
+            throw "Analyzer TRX '$Path' contains a missing, invalid, or duplicate test execution identity: '$name'."
+        }
+    }
+
+    $counters = $summaries[0].SelectNodes('trx:Counters', $ns)
+    if ($counters.Count -ne 1) { throw "Analyzer TRX '$Path' must contain one Counters element." }
+    foreach ($required in @('total', 'executed', 'passed', 'failed', 'notExecuted')) {
+        if (-not $counters[0].HasAttribute($required)) { throw "Analyzer TRX '$Path' is missing the '$required' counter." }
+    }
+    foreach ($counter in $counters[0].SelectNodes('@*')) {
+        $expected = if ($counter.Name -cin @('total', 'executed', 'passed')) { $cases.Count } else { 0 }
+        $value = 0
+        if (-not [int]::TryParse($counter.Value, [Globalization.NumberStyles]::None,
+            [Globalization.CultureInfo]::InvariantCulture, [ref]$value) -or $value -ne $expected) {
+            throw "Analyzer TRX '$Path' counter $($counter.Name)='$($counter.Value)' must equal $expected."
+        }
+    }
+}
+
 function Assert-AnalyzerMeta {
     param([string] $Path)
     if (-not [IO.File]::Exists($Path)) { throw 'Analyzer meta is missing; refusing to generate a new identity.' }
@@ -63,7 +117,13 @@ try {
     "PowerShell=$($PSVersionTable.PSVersion) SDK=$sdk"
     Invoke-DotNet -Arguments @('restore', $tests, '--locked-mode')
     Invoke-DotNet -Arguments @('build', $tests, '-c', 'Release', '--no-restore')
-    Invoke-DotNet -Arguments @('test', $tests, '-c', 'Release', '--no-build', '--no-restore', '--results-directory', (Join-Path $output 'TestResults'), '--logger', 'trx;LogFileName=analyzers.trx', '--logger', 'console;verbosity=minimal')
+    $resultsDirectory = Join-Path $output 'TestResults'
+    $trx = Join-Path $resultsDirectory 'analyzers.trx'
+    $null = [IO.Directory]::CreateDirectory($resultsDirectory)
+    # The entry lock covers both stale-report removal and verification of the new report.
+    [IO.File]::Delete($trx)
+    Invoke-DotNet -Arguments @('test', $tests, '-c', 'Release', '--no-build', '--no-restore', '--results-directory', $resultsDirectory, '--logger', 'trx;LogFileName=analyzers.trx', '--logger', 'console;verbosity=minimal')
+    Assert-AnalyzerTestResults -Path $trx
 
     $inputs = @('global.json', 'Directory.Build.props', 'build.ps1', 'Analyzer/YLFramework.Analyzers.csproj', 'Analyzer/packages.lock.json',
         '../../PackageSources/com.kano.ylframework/Editor/Core/Analyzers/AnalyzerRuleCatalog.cs')

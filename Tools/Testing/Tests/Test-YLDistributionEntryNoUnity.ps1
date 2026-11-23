@@ -81,20 +81,24 @@ namespace UnityEditor.SceneManagement
     $method = [YLFramework.Testing.DistributionEntry].GetMethod('ValidateInvocation', [Reflection.BindingFlags]'NonPublic,Static')
     $referenceGuard = [YLFramework.Testing.DistributionEntry].GetMethod('RejectReferences', [Reflection.BindingFlags]'NonPublic,Static')
     $sdkBoundary = [YLFramework.Testing.DistributionEntry].GetMethod('OfficialEditorPackage', [Reflection.BindingFlags]'NonPublic,Static')
+    function Assert-RejectsAssembly([scriptblock] $Call, [string] $AssemblyName) {
+        try { $null = & $Call } catch {
+            $cause = $_.Exception.GetBaseException()
+            if ($cause -isnot [InvalidOperationException] -or -not $cause.Message.EndsWith(": $AssemblyName", [StringComparison]::Ordinal)) { throw }
+            return
+        }
+        throw "DistributionEntry admitted forbidden assembly: $AssemblyName"
+    }
     foreach ($mapping in @(@('Unity.Addressables.DocExampleCode.Editor.Tests', 'com.unity.addressables'),
         @('UnityEditor.TestRunner', 'com.unity.test-framework'), @('UnityEngine.TestRunner', 'com.unity.test-framework'))) {
         if ($sdkBoundary.Invoke($null, [object[]]@($mapping[0])) -cne $mapping[1]) { throw 'The exact official Editor-only SDK mapping changed.' }; $checks++
     }
     foreach ($name in @('Unity.Unknown.Editor.Tests', 'Unity.Addressables.Tests', 'YLFramework.Tests', 'Unity.ResourceManager.Tests')) {
-        $rejected = $false
-        try { $null = $sdkBoundary.Invoke($null, [object[]]@($name)) } catch { $rejected = $true }
-        if (-not $rejected) { throw 'Unknown Editor SDK test names were broadly admitted.' }; $checks++
+        Assert-RejectsAssembly { $sdkBoundary.Invoke($null, [object[]]@($name)) } $name; $checks++
     }
     $null = $referenceGuard.Invoke($null, [object[]]@(,([string[]]@('Unity.Addressables.dll', 'Unity.ResourceManager', 'Unity.Profiling.Core.dll')))); $checks++
     foreach ($reference in @('Unity.Anything', 'Unity.Addressables.Editor', 'Unity.ScriptableBuildPipeline.Editor', 'Unity.ResourceManager.Tests', 'nunit.framework')) {
-        $rejected = $false
-        try { $null = $referenceGuard.Invoke($null, [object[]]@(,([string[]]@($reference)))) } catch { $rejected = $true }
-        if (-not $rejected) { throw "The Runtime reference guard was broadened for $reference" }; $checks++
+        Assert-RejectsAssembly { $referenceGuard.Invoke($null, [object[]]@(,([string[]]@($reference)))) } $reference; $checks++
     }
     if ($null -eq $method) { throw 'DistributionEntry must validate typed v2 ownership before it acquires process exit authority.' }
     [UnityEngine.Application]::dataPath = (Join-Path $hostRecord.path 'Assets').Replace('\', '/')
