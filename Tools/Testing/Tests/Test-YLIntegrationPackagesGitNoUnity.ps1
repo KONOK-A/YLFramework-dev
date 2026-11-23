@@ -110,7 +110,8 @@ try {
         [string] $RemoteRepository = 'https://example.invalid/product.git', [string] $EntryPackage, [string] $IntegrationName = 'ExcelGameplay') {
         $root = Join-Path $sandbox ([Guid]::NewGuid().ToString('N'))
         $fixtureRepository = Join-Path $root 'Repository'; $null = [IO.Directory]::CreateDirectory($fixtureRepository)
-        foreach ($relative in @('Tests/Test-YLIntegrationPackages.ps1', 'IntegrationEntry.cs', 'PackageCatalogContract.cs', 'Common/Packages.ps1', 'Common/Workspace.ps1', 'Common/Process.ps1', 'Common/Results.ps1', 'UnityHost.ps1', 'TestSuites.json')) {
+        foreach ($relative in @('Tests/Test-YLIntegrationPackages.ps1', 'IntegrationEntry.cs', 'PackageCatalogContract.cs', 'Common/Packages.ps1',
+            'Common/IntegrationPackageContent.ps1', 'Common/Workspace.ps1', 'Common/Process.ps1', 'Common/Results.ps1', 'UnityHost.ps1', 'TestSuites.json')) {
             $target = Join-Path $fixtureRepository "Tools/Testing/$relative"
             $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
             [IO.File]::Copy((Join-Path $PSScriptRoot "../$relative"), $target)

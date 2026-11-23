@@ -183,7 +183,8 @@ namespace UnityEditor.Compilation
             foreach (var entry in new[] {
                 (id: "data-assets", runtime: "DataAssets", editor: "DataAssets.Editor"), (id: "localization", runtime: "Localization", editor: "Localization.Editor"),
                 (id: "state-machine", runtime: "StateMachine", editor: "StateMachine.Editor"), (id: "overlap", runtime: "Overlap", editor: "Overlap.Editor"),
-                (id: "movement2d", runtime: "Character2D", editor: "Movement2D.Editor"), (id: "hybridclr", runtime: "HybridCLR", editor: "HybridCLR.Editor") })
+                (id: "movement2d", runtime: "Character2D", editor: "Movement2D.Editor"), (id: "hybridclr", runtime: "HybridCLR", editor: "HybridCLR.Editor"),
+                (id: "resource-encryption", runtime: "Resource.Encryption", editor: "Resource.Encryption.Editor") })
             {
                 if (!ids.Contains("com.kano.ylframework." + entry.id)) continue;
                 result.Add(new Assembly { name = "YLFramework." + entry.runtime, sourceFiles = new[] { "Packages/com.kano.ylframework." + entry.id + "/Runtime/Product.cs" } });

@@ -131,7 +131,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLTests.ps1 -
 
 ### Resource Addressables Win64 Player
 
-从仓库根运行 [Invoke-YLResourceAddressablesPlayer.ps1](Invoke-YLResourceAddressablesPlayer.ps1)。入口无需先导入开发工程，只在仓库外的短工作根创建全新的工具自有宿主，使用主包和固定的 Unity 依赖，不安装 HybridCLR 或其他可选 SDK。需要匹配的 Windows Editor、许可证、Win64 IL2CPP/C++ 工具链及可用的 Unity 包来源；不回退到 Mono。
+从仓库根运行 [Invoke-YLResourceAddressablesPlayer.ps1](Invoke-YLResourceAddressablesPlayer.ps1)。入口无需先导入开发工程，只在仓库外的短工作根创建全新的工具自有宿主，使用主包和固定的 Unity 依赖，不安装 HybridCLR 或其他可选 SDK。需要匹配的 Windows Editor、许可证、所选后端的 Win64 构建模块及可用的 Unity 包来源。IL2CPP 另需 C++ 工具链；前置不足不回退到另一后端。
 
 | `-Profile` | 标准 Editor | Registry Addressables |
 | --- | --- | --- |
@@ -145,7 +145,22 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLResourceAdd
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLResourceAddressablesPlayer.ps1 -Profile Unity6 -Unity $unity6 -WorkspaceRoot $workspace -BuildFlavor Release -Graphics -ScopeCloseBenchmark
 ```
 
-两种 `-BuildFlavor` 都构建 Windows x64 IL2CPP（`Medium` 裁剪）。默认 `Release`；`Development` 用于采集支持的分配指标，不作为发行耗时依据。默认 Player 无图形，`-Graphics` 要求实际图形设备。常规验收在独立进程中验证首次 HTTP 下载、二次官方缓存，以及 Bare Addressables 与 YL 的本地负载。`-ScopeCloseBenchmark` 仅允许 `Release -Graphics`，并追加三轮独立 Scope 关闭测量。Editor 构建限时 30 分钟，每个 Player 进程限时 180 秒。
+常规验收的两种 `-BuildFlavor` 都构建 Windows x64 IL2CPP（`Medium` 裁剪）。默认 `Release`；`Development` 用于采集支持的分配指标，不作为发行耗时依据。默认 Player 无图形，`-Graphics` 要求实际图形设备。常规验收在独立进程中验证首次 HTTP 下载、二次官方缓存，以及 Bare Addressables 与 YL 的本地负载。`-ScopeCloseBenchmark` 仅允许 `Release -Graphics`，并追加三轮独立 Scope 关闭测量。Editor 构建限时 30 分钟，每个常规 Player 进程限时 180 秒。
+
+`-EncryptedRemoteGroup` 仅用于 `Release -Graphics`，两版 Editor 串行运行，支持 `-Backend IL2CPP`（默认，`Medium`）或 `-Backend Mono`（`Disabled`）。默认用例检查冷启动、在线零请求热启动、离线可用、错钥/缺钥、坏缓存、共享下载取消和恢复，并验证仍由官方句柄拥有的 Bundle。`-EncryptionCase Performance` 比较相同物理明文 Bundle 的 8 MiB 和 128 MiB 以上双包并发。每个后端独立构建，明文和密文各跑一次冷载及三次独立进程在线热载，热载必须零请求（含 HEAD）。报告分列启动校验、素材可用时间、原生读取、加密层缓冲核算及进程内存采样；Release 引擎内存峰值不可得时不记为零。其余用例可单独验证明文副本、路由错误、同步等待和输出目录重叠。P0 的旧行为对照用 `-StockSizeControl`、`-VerifiedSizeSnapshot` 或 `-HeldDownload Stock|Separated` 显式选择，仍使用 IL2CPP。
+
+性能回执的原生读量分为预认证和 Unity 读取，另列启动扫描、加载阶段成功完成 SHA-256 的托管密文读取量；它们是应用读取字节，不是物理磁盘 I/O。目录用量在计时结束后测量：密文夹具的单份原子写入峰值等于完成量，普通 Unity 缓存的瞬时峰值和内部读取不可得，记 `-1`。进程内存在加载期间抽样，不代表引擎的精确峰值。
+
+固定提交验收从干净 worktree 运行，`-ReleaseManifest` 和完整 `-SourceCommit` 必须同时给出；直接核对提交 blob、已物化的本地 Git LFS 对象、实际安装的 `LocalTarball`、包内文件与随包 Catalog。安装未启用和移除重建使用 `Invoke-P0NativeDelivery.ps1`。示例（两版、两后端分别运行）：
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLResourceAddressablesPlayer.ps1 -Profile Unity6 -Unity $unity6 -WorkspaceRoot $workspace -BuildFlavor Release -Graphics -EncryptedRemoteGroup -Backend Mono -EncryptionCase Positive -ReleaseManifest $releaseManifest -SourceCommit $commit
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-P0NativeDelivery.ps1 -Profile Unity6 -Unity $unity6 -WorkspaceRoot $workspace -Backend Mono -ReleaseManifest $releaseManifest -SourceCommit $commit
+```
+
+未提交的诊断包用 `ResourceEncryption/Invoke-LocalEncryptionPack.ps1`，将回执传给 `-EncryptionPackReceipt`（安装入口为 `-PackReceipt`）；不能同时传固定提交参数。不传任何包输入时，功能入口仅验证源码投影。诊断包与源码投影的结果均不能作为固定提交或 Registry 发布凭据。加密功能/性能回执为 `<WorkspaceRoot>/Results/FrozenEncryption/<run-id>/frozen.json`，安装和移除回执为 `<WorkspaceRoot>/Results/NativeDeliveryFinal/<run-id>/p0-c.json`。
+
+`ResourceEncryption/Invoke-Contracts.ps1 -Root <新建的自有测试输出路径> -OracleJar <tink-1.18.0.jar>` 使用当前仓库的 Win64 插件做互读和缓存合同测试，可用 `-NativeDll` 指定另一个待测构建。Java 对照 JAR 必须匹配脚本固定的 SHA-256。
 
 每轮分别预载 1、100、1000 个不同的 `TextAsset`，只测 `CloseAsync()`。`slices` 在实际清理步之后记录归还数和释放调用的累计时间。还有租约待还时，一步最多归还 32 份，少于 32 份必须已用到约 1 ms 的同步释放预算。`maxSliceReleaseTicks` 是各步累计释放时间的最大值，`closeWallTicks` 是调用者观察到的关闭总延迟；二者都不是完整 Unity 帧的峰值。一次不可抢占的释放可以越过时间阈值。
 

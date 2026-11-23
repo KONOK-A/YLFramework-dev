@@ -1,0 +1,8 @@
+{
+  "name": "YLFramework.FrozenEncryption.Fixture.Editor",
+  "references": ["YLFramework.FrozenEncryption.Fixture", "YLFramework.Runtime", "YLFramework.Resource.Encryption", "YLFramework.Resource.Encryption.Editor", "Unity.Addressables", "Unity.Addressables.Editor", "Unity.ResourceManager"],
+  "includePlatforms": ["Editor"],
+  "overrideReferences": true,
+  "precompiledReferences": ["Newtonsoft.Json.dll"],
+  "autoReferenced": true
+}

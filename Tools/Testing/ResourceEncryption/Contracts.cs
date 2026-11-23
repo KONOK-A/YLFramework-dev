@@ -1,0 +1,406 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
+using YLFramework.Resource.Encryption;
+
+public static class YLResourceEncryptionContracts
+{
+    private const int Segment = 1024 * 1024;
+    private const string Group = "30925c6a78360f4128bc20b6b5ff4611";
+    private const string BundleHash = "88765c6a78360f4128bc20b6b5ff4422";
+    private const string Provider = "YLFramework.Resource.Encryption.EncryptedAssetBundleProvider";
+    private const string CatalogHash = "bcdd4fe94f25e4bd0348e7d6322033b25850474a6d12489b989a41bdd6e9ca9f";
+    private static int _passed;
+
+    public static async Task<int> Run(string root, string nativeDll, string jar, string oracle)
+    {
+        var native = NativeLibrary.Load(nativeDll);
+        Check(NativeLibrary.TryGetExport(native, "yl_read_statistics", out _), "native bridge must report actual cipher reads independently of managed heap size");
+        NativeLibrary.SetDllImportResolver(typeof(AuthenticatedBundleStream).Assembly, (name, _, _) =>
+            name == "ylresource_tink" ? native : IntPtr.Zero);
+        if (Directory.Exists(root) || !Directory.Exists(Path.GetDirectoryName(root))) throw new IOException("Test root must be fresh.");
+        Directory.CreateDirectory(root);
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        string release = "http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port + "/assets/build-a/";
+        byte[] key1 = RandomNumberGenerator.GetBytes(32);
+        byte[] key2 = RandomNumberGenerator.GetBytes(32);
+        string testKey = Path.Combine(root, "test-key");
+        try
+        {
+            var plain = new byte[3 * Segment + 111];
+            new Random(649928).NextBytes(plain);
+            string clearPath = Path.Combine(root, "a.bundle");
+            File.WriteAllBytes(clearPath, plain);
+            var binding = Bind(release, "K1", "bundle-a", "a.bundle", plain);
+            var binding2 = Bind(release, "K2", "bundle-b", "b.bundle", plain);
+            var first = Seal(clearPath, Path.Combine(root, "cpp.bin"), binding, key1);
+            var second = Seal(clearPath, Path.Combine(root, "cpp-2.bin"), binding2, key2);
+            var repeated = Seal(clearPath, Path.Combine(root, "cpp-repeat.bin"), binding, key1);
+            var description = new EncryptedBundleDescription("catalog.bin", CatalogHash, CatalogHash, CatalogHash, new[] { first.Record, second.Record });
+
+            string pinnedDirectory = Path.Combine(root, "pinned-parent");
+            string renamedDirectory = pinnedDirectory + "-renamed";
+            Directory.CreateDirectory(pinnedDirectory);
+            using (OwnedWindowsFiles.PinDirectory(pinnedDirectory, false))
+                Throws<IOException>(() => Directory.Move(pinnedDirectory, renamedDirectory), "owned directory pins prevent concurrent rename");
+            Directory.Move(pinnedDirectory, renamedDirectory);
+            string deliver = Path.Combine(root, "atomic-stage");
+            string delivery = Path.Combine(root, "atomic-delivery");
+            using (var directory = OwnedWindowsFiles.CreatePublicationDirectory(deliver))
+            {
+                File.WriteAllText(Path.Combine(deliver, "manifest"), "owned");
+                OwnedWindowsFiles.Publish(directory, delivery);
+            }
+            Check(!Directory.Exists(deliver) && File.ReadAllText(Path.Combine(delivery, "manifest")) == "owned",
+                "publish renames the exact staged directory by handle");
+            string openStage = Path.Combine(root, "open-stage");
+            string openRelease = Path.Combine(root, "open-release");
+            using (var directory = OwnedWindowsFiles.CreatePublicationDirectory(openStage))
+            {
+                string payload = Path.Combine(openStage, "payload");
+                File.WriteAllText(payload, "locked");
+                OwnedWindowsFiles.Publish(directory, openRelease);
+                string sealedPath = Path.Combine(openRelease, "payload");
+                using var verified = OwnedWindowsFiles.ReadPinned(sealedPath);
+                using var receipt = OwnedWindowsFiles.CreateTemporaryPinned(Path.Combine(openRelease, "receipt.part"));
+                receipt.WriteByte(42);
+                receipt.Flush(true);
+                OwnedWindowsFiles.Publish(receipt, Path.Combine(openRelease, "delivery.json"));
+                Throws<IOException>(() => File.OpenWrite(sealedPath).Dispose(),
+                    "atomic receipt can be committed while verified release bytes remain write locked");
+            }
+            using (OwnedWindowsFiles.InspectDirectory(openRelease, out string physicalRelease))
+            using (OwnedWindowsFiles.InspectDirectory(Path.Combine(openRelease, "not-created"), out string missingPhysical))
+                Check(physicalRelease.StartsWith(@"\\?\Volume{", StringComparison.OrdinalIgnoreCase) &&
+                    missingPhysical == Path.Combine(physicalRelease, "not-created") && !Directory.Exists(Path.Combine(openRelease, "not-created")),
+                    "physical identity uses a real volume and pinned ancestors without creating a missing output");
+            Check(first.Record.CipherLength == EncryptedBundleBinding.GetCipherLength(plain.Length) && first.Record.CipherSha256 != repeated.Record.CipherSha256,
+                "fresh Tink randomization and exact cipher size");
+            foreach (int length in new[] { 1, Segment - 56, Segment - 55, 2 * Segment - 72, 2 * Segment - 71 })
+            {
+                byte[] sample = plain.Take(length).ToArray();
+                string path = Path.Combine(root, "boundary-" + length);
+                File.WriteAllBytes(path, sample);
+                var boundary = Seal(path, path + ".bin", Bind(release, "K1", "boundary", "edge.bundle", sample), key1);
+                using var stream = Open(boundary.Path, boundary.Record, new Keys(("K1", key1)));
+                if (stream.Length != length) throw new Exception("Tink boundary length disagrees: " + length);
+            }
+            Check(true, "exact segment boundaries round-trip");
+
+            string json = description.Encode();
+            Check(EncryptedBundleDescription.Parse(json, true).Encode() == json, "strict versioned description round-trips");
+            Throws<InvalidDataException>(() => EncryptedBundleDescription.Parse(json), "production cannot use HTTP");
+            RejectJson(json, node => node["bundles"][0]["path"] = "../outside.bundle", "path traversal");
+            RejectJson(json, node => node["bundles"][0]["path"] = "sub/%2e%2e/outside.bundle", "encoded separators");
+            RejectJson(json, node => node["bundles"][0]["path"] = "NUL.bundle", "Windows device name");
+            RejectJson(json, node => node["bundles"][0]["cipherLength"] = 12, "wrong length");
+            RejectJson(json, node => node["bundles"][0]["key"] = "reject-me", "unexpected key field");
+            RejectJson(json, node => node["bundles"][1]["path"] = "a.bundle", "duplicate path");
+            Throws<InvalidDataException>(() => EncryptedBundleDescription.Parse("{\"version\":1," + json.Substring(1), true), "duplicate property");
+
+            byte[] aad = binding.AssociatedData();
+            var independent = new List<byte>(BitConverter.GetBytes(1));
+            foreach (string field in new[] { "YL.RemoteBundle.StreamingAEAD", "AES256_GCM_HKDF_1MB", "kano.test", "StandaloneWindows64",
+                release, Group, "bundle-a", BundleHash, Provider, "a.bundle", "K1", Hash(plain) })
+            {
+                byte[] utf = Encoding.UTF8.GetBytes(field);
+                independent.AddRange(BitConverter.GetBytes(utf.Length));
+                independent.AddRange(utf);
+            }
+            independent.AddRange(BitConverter.GetBytes(plain.LongLength));
+            Check(aad.SequenceEqual(independent), "AAD matches independent length-prefixed encoding");
+            string aadPath = Path.Combine(root, "aad");
+            File.WriteAllBytes(aadPath, independent.ToArray());
+            File.WriteAllBytes(testKey, key1);
+            string javaClear = Path.Combine(root, "java-plain");
+            string java = Path.Combine(root, "java.bin");
+            await Oracle(jar, oracle, "open", testKey, aadPath, first.Path, javaClear);
+            Check(HashFile(javaClear) == Hash(plain), "Java opens native Tink ciphertext");
+            await Oracle(jar, oracle, "seal", testKey, aadPath, clearPath, java);
+            var keys = new Keys(("K1", key1), ("K2", key2));
+            using (var stream = Open(java, Freeze(binding, java), keys))
+            {
+                var counters = stream.ReadStatistics();
+                Check(counters.Logical == plain.LongLength && counters.Physical <= 2 * new FileInfo(java).Length + 40 &&
+                    counters.Pages == 7 && counters.PayloadBound >= 3 * Segment + Segment / 2 + 128 * 1024 && counters.PayloadBound <= 4L * Segment,
+                    "verification includes the three pinned Tink segment allocations and the bridge window without exceeding the working-buffer target");
+                byte[] sample = new byte[225];
+                stream.Seek(Segment - 84, SeekOrigin.Begin);
+                Check(stream.Read(sample, 5, 200) == 200 && sample.Skip(5).Take(200).SequenceEqual(plain.Skip(Segment - 84).Take(200)), "native Tink opens Java and seeks across segments");
+                stream.Seek(-13, SeekOrigin.End);
+                Check(stream.Read(sample, 0, sample.Length) == 13 && stream.Read(sample, 0, sample.Length) == 0, "last segment and EOF are distinguished");
+                var reread = stream.ReadStatistics();
+                Check(reread.Logical - counters.Logical == 213 && reread.Pages - counters.Pages == 3 && reread.Physical > counters.Physical,
+                    "native cipher-byte counters distinguish a crossing seek from logical bytes delivered");
+                Throws<IOException>(() => File.Open(java, FileMode.Open, FileAccess.Write, FileShare.None).Dispose(), "stable file prevents writes while mounted");
+            }
+            using (File.Open(java, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+            Check(keys.Opens == 1 && keys.Returns == 1, "dispose returns exactly one retained key lease");
+            Throws<EncryptedBundleAuthenticationException>(() => Open(first.Path, first.Record, new Keys(("K1", key2))), "wrong K1 material");
+            Throws<EncryptedBundleKeyUnavailableException>(() => Open(first.Path, first.Record, new Keys(("K2", key2))), "no alternative key is tried");
+            var wrongContext = Bind(release, "K1", "different-bundle", "a.bundle", plain);
+            Throws<EncryptedBundleAuthenticationException>(() => Open(first.Path, Freeze(wrongContext, first.Path), keys), "different AAD despite correct ciphertext digest");
+            Throws<EncryptedBundleAuthenticationException>(() => Open(second.Path, Freeze(binding, second.Path), new Keys(("K1", key2))), "same-key bundle substitution");
+            foreach (long position in new[] { Segment - 1L, 2L * Segment - 1, first.Record.CipherLength - 1 })
+            {
+                string tampered = Path.Combine(root, "tampered-" + position);
+                File.Copy(first.Path, tampered);
+                Flip(tampered, position);
+                Throws<EncryptedBundleAuthenticationException>(() => Open(tampered, Freeze(binding, tampered), keys), "AEAD rejects bad tag at " + position);
+            }
+            var appended = Path.Combine(root, "appended.bin");
+            File.Copy(first.Path, appended);
+            using (var append = File.Open(appended, FileMode.Append, FileAccess.Write, FileShare.None)) append.WriteByte(0x01);
+            Throws<EncryptedBundleIntegrityException>(() => Open(appended, first.Record, keys), "appended ciphertext is rejected before AEAD");
+            var shortened = Path.Combine(root, "shortened.bin");
+            File.Copy(first.Path, shortened);
+            using (var truncate = File.Open(shortened, FileMode.Open, FileAccess.Write, FileShare.None)) truncate.SetLength(first.Record.CipherLength - 1);
+            Throws<EncryptedBundleIntegrityException>(() => Open(shortened, first.Record, keys), "truncated ciphertext is rejected before AEAD");
+
+            await Cache(root, description, first, second, repeated, listener, keys, new Keys(("K2", key2)), plain[0]);
+            Console.WriteLine($"P1 contracts: {_passed} passed");
+            return _passed;
+        }
+        finally
+        {
+            listener.Stop();
+            Array.Clear(key1, 0, key1.Length);
+            Array.Clear(key2, 0, key2.Length);
+            File.Delete(testKey);
+        }
+    }
+
+    private static async Task Cache(string root, EncryptedBundleDescription description, (string Path, EncryptedBundleRecord Record) first,
+        (string Path, EncryptedBundleRecord Record) second, (string Path, EncryptedBundleRecord Record) repeated, TcpListener listener, Keys keys, Keys k2Only, byte sentinel)
+    {
+        var a = first.Record;
+        var b = second.Record;
+        string cacheRoot = Path.Combine(root, "cache");
+        using var cache = await EncryptedBundleCache.OpenAsync(cacheRoot, description);
+        string file = Path.Combine(cacheRoot, a.CipherSha256 + ".bin");
+        byte[] cipher = File.ReadAllBytes(first.Path);
+        byte[] cipher2 = File.ReadAllBytes(second.Path);
+        Check(cache.GetRemainingBytes(a) == a.CipherLength, "cold snapshot is exact cipher length");
+        using var stopObserver = new CancellationTokenSource();
+        EncryptedBundleCache.TransferProgress canceledProgress = null;
+        EncryptedBundleCache.TransferProgress liveProgress = null;
+        var request1 = cache.EnsureAsync(a, stopObserver.Token, attempt => canceledProgress = attempt);
+        var request2 = cache.EnsureAsync(a, reportProgress: attempt => liveProgress = attempt);
+        Check(ReferenceEquals(canceledProgress, liveProgress) && liveProgress.TotalBytes == a.CipherLength && liveProgress.DownloadedBytes == 0,
+            "overlapping observers receive one cold attempt and its exact byte budget");
+        using (var client = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(10)))
+        {
+            NetworkStream channel = client.GetStream();
+            await ReadHeaders(channel);
+            stopObserver.Cancel();
+            await ThrowsAsync<OperationCanceledException>(() => request1, "cancelled observer detaches from shared download");
+            const int PrefixBytes = 250;
+            await Respond(channel, "200 OK", cipher.Take(PrefixBytes).ToArray(), cipher.Length);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (liveProgress.DownloadedBytes < PrefixBytes)
+                await Task.Delay(10, deadline.Token);
+            Check(liveProgress.DownloadedBytes == PrefixBytes && liveProgress.TotalBytes == a.CipherLength && !request2.IsCompleted && !File.Exists(file),
+                "held ciphertext reports only the received prefix, without publishing or completing");
+            await channel.WriteAsync(cipher.AsMemory(PrefixBytes));
+        }
+        await request2;
+        Check(!listener.Pending() && cache.GetRemainingBytes(a) == 0 && HashFile(file) == a.CipherSha256 && !Directory.EnumerateFiles(cacheRoot, "*.part").Any(), "one complete transfer is published atomically");
+        Check(liveProgress.DownloadedBytes == a.CipherLength && liveProgress.TotalBytes == a.CipherLength,
+            "a verified physical transfer preserves its final byte counts");
+        Check(cache.VerifiedCipherHashBytes == a.CipherLength,
+            "measure the actual managed cipher SHA pass on download commit");
+        EncryptedBundleCache.TransferProgress warmProgress = null;
+        await ThrowsAsync<EncryptedBundleKeyUnavailableException>(() => cache.OpenAuthenticatedAsync(a, k2Only, reportProgress: attempt => warmProgress = attempt),
+            "cached K1 with only K2 refuses without GET");
+        Check(warmProgress.TotalBytes == 0 && warmProgress.DownloadedBytes == 0,
+            "warm revalidation and failed authentication do not report disk work as downloaded bytes");
+        Check(cache.GetRemainingBytes(a) == 0 && File.Exists(file) && !listener.Pending(), "missing K1 does not invalidate bytes or trigger transfer");
+        var load2 = cache.EnsureAsync(b);
+        await Serve(listener, "200 OK", cipher2, cipher2.Length);
+        await load2;
+        using (var stream = await cache.OpenAuthenticatedAsync(b, k2Only)) if (stream.ReadByte() != sentinel) throw new Exception("Independent K2 failed");
+        long beforeMount = cache.VerifiedCipherHashBytes;
+        using (var stream = await cache.OpenAuthenticatedAsync(a, keys)) if (stream.ReadByte() != sentinel) throw new Exception("Restored K1 failed");
+        Check(cache.VerifiedCipherHashBytes - beforeMount == 2 * a.CipherLength, "separate managed recheck and mount hashes from native stream reads");
+        Check(!listener.Pending(), "restoring K1 and mounting K2 need no second GET");
+
+        File.Copy(repeated.Path, file, true);
+        Check(cache.GetRemainingBytes(a) == 0, "query is a snapshot");
+        int opens = keys.Opens;
+        await ThrowsAsync<EncryptedBundleIntegrityException>(() => cache.OpenAuthenticatedAsync(a, keys), "same-length replacement refused before key access");
+        Check(cache.GetRemainingBytes(a) == a.CipherLength && keys.Opens == opens && !listener.Pending(), "corruption invalidates snapshot without retry or key access");
+        EncryptedBundleCache.TransferProgress retryProgress = null;
+        var retry = cache.EnsureAsync(a, reportProgress: attempt => retryProgress = attempt);
+        Check(!ReferenceEquals(liveProgress, retryProgress) && liveProgress.DownloadedBytes == a.CipherLength &&
+            retryProgress.TotalBytes == a.CipherLength && retryProgress.DownloadedBytes == 0,
+            "an explicit repair starts a fresh attempt without rewriting a retained observer's progress");
+        await Serve(listener, "200 OK", cipher, cipher.Length);
+        await retry;
+        cache.Dispose();
+        Flip(file, 7);
+        string abandoned = Path.Combine(cacheRoot, ".yl-transfer-" + Guid.NewGuid().ToString("N") + ".part");
+        File.WriteAllText(abandoned, "abandoned");
+        using var restarted = await EncryptedBundleCache.OpenAsync(cacheRoot, description);
+        Check(restarted.GetRemainingBytes(a) == a.CipherLength && restarted.GetRemainingBytes(b) == 0 && !File.Exists(abandoned), "restart re-hashes files and recovers owned abandoned parts");
+        Check(restarted.VerifiedCipherHashBytes == b.CipherLength, "track separately the successful full hashes during warm cache scan");
+        await ThrowsAsync<EncryptedBundleIntegrityException>(() => restarted.EnsureAsync(a), "warm corruption fails this attempt");
+        EncryptedBundleCache.TransferProgress truncatedProgress = null;
+        var truncated = restarted.EnsureAsync(a, reportProgress: attempt => truncatedProgress = attempt);
+        await Serve(listener, "200 OK", cipher.Take(250).ToArray(), cipher.Length);
+        await ThrowsAsync<IOException>(() => truncated, "interrupted body refused");
+        Check(truncatedProgress.TotalBytes == a.CipherLength && truncatedProgress.DownloadedBytes == 250,
+            "a truncated transfer never advances download bytes to the advertised total");
+        var redirected = restarted.EnsureAsync(a);
+        await Serve(listener, "302 Found", Array.Empty<byte>(), 0, "Location: http://127.0.0.1:1/exit\r\n");
+        await ThrowsAsync<IOException>(() => redirected, "redirect refused");
+        var overlong = restarted.EnsureAsync(a);
+        await Serve(listener, "200 OK", Array.Empty<byte>(), cipher.Length + 1);
+        await ThrowsAsync<IOException>(() => overlong, "oversize body refused");
+        var substituted = restarted.EnsureAsync(a);
+        await Serve(listener, "200 OK", cipher2, cipher2.Length);
+        await ThrowsAsync<EncryptedBundleIntegrityException>(() => substituted, "an independently valid, same-length Bundle cannot be downloaded in place of another");
+        Check(!File.Exists(file) && !Directory.EnumerateFiles(cacheRoot, "*.part").Any() && restarted.GetRemainingBytes(b) == 0, "failed transfer retains no partial and leaves peer intact");
+        var racedCommit = restarted.EnsureAsync(a);
+        using (var client = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(10)))
+        {
+            NetworkStream channel = client.GetStream();
+            await ReadHeaders(channel);
+            File.Copy(first.Path, file);
+            await Respond(channel, "200 OK", cipher, cipher.Length);
+        }
+        await ThrowsAsync<IOException>(() => racedCommit, "atomic commit refuses to replace an existing valid ciphertext");
+        Check(HashFile(file) == a.CipherSha256 && !Directory.EnumerateFiles(cacheRoot, "*.part").Any(), "commit I/O failure preserves the existing file and removes its temporary attempt");
+        await restarted.EnsureAsync(a);
+        Check(restarted.GetRemainingBytes(a) == 0 && !listener.Pending(), "explicit retry after commit failure can revalidate without network");
+
+        string faultPath = Path.Combine(cacheRoot, ".yl-transfer-" + Guid.NewGuid().ToString("N") + ".part");
+        string faultFinal = Path.Combine(cacheRoot, "must-not-publish.bin");
+        const int diskFull = unchecked((int)0x80070070);
+        using (var handle = OwnedWindowsFiles.CreateTemporaryPinned(faultPath))
+        using (var output = new SpaceLimitedFile(handle.SafeFileHandle, diskFull))
+        using (var body = new MemoryStream(cipher, writable: false))
+        {
+            bool reported = false;
+            try { await EncryptedBundleCache.CommitCipherAsync(body, output, faultFinal, a, CancellationToken.None); }
+            catch (IOException error) when (error.HResult == diskFull) { reported = true; }
+            Check(reported && output.WriteAttempted, "cache reports the injected Win32 disk-full error after starting the real temporary write");
+        }
+        Check(!File.Exists(faultPath) && !File.Exists(faultFinal) && HashFile(file) == a.CipherSha256,
+            "disk-full cleanup did not publish a truncated record or modify an existing cache hit");
+    }
+
+    private sealed class SpaceLimitedFile : FileStream
+    {
+        private readonly int _error;
+        public bool WriteAttempted;
+
+        public SpaceLimitedFile(Microsoft.Win32.SafeHandles.SafeFileHandle file, int error) : base(file, FileAccess.ReadWrite, 1, false) => _error = error;
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            base.Write(buffer, offset, Math.Min(count, 16));
+            WriteAttempted = true;
+            throw new IOException("Test-only exhausted file storage", _error);
+        }
+    }
+
+    private static EncryptedBundleBinding Bind(string release, string keyId, string name, string path, byte[] plain) =>
+        new EncryptedBundleBinding("kano.test", release, Group, name, BundleHash, Provider, path, keyId, plain.LongLength, Hash(plain), true);
+    private static EncryptedBundleRecord Freeze(EncryptedBundleBinding binding, string path) => new EncryptedBundleRecord(binding, new FileInfo(path).Length, HashFile(path));
+    private static (string Path, EncryptedBundleRecord Record) Seal(string plain, string cipher, EncryptedBundleBinding binding, byte[] key)
+    {
+        using var lease = new EncryptedBundleKeyLease(key);
+        using var source = File.OpenRead(plain);
+        using (var destination = new FileStream(cipher, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            AuthenticatedBundleStream.Seal(source, destination, binding, lease);
+        return (cipher, Freeze(binding, cipher));
+    }
+    private static AuthenticatedBundleStream Open(string file, EncryptedBundleRecord record, Keys keys) =>
+        AuthenticatedBundleStream.OpenVerified(OwnedWindowsFiles.OpenRead(file), record, keys, CancellationToken.None);
+    private static void RejectJson(string json, Action<JObject> change, string name)
+    {
+        var item = JObject.Parse(json);
+        change(item);
+        Throws<InvalidDataException>(() => EncryptedBundleDescription.Parse(item.ToString(), true), name);
+    }
+    private static void Check(bool ok, string name)
+    {
+        if (!ok) throw new Exception(name);
+        _passed++;
+        Console.WriteLine("PASS " + name);
+    }
+    private static void Throws<T>(Action action, string name) where T : Exception
+    {
+        try { action(); }
+        catch (T) { Check(true, name); return; }
+        throw new Exception("Expected " + typeof(T).Name + ": " + name);
+    }
+    private static async Task ThrowsAsync<T>(Func<Task> action, string name) where T : Exception
+    {
+        try { await action().WaitAsync(TimeSpan.FromSeconds(10)); }
+        catch (T) { Check(true, name); return; }
+        throw new Exception("Expected " + typeof(T).Name + ": " + name);
+    }
+    private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+    private static string HashFile(string file) { using var input = File.OpenRead(file); return Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant(); }
+    private static void Flip(string file, long offset)
+    {
+        using var input = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        input.Position = offset;
+        int before = input.ReadByte();
+        if (before < 0) throw new IOException("Invalid fixture offset");
+        input.Position = offset;
+        input.WriteByte((byte)(before ^ 1));
+    }
+    private static async Task Oracle(string jar, string oracle, string mode, string key, string aad, string input, string output)
+    {
+        var start = new ProcessStartInfo("java") { UseShellExecute = false };
+        foreach (string value in new[] { "--class-path", jar, oracle, mode, key, aad, input, output }) start.ArgumentList.Add(value);
+        using var process = Process.Start(start);
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0) throw new IOException("Tink Java oracle exit " + process.ExitCode);
+    }
+    private static async Task ReadHeaders(NetworkStream channel)
+    {
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var reader = new StreamReader(channel, Encoding.ASCII, false, 512, true);
+        string request = await reader.ReadLineAsync(limit.Token);
+        if (request == null || !request.StartsWith("GET /assets/build-a/", StringComparison.Ordinal)) throw new IOException("Unexpected download request");
+        while (!string.IsNullOrEmpty(await reader.ReadLineAsync(limit.Token))) { }
+    }
+    private static async Task Respond(NetworkStream channel, string status, byte[] body, int declared, string headers = "")
+    {
+        await channel.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 {status}\r\nContent-Length: {declared}\r\nConnection: close\r\n{headers}\r\n"));
+        await channel.WriteAsync(body);
+    }
+    private static async Task Serve(TcpListener listener, string status, byte[] body, int declared, string headers = "")
+    {
+        using var connection = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        using var channel = connection.GetStream();
+        await ReadHeaders(channel);
+        await Respond(channel, status, body, declared, headers);
+    }
+    private sealed class Keys : IEncryptedBundleKeySource
+    {
+        private readonly Dictionary<string, byte[]> _keys;
+        public int Opens;
+        public int Returns;
+        public Keys(params (string id, byte[] key)[] pairs) => _keys = pairs.ToDictionary(pair => pair.id, pair => pair.key);
+        public EncryptedBundleKeyLease OpenReadKey(string keyId)
+        {
+            Opens++;
+            return _keys.TryGetValue(keyId, out byte[] key) ? new EncryptedBundleKeyLease(key, () => Returns++) : null;
+        }
+    }
+}

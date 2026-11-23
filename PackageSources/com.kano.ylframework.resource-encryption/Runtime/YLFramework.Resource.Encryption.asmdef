@@ -1,0 +1,9 @@
+{
+    "name": "YLFramework.Resource.Encryption",
+    "rootNamespace": "YLFramework.Resource.Encryption",
+    "references": ["Unity.Addressables", "Unity.ResourceManager"],
+    "includePlatforms": ["Editor", "WindowsStandalone64"],
+    "overrideReferences": true,
+    "precompiledReferences": ["Newtonsoft.Json.dll"],
+    "autoReferenced": true
+}

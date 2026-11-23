@@ -23,7 +23,7 @@ using Stopwatch = System.Diagnostics.Stopwatch;
 namespace YLFramework.Acceptance
 {
     [Preserve]
-    public sealed class ResourceAddressablesPlayerProbe : MonoBehaviour
+    public sealed partial class ResourceAddressablesPlayerProbe : MonoBehaviour
     {
         public const string Define = "YL_RESOURCE_ADDRESSABLES_ACCEPTANCE";
         public const string ManifestName = ".yl-resource-addressables-player.json";
@@ -54,7 +54,8 @@ namespace YLFramework.Acceptance
             public string buildToken, inputHash, contentHash, unityVersion, addressablesVersion;
             public string stripping, playerRoot, hostId, resultId, workspaceId, buildFlavor;
             public string publishedSourceSha256, guidOnlyKey, suppressedGuidKey, packedSpriteGuid;
-            public bool graphics, scopeCloseBenchmark;
+            public bool graphics, scopeCloseBenchmark, encryptedRemoteGroup, verifiedSizeSnapshot;
+            public string heldDownload;
         }
 
         [Serializable]
@@ -75,6 +76,8 @@ namespace YLFramework.Acceptance
             public Performance performance;
             public ScopeCloseMeasurement scopeClose;
             public PackedSpriteEvidence packedSprite;
+            public SizeExperimentEvidence sizeExperiment;
+            public HeldDownloadEvidence heldDownload;
         }
 
         [Serializable]
@@ -265,6 +268,16 @@ namespace YLFramework.Acceptance
 #endif
             Require(!Application.isEditor && Application.platform == RuntimePlatform.WindowsPlayer && IntPtr.Size == 8,
                 "The acceptance must execute in Windows x64 Player.");
+            if (!string.IsNullOrEmpty(_build.heldDownload))
+            {
+                yield return HeldDownloadHandle_DoesNotSatisfyAssetLoad();
+                yield break;
+            }
+            if (_build.encryptedRemoteGroup)
+            {
+                yield return DownloadSize_UsesShippedCipherLengthAndVerifiedBytes();
+                yield break;
+            }
             if (_report.round > 4)
             {
                 yield return MeasureScopeClose();
@@ -1318,6 +1331,8 @@ namespace YLFramework.Acceptance
             Require(owner.schemaVersion == 1 && owner.purpose == "YLResource.Addressables.PlayerIdentity" &&
                 owner.buildToken == _build.buildToken && owner.inputHash == _build.inputHash && owner.contentHash == _build.contentHash &&
                 owner.buildFlavor == _build.buildFlavor && owner.scopeCloseBenchmark == _build.scopeCloseBenchmark &&
+                owner.encryptedRemoteGroup == _build.encryptedRemoteGroup && owner.verifiedSizeSnapshot == _build.verifiedSizeSnapshot &&
+                owner.heldDownload == _build.heldDownload &&
                 !string.IsNullOrEmpty(_build.publishedSourceSha256) && owner.publishedSourceSha256 == _build.publishedSourceSha256 &&
                 owner.guidOnlyKey == _build.guidOnlyKey && owner.suppressedGuidKey == _build.suppressedGuidKey &&
                 !string.IsNullOrEmpty(_build.packedSpriteGuid) && owner.packedSpriteGuid == _build.packedSpriteGuid &&

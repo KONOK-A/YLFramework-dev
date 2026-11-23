@@ -131,17 +131,31 @@ function Get-YLRegistryPayload {
         $prefix = [Text.Encoding]::UTF8.GetString($bytes, 0, [Math]::Min(200, $bytes.Length))
         if ($prefix.StartsWith('version https://git-lfs.github.com/spec/v1', [StringComparison]::Ordinal)) { throw "Unmaterialized Git LFS content: $id/$path" }
         if ($path.EndsWith('.dll', [StringComparison]::OrdinalIgnoreCase)) {
-            if ("$id/$path" -cnotin $dlls) { throw "Unapproved bundled DLL/SDK: $id/$path" }
+            $nativeTink = "$id/$path" -ceq 'com.kano.ylframework.resource-encryption/Runtime/Plugins/Win64/ylresource_tink.dll'
+            if (-not $nativeTink -and "$id/$path" -cnotin $dlls) { throw "Unapproved bundled DLL/SDK: $id/$path" }
             if ($bytes.Length -lt 64 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw "DLL is not a real PE binary: $id/$path" }
             $offset = [BitConverter]::ToInt32($bytes, 60)
             if ($offset -lt 64 -or $offset -gt $bytes.Length - 24 -or [BitConverter]::ToUInt32($bytes, $offset) -ne 0x4550) { throw "DLL has no valid PE header: $id/$path" }
             $stream = [IO.MemoryStream]::new($bytes, $false)
             $pe = [Reflection.PortableExecutable.PEReader]::new($stream)
             try {
-                if (-not $pe.HasMetadata -or $null -eq $pe.PEHeaders.CorHeader) { throw "DLL has no managed PE metadata: $id/$path" }
-                $metadata = [Reflection.Metadata.PEReaderExtensions]::GetMetadataReader($pe)
-                $expectedName = [IO.Path]::GetFileNameWithoutExtension($path)
-                if (-not $metadata.IsAssembly -or $metadata.GetString($metadata.GetAssemblyDefinition().Name) -cne $expectedName) { throw "Approved DLL assembly identity differs: $id/$path" }
+                if ($nativeTink) {
+                    if (-not $pe.PEHeaders.IsDll -or $pe.PEHeaders.CoffHeader.Machine -ne [Reflection.PortableExecutable.Machine]::Amd64 -or
+                        $null -eq $pe.PEHeaders.PEHeader -or $pe.PEHeaders.PEHeader.Magic -ne [Reflection.PortableExecutable.PEMagic]::PE32Plus -or
+                        $pe.HasMetadata -or $null -ne $pe.PEHeaders.CorHeader) { throw "Tink native DLL must be a Win64-only native PE: $id/$path" }
+                    if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ine '963ba62687c2f895649923138083b78acff7bba470ce92ba90228c27e9a46f5c') {
+                        throw "Tink native DLL byte identity differs: $id/$path"
+                    }
+                    if (-not $Contents.ContainsKey($path + '.meta') -or
+                        [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Contents[$path + '.meta'])) -ine '66631371d78c62e2d09347f070ad5fc5c365fa390b0e0a3bcf12e37bec446baf') {
+                        throw "Tink native plugin importer differs from the approved Win64-only settings: $id/$path"
+                    }
+                } else {
+                    if (-not $pe.HasMetadata -or $null -eq $pe.PEHeaders.CorHeader) { throw "DLL has no managed PE metadata: $id/$path" }
+                    $metadata = [Reflection.Metadata.PEReaderExtensions]::GetMetadataReader($pe)
+                    $expectedName = [IO.Path]::GetFileNameWithoutExtension($path)
+                    if (-not $metadata.IsAssembly -or $metadata.GetString($metadata.GetAssemblyDefinition().Name) -cne $expectedName) { throw "Approved DLL assembly identity differs: $id/$path" }
+                }
             }
             finally { $pe.Dispose(); $stream.Dispose() }
         }
@@ -203,8 +217,9 @@ function Get-YLRegistryAssemblySources {
         if ($actual['name'] -isnot [string] -or $actual['name'] -cne $expected['name']) { throw "Catalog assembly identity mismatch: $path" }
         $platforms = @(); if ($actual.Contains('includePlatforms')) { $platforms = $actual['includePlatforms'] }
         $excluded = @(); if ($actual.Contains('excludePlatforms')) { $excluded = $actual['excludePlatforms'] }
+        $win64 = $Definition['id'] -ceq 'com.kano.ylframework.resource-encryption' -and $path -ceq 'Runtime/YLFramework.Resource.Encryption.asmdef'
         if ($platforms -isnot [array] -or $excluded -isnot [array] -or $excluded.Count -ne 0 -or
-            ($expected['player'] -and $platforms.Count -ne 0) -or
+            ($expected['player'] -and $(if ($win64) { $platforms.Count -ne 2 -or $platforms[0] -cne 'Editor' -or $platforms[1] -cne 'WindowsStandalone64' } else { $platforms.Count -ne 0 })) -or
             (-not $expected['player'] -and ($platforms.Count -ne 1 -or $platforms[0] -cne 'Editor'))) { throw "Catalog Editor/Player assembly policy differs: $path" }
         $constraints = @(); if ($actual.Contains('defineConstraints')) { $constraints = $actual['defineConstraints'] }
         $versionDefines = @(); if ($actual.Contains('versionDefines')) { $versionDefines = $actual['versionDefines'] }

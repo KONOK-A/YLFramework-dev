@@ -11,7 +11,7 @@ YLFramework 希望减少游戏项目中重复搭建基础设施的工作：小�
 | 基础机制 | 事件与订阅、对象池、计时、依赖注入、数据绑定、协程与更新桥接 |
 | 业务与表现 | Module / MVC、View / Panel、UI 根与输入协调、组合动作、音频播放 |
 | 资源管理 | 资产与场景租约、AssetBundle 构建、内置部署、远端更新 |
-| 选装功能 | 配置数据、本地化、存档、状态机、二维移动与检测、玩法系统、红点、Excel、HybridCLR |
+| 选装功能 | 配置数据、本地化、存档、状态机、二维移动与检测、玩法系统、红点、Excel、HybridCLR、远端资源加密 |
 | 编辑器工具 | 配置编辑、资源工作台、代码生成、帮助索引与使用诊断 |
 
 主包与选装包的用途及依赖见[文档导航](PackageSources/com.kano.ylframework/Documentation~/README.md)。

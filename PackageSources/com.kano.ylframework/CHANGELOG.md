@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 新增选装包 `com.kano.ylframework.resource-encryption`，支持 Windows x64 Release Player 对单个远端 Addressables 组的加密交付。主包不依赖它，安装扩展也不会自动启用加密。
+
 - 模块功能改动的验收要求补充真实 IL2CPP Player 构建和运行，不再仅凭 Editor/Mono/工具 CI 结项。新增独立 `ActionTimingIL2CPP` 门禁，复用 PlayerNative：Windows x64 Release、Medium 裁剪、双进程公共 API 与生命周期回归；探针隔离在产品编译图之外，不新增运行时 API 或可选 SDK 依赖。
 
 - Action 新增 `StartHandle` / `StartHandleCurrentScene` / `StartHandleGlobal`，复用现有 ActionHandle 与执行租约，匿名安全控制不再要求名字；原 Start 和命名 API、有效输入的时钟/首步/重复语义保留。

@@ -7,7 +7,17 @@ param(
     [string] $Unity = $env:YL_TEST_UNITY,
     [string] $WorkspaceRoot = $env:YL_TEST_WORKSPACE,
     [switch] $Graphics,
-    [switch] $ScopeCloseBenchmark
+    [switch] $ScopeCloseBenchmark,
+    [switch] $EncryptedRemoteGroup,
+    [switch] $StockSizeControl,
+    [switch] $VerifiedSizeSnapshot,
+    [ValidateSet('Stock', 'Separated', IgnoreCase = $false)][string] $HeldDownload,
+    [ValidateSet('Positive','PlainBundleCopy','PlayerCopy','WrongRoute','Disabled','Performance','OutputOverlap','SourceChanged','SyncWait','GuardReview','OfficialOutput','PublishChanged', IgnoreCase = $false)]
+    [string] $EncryptionCase = 'Positive',
+    [string] $EncryptionPackReceipt,
+    [string] $ReleaseManifest,
+    [string] $SourceCommit,
+    [ValidateSet('IL2CPP','Mono', IgnoreCase = $false)][string] $Backend = 'IL2CPP'
 )
 
 Set-StrictMode -Version 3.0
@@ -15,6 +25,22 @@ $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'Resource Addressables Player acceptance requires Windows.' }
 if ($ScopeCloseBenchmark -and ($BuildFlavor -cne 'Release' -or -not $Graphics)) {
     throw 'Scope close measurement requires -BuildFlavor Release -Graphics.'
+}
+if ($EncryptedRemoteGroup -and ($BuildFlavor -cne 'Release' -or -not $Graphics -or $ScopeCloseBenchmark)) {
+    throw 'The isolated encryption experiment requires -BuildFlavor Release -Graphics without -ScopeCloseBenchmark.'
+}
+if ($VerifiedSizeSnapshot -and -not $EncryptedRemoteGroup) { throw '-VerifiedSizeSnapshot requires -EncryptedRemoteGroup.' }
+if ($HeldDownload -and (-not $EncryptedRemoteGroup -or $VerifiedSizeSnapshot)) { throw '-HeldDownload is a separate -EncryptedRemoteGroup workload.' }
+if ($StockSizeControl -and (-not $EncryptedRemoteGroup -or $HeldDownload -or $VerifiedSizeSnapshot)) { throw '-StockSizeControl is a separate -EncryptedRemoteGroup workload.' }
+$fixedRelease = $PSBoundParameters.ContainsKey('ReleaseManifest') -or $PSBoundParameters.ContainsKey('SourceCommit')
+if ($fixedRelease -and ([string]::IsNullOrWhiteSpace($ReleaseManifest) -or [string]::IsNullOrWhiteSpace($SourceCommit) -or $PSBoundParameters.ContainsKey('EncryptionPackReceipt'))) {
+    throw '-ReleaseManifest and -SourceCommit must be supplied together, without -EncryptionPackReceipt.'
+}
+if (($PSBoundParameters.ContainsKey('EncryptionCase') -or $EncryptionPackReceipt -or $fixedRelease) -and (-not $EncryptedRemoteGroup -or $HeldDownload -or $VerifiedSizeSnapshot -or $StockSizeControl)) {
+    throw 'Select exactly one encrypted Player workload.'
+}
+if ($Backend -ceq 'Mono' -and (-not $EncryptedRemoteGroup -or $HeldDownload -or $VerifiedSizeSnapshot -or $StockSizeControl)) {
+    throw '-Backend Mono requires the frozen encrypted Player workload.'
 }
 
 . (Join-Path $PSScriptRoot 'UnityHost.ps1')
@@ -28,6 +54,13 @@ if ($root.StartsWith($repository + '\', [StringComparison]::OrdinalIgnoreCase)) 
 $Unity = Get-YLTestPath -Path $Unity -ReadOnly
 if ([IO.Path]::GetFileName($Unity) -ine 'Unity.exe' -or -not [IO.File]::Exists($Unity)) {
     throw 'Provide the installed Unity.exe via -Unity or YL_TEST_UNITY.'
+}
+if ($EncryptedRemoteGroup -and -not ($HeldDownload -or $VerifiedSizeSnapshot -or $StockSizeControl)) {
+    $artifactArguments = if ($fixedRelease) { @{ ReleaseManifest = $ReleaseManifest; SourceCommit = $SourceCommit } }
+        elseif ($EncryptionPackReceipt) { @{ PackReceipt = $EncryptionPackReceipt } } else { @{} }
+    & (Join-Path $PSScriptRoot 'ResourceEncryption/Invoke-FrozenDelivery.ps1') -Profile $Profile -Unity $Unity -WorkspaceRoot $root `
+        -Mode $EncryptionCase -Backend $Backend @artifactArguments
+    return
 }
 $configurationPath = 'Tools/Testing/TestSuites.json'
 $configurationFile = Get-YLTestPath (Join-Path $repository $configurationPath)
@@ -59,9 +92,20 @@ $toolInputs = @($configurationPath, 'Tools/Testing/UnityHost.ps1', 'Tools/Testin
     'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Results.ps1', 'Tools/Testing/Common/Packages.ps1',
     'Tools/Testing/Common/ResourceAddressablesPlayer.ps1', 'Tools/Testing/ResourceAddressablesContentServer.cs',
     'Tools/Packaging/PackageCatalog.json', [IO.Path]::GetRelativePath($repository, $PSCommandPath).Replace('\', '/')) + $packageInputs
+$acceptance = 'Assets/Tests/YLFramework/Acceptance/ResourceAddressables'
+$projection["$acceptance/ResourceAddressablesSizeProbe.cs"] = 'Assets/Acceptance/Runtime/ResourceAddressablesSizeProbe.cs'
+$projection['Tools/Testing/P0SizePackedBuilder.cs'] = 'Assets/Acceptance/Editor/P0SizePackedBuilder.cs'
+$projection["$acceptance/ResourceAddressablesHeldProbe.cs"] = 'Assets/Acceptance/Runtime/ResourceAddressablesHeldProbe.cs'
+$projection["$acceptance/P0HeldBundleProvider.cs"] = 'Assets/Acceptance/Runtime/P0HeldBundleProvider.cs'
+$projection["$acceptance/P0NativeInterop.cs"] = 'Assets/Acceptance/Runtime/P0NativeInterop.cs'
+$toolInputs += 'Tools/Testing/Common/ResourceAddressablesSizeExperiment.ps1'
+$toolInputs += 'Tools/Testing/Common/ResourceAddressablesHeldExperiment.ps1'
+. (Join-Path $PSScriptRoot 'Common/ResourceAddressablesSizeExperiment.ps1')
+. (Join-Path $PSScriptRoot 'Common/ResourceAddressablesHeldExperiment.ps1')
 $il2cpp = Join-Path ([IO.Path]::GetDirectoryName($Unity)) 'Data/il2cpp/build/deploy/il2cpp.exe'
 if (-not [IO.File]::Exists($il2cpp)) { throw 'The selected Editor is missing its IL2CPP toolchain.' }
 $identityProfile = "ResourceAA-$($editor.productVersion)-AA$addressables-Win64-IL2CPP-Medium-$BuildFlavor-Graphics$([bool]$Graphics)-ScopeClose$([bool]$ScopeCloseBenchmark)"
+if ($EncryptedRemoteGroup) { $identityProfile += $(if ($HeldDownload) { "-P0B-$HeldDownload" } elseif ($VerifiedSizeSnapshot) { '-P0A-Verified' } else { '-P0A-Stock' }) }
 
 function Get-ResourcePlayerInputIdentity {
     $packagePaths = @(Get-YLTestTreeFiles $package.root | ForEach-Object { [IO.Path]::GetRelativePath($repository, $_).Replace('\', '/') })
@@ -124,6 +168,9 @@ try {
         profile = $Profile; unity = $Unity; unityProductVersion = $editor.productVersion; powerShell = $PSVersionTable.PSVersion.ToString()
         backend = 'IL2CPP'; target = 'StandaloneWindows64'; stripping = 'Medium'; buildFlavor = $BuildFlavor
         graphics = [bool]$Graphics; scopeCloseBenchmark = [bool]$ScopeCloseBenchmark
+        encryptedRemoteGroup = [bool]$EncryptedRemoteGroup
+        verifiedSizeSnapshot = [bool]$VerifiedSizeSnapshot
+        heldDownload = $HeldDownload
         inputHash = $identity.sha256; inputIdentity = Join-Path $run.path 'input-identity.json'
         buildReport = Join-Path $run.path 'build.json'; runtimeSummary = Join-Path $run.path 'player-summary.json'
         addressables = $null; build = $null; runtime = $null
@@ -147,6 +194,9 @@ try {
         resultRoot = $run.path; output = $buildReport; unityVersion = $editor.version; addressablesVersion = $addressables
         backend = 'IL2CPP'; stripping = 'Medium'; buildFlavor = $BuildFlavor
         graphics = [bool]$Graphics; scopeCloseBenchmark = [bool]$ScopeCloseBenchmark
+        encryptedRemoteGroup = [bool]$EncryptedRemoteGroup
+        verifiedSizeSnapshot = [bool]$VerifiedSizeSnapshot
+        heldDownload = $HeldDownload
     })
     $requestSha256 = (Get-FileHash -LiteralPath $request -Algorithm SHA256).Hash.ToLowerInvariant()
     $start = [Diagnostics.ProcessStartInfo]::new($Unity)
@@ -177,7 +227,13 @@ try {
         BuildProcess = $summary.build; BuildReport = $buildReport; UnityVersion = $editor.version; AddressablesVersion = $addressables
         BuildFlavor = $BuildFlavor
     }
-    $summary.runtime = Invoke-YLResourceAddressablesPlayerRuns @runs
+    if ($HeldDownload) {
+        $summary.runtime = Invoke-YLResourceAddressablesHeldExperiment @runs -Mode $HeldDownload
+    } elseif ($EncryptedRemoteGroup) {
+        $summary.runtime = Invoke-YLResourceAddressablesSizeExperiment @runs
+    } else {
+        $summary.runtime = Invoke-YLResourceAddressablesPlayerRuns @runs
+    }
     if ((Get-ResourcePlayerInputIdentity).sha256 -cne $identity.sha256) { throw 'Source or toolchain inputs drifted during the Player runs.' }
     $summary.status = 'Passed'
 } catch {

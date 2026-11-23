@@ -28,6 +28,15 @@
       "samples": ["Samples~/ResourceStartup"]
     },
     {
+      "id": "com.kano.ylframework.resource-encryption",
+      "assemblies": [
+        { "name": "YLFramework.Resource.Encryption", "path": "Runtime/YLFramework.Resource.Encryption.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
+        { "name": "YLFramework.Resource.Encryption.Editor", "path": "Editor/YLFramework.Resource.Encryption.Editor.asmdef", "player": false, "defineConstraints": [], "versionDefines": [] }
+      ],
+      "requiredFiles": ["Runtime/Plugins/Win64/ylresource_tink.dll", "Runtime/Plugins/Win64/ylresource_tink.dll.meta", "Runtime/EncryptedDeliverySession.cs", "Editor/EncryptedBundleExporter.cs", "Documentation~/Tink-LICENSE.txt", "Documentation~/BoringSSL-LICENSE.txt", "Documentation~/Abseil-LICENSE.txt", "Documentation~/NativeBackend.json"],
+      "samples": []
+    },
+    {
       "id": "com.kano.ylframework.data-assets",
       "assemblies": [
         { "name": "YLFramework.DataAssets", "path": "Runtime/YLFramework.DataAssets.asmdef", "player": true, "defineConstraints": [], "versionDefines": [] },
