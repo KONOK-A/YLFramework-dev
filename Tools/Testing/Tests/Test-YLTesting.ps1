@@ -1037,12 +1037,15 @@ try {
                 $null = New-RotationFixture $legacy 'Passed' 1 $key
                 $report = Join-Path $older.path 'summary.json'
                 $before = [IO.File]::ReadAllText($report)
-                $output = & $pwsh @arguments -WorkspaceRoot $legacy.root -Apply 2>&1
-                $code = $LASTEXITCODE
-                $summary = ($output | Where-Object { $_ -is [string] }) -join "`n" | ConvertFrom-Json -DateKind String
-                if ($code -ne 2 -or $summary.status -cne 'PrerequisiteNotMet' -or $summary.reason -notmatch $case.reason -or
-                    -not [IO.File]::Exists($report) -or [IO.File]::ReadAllText($report) -cne $before) {
-                    "Clean accepted or changed legacy $($case.reason) output (exit $code)."
+                foreach ($apply in $false, $true) {
+                    $modeArguments = @(); if ($apply) { $modeArguments += '-Apply' }
+                    $output = & $pwsh @arguments -WorkspaceRoot $legacy.root @modeArguments 2>&1
+                    $code = $LASTEXITCODE
+                    $summary = ($output | Where-Object { $_ -is [string] }) -join "`n" | ConvertFrom-Json -DateKind String
+                    if ($code -ne 2 -or $summary.status -cne 'PrerequisiteNotMet' -or $summary.reason -notmatch $case.reason -or
+                        -not [IO.File]::Exists($report) -or [IO.File]::ReadAllText($report) -cne $before) {
+                        "Clean (Apply=$apply) accepted or changed legacy $($case.reason) output (exit $code)."
+                    }
                 }
             })
 

@@ -176,8 +176,9 @@ try {
         $definitions = @($configuration.modules | Where-Object { $_.name -ceq $Module })
         if ($definitions.Count -ne 1 -or $Suite -cnotin $definitions[0].suites) { throw "No defined $Suite selection for module $Module." }
         $definition = $definitions[0]
-        $root = if ($Action -ceq 'Clean') { (Get-YLTestWorkspacePaths -WorkspaceRoot $WorkspaceRoot -Repository $repository).root }
-            else { Get-YLTestPath $WorkspaceRoot }
+        $root = if ($Action -ceq 'Clean') {
+            (Get-YLTestWorkspacePaths -WorkspaceRoot $WorkspaceRoot -Repository $repository).root
+        } else { Get-YLTestPath $WorkspaceRoot }
         $summary.workspace = $root
         if ($Action -ceq 'Clean') {
             $rows = [Collections.Generic.List[object]]::new()

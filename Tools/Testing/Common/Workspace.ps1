@@ -95,7 +95,7 @@ function Get-YLTestWorkspacePaths {
     param([string] $WorkspaceRoot, [string] $Repository)
     $root = Get-YLTestPath $WorkspaceRoot
     $Repository = Get-YLTestPath $Repository
-    if ($root.Length -le 3 -or $root -ieq $Repository -or $root.StartsWith(($Repository.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase) -or
+    if ($root.Length -le 3 -or $root -ieq $Repository -or $root.StartsWith($Repository + '\', [StringComparison]::OrdinalIgnoreCase) -or
         $Repository.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) {
         throw 'A testing workspace must be outside the source repository and cannot be its ancestor or a drive root.'
     }
@@ -197,16 +197,20 @@ function Get-YLTestTreeFiles {
         $current = $pending.Pop()
         $attributes = [IO.File]::GetAttributes($current)
         if ($attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Linked cleanup entry is refused: $current" }
-        if (($ForCleanup -or $ProtectNested) -and $current -ine $Path) {
+        if ($ProtectNested -and $current -ine $Path) {
             $leaf = [IO.Path]::GetFileName($current)
-            if ($leaf -ieq '.yl-workspace.json') { throw "Protected nested workspace in cleanup target: $current" }
-            if ($ProtectNested -and ($leaf -in '.pinned','.git' -or
-                ($leaf -in '.yl-owner.json','.lease' -and [IO.Path]::GetDirectoryName($current) -ine $Path))) {
+            if ($leaf -in '.pinned','.git' -or
+                ($leaf -in '.yl-owner.json','.lease' -and [IO.Path]::GetDirectoryName($current) -ine $Path)) {
                 throw "Protected nested evidence in one-shot host: $current"
             }
         }
         if ($attributes -band [IO.FileAttributes]::Directory) {
-            foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($current)) { $pending.Push($entry) }
+            foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($current)) {
+                if (($ForCleanup -or $ProtectNested) -and [IO.Path]::GetFileName($entry) -ieq '.yl-workspace.json') {
+                    throw "Protected nested workspace in cleanup target: $entry"
+                }
+                $pending.Push($entry)
+            }
         } else { $current }
     }
 }
@@ -234,6 +238,7 @@ function Remove-YLTestDirectory {
             catch [IO.IOException] { throw "Output file is in use: $file" }
         }
         $remove = $Apply -and $PSCmdlet.ShouldProcess($Path, 'Remove owned test output')
+        # Recheck the tree after a potential confirmation prompt.
         $null = @(Get-YLTestTreeFiles $Path -ForCleanup -ProtectNested:([bool]$ExpectedId))
         if ([IO.Path]::Exists($pin)) { throw "Pinned output is protected: $Path" }
         if ($remove) {
