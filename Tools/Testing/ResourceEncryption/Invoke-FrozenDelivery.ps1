@@ -179,10 +179,11 @@ try {
         } elseif ($Mode -ceq 'PublishChanged') {
             if ($built.status -cne 'Rejected' -or $built.error -cnotmatch 'Staged delivery inventory' -or -not $built.stagedChanged -or
                 [IO.Directory]::Exists((Join-Path $hostRecord.path 'Delivery')) -or
-                [IO.File]::Exists((Join-Path $hostRecord.path 'P/P_Data/StreamingAssets/aa/yl-encrypted-bundles.json'))) { throw 'Changed publication became eligible or left the Player description behind.' }
+                [IO.Directory]::Exists((Join-Path $hostRecord.path 'P'))) { throw 'Changed publication exposed a final Player or release.' }
         } elseif ($Mode -ceq 'SourceChanged') {
             if ($built.status -cne 'Rejected' -or $built.error -cnotmatch 'Audited plaintext Bundle changed' -or -not $built.sameLengthReplacement -or -not $built.opaqueLayoutRejected -or
-                [IO.Directory]::Exists((Join-Path $hostRecord.path 'Delivery'))) { throw 'Same-length plaintext drift after the audit was not refused.' }
+                [IO.Directory]::Exists((Join-Path $hostRecord.path 'Delivery')) -or
+                [IO.Directory]::Exists((Join-Path $hostRecord.path 'P'))) { throw 'Same-length plaintext drift exposed a final Player or release.' }
         } elseif ($Mode -ceq 'OutputOverlap') {
             if ($built.status -cne 'Rejected' -or $built.error -cnotmatch 'Ordinary Bundle build path overlaps' -or
                 [IO.Directory]::Exists((Join-Path $hostRecord.path 'Delivery')) -or [IO.Directory]::Exists((Join-Path $hostRecord.path 'Private'))) {
@@ -194,10 +195,13 @@ try {
                 $built.error -cnotmatch 'protected bundle protected_' -or $built.error -cnotmatch $plainPlacement) {
                 throw 'The audit did not reject the actual duplicate by identity.'
             }
-            if ([IO.Directory]::Exists((Join-Path $hostRecord.path 'Delivery'))) { throw 'Audit rejection must not produce a publishable result.' }
+            if ([IO.Directory]::Exists((Join-Path $hostRecord.path 'Delivery')) -or
+                [IO.Directory]::Exists((Join-Path $hostRecord.path 'P'))) { throw 'Audit rejection exposed a final Player or release.' }
         } else {
             if ($built.status -cne 'Built' -or $built.pluginSha256 -cne $summary.pluginSha256) { throw 'Missing matching Win64 native artifact.' }
-            if ($Mode -ceq 'Positive' -and -not $built.preflightIsWriteFree) { throw 'Missing successful write-free preflight regression.' }
+            if ($Mode -ceq 'Positive' -and (-not $built.preflightIsWriteFree -or -not $built.excludedStaleAddressables)) {
+                throw 'Missing write-free preflight or stale Addressables exclusion evidence.'
+            }
             $playerRoot = Join-Path $hostRecord.path 'P'
             $exe = Join-Path $playerRoot 'P.exe'
             $playerData = Join-Path $playerRoot 'P_Data/StreamingAssets/aa'
@@ -216,7 +220,7 @@ try {
                 GuardReview { @('cold','post-start-guard') }
                 Performance { Get-YLFrozenPerformanceScenarios }
                 Positive { @('cold','online-warm','head-injection','offline-warm','no-cache-offline','shadow','missing-key','wrong-key','external-owner',
-                    'held-download','provider-shadow','key-return','post-start-guard','tamper','repair','fault-abort','fault-recovery') }
+                    'held-download','held-load','provider-shadow','key-return','post-start-guard','tamper','repair','tamper-prefetched','fault-abort','fault-recovery') }
             })
             if ($scenarios.Count -eq 0) { throw 'A Player workload requires at least one actual Player round.' }
             $processed = 0
@@ -232,8 +236,9 @@ try {
                 }
                 if ($scenario -ceq 'shadow') { $server.Resume() }
                 if ($scenario -ceq 'fault-abort') { $server.InterruptNextProtectedTransfer() }
-                if ($scenario -ceq 'held-download') {
-                    $held = Get-YLTestPath (Join-Path $playerRoot 'HeldGet')
+                if ($scenario -cin @('held-download','held-load')) {
+                    $gateName = if ($scenario -ceq 'held-download') { 'HeldGet' } else { 'HeldLoad' }
+                    $held = Get-YLTestPath (Join-Path $playerRoot $gateName)
                     if ([IO.Path]::Exists($held)) { throw 'The held download requires a fresh gate directory.' }
                     $null = [IO.Directory]::CreateDirectory($held)
                     $server.HoldNextProtectedTransfer($held)
@@ -282,6 +287,22 @@ try {
                     -not $observed.rejectedAfterDrift -or -not $observed.leftForeignRegistration -or -not $observed.reopenedCacheLock)) {
                     throw 'Candidate order or drift cleanup evidence is incomplete.'
                 }
+                if ($scenario -cin @('external-owner','key-return') -and (-not $observed.closeWaitedForUnload -or -not $observed.sharedClose -or
+                    -not $observed.reenteredCloseDuringKeyReturn -or -not $observed.reopenedCacheLock)) { throw 'Shared session close and native drain evidence is incomplete.' }
+                if ($scenario -ceq 'cold' -and ($observed.completedTransferBytes -ne $built.protectedBytes -or -not $observed.refusedCloseWithPrefetchOwner -or
+                    ($Mode -ceq 'Positive' -and (-not $observed.stockDefaultsVerified -or -not $observed.mixedPrefetchVerified)))) {
+                    throw 'Missing completed progress, prefetch ownership, stock defaults or mixed prefetch evidence.'
+                }
+                if ($scenario -ceq 'tamper-prefetched') {
+                    if (-not $observed.rejectedBeforeCreate -or -not $observed.invalidatedSize -or -not $observed.retriedWithPrefetchHeld -or
+                        [string]::IsNullOrEmpty($observed.retryAfterUtc) -or $requests.Count -ne 2 -or @($requests | Where-Object {
+                            $_.method -cne 'GET' -or $_.target -cne ('/r/' + $built.protectedPaths[0]) -or $_.status -ne 200 -or
+                            $_.bytes -ne $built.protectedBytes -or -not $_.completed
+                        }).Count -ne 0 -or [DateTimeOffset]$requests[0].at -ge [DateTimeOffset]$observed.retryAfterUtc -or
+                        [DateTimeOffset]$requests[1].at -lt [DateTimeOffset]$observed.retryAfterUtc) {
+                        throw 'Corruption must fail without a transfer until the explicit retry, even with an older prefetch held.'
+                    }
+                }
                 if ($scenario -cin @('online-warm','shadow','wrong-route','missing-key','wrong-key','external-owner','disabled','provider-shadow','key-return','post-start-guard','tamper') -or
                     $scenario -clike 'performance-*-warm-*') {
                     [YLFramework.Testing.FrozenLoopback]::RequireQuiet([YLFramework.Testing.FrozenLoopback+Request[]]$requests)
@@ -302,7 +323,7 @@ try {
                         throw 'The paired performance inputs did not arrive as two exact owned transfers.'
                     }
                 }
-                if ($scenario -cin @('cold','held-download','repair','fault-recovery','sync-wait')) {
+                if ($scenario -cin @('cold','held-download','held-load','repair','fault-recovery','sync-wait')) {
                     $protected = @($requests | Where-Object { $_.target -clike '/r/*' })
                     $ordinary = @($requests | Where-Object { $_.target -clike '/o/*' })
                     if ($protected.Count -ne 1 -or $protected[0].method -cne 'GET' -or $protected[0].path -cne $built.protectedPaths[0] -or
@@ -312,9 +333,14 @@ try {
                     }
                     if ($scenario -ceq 'held-download' -and (-not $protected[0].held -or -not $observed.observerStartedTransfer -or -not $observed.loadedWhileTransferHeld -or
                         -not $observed.observerCanceledWhileTransferHeld -or $observed.downloadReleasedBeforeAsset -isnot [bool] -or
-                        -not $observed.downloadReleasedBeforeAsset -or -not $observed.sentinel -or $observed.creates -ne 1 -or $observed.unloads -ne 1)) {
+                        -not $observed.downloadReleasedBeforeAsset -or -not $observed.sentinel -or $observed.creates -ne 1 -or $observed.unloads -ne 1 -or
+                        $observed.heldTransferBytes -le 0 -or $observed.heldTransferBytes -ge $built.protectedBytes -or
+                        $observed.completedTransferBytes -ne $built.protectedBytes)) {
                         throw 'In-flight sharing, per-observer cancellation or release-order evidence is incomplete.'
                     }
+                    if ($scenario -cin @('held-download','held-load') -and (-not $protected[0].held -or $observed.heldLoadBytes -le 0 -or
+                        $observed.heldLoadBytes -ge $built.protectedBytes -or $observed.completedLoadBytes -ne $built.protectedBytes -or
+                        ($scenario -ceq 'held-load' -and -not $observed.singleLoadAttempt))) { throw 'Asset load did not report one exact partial and completed transfer.' }
                 }
             }
             $server.Pause()

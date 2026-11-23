@@ -150,8 +150,11 @@ namespace YLFramework.Resource.Encryption
         {
             if (!CreateDirectory(path, IntPtr.Zero))
                 throw Failure("Create fresh encrypted delivery directory");
-            return OpenChecked(path, ListDirectory | DeleteAccess, DirectoryShare, OpenExisting, directory: true);
+            return OpenPublicationDirectory(path);
         }
+
+        internal static SafeFileHandle OpenPublicationDirectory(string path) =>
+            OpenChecked(LocalAbsolute(path), ListDirectory | DeleteAccess, DirectoryShare, OpenExisting, directory: true);
 
         internal static void Publish(FileStream temporary, string destination) => Publish(temporary.SafeFileHandle, destination);
 

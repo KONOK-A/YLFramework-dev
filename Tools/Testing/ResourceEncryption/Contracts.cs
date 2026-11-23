@@ -193,22 +193,38 @@ public static class YLResourceEncryptionContracts
         byte[] cipher2 = File.ReadAllBytes(second.Path);
         Check(cache.GetRemainingBytes(a) == a.CipherLength, "cold snapshot is exact cipher length");
         using var stopObserver = new CancellationTokenSource();
-        var request1 = cache.EnsureAsync(a, stopObserver.Token);
-        var request2 = cache.EnsureAsync(a);
+        EncryptedBundleCache.TransferProgress canceledProgress = null;
+        EncryptedBundleCache.TransferProgress liveProgress = null;
+        var request1 = cache.EnsureAsync(a, stopObserver.Token, attempt => canceledProgress = attempt);
+        var request2 = cache.EnsureAsync(a, reportProgress: attempt => liveProgress = attempt);
+        Check(ReferenceEquals(canceledProgress, liveProgress) && liveProgress.TotalBytes == a.CipherLength && liveProgress.DownloadedBytes == 0,
+            "overlapping observers receive one cold attempt and its exact byte budget");
         using (var client = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(10)))
         {
             NetworkStream channel = client.GetStream();
             await ReadHeaders(channel);
             stopObserver.Cancel();
             await ThrowsAsync<OperationCanceledException>(() => request1, "cancelled observer detaches from shared download");
-            if (File.Exists(file)) throw new Exception("Committed path visible before verification.");
-            await Respond(channel, "200 OK", cipher, cipher.Length);
+            const int PrefixBytes = 250;
+            await Respond(channel, "200 OK", cipher.Take(PrefixBytes).ToArray(), cipher.Length);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (liveProgress.DownloadedBytes < PrefixBytes)
+                await Task.Delay(10, deadline.Token);
+            Check(liveProgress.DownloadedBytes == PrefixBytes && liveProgress.TotalBytes == a.CipherLength && !request2.IsCompleted && !File.Exists(file),
+                "held ciphertext reports only the received prefix, without publishing or completing");
+            await channel.WriteAsync(cipher.AsMemory(PrefixBytes));
         }
         await request2;
         Check(!listener.Pending() && cache.GetRemainingBytes(a) == 0 && HashFile(file) == a.CipherSha256 && !Directory.EnumerateFiles(cacheRoot, "*.part").Any(), "one complete transfer is published atomically");
+        Check(liveProgress.DownloadedBytes == a.CipherLength && liveProgress.TotalBytes == a.CipherLength,
+            "a verified physical transfer preserves its final byte counts");
         Check(cache.VerifiedCipherHashBytes == a.CipherLength,
             "measure the actual managed cipher SHA pass on download commit");
-        await ThrowsAsync<EncryptedBundleKeyUnavailableException>(() => cache.OpenAuthenticatedAsync(a, k2Only), "cached K1 with only K2 refuses without GET");
+        EncryptedBundleCache.TransferProgress warmProgress = null;
+        await ThrowsAsync<EncryptedBundleKeyUnavailableException>(() => cache.OpenAuthenticatedAsync(a, k2Only, reportProgress: attempt => warmProgress = attempt),
+            "cached K1 with only K2 refuses without GET");
+        Check(warmProgress.TotalBytes == 0 && warmProgress.DownloadedBytes == 0,
+            "warm revalidation and failed authentication do not report disk work as downloaded bytes");
         Check(cache.GetRemainingBytes(a) == 0 && File.Exists(file) && !listener.Pending(), "missing K1 does not invalidate bytes or trigger transfer");
         var load2 = cache.EnsureAsync(b);
         await Serve(listener, "200 OK", cipher2, cipher2.Length);
@@ -224,7 +240,11 @@ public static class YLResourceEncryptionContracts
         int opens = keys.Opens;
         await ThrowsAsync<EncryptedBundleIntegrityException>(() => cache.OpenAuthenticatedAsync(a, keys), "same-length replacement refused before key access");
         Check(cache.GetRemainingBytes(a) == a.CipherLength && keys.Opens == opens && !listener.Pending(), "corruption invalidates snapshot without retry or key access");
-        var retry = cache.EnsureAsync(a);
+        EncryptedBundleCache.TransferProgress retryProgress = null;
+        var retry = cache.EnsureAsync(a, reportProgress: attempt => retryProgress = attempt);
+        Check(!ReferenceEquals(liveProgress, retryProgress) && liveProgress.DownloadedBytes == a.CipherLength &&
+            retryProgress.TotalBytes == a.CipherLength && retryProgress.DownloadedBytes == 0,
+            "an explicit repair starts a fresh attempt without rewriting a retained observer's progress");
         await Serve(listener, "200 OK", cipher, cipher.Length);
         await retry;
         cache.Dispose();
@@ -235,9 +255,12 @@ public static class YLResourceEncryptionContracts
         Check(restarted.GetRemainingBytes(a) == a.CipherLength && restarted.GetRemainingBytes(b) == 0 && !File.Exists(abandoned), "restart re-hashes files and recovers owned abandoned parts");
         Check(restarted.VerifiedCipherHashBytes == b.CipherLength, "track separately the successful full hashes during warm cache scan");
         await ThrowsAsync<EncryptedBundleIntegrityException>(() => restarted.EnsureAsync(a), "warm corruption fails this attempt");
-        var truncated = restarted.EnsureAsync(a);
+        EncryptedBundleCache.TransferProgress truncatedProgress = null;
+        var truncated = restarted.EnsureAsync(a, reportProgress: attempt => truncatedProgress = attempt);
         await Serve(listener, "200 OK", cipher.Take(250).ToArray(), cipher.Length);
         await ThrowsAsync<IOException>(() => truncated, "interrupted body refused");
+        Check(truncatedProgress.TotalBytes == a.CipherLength && truncatedProgress.DownloadedBytes == 250,
+            "a truncated transfer never advances download bytes to the advertised total");
         var redirected = restarted.EnsureAsync(a);
         await Serve(listener, "302 Found", Array.Empty<byte>(), 0, "Location: http://127.0.0.1:1/exit\r\n");
         await ThrowsAsync<IOException>(() => redirected, "redirect refused");

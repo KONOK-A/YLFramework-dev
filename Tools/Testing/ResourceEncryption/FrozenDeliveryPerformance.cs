@@ -37,6 +37,7 @@ namespace YLFramework.Testing
         {
             public string clearSha256, cipherSha256;
             public long clearBytes, cipherBytes;
+            public long officialDownloadBytes = -1;
             public long readPlain = -1, readCipher = -1, pages = -1, payloadBufferBound = -1, engineReadPlain = -1, engineReadCipher = -1;
             public long preAuthenticationCipherBytes = -1, preAuthenticationPlainBytes = -1, unityReadBufferBytes = -1;
         }
@@ -137,6 +138,10 @@ namespace YLFramework.Testing
                 evidence.loadCipherHashBytes = session.Cache.VerifiedCipherHashBytes - evidence.startGateCipherHashBytes;
                 Require(first.Status == AsyncOperationStatus.Succeeded && second.Status == AsyncOperationStatus.Succeeded,
                     "Two protected Bundles must load concurrently: " + first.OperationException + "; " + second.OperationException);
+                evidence.bundles[0].officialDownloadBytes = CompletedDownloadBytes(first, warm ? 0 : sorted[0].CipherLength);
+                evidence.bundles[1].officialDownloadBytes = CompletedDownloadBytes(second, warm ? 0 : sorted[1].CipherLength);
+                Require(evidence.loadCipherHashBytes == 2 * sorted.Sum(bundle => bundle.CipherLength),
+                    "Each loaded Bundle must have one successful cache check or commit plus one pinned mount hash.");
                 AssertPayload(first.Result, 8 * MiB, 97);
                 AssertPayload(second.Result, 128 * MiB, 173);
                 CaptureAssetsAndCache(evidence, cache, first.Result, second.Result);
@@ -146,12 +151,13 @@ namespace YLFramework.Testing
                 _row.sentinel = true;
             }
             finally { Addressables.Release(second); Addressables.Release(first); }
-            yield return Until(() => session.Provider.Unloading == 0 && !AssetBundle.GetAllLoadedAssetBundles().Any());
             var close = session.CloseAsync();
             yield return Until(() => close.IsCompleted);
             close.GetAwaiter().GetResult();
-            Require(Directory.EnumerateFiles(cache, "*.bin").Count() == 2 && !Directory.EnumerateFiles(cache, "*.part").Any() && keys.Returns == 2 && session.Provider.Unloads == 2,
+            Require(Directory.EnumerateFiles(cache, "*.bin").Count() == 2 && !Directory.EnumerateFiles(cache, "*.part").Any() &&
+                keys.Returns == 2 && session.Provider.Unloads == 2 && session.Provider.StreamsClosed == 2 && session.Provider.Unloading == 0,
                 "Concurrent read cleanup did not leave just the expected ciphertexts.");
+            yield return Until(() => !AssetBundle.GetAllLoadedAssetBundles().Any());
             CheckKeyReturns(keys);
             Require(evidence.cacheLogicalBytesAtCompletion == sorted.Sum(bundle => bundle.CipherLength) && CacheBytes(cache) == evidence.cacheLogicalBytesAtCompletion,
                 "The dedicated cipher cache must contain only the two retained ciphertexts.");

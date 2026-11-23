@@ -26,7 +26,7 @@ namespace YLFramework.Resource.Encryption
         private readonly HashSet<string> _providerIds;
         private readonly string _providerId;
         private readonly int _thread;
-        private bool _closed;
+        private Task _closing;
 
         private EncryptedDeliverySession(EncryptedBundleDescription description, EncryptedBundleCache cache,
             IEncryptedBundleKeySource keys, EncryptedAssetBundleProvider provider, IResourceLocator[] locators)
@@ -200,7 +200,7 @@ namespace YLFramework.Resource.Encryption
 
         internal void CheckUnchanged()
         {
-            if (Environment.CurrentManagedThreadId != _thread || _closed || Addressables.InternalIdTransformFunc != _transform ||
+            if (Environment.CurrentManagedThreadId != _thread || _closing != null || Addressables.InternalIdTransformFunc != _transform ||
                 Addressables.WebRequestOverride != null || !Addressables.ResourceLocators.SequenceEqual(_locators) ||
                 !Addressables.ResourceManager.ResourceProviders.Where(candidate => _providerIds.Contains(candidate.ProviderId)).SequenceEqual(_providers))
                 throw new InvalidOperationException("The protected Addressables session must not change after startup; use a new Player and catalog.");
@@ -226,20 +226,40 @@ namespace YLFramework.Resource.Encryption
             return Cache.TryGetVerifiedPath(ResolveTransfer(location), out string path) ? path : location.InternalId;
         }
 
-        /// <summary>Close only after all direct and YL resource handles have been released. Does not unload assets owned by anyone else.</summary>
+        /// <summary>After all protected handles are released, wait for native unload and key return before closing the cipher cache.</summary>
+        /// <remarks>Call on the Unity thread. Outstanding owners or provider work are rejected; accepted calls share one terminal task.
+        /// An observed native unload failure faults the task without releasing the potentially live stream or cache.
+        /// If Unity never signals completion, the task stays pending.</remarks>
         public Task CloseAsync()
         {
             if (Environment.CurrentManagedThreadId != _thread)
                 throw new InvalidOperationException("Close encrypted delivery on the Unity thread.");
-            if (_closed)
-                return Cache.CloseAsync();
-            if (Provider.Pending != 0 || Provider.Mounted != 0 || Provider.Unloading != 0 || Provider.UnloadFailure != null)
-                throw new InvalidOperationException("Release all protected Bundle owners and wait for native unload before closing delivery.");
-            _closed = true;
-            if (Addressables.InternalIdTransformFunc == _transform)
-                Addressables.InternalIdTransformFunc = null;
-            Provider.Detach();
-            return Cache.CloseAsync();
+            if (_closing != null)
+                return _closing;
+            if (Provider.Pending != 0 || Provider.HasOwners)
+                throw new InvalidOperationException("Release all protected handles and let outstanding provider work settle before closing delivery.");
+
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _closing = completion.Task;
+            _ = FinishCloseAsync(completion);
+            return _closing;
+        }
+
+        private async Task FinishCloseAsync(TaskCompletionSource<bool> completion)
+        {
+            try
+            {
+                await Provider.DrainUnloadsAsync();
+                if (Addressables.InternalIdTransformFunc == _transform)
+                    Addressables.InternalIdTransformFunc = null;
+                Provider.Detach();
+                await Cache.CloseAsync();
+                completion.TrySetResult(true);
+            }
+            catch (Exception error)
+            {
+                completion.TrySetException(error);
+            }
         }
     }
 }

@@ -63,13 +63,15 @@ Addressables 可能回退到缓存或内置目录。远端 hash 缺失、读取�
 
 **作者构建。** 在一个远端 LZ4 Group 加入 `Encrypted Bundle Delivery` Schema，选择 `EncryptedAssetBundleProvider` 作为 **Bundle Provider**，保留官方资产 Provider、带 hash 的 Bundle 名，关闭该组的 Unity Bundle Cache。Schema 只保存 `keyId` 和按 GUID 明确允许公开的依赖，不保存钥材。保护组使用显式非场景资产；其传递依赖默认受保护。将 BuildPath 和官方内容状态指向独立的非公开暂存根，LoadPath 指向新建且不可覆盖的 HTTPS 发布子目录。禁用远端 Catalog、启动更新和随 Player 自动重建 Addressables 内容。由正式 Player 构建入口调用 `EncryptedBundleExporter.Build(...)`，传入项目设置、所选组、Player 构建参数、固定应用命名空间、私有/发布目录和来自 CI 密钥存储的 `IEncryptedBundleKeySource`。只发布审计通过的导出目录；不要上传官方明文暂存、Build Layout 或内容状态。若修改内容、密钥或关联数据，使用新发布目录并重建 Player；重发同一 URL 时只能复用完全相同的冻结产物。
 
-保留官方 `Library` / `Temp` 路径和受保护组的 `Requested Asset and Dependencies` 加载模式；普通远端组使用独立、全新的暂存目录。构建机只发布 `Build(...)` 成功返回、具有完整 `delivery.json` 且长度和摘要仍吻合的文件清单，不按目录通配上传。没有 `delivery.json` 的目录可能是失败残留，不能与 Player 配对发布。
+保留官方 `Library` / `Temp` 路径和受保护组的 `Requested Asset and Dependencies` 加载模式；普通远端组使用独立、全新的暂存目录。Unity 2022 若保留 `Built In Data` 的场景别名，`BuildPlayerOptions.scenes` 必须与启用的 Build Settings 场景顺序一致。私有暂存根和最终 Player 目录须在同一 Windows 本地卷；Player 先在私有根构建，随包只带本轮核验过的 Addressables 文件，审计后才移到最终目录。构建机只发布 `Build(...)` 成功返回、具有完整 `delivery.json` 且长度和摘要仍吻合的文件清单，不按目录通配上传。失败的私有产物仍可能含明文，不可发布；没有 `delivery.json` 的目录不能与 Player 配对发布。
 
-**应用启动。** 在 Unity 主线程、任何官方 Addressables 或 YL 消费者启动之前调用 `await EncryptedDeliverySession.StartAsync(dedicatedCipherCache, keys)`；只有它通过后才创建 `ResourceStartup`、开放业务入口。不要启用 YL 启动更新，不要注册额外 Locator、遮蔽已冻结的 Provider、设置自定义 Web 请求覆盖或替换内部地址转换。受保护资源只用异步加载，不调用 `WaitForCompletion()`。业务仍使用 `scope.LoadAsync<T>(key)`、`AcquireAsync<T>` 或官方异步句柄。关闭时先归还业务 Scope、Lease 和直接官方句柄，再等待原生卸载并关闭交付会话；YL 的 `StopAsync()` 只排空 YL 自身，不归还别人的句柄。
+**应用启动。** 在 Unity 主线程、任何官方 Addressables 或 YL 消费者启动之前调用 `await EncryptedDeliverySession.StartAsync(dedicatedCipherCache, keys)`；只有它通过后才创建 `ResourceStartup`、开放业务入口。不要启用 YL 启动更新，不要注册额外 Locator、遮蔽已冻结的 Provider、设置自定义 Web 请求覆盖或替换内部地址转换。扩展会拒绝检测到漂移后的新 Provider 操作；Addressables 可能复用已有操作而不再调用 Provider，因此应用仍须保证配置不变，发现漂移时停止发起新请求。受保护资源只用异步加载，不调用 `WaitForCompletion()`。业务仍使用 `scope.LoadAsync<T>(key)`、`AcquireAsync<T>` 或官方异步句柄。关闭时先停止提交新请求，归还业务 Scope、Lease 和直接官方句柄（含预下载），待仍在执行的请求结束，再在主线程 `await session.CloseAsync()`；它会等待已开始的原生卸载和密钥归还，不必轮询内部状态。YL 的 `StopAsync()` 只排空 YL 自身，不归还别人的句柄。
 
 官方和 YL 下载量只报告尚缺的密文字节，预下载只校验并保存密文，不访问密钥。应用需预先准备按 `keyId` 查找的本地密钥，通过 `EncryptedBundleKeyLease` 交付独立副本；`OpenReadKey` 从工作线程调用，不在此发网络请求。缺 K1 时已验证的 K1 密文仍可报零待下载，但不能加载；恢复正确 K1 无需重传。错钥报认证失败；发现缓存损坏时当前请求失败，明确重试后才重新获取。首版不自动跨版本清理私有密文目录。
 
-加密针对 CDN 副本和应用磁盘缓存，不加密 Catalog，不提供 DRM、永久离线授权、发布者签名或在线回滚。能控制客户端的人仍可取得解密能力。Mono 与 IL2CPP 使用同一个 Win64 Tink 插件和 v1 密文格式，但不能混用不同构建的 Player、Catalog 和 `delivery.json`。旧 CNG 密文和旧缓存不能直接使用；从原始资源重新导出。启用、停用或移除扩展都应重新构建配套的 Player 和内容，不能让旧 Player 回退到明文。
+加密针对 CDN 副本和应用磁盘缓存，不加密 Catalog，不提供 DRM、永久离线授权、发布者签名或在线回滚。能控制客户端的人仍可取得解密能力。Mono 与 IL2CPP 使用同一个 Win64 Tink 插件和 v1 密文格式，但不能混用不同构建的 Player、Catalog 和 `delivery.json`。旧 CNG 密文和旧缓存不能直接使用；从原始资源重新导出。
+
+**停用或移除。** 扩展仍安装时，先移除 `Encrypted Bundle Delivery` Schema，恢复官方 Bundle Provider、普通 BuildPath / LoadPath 及构建和启动入口。删去应用和 Editor 程序集对扩展的引用后，再按需卸包。在新路径上重建匹配的普通 Player、Catalog 和内容；不要在旧加密发布 URL 上改发明文，也不让旧 Player 回退到明文。
 
 命中磁盘缓存也不等于立即可用：实际挂载前仍要校验并完整认证大包，Unity 的随机读还可能产生额外读取。功能默认关闭；在实际项目中测过启动和切场景的资源组、确认等待预算后再启用。框架夹具的合成资源与进程内存采样不能代替业务性能或引擎内存峰值。
 

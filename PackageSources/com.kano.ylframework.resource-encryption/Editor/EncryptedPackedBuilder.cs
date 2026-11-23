@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using UnityEditor;
 using UnityEditor.AddressableAssets.Build;
 using UnityEditor.AddressableAssets.Build.DataBuilders;
 using UnityEditor.AddressableAssets.Settings;
@@ -17,6 +18,7 @@ namespace YLFramework.Resource.Encryption.Editor
     internal sealed class EncryptedPackedBuilder : BuildScriptPackedMode
     {
         internal AddressableAssetGroup ProtectedGroup;
+        internal string[] PlayerScenes;
         internal string ApplicationNamespace, ReleasePrefix, KeyId;
         internal bool Loopback;
         internal readonly Dictionary<string, EncryptedBundleBinding> Bindings = new Dictionary<string, EncryptedBundleBinding>(StringComparer.Ordinal);
@@ -31,6 +33,9 @@ namespace YLFramework.Resource.Encryption.Editor
         private AddressableAssetsBuildContext _context;
         private Dictionary<ContentCatalogDataEntry, ContentCatalogDataEntry[]> _expected;
         private ContentCatalogDataEntry[] _authorOrder;
+#if UNITY_6000_3_OR_NEWER
+        private Dictionary<string, ContentCatalogDataEntry> _localPrefetchDependencies;
+#endif
 
         protected override TResult DoBuild<TResult>(AddressablesDataBuilderInput input, AddressableAssetsBuildContext context)
         {
@@ -45,14 +50,18 @@ namespace YLFramework.Resource.Encryption.Editor
                 {
                     if (_expected == null || Bindings.Count == 0)
                         throw new InvalidDataException("Official Packed Builder produced no protected bundles.");
+#if UNITY_6000_3_OR_NEWER
+                    if (_localPrefetchDependencies.Values.Any(entry => !(entry.Data is AssetBundleRequestOptions)))
+                        throw new InvalidDataException("Mixed prefetch requires stock options for shipped local Bundles.");
+#endif
                     var rows = new List<string>();
-                    var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+                    var counts = new Dictionary<object, int>();
                     // Both pinned Packed Builders serialize locations in this stable InternalId order.
                     foreach (var asset in _authorOrder.OrderBy(entry => entry.InternalId))
                     {
                         string identity = Node(asset);
                         string[] depends = _expected[asset].Select(Node).ToArray();
-                        foreach (string key in asset.Keys.Cast<string>())
+                        foreach (object key in asset.Keys)
                         {
                             counts.TryGetValue(key, out int index);
                             rows.Add(FrozenAddressablesRoutes.Row(key, index, identity, depends));
@@ -77,18 +86,39 @@ namespace YLFramework.Resource.Encryption.Editor
                 _expected = _authorOrder.ToDictionary(entry => entry,
                     entry => entry.Dependencies.Select(key => bundleKeys.TryGetValue(key, out var dependency) ? dependency :
                         throw new InvalidDataException("Only official direct Bundle dependencies are supported in encrypted delivery.")).ToArray());
+#if UNITY_6000_3_OR_NEWER
+                _localPrefetchDependencies = bundleKeys.Values
+                    .Where(dep => FrozenAddressablesRoutes.IsStockLocalBundle(dep.InternalId.Replace('\\', '/'), dep.Provider))
+                    .ToDictionary(dep => (string)dep.Keys[0], StringComparer.Ordinal);
+#endif
                 foreach (var entry in _expected.Keys)
                 {
-                    if (!FrozenAddressablesRoutes.IsSupportedAssetProvider(entry.Provider, entry.Dependencies.Count) ||
-                        entry.Keys.Any(key => !(key is string alias) || alias.StartsWith(FrozenAddressablesRoutes.MountPrefix, StringComparison.Ordinal)))
-                        throw new InvalidDataException("An asset route uses a custom provider, scene, or reserved alias: " + entry.InternalId + " [" + entry.Provider + "].");
+                    int index = -1;
+                    if (FrozenAddressablesRoutes.IsBuiltInScene(entry.Provider, entry.ResourceType, entry.Data, entry.Dependencies.Count))
+                    {
+                        var stock = EditorBuildSettings.scenes.Where(scene => scene.enabled).Select(scene => scene.path).ToArray();
+                        if (PlayerScenes == null || !stock.SequenceEqual(PlayerScenes, StringComparer.Ordinal) ||
+                            (index = Array.FindIndex(stock, path => FrozenAddressablesRoutes.BuiltInSceneId(path) == entry.InternalId)) < 0)
+                            throw new InvalidDataException("Built-in scene aliases require the selected Player scenes in enabled Build Settings order.");
+                    }
+                    else if (!FrozenAddressablesRoutes.IsSupportedAssetProvider(entry.Provider, entry.Dependencies.Count))
+                        throw new InvalidDataException("An asset route uses an unsupported provider: " + entry.InternalId + " [" + entry.Provider + "].");
+                    foreach (object key in entry.Keys)
+                        FrozenAddressablesRoutes.CheckAlias(key, index);
                 }
             }
 
             string output = base.ConstructAssetBundleName(group, schema, info, name);
-            if (group != ProtectedGroup)
-                return output;
             string bundleName = Path.GetFileNameWithoutExtension(info.FileName);
+            if (group != ProtectedGroup)
+            {
+#if UNITY_6000_3_OR_NEWER
+                // Stock prefetch rejects stripped options before the local no-op, even on unrelated local keys in a Union.
+                if (_localPrefetchDependencies.TryGetValue(Path.GetFileName(info.FileName), out var local) && local.Data == null)
+                    local.Data = new AssetBundleRequestOptions { BundleName = bundleName };
+#endif
+                return output;
+            }
             var location = _context.locations.Single(entry => entry.ResourceType == typeof(IAssetBundleResource) &&
                 entry.Data is AssetBundleRequestOptions option && option.BundleName == bundleName);
             var options = (AssetBundleRequestOptions)location.Data;

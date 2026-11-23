@@ -27,12 +27,14 @@ namespace YLFramework.Testing
         [SerializeField] private string _backend;
         [SerializeField] private string _inputHash;
         [SerializeField] private string _catalogName;
-        public void Configure(string token, string backend, string inputHash, string catalogName)
+        [SerializeField] private bool _checkStockDefaults;
+        public void Configure(string token, string backend, string inputHash, string catalogName, bool checkStockDefaults)
         {
             _token = token;
             _backend = backend;
             _inputHash = inputHash;
             _catalogName = catalogName;
+            _checkStockDefaults = checkStockDefaults;
         }
         private string _output;
         private Row _row;
@@ -41,14 +43,19 @@ namespace YLFramework.Testing
         private sealed class Row
         {
             public string token, scenario, status, error, rejection, unity, backend, architecture, graphics, catalogSha256, inputHash, descriptionSha256;
+            public string retryAfterUtc;
             public int pid, bits, creates, unloads, streamsClosed, openKeys, issuedKeys, returnKeys, bundlesAfterStop, leasesAfterStop;
             public int[] nativeBeforeStop, nativeAfterStop;
             public PerformanceEvidence performance;
             public long coldBytes, mixedBytes, cacheBytes;
+            public long heldTransferBytes, heldLoadBytes, completedTransferBytes, completedLoadBytes;
             public bool quit, sentinel, verifiedStartup, externalAfterStop, stableFile, exclusiveAfterUnload, remount, remountDuringUnload, noParts, predownloadOnly;
             public bool sawOwnedPart, rejectedBeforeCreate, invalidatedSize, refusedCloseWithExternalOwner;
             public bool rejectedReorderedCandidates, matchedFirstCandidate, rejectedAfterDrift, leftForeignRegistration, reopenedCacheLock;
             public bool observerStartedTransfer, loadedWhileTransferHeld, observerCanceledWhileTransferHeld, downloadReleasedBeforeAsset, keyLeasesReturned;
+            public bool retriedWithPrefetchHeld, singleLoadAttempt, refusedCloseWithPrefetchOwner;
+            public bool closeWaitedForUnload, sharedClose, reenteredCloseDuringKeyReturn;
+            public bool stockDefaultsVerified, mixedPrefetchVerified;
         }
 
         private IEnumerator Start()
@@ -102,10 +109,12 @@ namespace YLFramework.Testing
             string player = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
             if (scenario == "disabled") { yield return Disabled(); yield break; }
             if (scenario.StartsWith("performance-", StringComparison.Ordinal)) { yield return Performance(player); yield break; }
+            bool isolated = scenario == "no-cache-offline" || scenario == "held-download" || scenario == "held-load" || scenario == "tamper-prefetched";
             string cacheName = scenario == "fault-abort" || scenario == "fault-recovery" ? "Cache-abort" :
-                scenario == "no-cache-offline" || scenario == "held-download" ? "Cache-" + scenario : "CipherCache";
+                isolated ? "Cache-" + scenario : "CipherCache";
             string cache = Path.Combine(player, cacheName);
-            using var keys = new Keys(Path.GetFullPath(Path.Combine(player, "..", "fixture.key")), scenario);
+            Action onKeyReturn = null;
+            using var keys = new Keys(Path.GetFullPath(Path.Combine(player, "..", "fixture.key")), scenario, () => onKeyReturn?.Invoke());
             if (scenario == "shadow")
             {
                 var shadow = new ResourceLocationMap("unexpected test locator");
@@ -154,7 +163,7 @@ namespace YLFramework.Testing
             var stock = (AssetBundleRequestOptions)remoteLocations.Result.Single().Dependencies.Single().Data;
             var officialVersion = new CachedAssetBundle(stock.BundleName, Hash128.Parse(stock.Hash));
             Addressables.Release(remoteLocations);
-            long initial = scenario == "cold" || scenario == "no-cache-offline" || scenario == "held-download" ||
+            long initial = scenario == "cold" || isolated ||
                 scenario == "repair" || scenario == "fault-abort" || scenario == "fault-recovery" || scenario == "sync-wait" ? record.CipherLength : 0;
             yield return Sizes(system, new[] { ProtectedKey, ProtectedTwinKey }, initial, false);
             yield return Sizes(system, new[] { Mixed, ProtectedKey }, initial + (Caching.IsVersionCached(officialVersion) ? 0 : stock.BundleSize), true);
@@ -181,22 +190,52 @@ namespace YLFramework.Testing
                 CheckAsset(asynchronous);
                 Addressables.Release(asynchronous);
             }
-            else if (scenario == "tamper")
+            else if (scenario == "tamper" || scenario == "tamper-prefetched")
             {
-                using (var data = new FileStream(final, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                var prefetch = default(AsyncOperationHandle);
+                try
                 {
-                    byte original = checked((byte)data.ReadByte());
-                    data.Position = 0; data.WriteByte((byte)(original ^ 1));
+                    if (scenario == "tamper-prefetched")
+                    {
+                        prefetch = Addressables.DownloadDependenciesAsync(ProtectedKey, false);
+                        yield return Until(() => prefetch.IsDone);
+                        Require(prefetch.Status == AsyncOperationStatus.Succeeded && keys.Opens == 0 && session.Provider.Creates == 0,
+                            "The held download must have committed ciphertext without opening a key or a Bundle.");
+                        yield return Sizes(system, new[] { ProtectedKey }, 0, false);
+                    }
+                    using (var data = new FileStream(final, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    {
+                        Require(data.Length == record.CipherLength, "The tamper control requires the exact frozen ciphertext length.");
+                        byte original = checked((byte)data.ReadByte());
+                        data.Position = 0;
+                        data.WriteByte((byte)(original ^ 1));
+                    }
+                    var invalid = Addressables.LoadAssetAsync<TextAsset>(ProtectedKey);
+                    try
+                    {
+                        yield return Until(() => invalid.IsDone);
+                        var error = invalid.OperationException?.ToString();
+                        _row.rejectedBeforeCreate = invalid.Status == AsyncOperationStatus.Failed && !invalid.Result &&
+                            error != null && error.Contains("EncryptedBundleIntegrityException") && session.Provider.Creates == 0 &&
+                            keys.Opens == 0 && system.GetDiagnostics().LeaseCount == 0;
+                    }
+                    finally { Addressables.Release(invalid); }
+                    Require(_row.rejectedBeforeCreate && !File.Exists(final) && !Directory.EnumerateFiles(cache, "*.part").Any(),
+                        "Same-length replacement was not retired before native creation, or the failed request started a replacement transfer.");
+                    yield return Sizes(system, new[] { ProtectedKey }, record.CipherLength, false);
+                    _row.invalidatedSize = true;
+                    if (prefetch.IsValid())
+                    {
+                        Require(prefetch.Status == AsyncOperationStatus.Succeeded, "The older download handle was not retained across tamper.");
+                        _row.retryAfterUtc = DateTime.UtcNow.ToString("o");
+                        yield return GoodOfficial(ProtectedKey);
+                        _row.retriedWithPrefetchHeld = prefetch.IsValid() && prefetch.Status == AsyncOperationStatus.Succeeded &&
+                            session.Provider.Creates == 1 && keys.Issued == 1 && File.Exists(final);
+                        Require(_row.retriedWithPrefetchHeld, "A new official load could not download and mount while the old prefetch was still held.");
+                        yield return Sizes(system, new[] { ProtectedKey }, 0, false);
+                    }
                 }
-                var invalid = Addressables.LoadAssetAsync<TextAsset>(ProtectedKey);
-                yield return Until(() => invalid.IsDone);
-                var error = invalid.OperationException?.ToString();
-                _row.rejectedBeforeCreate = invalid.Status == AsyncOperationStatus.Failed && !invalid.Result && error != null && error.Contains("EncryptedBundleIntegrityException") &&
-                    session.Provider.Creates == 0 && keys.Opens == 0 && system.GetDiagnostics().LeaseCount == 0;
-                Addressables.Release(invalid);
-                Require(_row.rejectedBeforeCreate && !File.Exists(final), "Same-length replacement was not retired before native creation.");
-                yield return Sizes(system, new[] { ProtectedKey }, record.CipherLength, false);
-                _row.invalidatedSize = true;
+                finally { if (prefetch.IsValid()) Addressables.Release(prefetch); }
             }
             else if (scenario == "fault-recovery" || scenario == "repair")
             {
@@ -205,13 +244,64 @@ namespace YLFramework.Testing
             }
             else if (scenario == "cold")
             {
-                var predownload = Addressables.DownloadDependenciesAsync(ProtectedKey, false);
-                yield return Until(() => predownload.IsDone);
-                Require(predownload.Status == AsyncOperationStatus.Succeeded && !AssetBundle.GetAllLoadedAssetBundles().Any() && session.Provider.Creates == 0 && keys.Opens == 0 &&
-                    system.GetDiagnostics().LeaseCount == 0, "Download-only was not a pure ciphertext transfer: " + predownload.OperationException);
-                _row.predownloadOnly = true;
-                yield return GoodOfficial(ProtectedKey);
-                Addressables.Release(predownload);
+                if (_checkStockDefaults)
+                {
+                    var local = Addressables.LoadAssetAsync<TextAsset>(LocalKey);
+                    try
+                    {
+                        yield return Until(() => local.IsDone);
+                        Require(local.Status == AsyncOperationStatus.Succeeded && local.Result && local.Result.text == "local:" + _token,
+                            "The official local Bundle could not load alongside encryption: " + local.OperationException);
+                    }
+                    finally { Addressables.Release(local); }
+                    if (_catalogName == "catalog.json")
+                    {
+                        var catalog = Addressables.ResourceLocators.Single(locator => locator.LocatorId == "AddressablesMainContentCatalog");
+                        Require(catalog.Locate(0, typeof(SceneInstance), out var byIndex) && byIndex.Count == 1 &&
+                            catalog.Locate("Boot", typeof(SceneInstance), out var byName) && byName.Count == 1 &&
+                            ReferenceEquals(byIndex[0], byName[0]) && byIndex[0].ProviderId == "" && !byIndex[0].HasDependencies &&
+                            byIndex[0].InternalId == "FrozenData/Boot" && UnityEngine.SceneManagement.SceneUtility.GetScenePathByBuildIndex(0) == "Assets/FrozenData/Boot.unity",
+                            "The official built-in scene must retain both its numeric and named aliases in the shipped Catalog.");
+                    }
+                    else
+                    {
+                        var locations = Addressables.LoadResourceLocationsAsync(LocalKey, typeof(TextAsset));
+                        try
+                        {
+                            yield return Until(() => locations.IsDone);
+                            Require(locations.Status == AsyncOperationStatus.Succeeded && locations.Result.Single().Dependencies.Any(dep =>
+                                dep.ProviderId == typeof(AssetBundleProvider).FullName && dep.ResourceType == typeof(IAssetBundleResource)),
+                                "The fixture must have an independent stock local Bundle.");
+                        }
+                        finally { Addressables.Release(locations); }
+                    }
+                    _row.stockDefaultsVerified = true;
+                }
+                var predownload = _checkStockDefaults
+                    ? Addressables.DownloadDependenciesAsync((IEnumerable)new[] { LocalKey, ProtectedKey }, Addressables.MergeMode.Union, false)
+                    : Addressables.DownloadDependenciesAsync(ProtectedKey, false);
+                try
+                {
+                    yield return Until(() => predownload.IsDone);
+                    Require(predownload.Status == AsyncOperationStatus.Succeeded && !AssetBundle.GetAllLoadedAssetBundles().Any() && session.Provider.Creates == 0 && keys.Opens == 0 &&
+                        system.GetDiagnostics().LeaseCount == 0, "Local and protected prefetch did not complete without a mount or key: " + predownload.OperationException);
+                    _row.predownloadOnly = true;
+                    _row.completedTransferBytes = CompletedDownloadBytes(predownload, record.CipherLength);
+                    if (_checkStockDefaults)
+                    {
+                        using var mixed = system.DownloadDependenciesAsync(new[] { Mixed, ProtectedKey });
+                        yield return Until(() => mixed.IsDone);
+                        Require(mixed.TakeResult() && Caching.IsVersionCached(officialVersion) && !AssetBundle.GetAllLoadedAssetBundles().Any() &&
+                            session.Provider.Creates == 0 && keys.Opens == 0,
+                            "The YL mixed-label prefetch did not preserve the stock remote cache and ciphertext-only transfer.");
+                        _row.mixedPrefetchVerified = true;
+                    }
+                    try { session.CloseAsync(); }
+                    catch (InvalidOperationException) { _row.refusedCloseWithPrefetchOwner = true; }
+                    Require(_row.refusedCloseWithPrefetchOwner, "Close accepted an outstanding official predownload owner.");
+                    yield return GoodOfficial(ProtectedKey);
+                }
+                finally { Addressables.Release(predownload); }
             }
             else if (scenario == "held-download")
             {
@@ -238,10 +328,16 @@ namespace YLFramework.Testing
                     yield return Until(() => observer.IsDone);
                     _row.observerCanceledWhileTransferHeld = observer.Status == ResourceRequestStatus.Canceled && !load.IsDone && !transfer.IsDone;
                     Require(_row.observerCanceledWhileTransferHeld, "Only the canceled observer may finish before releasing the protected response.");
+                    yield return PartialDownload(transfer, record.CipherLength);
+                    yield return PartialDownload(load, record.CipherLength);
+                    _row.heldTransferBytes = transfer.GetDownloadStatus().DownloadedBytes;
+                    _row.heldLoadBytes = load.GetDownloadStatus().DownloadedBytes;
                     using (File.Open(Path.Combine(held, "release"), FileMode.CreateNew)) { }
                     yield return Until(() => transfer.IsDone && load.IsDone);
                     Require(transfer.IsValid() && transfer.Status == AsyncOperationStatus.Succeeded, "A held download handle was invalidated.");
                     CheckAsset(load);
+                    _row.completedTransferBytes = CompletedDownloadBytes(transfer, record.CipherLength);
+                    _row.completedLoadBytes = CompletedDownloadBytes(load, record.CipherLength);
                     var mounted = LoadedBundleIds();
                     Addressables.Release(transfer);
                     transfer = default;
@@ -261,6 +357,25 @@ namespace YLFramework.Testing
                     if (load.IsValid()) Addressables.Release(load);
                     if (transfer.IsValid()) Addressables.Release(transfer);
                 }
+            }
+            else if (scenario == "held-load")
+            {
+                string held = Path.Combine(player, "HeldLoad");
+                var load = Addressables.LoadAssetAsync<TextAsset>(ProtectedKey);
+                try
+                {
+                    yield return Until(() => File.Exists(Path.Combine(held, "in-flight")));
+                    _row.singleLoadAttempt = !load.IsDone && session.Provider.Pending == 1 &&
+                        session.Provider.Creates == 0 && keys.Opens == 0 && !File.Exists(final);
+                    Require(_row.singleLoadAttempt, "One official load must have exactly one active protected check/transfer, not independent siblings.");
+                    yield return PartialDownload(load, record.CipherLength);
+                    _row.heldLoadBytes = load.GetDownloadStatus().DownloadedBytes;
+                    using (File.Open(Path.Combine(held, "release"), FileMode.CreateNew)) { }
+                    yield return Until(() => load.IsDone);
+                    CheckAsset(load);
+                    _row.completedLoadBytes = CompletedDownloadBytes(load, record.CipherLength);
+                }
+                finally { Addressables.Release(load); }
             }
             else if (scenario == "post-start-guard")
             {
@@ -326,7 +441,31 @@ namespace YLFramework.Testing
                 _row.remount = session.Provider.Creates == 2 && session.Provider.Unloads == 1 && keys.Returns == 1 &&
                     session.Provider.StreamsClosed == 1 && LoadedBundleIds().Except(oldInstances).Any();
                 Require(_row.remount, "Reload did not wait for the old native unload.");
+                Task reentered = null;
+                bool cacheLockedDuringReturn = false;
+                string cacheLock = Path.Combine(cache, ".yl-cache.lock");
+                onKeyReturn = () =>
+                {
+                    reentered = session.CloseAsync();
+                    _row.reenteredCloseDuringKeyReturn = !reentered.IsCompleted && session.Provider.Unloading == 1 &&
+                        session.Provider.StreamsClosed == 1;
+                    try { using var unexpected = OwnedWindowsFiles.LockPinned(cacheLock); }
+                    catch (IOException) { cacheLockedDuringReturn = true; }
+                };
                 Addressables.Release(remount);
+                bool draining = session.Provider.Unloading != 0;
+                var closingSession = session.CloseAsync();
+                // If native completion was immediate, the callback observed the same drain before Release returned.
+                _row.closeWaitedForUnload = draining ? !closingSession.IsCompleted : _row.reenteredCloseDuringKeyReturn;
+                Require(_row.closeWaitedForUnload && ReferenceEquals(closingSession, session.CloseAsync()),
+                    "Close must be shared and stay pending after the last handle has started unload.");
+                yield return Until(() => closingSession.IsCompleted);
+                closingSession.GetAwaiter().GetResult();
+                _row.sharedClose = ReferenceEquals(closingSession, reentered) && ReferenceEquals(closingSession, session.CloseAsync());
+                using (var reopened = OwnedWindowsFiles.LockPinned(cacheLock)) _row.reopenedCacheLock = !reopened.IsInvalid;
+                Require(_row.sharedClose && _row.reenteredCloseDuringKeyReturn && cacheLockedDuringReturn && _row.reopenedCacheLock &&
+                    keys.Returns == 2 && session.Provider.StreamsClosed == 2,
+                    "The close must stay pending through key return, then release the stream and cache lock exactly once.");
             }
             else
             {
@@ -397,6 +536,23 @@ namespace YLFramework.Testing
             var asset = Addressables.LoadAssetAsync<TextAsset>(key);
             yield return Until(() => asset.IsDone);
             try { CheckAsset(asset); } finally { Addressables.Release(asset); }
+        }
+
+        private static IEnumerator PartialDownload(AsyncOperationHandle handle, long total)
+        {
+            Require(handle.GetDownloadStatus().TotalBytes == total, "The official operation did not report exactly one ciphertext transfer.");
+            yield return Until(() => handle.IsDone || handle.GetDownloadStatus().DownloadedBytes > 0);
+            var received = handle.GetDownloadStatus();
+            Require(!handle.IsDone && !received.IsDone && received.TotalBytes == total && received.DownloadedBytes > 0 && received.DownloadedBytes < total,
+                "The official operation did not report partial ciphertext bytes while the GET was held.");
+        }
+
+        private static long CompletedDownloadBytes(AsyncOperationHandle handle, long total)
+        {
+            var received = handle.GetDownloadStatus();
+            Require(received.IsDone && received.TotalBytes == total && received.DownloadedBytes == total,
+                $"Completed official byte progress differs: {received.DownloadedBytes}/{received.TotalBytes}, expected {total}.");
+            return received.DownloadedBytes;
         }
 
         private void CheckAsset(AsyncOperationHandle<TextAsset> asset)
@@ -559,9 +715,10 @@ namespace YLFramework.Testing
                         System.Threading.Interlocked.Increment(ref DuplicateReturns);
                         return;
                     }
-                    if (System.Threading.Interlocked.Increment(ref Returns) == 1 && _mode == "key-return")
-                        throw new InvalidOperationException("Fixture key return callback failed.");
+                    System.Threading.Interlocked.Increment(ref Returns);
                     _onAuthorReturn?.Invoke();
+                    if (_mode == "key-return")
+                        throw new InvalidOperationException("Fixture key return callback failed.");
                 });
                 System.Threading.Interlocked.Increment(ref Issued);
                 return lease;

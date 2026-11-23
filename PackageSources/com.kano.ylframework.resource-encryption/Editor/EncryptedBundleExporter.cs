@@ -95,6 +95,8 @@ namespace YLFramework.Resource.Encryption.Editor
                 Directory.Exists(privateRoot) || File.Exists(privateRoot) || Directory.Exists(releaseRoot) || File.Exists(releaseRoot) ||
                 Directory.Exists(playerRoot) || File.Exists(playerRoot))
                 throw new InvalidDataException("Use separate, fresh private, Player and immutable release paths.");
+            if (!string.Equals(Path.GetPathRoot(privateRoot), Path.GetPathRoot(playerRoot), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Private and final Player paths must be on the same local volume for publication.");
             using var privateParent = OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(privateRoot), false);
             using var releaseParent = OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(releaseRoot), false);
             using var playerParent = OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(playerRoot), false);
@@ -106,6 +108,10 @@ namespace YLFramework.Resource.Encryption.Editor
             ProtectedAssetAudit.Relative(privateRoot, stateFolder);
             if (!StrictlyBelow(paths.Identity(stateFolder), paths.Identity(privateRoot)))
                 throw new InvalidDataException("Official content state must physically belong to the private root.");
+            string playerCandidate = Path.Combine(privateRoot, ".yl-player-" + Guid.NewGuid().ToString("N"));
+            string shippingLibrary = Path.Combine(privateRoot, ".yl-aa-" + Guid.NewGuid().ToString("N"));
+            if (new[] { playerCandidate, shippingLibrary }.Any(root => paths.Overlap(root, inputRoot) || paths.Overlap(root, stateFolder)))
+                throw new InvalidDataException("Player staging overlaps an authoring output.");
             string prefix = packed.LoadPath.GetValue(settings);
             if (!prefix.EndsWith("/", StringComparison.Ordinal))
                 prefix += "/";
@@ -158,6 +164,7 @@ namespace YLFramework.Resource.Encryption.Editor
                 builder.ReleasePrefix = prefix;
                 builder.KeyId = auth.KeyId;
                 builder.Loopback = allowLoopback;
+                builder.PlayerScenes = player.scenes;
                 bool oldLayout = ProjectConfigData.GenerateBuildLayout;
                 var oldFormat = ProjectConfigData.BuildLayoutReportFileFormat;
                 AddressablesPlayerBuildResult output;
@@ -202,12 +209,8 @@ namespace YLFramework.Resource.Encryption.Editor
                 string catalogHash = ProtectedAssetAudit.DigestFile(catalogPath);
                 expectedStreaming.Add("aa/settings.json", settingsHash);
                 expectedStreaming.Add("aa/" + builder.CatalogName, catalogHash);
-                foreach (string metadata in new[] { "catalog.hash", "AddressablesLink/link.xml" })
-                {
-                    string officialFile = Path.Combine(buildPath, metadata);
-                    if (File.Exists(officialFile))
-                        expectedStreaming.Add("aa/" + metadata, ProtectedAssetAudit.DigestFile(officialFile));
-                }
+                const string link = "AddressablesLink/link.xml";
+                expectedStreaming.Add("aa/" + link, ProtectedAssetAudit.DigestFile(Path.Combine(buildPath, link)));
                 foreach (var result in output.AssetBundleBuildResults)
                 {
                     string file = Path.GetFullPath(result.FilePath);
@@ -230,34 +233,61 @@ namespace YLFramework.Resource.Encryption.Editor
                 if (protectedInputs.Count != builder.Bindings.Count)
                     throw new InvalidDataException("The audited protected inventory is incomplete.");
 
-                paths.Prepare(playerRoot);
+                // The stock Player processor copies all of Addressables.BuildPath, not just this build's results.
+                BuildReport report;
+                string libraryPath = Addressables.LibraryPath;
+                using (OwnedWindowsFiles.CreatePublicationDirectory(playerCandidate))
+                {
+                }
+                player.locationPathName = Path.Combine(playerCandidate, Path.GetFileName(player.locationPathName));
                 player.options |= BuildOptions.DetailedBuildReport | BuildOptions.StrictMode;
-                var report = BuildPipeline.BuildPlayer(player);
+                try
+                {
+                    Addressables.LibraryPath = shippingLibrary + Path.DirectorySeparatorChar;
+                    string shippingBuildPath = Path.GetFullPath(Addressables.BuildPath);
+                    if (!StrictlyBelow(shippingBuildPath, shippingLibrary))
+                        throw new InvalidDataException("The stock Player processor did not resolve the private Addressables input.");
+                    foreach (var item in expectedStreaming)
+                    {
+                        string relative = item.Key.Substring("aa/".Length);
+                        string destination = Path.Combine(shippingBuildPath, relative);
+                        paths.Prepare(Path.GetDirectoryName(destination));
+                        using var source = OwnedWindowsFiles.OpenRead(Path.Combine(buildPath, relative));
+                        using var copy = OwnedWindowsFiles.CreateTemporaryPinned(destination);
+                        source.CopyTo(copy);
+                        copy.Flush(true);
+                        if (AuthenticatedBundleStream.Hash(copy, default) != item.Value)
+                            throw new InvalidDataException("Audited Addressables Player input changed: " + relative);
+                    }
+                    report = BuildPipeline.BuildPlayer(player);
+                }
+                finally { Addressables.LibraryPath = libraryPath; }
                 if (report.summary.result != BuildResult.Succeeded || report.summary.totalErrors != 0)
                     throw new InvalidDataException("The Win64 Player failed to build.");
-                string streaming = Path.Combine(playerRoot, Path.GetFileNameWithoutExtension(player.locationPathName) + "_Data", "StreamingAssets");
+                string streaming = Path.Combine(playerCandidate, Path.GetFileNameWithoutExtension(player.locationPathName) + "_Data", "StreamingAssets");
                 audit.AuditPlayer(report, player.scenes, streaming, expectedStreaming);
                 if (ProtectedAssetAudit.DigestFile(state) != ProtectedAssetAudit.DigestFile(archivedState))
                     throw new InvalidDataException("Official Addressables state changed during Player build.");
                 foreach (var ordinary in ordinaryInputs)
                     if (ProtectedAssetAudit.DigestFile(ordinary.Key) != ordinary.Value)
                         throw new InvalidDataException("Audited ordinary Bundle changed during Player build: " + Path.GetFileName(ordinary.Key));
-                return Export(protectedInputs, builder, keys, audit, report, privateRoot, releaseRoot, streaming, catalogHash, settingsHash, archivedLayout, archivedState);
+                return Export(protectedInputs, builder, keys, audit, report, privateRoot, releaseRoot, playerCandidate, playerRoot, streaming,
+                    catalogHash, settingsHash, archivedLayout, archivedState);
             }
             finally { Object.DestroyImmediate(builder); }
         }
 
         private static EncryptedBundleDescription Export(Dictionary<string, (string Path, EncryptedBundleBinding Binding)> inputs, EncryptedPackedBuilder builder,
             IEncryptedBundleKeySource keys, ProtectedAssetAudit audit, BuildReport report,
-            string privateRoot, string releaseRoot, string streaming, string catalogHash, string settingsHash, string layout, string state)
+            string privateRoot, string releaseRoot, string playerCandidate, string playerRoot, string streaming, string catalogHash, string settingsHash,
+            string layout, string state)
         {
             string stage = Path.Combine(Path.GetDirectoryName(releaseRoot), ".yl-protected-" + Guid.NewGuid().ToString("N"));
             string aa = Path.Combine(streaming, "aa");
-            using var playerPin = OwnedWindowsFiles.PinDirectory(aa, false);
-            using var shippedCatalog = OwnedWindowsFiles.ReadPinned(Path.Combine(aa, builder.CatalogName));
-            using var shippedSettings = OwnedWindowsFiles.ReadPinned(Path.Combine(aa, "settings.json"));
-            if (AuthenticatedBundleStream.Hash(shippedCatalog, default) != catalogHash || AuthenticatedBundleStream.Hash(shippedSettings, default) != settingsHash)
-                throw new InvalidDataException("Final Player metadata differs after auditing.");
+            var auditedPlayer = PlayerInventory(playerCandidate);
+            if (ProtectedAssetAudit.DigestFile(Path.Combine(aa, builder.CatalogName)) != catalogHash ||
+                ProtectedAssetAudit.DigestFile(Path.Combine(aa, "settings.json")) != settingsHash)
+                throw new InvalidDataException("Staged Player metadata differs after auditing.");
             using var key = EncryptedBundleKeyLease.Rent(keys, builder.KeyId) ?? throw new EncryptedBundleKeyUnavailableException(builder.KeyId);
             var rows = new List<EncryptedBundleRecord>();
             using var ownedStage = OwnedWindowsFiles.CreatePublicationDirectory(stage);
@@ -277,6 +307,9 @@ namespace YLFramework.Resource.Encryption.Editor
             key.Dispose(); // Run application callbacks before checking or publishing the finished bytes.
             string[] names = rows.Select(row => row.Binding.RelativePath).ToArray();
             CheckInventory(stage, names);
+            var sealedPlayer = PlayerInventory(playerCandidate);
+            if (sealedPlayer.Count != auditedPlayer.Count || sealedPlayer.Any(file => !auditedPlayer.TryGetValue(file.Key, out string hash) || file.Value != hash))
+                throw new InvalidDataException("Staged Player inventory changed after the audit.");
             var description = new EncryptedBundleDescription(builder.CatalogName, catalogHash, settingsHash, builder.RoutesSha256, rows);
             // Windows will not rename a directory with locked children. Move the ciphertext first, then commit the
             // deployment manifest while the verified children are locked. A directory without it is incomplete.
@@ -320,7 +353,28 @@ namespace YLFramework.Resource.Encryption.Editor
                 }.ToString(Formatting.Indented));
                 CheckInventory(releaseRoot, names.Append(pending));
                 OwnedWindowsFiles.Publish(playerDescription, Path.Combine(aa, EncryptedBundleDescription.FileName));
-                OwnedWindowsFiles.Publish(manifest, Path.Combine(releaseRoot, "delivery.json"));
+                FinishPending(playerDescription, true);
+                playerDescription = null;
+                // There must be no open child handles when committing the already audited Win64 directory.
+                using var ownedPlayer = OwnedWindowsFiles.OpenPublicationDirectory(playerCandidate);
+                OwnedWindowsFiles.Publish(ownedPlayer, playerRoot);
+                try
+                {
+                    OwnedWindowsFiles.Publish(manifest, Path.Combine(releaseRoot, "delivery.json"));
+                }
+                catch (IOException publicationError)
+                {
+                    try
+                    {
+                        OwnedWindowsFiles.Publish(ownedPlayer, playerCandidate);
+                    }
+                    catch (IOException rollbackError)
+                    {
+                        throw new IOException("Manifest commit failed and the audited Player could not be withdrawn. Do not publish either output.",
+                            new AggregateException(publicationError, rollbackError));
+                    }
+                    throw;
+                }
                 committed = true;
                 return description;
             }
@@ -340,6 +394,9 @@ namespace YLFramework.Resource.Encryption.Editor
                 }
             }
         }
+
+        private static Dictionary<string, string> PlayerInventory(string root) => ProtectedAssetAudit.EnumerateOwnedFiles(root)
+            .ToDictionary(file => ProtectedAssetAudit.Relative(root, file), ProtectedAssetAudit.DigestFile, StringComparer.OrdinalIgnoreCase);
 
         private static void CheckInventory(string root, IEnumerable<string> expected)
         {

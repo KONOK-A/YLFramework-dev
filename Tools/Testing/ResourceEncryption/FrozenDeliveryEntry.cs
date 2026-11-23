@@ -77,7 +77,14 @@ namespace YLFramework.Testing
                 settings.AddLabel(Mixed);
 
                 var local = settings.DefaultGroup;
-                Configure(settings, local, AddressableAssetSettings.kLocalBuildPath, AddressableAssetSettings.kLocalLoadPath);
+                var localSchema = Configure(settings, local, AddressableAssetSettings.kLocalBuildPath, AddressableAssetSettings.kLocalLoadPath);
+#if UNITY_6000_3_OR_NEWER
+                if (mode == "Positive")
+                {
+                    localSchema.UseDefaultSchemaSettings = true;
+                    Require(localSchema.StripDownloadOptions, "The stock Win64 local defaults must omit Bundle download metadata.");
+                }
+#endif
                 AddText(settings, local, "Local.txt", "local:" + token, LocalKey);
                 if (mode == "Disabled")
                 {
@@ -120,7 +127,15 @@ namespace YLFramework.Testing
                     Prefab(settings, secret, "PrivatePrefab", sprite, "frozen/private-prefab");
                     if (mode == "PlainBundleCopy" || mode == "OutputOverlap") Prefab(settings, plain, "PublicCopy", sprite, "frozen/public-prefab");
                 }
-                string scenePath = CreateScene(token, backend, inputHash, catalogName, mode == "PlayerCopy" ? sprite : null);
+                string scenePath = CreateScene(token, backend, inputHash, catalogName, mode == "PlayerCopy" ? sprite : null, mode == "Positive");
+#if !UNITY_6000_3_OR_NEWER
+                if (mode == "Positive")
+                {
+                    EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, true) };
+                    Require(settings.groups.Any(candidate => candidate && candidate.GetSchema<PlayerDataGroupSchema>()?.IncludeBuildSettingsScenes == true),
+                        "This fixture must publish the default built-in scene aliases.");
+                }
+#endif
                 string player = Path.Combine(host, "P", "P.exe");
                 if (mode == "SourceChanged") PlaintextDriftFixture.Arm(secret, privateRoot);
                 if (mode == "OfficialOutput")
@@ -164,8 +179,20 @@ namespace YLFramework.Testing
                     finally { settings.profileSettings.SetValue(settings.activeProfileId, ordinaryVariable, Path.Combine(host, "Ordinary").Replace('\\', '/')); }
                     report["preflightIsWriteFree"] = true;
                 }
+                string oldBundle = Path.Combine(Addressables.BuildPath, "superseded-local.bundle");
+                if (mode == "Positive")
+                {
+                    Directory.CreateDirectory(Addressables.BuildPath);
+                    File.WriteAllText(oldBundle, "unrelated output from a previous fixture build");
+                }
                 var description = EncryptedBundleExporter.BuildCore(settings, secret, options, "yl.frozen.acceptance", privateRoot, releaseRoot, keys, allowLoopback: true);
                 string data = Path.Combine(host, "P", "P_Data");
+                if (mode == "Positive")
+                {
+                    Require(File.Exists(oldBundle) && !File.Exists(Path.Combine(data, "StreamingAssets", "aa", Path.GetFileName(oldBundle))),
+                        "The exporter must leave stale official output untouched and never copy it to the Player.");
+                    report["excludedStaleAddressables"] = true;
+                }
                 report["catalogSha256"] = description.CatalogSha256;
                 report["routesSha256"] = description.RoutesSha256;
                 FrozenPlayerBuildEvidence.Capture(report, backend, player, ProtectedAssetAudit.DigestFile, "YLFramework.Resource.Encryption", typeof(FrozenDeliveryProbe));
@@ -285,10 +312,10 @@ namespace YLFramework.Testing
             }
         }
 
-        private static string CreateScene(string token, string backend, string inputHash, string catalogName, Sprite leaked)
+        private static string CreateScene(string token, string backend, string inputHash, string catalogName, Sprite leaked, bool checkStockDefaults = false)
         {
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            new GameObject("Frozen encryption test").AddComponent<FrozenDeliveryProbe>().Configure(token, backend, inputHash, catalogName);
+            new GameObject("Frozen encryption test").AddComponent<FrozenDeliveryProbe>().Configure(token, backend, inputHash, catalogName, checkStockDefaults);
             if (leaked) new GameObject("Scene duplicate").AddComponent<SpriteRenderer>().sprite = leaked;
             string path = Root + "/Boot.unity";
             Require(EditorSceneManager.SaveScene(scene, path), "Failed to save owned boot fixture.");

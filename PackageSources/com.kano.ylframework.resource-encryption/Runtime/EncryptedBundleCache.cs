@@ -33,6 +33,21 @@ namespace YLFramework.Resource.Encryption
             internal string Path;
             internal bool Verified;
             internal Task Shared;
+            internal TransferProgress Progress;
+        }
+
+        internal sealed class TransferProgress
+        {
+            private long _totalBytes;
+            private long _downloadedBytes;
+
+            internal TransferProgress(long totalBytes) => _totalBytes = totalBytes;
+
+            internal long TotalBytes => Interlocked.Read(ref _totalBytes);
+            internal long DownloadedBytes => Interlocked.Read(ref _downloadedBytes);
+
+            internal void SetTotalBytes(long bytes) => Interlocked.Exchange(ref _totalBytes, bytes);
+            internal void SetDownloadedBytes(long bytes) => Interlocked.Exchange(ref _downloadedBytes, bytes);
         }
 
         private EncryptedBundleCache(string root, EncryptedBundleDescription description)
@@ -124,11 +139,13 @@ namespace YLFramework.Resource.Encryption
             }
         }
 
-        internal Task EnsureAsync(EncryptedBundleRecord record, CancellationToken observer = default)
+        internal Task EnsureAsync(EncryptedBundleRecord record, CancellationToken observer = default,
+            Action<TransferProgress> reportProgress = null)
         {
             if (observer.IsCancellationRequested)
                 return Task.FromCanceled(observer);
             Task shared;
+            TransferProgress progress;
             lock (_gate)
             {
                 if (_closing != null)
@@ -136,12 +153,16 @@ namespace YLFramework.Resource.Encryption
                 var entry = GetEntry(record);
                 if (entry.Shared == null || entry.Shared.IsCompleted)
                 {
-                    entry.Shared = Task.Run(() => EnsureCoreAsync(entry, record, _lifetime.Token));
+                    var attempt = new TransferProgress(entry.Verified ? 0 : record.CipherLength);
+                    entry.Progress = attempt;
+                    entry.Shared = Task.Run(() => EnsureCoreAsync(entry, record, attempt, _lifetime.Token));
                     _ = entry.Shared.ContinueWith(done => { _ = done.Exception; }, CancellationToken.None,
                         TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
                 }
                 shared = entry.Shared;
+                progress = entry.Progress;
             }
+            reportProgress?.Invoke(progress);
             return observer.CanBeCanceled ? ObserveAsync(shared, observer) : shared;
         }
 
@@ -152,13 +173,14 @@ namespace YLFramework.Resource.Encryption
             return _entries[record.CipherSha256];
         }
 
-        private async Task EnsureCoreAsync(Entry entry, EncryptedBundleRecord record, CancellationToken token)
+        private async Task EnsureCoreAsync(Entry entry, EncryptedBundleRecord record, TransferProgress progress, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
             try
             {
                 if (CheckExisting(entry.Path, record, token))
                 {
+                    progress.SetTotalBytes(0);
                     lock (_gate)
                     {
                         entry.Verified = true;
@@ -183,7 +205,8 @@ namespace YLFramework.Resource.Encryption
                 throw;
             }
 
-            await DownloadAsync(entry.Path, record, token).ConfigureAwait(false);
+            progress.SetTotalBytes(record.CipherLength);
+            await DownloadAsync(entry.Path, record, progress, token).ConfigureAwait(false);
             lock (_gate)
             {
                 entry.Verified = true;
@@ -191,9 +214,9 @@ namespace YLFramework.Resource.Encryption
         }
 
         internal async Task<AuthenticatedBundleStream> OpenAuthenticatedAsync(EncryptedBundleRecord record, IEncryptedBundleKeySource keys,
-            CancellationToken token = default)
+            CancellationToken token = default, Action<TransferProgress> reportProgress = null)
         {
-            await EnsureAsync(record, token).ConfigureAwait(false);
+            await EnsureAsync(record, token, reportProgress).ConfigureAwait(false);
             return await Task.Run(() =>
             {
                 var entry = GetEntry(record);
@@ -256,7 +279,7 @@ namespace YLFramework.Resource.Encryption
             }
         }
 
-        private async Task DownloadAsync(string final, EncryptedBundleRecord row, CancellationToken token)
+        private async Task DownloadAsync(string final, EncryptedBundleRecord row, TransferProgress progress, CancellationToken token)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
             deadline.CancelAfter(TimeSpan.FromMinutes(2));
@@ -273,7 +296,7 @@ namespace YLFramework.Resource.Encryption
                 }
                 using var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
                 using var part = OwnedWindowsFiles.CreateTemporaryPinned(name);
-                RecordVerifiedCipherHash(await CommitCipherAsync(input, part, final, row, transfer).ConfigureAwait(false));
+                RecordVerifiedCipherHash(await CommitCipherAsync(input, part, final, row, transfer, progress).ConfigureAwait(false));
             }
             catch (OperationCanceledException error) when (!token.IsCancellationRequested)
             {
@@ -285,7 +308,8 @@ namespace YLFramework.Resource.Encryption
             }
         }
 
-        internal static async Task<long> CommitCipherAsync(Stream input, FileStream part, string final, EncryptedBundleRecord row, CancellationToken transfer)
+        internal static async Task<long> CommitCipherAsync(Stream input, FileStream part, string final, EncryptedBundleRecord row,
+            CancellationToken transfer, TransferProgress progress = null)
         {
             try
             {
@@ -301,6 +325,7 @@ namespace YLFramework.Resource.Encryption
                     if (length > row.CipherLength)
                         throw new EncryptedBundleIntegrityException("Download exceeded the frozen ciphertext length.");
                     part.Write(buffer, 0, count);
+                    progress?.SetDownloadedBytes(length);
                 }
                 part.Flush(true);
                 long checkedBytes = AuthenticatedBundleStream.ValidateCipher(part, row, transfer);

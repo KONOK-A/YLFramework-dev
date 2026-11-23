@@ -8,9 +8,10 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine.AddressableAssets;
 using UnityEngine.AddressableAssets.ResourceLocators;
+using UnityEngine.AddressableAssets.ResourceProviders;
 using UnityEngine.ResourceManagement.ResourceLocations;
 using UnityEngine.ResourceManagement.ResourceProviders;
-using UnityEngine.AddressableAssets.ResourceProviders;
+using UnityEngine.SceneManagement;
 
 namespace YLFramework.Resource.Encryption
 {
@@ -27,6 +28,36 @@ namespace YLFramework.Resource.Encryption
         internal static bool IsSupportedAssetProvider(string provider, int dependencies) =>
             provider == typeof(BundledAssetProvider).FullName ||
             (provider == "UnityEngine.ResourceManagement.ResourceProviders.LegacyResourcesProvider" && dependencies == 0);
+
+        internal static bool IsBuiltInScene(string provider, Type type, object data, int dependencies) =>
+            provider == "" && type == typeof(SceneInstance) && data == null && dependencies == 0;
+
+        internal static string BuiltInSceneId(string path)
+        {
+            if (!path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("A built-in scene has no Unity asset path.");
+            int start = path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) ? "Assets/".Length : 0;
+            return path.Substring(start, path.Length - start - ".unity".Length);
+        }
+
+        internal static void CheckAlias(object key, int sceneIndex)
+        {
+            if ((key is string alias && !alias.StartsWith(MountPrefix, StringComparison.Ordinal)) ||
+                (key is int index && sceneIndex >= 0 && index == sceneIndex))
+                return;
+            throw new InvalidDataException("Unexpected Catalog alias or built-in scene index.");
+        }
+
+        internal static bool IsStockLocalBundle(string id, string provider)
+        {
+            const string prefix = RuntimeToken + "/";
+            string stock = typeof(AssetBundleProvider).FullName;
+            return (provider == stock || (provider.StartsWith(stock + "_", StringComparison.Ordinal) &&
+                provider.Length == stock.Length + 33 && Guid.TryParseExact(provider.Substring(stock.Length + 1), "N", out _))) &&
+                id.StartsWith(prefix, StringComparison.Ordinal) && id.EndsWith(".bundle", StringComparison.Ordinal) &&
+                id.Substring(prefix.Length).Split('/').All(part => part.Length != 0 && !part.EndsWith(".", StringComparison.Ordinal) &&
+                    !part.EndsWith(" ", StringComparison.Ordinal) && part.IndexOfAny(Path.GetInvalidFileNameChars()) < 0);
+        }
 
         internal static void CheckRuntimeSettings(string settings, string catalogName)
         {
@@ -60,7 +91,7 @@ namespace YLFramework.Resource.Encryption
 
         internal static string Node(string id, string provider, Type type, object data, string localRoot)
         {
-            if (id == null || string.IsNullOrEmpty(provider) || type == null)
+            if (id == null || type == null || (string.IsNullOrEmpty(provider) && !IsBuiltInScene(provider, type, data, 0)))
             {
                 throw new InvalidDataException("A catalog location has no complete identity.");
             }
@@ -79,7 +110,7 @@ namespace YLFramework.Resource.Encryption
             return row.ToString(Formatting.None);
         }
 
-        internal static string Row(string key, int candidateIndex, string asset, IEnumerable<string> dependencies)
+        internal static string Row(object key, int candidateIndex, string asset, IEnumerable<string> dependencies)
         {
             return new JArray(key, candidateIndex, asset, new JArray(dependencies)).ToString(Formatting.None);
         }
@@ -104,6 +135,8 @@ namespace YLFramework.Resource.Encryption
             var mounts = description.Bundles.ToDictionary(item => MountId(item.Binding), StringComparer.Ordinal);
             var name = description.Bundles[0].Binding.ProviderId;
             string localRoot = Addressables.RuntimePath;
+            var scenes = Enumerable.Range(0, SceneManager.sceneCountInBuildSettings).Select(SceneUtility.GetScenePathByBuildIndex)
+                .Select(BuiltInSceneId).ToArray();
             var manager = Addressables.ResourceManager;
             if (manager.ResourceProviders.Count(provider => provider.GetType() == typeof(ContentCatalogProvider)) != 1 ||
                 manager.ResourceProviders.Count(provider => provider.GetType() == typeof(JsonAssetProvider)) != 1)
@@ -117,9 +150,17 @@ namespace YLFramework.Resource.Encryption
                 {
                     if (IsBundle(location.ResourceType))
                         continue;
-                    if (!(key is string alias))
-                        throw new InvalidDataException("Published nonstring asset identifiers are not supported in encrypted mode.");
                     var depends = location.Dependencies ?? Array.Empty<IResourceLocation>();
+                    if (IsBuiltInScene(location.ProviderId, location.ResourceType, location.Data, depends.Count))
+                    {
+                        int index = Array.IndexOf(scenes, location.InternalId);
+                        if (index < 0)
+                            throw new InvalidDataException("A built-in scene route is absent from the actual Player scene list.");
+                        CheckAlias(key, index);
+                        rows.Add(Row(key, candidateIndex++, Node(location.InternalId, location.ProviderId, location.ResourceType, null, localRoot), Array.Empty<string>()));
+                        continue;
+                    }
+                    CheckAlias(key, -1);
                     if (!IsSupportedAssetProvider(location.ProviderId, depends.Count))
                     {
                         throw new InvalidDataException("Asset routes must retain the official asset or legacy Resources provider.");
@@ -152,7 +193,7 @@ namespace YLFramework.Resource.Encryption
                         if (manager.GetResourceProvider(typeof(IAssetBundleResource), dep)?.GetType() != expected)
                             throw new InvalidDataException("Bundle route did not select its expected provider.");
                     }
-                    rows.Add(Row(alias, candidateIndex++, Node(location.InternalId, location.ProviderId, location.ResourceType, location.Data, localRoot),
+                    rows.Add(Row(key, candidateIndex++, Node(location.InternalId, location.ProviderId, location.ResourceType, location.Data, localRoot),
                         depends.Select(dep => Node(dep.InternalId, dep.ProviderId, dep.ResourceType, dep.Data, localRoot))));
                 }
             }
