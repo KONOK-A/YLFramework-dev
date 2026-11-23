@@ -56,7 +56,7 @@ function Assert-YLTestWorkspace {
 }
 
 function New-YLTestContainer {
-    param([object] $Workspace, [string] $Path, [string] $Kind, [string] $Key, [switch] $ExistingOnly)
+    param([object] $Workspace, [string] $Path, [string] $Kind, [string] $Key, [switch] $ExistingOnly, [switch] $NewOnly)
     Assert-YLTestWorkspace $Workspace
     $Path = Get-YLTestPath $Path
     if (-not $Path.StartsWith($Workspace.root + '\', [StringComparison]::OrdinalIgnoreCase)) {
@@ -64,6 +64,7 @@ function New-YLTestContainer {
     }
     $marker = Join-Path $Path '.yl-owner.json'
     if ([IO.Path]::Exists($Path)) {
+        if ($NewOnly) { throw "A fresh output is required; the path already exists: $Path" }
         if (-not [IO.File]::Exists($marker)) { throw "Unknown container owner: $Path" }
         $null = Get-YLTestPath $marker
         $owner = [IO.File]::ReadAllText($marker) | ConvertFrom-Json -AsHashtable -DateKind String
@@ -90,16 +91,32 @@ function New-YLTestContainer {
     return [pscustomobject]$owner
 }
 
+function Get-YLTestWorkspacePaths {
+    param([string] $WorkspaceRoot, [string] $Repository)
+    $root = Get-YLTestPath $WorkspaceRoot
+    $Repository = Get-YLTestPath $Repository
+    if ($root.Length -le 3 -or $root -ieq $Repository -or $root.StartsWith($Repository + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        $Repository.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'A testing workspace must be outside the source repository and cannot be its ancestor or a drive root.'
+    }
+    for ($cursor = $root; $cursor; $cursor = [IO.Path]::GetDirectoryName($cursor)) {
+        $leaf = [IO.Path]::GetFileName($cursor)
+        if ($leaf -in 'Archive', 'Results' -and
+            [IO.File]::Exists((Join-Path ([IO.Path]::GetDirectoryName($cursor)) '.yl-workspace.json'))) {
+            if ($leaf -ieq 'Archive') { throw 'A workspace Archive is read-only history, not an active test root.' }
+            throw 'A managed workspace Results area cannot contain another workspace.'
+        }
+    }
+    if (-not [IO.Directory]::Exists($Repository)) { throw "Missing source repository: $Repository" }
+    return [pscustomobject]@{ root = $root; repository = $Repository }
+}
+
 function Initialize-YLTestWorkspace {
     param([string] $WorkspaceRoot, [string] $Repository)
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { $WorkspaceRoot = $env:YL_TEST_WORKSPACE }
-    $root = Get-YLTestPath $WorkspaceRoot
-    $Repository = Get-YLTestPath $Repository
-    if ($root.Length -le 3 -or $root -ieq $Repository -or
-        $Repository.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'A drive/source repository root or its ancestor cannot be a testing workspace.'
-    }
-    if (-not [IO.Directory]::Exists($Repository)) { throw "Missing source repository: $Repository" }
+    $paths = Get-YLTestWorkspacePaths -WorkspaceRoot $WorkspaceRoot -Repository $Repository
+    $root = $paths.root
+    $Repository = $paths.repository
     $marker = Join-Path $root '.yl-workspace.json'
     if ([IO.Path]::Exists($root)) {
         if (-not [IO.File]::Exists($marker)) { throw "Never adopt an unknown workspace owner: $root" }
@@ -126,7 +143,8 @@ function New-YLTestDirectory {
     param(
         [object] $Workspace,
         [ValidateSet('Result', 'Host', 'Cache')][string] $Kind,
-        [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$')][string] $Key
+        [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$')][string] $Key,
+        [switch] $NewOnly
     )
     Assert-YLTestWorkspace $Workspace
     $area = switch ($Kind) { Result { 'Results' }; Host { 'Hosts' }; Cache { 'Cache' } }
@@ -137,7 +155,7 @@ function New-YLTestDirectory {
         $null = New-YLTestContainer -Workspace $Workspace -Path $path -Kind ResultGroup -Key $Key
         $path = Join-Path $path ([Guid]::NewGuid().ToString('N'))
     }
-    return New-YLTestContainer -Workspace $Workspace -Path $path -Kind $Kind -Key $Key
+    return New-YLTestContainer -Workspace $Workspace -Path $path -Kind $Kind -Key $Key -NewOnly:($NewOnly -or $Kind -eq 'Result')
 }
 
 function Get-YLTestDirectory {
@@ -172,40 +190,58 @@ function Lock-YLTestDirectory {
 }
 
 function Get-YLTestTreeFiles {
-    param([string] $Path)
+    param([string] $Path, [switch] $ForCleanup, [switch] $ProtectNested)
     $pending = [Collections.Generic.Stack[string]]::new()
     $pending.Push((Get-YLTestPath $Path))
     while ($pending.Count -ne 0) {
         $current = $pending.Pop()
         $attributes = [IO.File]::GetAttributes($current)
         if ($attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Linked cleanup entry is refused: $current" }
+        if ($ProtectNested -and $current -ine $Path) {
+            $leaf = [IO.Path]::GetFileName($current)
+            if ($leaf -in '.pinned','.git' -or
+                ($leaf -in '.yl-owner.json','.lease' -and [IO.Path]::GetDirectoryName($current) -ine $Path)) {
+                throw "Protected nested evidence in one-shot host: $current"
+            }
+        }
         if ($attributes -band [IO.FileAttributes]::Directory) {
-            foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($current)) { $pending.Push($entry) }
+            foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($current)) {
+                if (($ForCleanup -or $ProtectNested) -and [IO.Path]::GetFileName($entry) -ieq '.yl-workspace.json') {
+                    throw "Protected nested workspace in cleanup target: $entry"
+                }
+                $pending.Push($entry)
+            }
         } else { $current }
     }
 }
 
 function Remove-YLTestDirectory {
     [CmdletBinding(SupportsShouldProcess)]
-    param([object] $Workspace, [string] $Path, [switch] $Apply)
+    param([object] $Workspace, [string] $Path, [switch] $Apply, [string] $ExpectedId, [IO.FileStream] $HeldLease)
     $owner = Get-YLTestDirectory -Workspace $Workspace -Path $Path
+    if ($ExpectedId -and $owner.id -cne $ExpectedId) { throw 'Output ownership changed before cleanup.' }
     $Path = $owner.path
-    $files = @(Get-YLTestTreeFiles $Path)
     $pin = Join-Path $Path '.pinned'
     if ([IO.Path]::Exists($pin)) { throw "Pinned output is protected: $Path" }
     $handles = [Collections.Generic.List[IO.FileStream]]::new()
     try {
-        $handles.Add((Lock-YLTestDirectory -Workspace $Workspace -Path $Path))
+        if ($null -eq $HeldLease) { $handles.Add((Lock-YLTestDirectory -Workspace $Workspace -Path $Path)) }
+        elseif (-not $ExpectedId -or -not $HeldLease.CanWrite -or $HeldLease.Name -ine (Join-Path $Path '.lease')) {
+            throw 'Cleanup requires the original lease and matching output identity.'
+        }
         $currentOwner = Get-YLTestDirectory -Workspace $Workspace -Path $Path
         if ($currentOwner.id -cne $owner.id) { throw 'Output ownership changed during cleanup.' }
+        $files = @(Get-YLTestTreeFiles $Path -ForCleanup -ProtectNested:([bool]$ExpectedId))
         foreach ($file in $files) {
             if ($file -ieq (Join-Path $Path '.lease')) { continue }
             try { $handles.Add([IO.File]::Open($file, 'Open', 'Read', 'Delete')) }
             catch [IO.IOException] { throw "Output file is in use: $file" }
         }
-        $null = @(Get-YLTestTreeFiles $Path)
+        $remove = $Apply -and $PSCmdlet.ShouldProcess($Path, 'Remove owned test output')
+        # Recheck the tree after a potential confirmation prompt.
+        $null = @(Get-YLTestTreeFiles $Path -ForCleanup -ProtectNested:([bool]$ExpectedId))
         if ([IO.Path]::Exists($pin)) { throw "Pinned output is protected: $Path" }
-        if ($Apply -and $PSCmdlet.ShouldProcess($Path, 'Remove owned test output')) {
+        if ($remove) {
             [IO.Directory]::Delete($Path, $true)
             return [pscustomobject]@{ path = $Path; status = 'Removed' }
         }

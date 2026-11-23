@@ -8,7 +8,7 @@
 
 - 每个包保留包根 `README.md`、`LICENSE.md`、`package.json` 及其现有元数据。
 - 顶层文件/目录必须获 `files` 明确允许且真实存在。新增手册应声明 `Documentation~`，不能仅在源码中看到文件就假定会打包。
-- 普通 Unity 资产要求配套 `.meta`；`Documentation~` / `Samples~` 下文件和目录有隐藏内容豁免，但已有 `.meta` 不能成为孤儿，GUID 不能跨包重复。
+- 普通 Unity 资产要求配套 `.meta`。`Documentation~` 整棵树免补 `.meta`；`Samples~` 只有根目录本身豁免，样例文件和子目录仍需各自的 `.meta`。移动已有资产时保留对应元数据，不复制 GUID。
 - 产品包不能夹带 Tests、宿主 Assets/Packages/ProjectSettings、Tools、缓存或本机配置。样例隐藏输入与显式导入副本分别管理。
 - 依赖 DLL、第三方许可证、MiniExcel 来源与条件适配源码都是实际负载，不能因默认未编译就漏包。
 

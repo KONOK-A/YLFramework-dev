@@ -17,6 +17,7 @@ param(
     [string] $EncryptionPackReceipt,
     [string] $ReleaseManifest,
     [string] $SourceCommit,
+    [switch] $KeepArtifacts,
     [ValidateSet('IL2CPP','Mono', IgnoreCase = $false)][string] $Backend = 'IL2CPP'
 )
 
@@ -59,7 +60,7 @@ if ($EncryptedRemoteGroup -and -not ($HeldDownload -or $VerifiedSizeSnapshot -or
     $artifactArguments = if ($fixedRelease) { @{ ReleaseManifest = $ReleaseManifest; SourceCommit = $SourceCommit } }
         elseif ($EncryptionPackReceipt) { @{ PackReceipt = $EncryptionPackReceipt } } else { @{} }
     & (Join-Path $PSScriptRoot 'ResourceEncryption/Invoke-FrozenDelivery.ps1') -Profile $Profile -Unity $Unity -WorkspaceRoot $root `
-        -Mode $EncryptionCase -Backend $Backend @artifactArguments
+        -Mode $EncryptionCase -Backend $Backend -KeepArtifacts:$KeepArtifacts @artifactArguments
     return
 }
 $configurationPath = 'Tools/Testing/TestSuites.json'
@@ -146,14 +147,12 @@ $files['Packages/manifest.json'] = [Text.UTF8Encoding]::new($false).GetBytes((Co
 
 $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $root -Repository $repository
 $hostKey = 'RAP' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
-if ([IO.Path]::Exists((Get-YLTestPath (Join-Path $workspace.root "Hosts/$hostKey")))) {
-    throw 'The fresh Player host path already exists; preserve it instead of reusing it.'
-}
 $hostLease = $null
 $runLease = $null
 $summary = $null
+$failures = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
 try {
-    $hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key $hostKey
+    $hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key $hostKey -NewOnly
     $hostLease = Lock-YLTestDirectory -Workspace $workspace -Path $hostRecord.path
     $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key 'ResourceAAIL2CPP'
     $runLease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
@@ -176,9 +175,7 @@ try {
         addressables = $null; build = $null; runtime = $null
     }
     Assert-YLUnityHostIdle $hostRecord
-    $pin = @{ purpose = 'Preserve this build and its runtime evidence'; hostId = $hostRecord.id; resultId = $run.id; inputHash = $identity.sha256 }
-    Write-YLTestJson -Path (Join-Path $hostRecord.path '.pinned') -Value $pin
-    Write-YLTestJson -Path (Join-Path $run.path '.pinned') -Value $pin
+    Start-YLPlayerRetention $hostRecord $run -KeepArtifacts:$KeepArtifacts
     Write-YLTestJson -Path $summary.inputIdentity -Value $identity
     Sync-YLUnityHost -HostRecord $hostRecord -Files $files -Identity $identity -EditorVersion $editor.version
 
@@ -238,15 +235,19 @@ try {
     $summary.status = 'Passed'
 } catch {
     if ($null -ne $summary) { $summary.reason = $_.Exception.Message }
-    throw
+    $failures.Add($_)
 } finally {
     try {
         if ($null -ne $summary) {
-            Write-YLTestJson -Path (Join-Path $run.path 'execution.json') -Value $summary
-            $summary | ConvertTo-Json -Depth 40
+            Complete-YLPlayerRun $workspace $hostRecord $run $hostLease $summary -KeepArtifacts:$KeepArtifacts
         }
+    } catch {
+        $failures.Add($_)
     } finally {
-        if ($null -ne $runLease) { $runLease.Dispose() }
-        if ($null -ne $hostLease) { $hostLease.Dispose() }
+        try { if ($null -ne $hostLease) { $hostLease.Dispose() } }
+        finally { if ($null -ne $runLease) { $runLease.Dispose() } }
     }
 }
+if ($failures.Count -eq 1) { throw $failures[0] }
+if ($failures.Count -gt 1) { throw [AggregateException]::new('Addressables Player run and finalization failed.', [Exception[]]$failures.Exception) }
+$summary | ConvertTo-Json -Depth 40

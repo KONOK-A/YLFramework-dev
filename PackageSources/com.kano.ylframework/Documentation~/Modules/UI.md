@@ -30,7 +30,7 @@ var owner = (MenuModule)request.Module;
 // 在应用决定结束本模块时调用 owner.Close()。
 ```
 
-默认空配表和空启动场景无需资源 Provider；设置 `PreloadConfigTables` 或 `DefaultStartUpScene` 后，须先按 [Resource](Resource.md#core-与-audio)装配 `ICoreResourceProvider`。`ProjectName` 是资源项目身份，不是 Module 的完整类型注册名；它应在启动前确定。
+默认空配表和空启动场景无需资源 Provider；设置 `PreloadConfigTables` 或 `DefaultStartUpScene` 后，须先按 [Resource](Resource.md#最小接入)装配 `ICoreResourceProvider`。`ProjectName` 是资源地址的业务命名空间，不是 Module 的完整类型注册名；它应在启动前确定。
 
 - Model 管理业务状态，Controller 组织行为，View 负责表现。通过所属 Module 创建和查询，不把一个 Module 的对象交给另一 Module 结束。
 - `StartUpModule` 对运行中的同一实例不重复启动，启动请求不支持 `Abort`；Starting 期间不允许 Close 或 Shutdown。

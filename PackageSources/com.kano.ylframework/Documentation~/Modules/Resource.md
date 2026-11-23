@@ -1,14 +1,16 @@
 # 资源管理
 
-> [文档首页](../README.md) · [安装](../Installation.md) · [资源制作](Resource/Authoring.md) · [内容交付](Resource/Delivery.md) · [音频](Audio.md)
+> [文档首页](../README.md) · [安装](../Installation.md) · [资源制作](Resource/Authoring.md) · [内容交付](Resource/Delivery.md) · [音频](Audio/Resources.md)
 
 YL Resource 以官方 Addressables 为唯一资源内核。官方负责定位、依赖、加载、Bundle、Catalog、缓存和内容构建；YL 负责业务 Scope、独立 Lease、实例复用、框架接入与责任诊断。不维护另一份资源目录、Bundle 依赖图或版本存储。
 
 Runtime namespace 为 `YLFramework.Resource`，Editor 为 `YLFramework.Editor.Resource`，属于主包。主包正式依赖 Addressables；安装包、构造配置、读取 `ResourceSystem.Current` 或打开工作台都不会初始化资源。操作及 Unity 对象访问在主线程，不把 `Task.Run` 当加载入口。
 
+先按[作者指南](Resource/Authoring.md#第一次配置)配置官方 Settings 与 Entries。需要 Windows x64 固定 Catalog 的加密 Bundle 时，[另选加密交付](Resource/Delivery.md#可选的远端-bundle-加密)，不改变普通资源的安装要求。
+
 ## 最小接入
 
-应用组合根长期持有一个 `ResourceStartup`，等待 `StartAsync()` 成功后才使用 `Resources`。同一执行会话同时只允许一个启动所有者；其他模块借用服务并创建自己的 Scope，而不是再创建 Startup 加入会话。
+应用组合根长期持有一个 `ResourceStartup`，等待 `StartAsync()` 成功后才使用 `Resources`。同一执行会话同时只允许一个启动所有者；其他模块借用服务并创建自己的 Scope，而不是再创建 Startup 加入会话。下面是引用 `YLFramework.Runtime`、导入 `YLFramework.Resource` 的主线程 async 方法体片段；退出时按[停止与诊断](#停止与诊断)等待 `StopAsync()`。
 
 ```csharp
 // startup 是应用 owner 的字段，关闭失败时继续保留，不能在方法退出后丢弃。
@@ -20,11 +22,13 @@ var resources = startup.Resources;
 
 Core 默认绑定；可传 `false` 只使用资源能力。音频命名空间登记不启动 Audio、不修改偏好或接管 Audio 生命周期。已有外部 Core Provider 冲突会明确失败，不强制替换。
 
-完整组件、取消、失败、`OnDestroy` 收尾及重试见随包的 [Resource Startup](../../Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs)。从 Package Manager 显式导入完整样例，创建并保存官方内容，打开生成的 Bootstrap 后在 Play 中用组件菜单显式开始。样例展示 Scope 重用与销毁绑定、预热与归还前复位、Core 文本、音频 Clip 租约和 `ResourceImage`。可选的 `startupCatalogId` 只在受控首次启动检查后应用指定 Catalog，再开放业务；本地样例默认不更新。Editor 创建入口只保存本次新建的场景，不保存或关闭用户场景。
+完整组件、取消、失败、`OnDestroy` 收尾及重试见随包的 [Resource Startup](../../Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs)；按[样例步骤](Resource/Authoring.md#运行资源样例)导入、建场景并显式运行。样例展示 Scope 重用与销毁绑定、预热与归还前复位、Core 文本、音频 Clip 租约和 `ResourceImage`。可选的 `startupCatalogId` 只在受控首次启动检查后应用指定 Catalog，再开放业务；本地样例默认不更新。
 
 ## 默认用 Scope 借读
 
 Scope 是业务生命周期，不是地址分组或新的全局缓存。普通调用直接取得借用对象，不需要为每次读取手动编写 Request/TakeResult/Lease 三层管理。
+
+把一个 `TextAsset` 登记为官方地址 `game/text/welcome` 且在 Catalog 发布地址键。在资源启动成功后，从主线程向下面的 `ReadAsync` 传入 `startup.Resources` 和调用方的取消令牌；成功应打印文本，并在方法退出时关闭 Scope。
 
 ```csharp
 using System.Threading;
@@ -77,7 +81,7 @@ Debug.Log(anotherOwner.Asset.text);
 
 若同一 PNG 的地址在打包目录中同时匹配 `Sprite` 和 `Texture2D`，`AcquireAsync<UnityEngine.Object>` 会返回 `InvalidAddress` 并列出候选类型。按用途改用 `AcquireAsync<Sprite>` 或 `AcquireAsync<Texture2D>`；若同一类型仍有多个位置，改用唯一地址、修正 Label，或在确实需要多项时使用 `AcquireBatchAsync<T>`。
 
-`ResourceAddress(projectId, path)` 仍可表达框架模块的业务命名空间，投影为官方 `projectId/path`，不表示私有 Catalog 挂载。新资产和子对象优先使用官方地址/AssetReference；旧 localId 字符串不能直接充当官方子对象名。
+`ResourceAddress(projectId, path)` 用于表达框架模块的业务命名空间，投影为官方地址 `projectId/path`，不挂载私有 Catalog。子对象用明确的官方 `AssetReference`，不能把 localId 字符串当作官方子对象名。
 
 ## 必需资源批量
 
@@ -160,7 +164,7 @@ Core 的默认 Module 场景与 SceneController 默认仍为 Single，不等于 
 
 `ResourceImage` 隔离替换、停用、销毁与晚回调；placeholder 借用，自建 Sprite 克隆自己销毁，不能销毁共享 Texture。直接指定图集及 Sprite 名时，先销毁组件自建的克隆，再归还 Atlas Lease。`AssetReferenceAtlasedSprite` 按 `Sprite` 查询，图集子对象由官方 Provider 持有和释放。
 
-Core 保留 `ICoreResourceProvider` 窄合同，不反向引入 Addressables 类型。`CorePrefabLease.Rent` 允许后端复用实例，不消费 Prefab 租约。Audio 播放、缓存和交叉淡化尾轨各持独立 Clip 责任。DataAssets/Gameplay 的配置根由各 Manager 持有，条目只借读；Scope 不能替代业务登记注销。Localization 仍走官方包，与 YL 共享官方设施而不共享释放权。详见 [Audio](Audio.md) 及各选装包手册。
+Core 通过 `ICoreResourceProvider` 消费资源；应用用 `ResourceStartup` 的 `bindCoreResourceProvider: true` 装配主包适配，之后再按 [UI 文档](UI.md)启动业务。`CorePrefabLease.Rent` 允许后端复用实例，不消费 Prefab 租约。Audio 播放、缓存和交叉淡化尾轨各持独立 Clip 责任，见[命名音频接入](Audio/Resources.md)。DataAssets/Gameplay 的配置根由领域 owner 持有，条目只借读；Scope 不能替代业务登记注销。Localization 走官方包，与 YL 共享官方设施而不共享释放权。详见[选装手册](../README.md#选装能力)。
 
 ## 停止与诊断
 
@@ -176,9 +180,4 @@ Core 保留 `ICoreResourceProvider` 窄合同，不反向引入 Addressables 类
 
 缺失 key 检查官方 Entry/类型；歧义明确修配置；`ConfigurationConflict` 检查唯一 Startup 与外部绑定；`Busy` 找真实持有者；`SessionUnavailable` 结算旧会话而不是把旧请求挂新会话。性能以相同内容、分包、平台与正确生命周期测量，不能由包装层代码量推断优于裸 Addressables。
 
-## API 改名迁移
-
-- 将 `CorePrefabLease.Instantiate` 的调用和覆写改为 `Rent`。Resource 的 `Instantiate` / `InstantiateAsync` 仍保证新建。
-- 将 `GetInstanceCache`、`ClearInstanceCaches`、`ClearImageCache` 分别改为 `GetOrCreateInstanceCache`、`RetireInstanceCaches`、`ClearIdleImageCache`。
-- 读取资源来源 ID 改用 `ResourceException.SourceId`，构造时使用 `sourceId:`。`Source` 仍可编译，但现在读取的是 .NET 异常诊断字符串。
-- 以字符串调用 `ResourceScope.LoadAsync`、`ResourceSystem.AcquireAsync` 或 `ResourceSystem.LoadSceneAsync` 时，具名实参从 `address:` 改为 `key:`；`SceneLease.Address` 改为 `Key`。不需要修改已配置的地址、标签或序列化字段。
+`ResourceException.SourceId` 表示资源来源 ID；不是 .NET 异常基类的 `Source`。生成常量因目录或同名程序集冲突而失败时，按[生成输出与归属](Resource/Authoring.md#常量与图集)处理，不创建第二份同名 asmdef。

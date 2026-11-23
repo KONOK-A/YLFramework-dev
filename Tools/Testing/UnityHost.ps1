@@ -164,6 +164,77 @@ function Assert-YLUnityHostIdle([object] $HostRecord) {
     }
 }
 
+function Start-YLPlayerRetention {
+    param($HostRecord, $Run, [switch] $FormalCandidate, [switch] $KeepArtifacts)
+    $context = [ordered]@{ schemaVersion = 1; host = $HostRecord.path; hostId = $HostRecord.id; resultId = $Run.id
+        formalCandidate = [bool]$FormalCandidate; keepArtifacts = [bool]$KeepArtifacts }
+    Write-YLTestJson -Path (Join-Path $Run.path 'host-context.json') -Value $context
+    if ($FormalCandidate -or $KeepArtifacts) {
+        foreach ($dir in $HostRecord.path,$Run.path) { Write-YLTestJson -Path (Join-Path $dir '.pinned') -Value $context }
+    }
+}
+
+function Complete-YLPlayerRun {
+    param($Workspace, $HostRecord, $Run, [IO.FileStream] $HostLease, [Collections.IDictionary] $Summary, [switch] $KeepArtifacts)
+    $owned = Get-YLTestDirectory $Workspace $HostRecord.path
+    $result = Get-YLTestDirectory $Workspace $Run.path
+    $file, $prefix = switch -CaseSensitive ($result.key) {
+        'ResourceAAIL2CPP' { 'execution.json', 'RAP' }
+        'FrozenEncryption' { 'frozen.json', 'RFD' }
+        { $_ -cin 'NativeDeliveryP0','NativeDeliveryFinal' } { 'p0-c.json', 'RNC' }
+        default { throw 'Not a one-shot Player result group.' }
+    }
+    if ($owned.kind -cne 'Host' -or $result.kind -cne 'Result' -or $owned.key -cnotmatch "^${prefix}[0-9a-f]{8}$" -or
+        $owned.id -cne $HostRecord.id -or $result.id -cne $Run.id -or $Summary['host'] -ine $owned.path -or
+        $Summary['hostId'] -cne $owned.id -or $Summary['resultId'] -cne $result.id) { throw 'Player host/result identity mismatch.' }
+
+    # Preserve the run result before cleanup, but publish a terminal pass only after retention succeeds.
+    Write-YLTestJson -Path (Join-Path $result.path 'run-outcome.json') -Value $Summary
+    if ($null -eq $HostLease -or -not $HostLease.CanWrite -or $HostLease.Name -ine (Join-Path $owned.path '.lease')) {
+        throw 'Player finalization requires the original host lease.'
+    }
+    $reason = if ($KeepArtifacts) { 'KeepArtifacts' } elseif ($Summary['formalCandidate']) { 'FormalCandidate' }
+        elseif ($Summary['status'] -isnot [string] -or $Summary['status'] -cne 'Passed') { 'NotPassed' }
+        elseif ([IO.Path]::Exists((Join-Path $owned.path '.pinned')) -or [IO.Path]::Exists((Join-Path $result.path '.pinned'))) { 'ExistingPin' }
+        else { 'PassedDiagnostic' }
+    $retention = [ordered]@{ schemaVersion = 1; host = $owned.path; hostId = $owned.id; resultId = $result.id; reason = $reason; hostStatus = 'Pinned' }
+    try {
+        if ($reason -cne 'PassedDiagnostic') {
+            foreach ($path in $owned.path, $result.path) {
+                $pin = Get-YLTestPath (Join-Path $path '.pinned')
+                if (-not [IO.File]::Exists($pin)) { Write-YLTestJson -Path $pin -Value $retention }
+            }
+        } else {
+            Assert-YLUnityHostIdle $owned
+            $retention['evidenceSha256'] = [ordered]@{}
+            foreach ($relative in '.yl-inputs.json','Packages/manifest.json','Packages/packages-lock.json','fixture.json','Private/audit.json') {
+                $source = Get-YLHostManagedPath $owned $relative
+                if (-not [IO.File]::Exists($source)) { continue }
+                $copy = Get-YLTestPath (Join-Path $result.path "host-evidence/$relative")
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($copy))
+                [IO.File]::Copy($source, $copy, $false)
+                $hash = (Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash
+                if ($hash -cne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) { throw "Host evidence copy changed: $relative" }
+                $retention.evidenceSha256[$relative] = $hash
+            }
+            $retention.hostStatus = 'RemovalPending'
+            Write-YLTestJson -Path (Join-Path $result.path 'retirement-intent.json') -Value $retention
+            $removed = Remove-YLTestDirectory -Workspace $Workspace -Path $owned.path -Apply -ExpectedId $owned.id -HeldLease $HostLease
+            $retention.hostStatus = $removed.status
+        }
+    } catch {
+        $retention.hostStatus = 'CleanupFailed'
+        $retention['error'] = $_.Exception.Message
+        $Summary['runStatus'] = $Summary['status']
+        $Summary['status'] = 'Failed'
+        $Summary['retentionError'] = $_.Exception.Message
+        throw
+    } finally {
+        Write-YLTestJson -Path (Join-Path $result.path 'retention.json') -Value $retention
+        Write-YLTestJson -Path (Join-Path $result.path $file) -Value $Summary
+    }
+}
+
 function Sync-YLUnityHost([object] $HostRecord, [Collections.IDictionary] $Files, [object] $Identity, [string] $EditorVersion) {
     $statePath = Get-YLHostManagedPath $HostRecord '.yl-inputs.json'
     $previous = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)

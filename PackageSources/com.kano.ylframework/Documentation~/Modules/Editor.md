@@ -32,7 +32,7 @@
 
 Module 生成器输出到 `Assets/YLFrameworkData/Generated/Modules`，namespace 与程序集身份为 `YLFramework.Core.Examples.<ModuleName>`。任意位置存在同名 asmdef、已加载同名程序集或类型时，写入前拒绝并指出来源；不能通过另选输出目录创建第二个同名身份。
 
-Resource 生成器有独立的专属目录与输出保护，见[地址常量生成](Resource/Authoring.md#地址常量生成)。修改生成器时改源模板和输入，再验证正式输出与消费者，不手补生成代码。
+Resource 生成器有独立的专属目录与输出保护，见[地址常量生成](Resource/Authoring.md#常量与图集)。修改生成器时改源模板和输入，再验证正式输出与消费者，不手补生成代码。
 
 `ScriptableObjectExtensions.CreateAsset()` 默认输出 `Assets/YLFrameworkData/ScriptableObjects`，显式路径也只能在该根或子目录中。它只接受尚未归属 AssetDatabase 的新实例，不移动或覆盖已有资产、不接受链接目录，不注册 Undo。失败时由调用者处理自己仍持有的实例。
 

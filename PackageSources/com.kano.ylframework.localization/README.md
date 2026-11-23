@@ -18,7 +18,7 @@ DataAssets/Excel 是可选 Editor 适配，不会因安装本包被强制安装�
 
 Package Manager 提供 `Basic UI` 以及可选 `DataAssets Excel` Samples。基础样例包含完整场景/官方数据生成入口和 Core Panel 模板，不要求使用工程先安装配置表工具。
 
-完整接入、所有权、配置引用和旧内核淘汰说明见[使用手册](Documentation~/README.md)。
+完整接入、所有权、面板绑定及可选工作簿流程见[使用手册](Documentation~/README.md)。
 
 ## 许可证
 

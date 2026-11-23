@@ -8,6 +8,7 @@ param([Parameter(Mandatory)][ValidateSet('Unity6','Unity2022', IgnoreCase = $fal
     [string] $PackReceipt,
     [string] $ReleaseManifest,
     [string] $SourceCommit,
+    [switch] $KeepArtifacts,
     [ValidateSet('IL2CPP','Mono', IgnoreCase = $false)][string] $Backend = 'IL2CPP')
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
@@ -42,13 +43,15 @@ $pins = @(Get-YLUnityPackageInputs -EditorProfile $editor)
 $lock = Read-YLPackageEvidenceJson (Join-Path $repo $pins[1])
 $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $repo
 $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key 'FrozenEncryption'
-$hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key ('RFD' + [guid]::NewGuid().ToString('N').Substring(0,8))
-$hostLease = Lock-YLTestDirectory -Workspace $workspace -Path $hostRecord.path
+$hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key ('RFD' + [guid]::NewGuid().ToString('N').Substring(0,8)) -NewOnly
+$hostLease = $null
 $runLease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
 $summary = [ordered]@{ purpose = $(if ($fixedRelease) { 'YLResource.FrozenDelivery.LocalTarball' } else { 'YLResource.FrozenDelivery.LocalFixture' });
     status = 'Failed'; profile = $Profile; mode = $Mode; backend = $Backend; addressables = $aa; formalCandidate = $fixedRelease;
-    host = $hostRecord.path; results = $run.path; build = $null; runs = @(); packageArtifacts = [ordered]@{} }
+    host = $hostRecord.path; hostId = $hostRecord.id; results = $run.path; resultId = $run.id; build = $null; runs = @(); packageArtifacts = [ordered]@{} }
 $keyFile = Join-Path $hostRecord.path 'fixture.key'
+$keyCreated = $false
+$failures = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
 
 function Execute-Process($exe, $working, $arguments, $log, [int]$timeout, [string]$CacheRoot) {
     $info = [Diagnostics.ProcessStartInfo]::new($exe)
@@ -59,10 +62,9 @@ function Execute-Process($exe, $working, $arguments, $log, [int]$timeout, [strin
 }
 
 try {
+    $hostLease = Lock-YLTestDirectory -Workspace $workspace -Path $hostRecord.path
     Assert-YLUnityHostIdle $hostRecord
-    $label = @{ purpose = 'Frozen encryption experiment with original evidence'; hostId = $hostRecord.id; resultId = $run.id }
-    Write-YLTestJson -Path (Join-Path $hostRecord.path '.pinned') -Value $label
-    Write-YLTestJson -Path (Join-Path $run.path '.pinned') -Value $label
+    Start-YLPlayerRetention $hostRecord $run -FormalCandidate:$fixedRelease -KeepArtifacts:$KeepArtifacts
     $projection = [ordered]@{
         'FrozenDeliveryEntry.cs' = 'Assets/Fixture/Editor/FrozenDeliveryEntry.cs'
         'FrozenPlayerBuildEvidence.cs' = 'Assets/Fixture/Editor/FrozenPlayerBuildEvidence.cs'
@@ -121,6 +123,11 @@ try {
         'Tools/Testing/UnityHost.ps1', 'Tools/Testing/TestSuites.json', 'Tools/Testing/PackageCatalogContract.cs', 'Tools/Testing/Invoke-YLResourceAddressablesPlayer.ps1',
         'Tools/Testing/Common/ResourceAddressablesPlayer.ps1', 'Tools/Packaging/PackageCatalog.json', 'Tools/Packaging/Build-YLRegistryPackages.ps1') + $pins
     $identity = Get-YLTestInputIdentity -Repository $repo -Paths $files -Toolchain $binaries -Profile "Frozen-$Profile-$Backend-$Mode-$packageSource"
+    $identityPath = Join-Path $run.path 'input-identity.json'
+    Write-YLTestJson -Path $identityPath -Value $identity
+    $summary['inputIdentity'] = $identityPath
+    $summary['inputHash'] = $identity.sha256
+    $summary['packageSource'] = $packageSource
     if ($fixedRelease) { Assert-YLFrozenCommittedFiles -Repository $repo -SourceCommit $SourceCommit -Files $identity.files }
     foreach ($item in $identity.files) {
         $leaf = [IO.Path]::GetFileName($item.path)
@@ -128,8 +135,6 @@ try {
         $inputs[$dest] = [IO.File]::ReadAllBytes((Join-Path $repo $item.path))
         if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($inputs[$dest])) -ine $item.sha256) { throw 'Frozen source drift.' }
     }
-    $summary['packageSource'] = $packageSource
-    $summary['inputHash'] = $identity.sha256
     $inputs['Packages/manifest.json'] = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Json @{ dependencies = $deps }))
     Sync-YLUnityHost -HostRecord $hostRecord -Files $inputs -Identity $identity -EditorVersion $editor.version
     $expectedManifestHash = Get-YLFrozenFileSha256 (Join-Path $hostRecord.path 'Packages/manifest.json')
@@ -140,7 +145,8 @@ try {
     }
     $key = [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
     try {
-        $raw = [IO.File]::Open($keyFile, 'CreateNew', 'Write', 'None')
+        $raw = [IO.File]::Open((Get-YLTestPath $keyFile), 'CreateNew', 'Write', 'None')
+        $keyCreated = $true
         try { $raw.Write($key) } finally { $raw.Dispose() }
     } finally { [Array]::Clear($key) }
     Add-Type -Path (Join-Path $PSScriptRoot 'FrozenLoopback.cs')
@@ -354,13 +360,29 @@ try {
         Assert-YLFrozenReleaseUnchanged -Release $release
     }
     $summary.status = 'Passed'
-    "Frozen $Profile $Backend $Mode $($summary.purpose): $($run.path)\frozen.json"
 } catch {
     $summary['failure'] = $_.Exception.Message
-    throw
+    $failures.Add($_)
 } finally {
     try {
-        if ([IO.File]::Exists($keyFile)) { [IO.File]::Delete((Get-YLTestPath $keyFile)) }
-        Write-YLTestJson -Path (Join-Path $run.path 'frozen.json') -Value $summary
-    } finally { $hostLease.Dispose(); $runLease.Dispose() }
+        if ($null -ne $hostLease) {
+            if ($keyCreated) {
+                try { [IO.File]::Delete((Get-YLTestPath $keyFile)) }
+                catch {
+                    $summary.status = 'Failed'
+                    $summary['keyCleanupError'] = $_.Exception.Message
+                    $failures.Add($_)
+                }
+            }
+            Complete-YLPlayerRun $workspace $hostRecord $run $hostLease $summary -KeepArtifacts:$KeepArtifacts
+        } else { Write-YLTestJson -Path (Join-Path $run.path 'frozen.json') -Value $summary }
+    } catch {
+        $failures.Add($_)
+    } finally {
+        try { if ($null -ne $hostLease) { $hostLease.Dispose() } }
+        finally { $runLease.Dispose() }
+    }
 }
+if ($failures.Count -eq 1) { throw $failures[0] }
+if ($failures.Count -gt 1) { throw [AggregateException]::new('Frozen delivery or finalization failed.', [Exception[]]$failures.Exception) }
+"Frozen $Profile $Backend $Mode $($summary.purpose): $($run.path)\frozen.json"

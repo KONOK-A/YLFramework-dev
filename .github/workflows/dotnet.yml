@@ -47,6 +47,9 @@ jobs:
       - name: Test PowerShell minimum policy
         run: ./Tools/Testing/Tests/Test-YLPowerShellMinimum.ps1
 
+      - name: Check repository documentation entry points offline
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDocumentationNoUnity.ps1
+
       - name: Install pinned .NET SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -96,6 +99,12 @@ jobs:
 
       - name: Test harness contracts, not Unity acceptance
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLTesting.ps1 -TemporaryRoot $env:RUNNER_TEMP
+
+      - name: Test Addressables Player evidence contracts, not Unity acceptance
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLResourceAddressablesPlayerNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+
+      - name: Test frozen encryption evidence contracts, not Unity acceptance
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLFrozenEncryptionNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
 
       - name: Test UPM manifest and sample ownership contracts
         run: |

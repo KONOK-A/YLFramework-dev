@@ -10,7 +10,7 @@ YLFramework 希望减少游戏项目中重复搭建基础设施的工作：小�
 | --- | --- |
 | 基础机制 | 事件与订阅、对象池、计时、依赖注入、数据绑定、协程与更新桥接 |
 | 业务与表现 | Module / MVC、View / Panel、UI 根与输入协调、组合动作、音频播放 |
-| 资源管理 | 资产与场景租约、AssetBundle 构建、内置部署、远端更新 |
+| 资源管理 | 基于 Unity Addressables 的资产、实例与场景租约，以及本地内容与远端交付 |
 | 选装功能 | 配置数据、本地化、存档、状态机、二维移动与检测、玩法系统、红点、Excel、HybridCLR、远端资源加密 |
 | 编辑器工具 | 配置编辑、资源工作台、代码生成、帮助索引与使用诊断 |
 
@@ -32,9 +32,12 @@ YLFramework 希望减少游戏项目中重复搭建基础设施的工作：小�
 
 ## 文档与贡献
 
-- [使用手册](PackageSources/com.kano.ylframework/Documentation~/README.md)：安装、入门与能力导航。
-- [架构说明](PackageSources/com.kano.ylframework/Documentation~/Architecture.md)：分层、依赖与生命周期所有权。
-- [贡献指南](CONTRIBUTING.md)：源码组织、开发验证与文档维护。
+| 我想做什么 | 从这里开始 |
+| --- | --- |
+| 用框架，或选择要装的模块 | [使用手册](PackageSources/com.kano.ylframework/Documentation~/README.md) |
+| 修改框架，确定源码、测试、文档放在哪里 | [贡献指南：熟悉仓库](CONTRIBUTING.md#熟悉仓库) · [架构说明](PackageSources/com.kano.ylframework/Documentation~/Architecture.md) |
+| 新增模块文档或整理开发计划 | [模块文档](CONTRIBUTING.md#模块文档) · [计划与交接](CONTRIBUTING.md#计划与交接) |
+| 跑测试、复核产物或打包 | [测试工具说明](Tools/Testing/README.md) · [打包与发行准备](Tools/Packaging/README.md) |
 
 欢迎通过 [Issues](https://github.com/KONOK-A/YLFramework-dev/issues)反馈可复现的问题或讨论功能需求，通过 Pull Request 提交改进。
 
