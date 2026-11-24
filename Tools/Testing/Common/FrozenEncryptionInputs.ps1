@@ -299,56 +299,250 @@ function Assert-YLFrozenInstalledInputs {
     }
 }
 
+function Assert-YLFrozenDeliveryFields([object] $Row, [string[]] $Fields, [string] $Label) {
+    if ($Row -isnot [Collections.IDictionary] -or $Row.psbase.Count -ne $Fields.Count) { throw "Invalid $Label fields." }
+    foreach ($entry in $Row.GetEnumerator()) {
+        if ([Array]::IndexOf($Fields, $entry.Key) -lt 0) { throw "Unexpected $Label field: $($entry.Key)" }
+    }
+}
+
+function Test-YLFrozenDeliveryBundleLeaf([object] $Value) {
+    return ($Value -is [string] -and $Value.Length -le 255 -and $Value -cmatch '\A[A-Za-z0-9][A-Za-z0-9_.-]*\.bundle\z' -and
+        $Value -notmatch '\A(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])\.')
+}
+
+function Assert-YLFrozenDeliveryFile([string] $Path, [long] $Bytes, [string] $Sha256, [string] $Label) {
+    $actual = [IO.File]::OpenRead((Get-YLTestPath $Path))
+    try {
+        if ($actual.Length -ne $Bytes -or [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($actual)) -ine $Sha256) {
+            throw "$Label differs from the expected raw bytes."
+        }
+    } finally { $actual.Dispose() }
+}
+
 function Assert-YLFrozenShippedContent {
+    [CmdletBinding()]
     param([Collections.IDictionary] $Build, [ValidateSet('catalog.bin','catalog.json', IgnoreCase = $false)][string] $Catalog,
-        [string] $PlayerData, [string] $DeliveryRoot, [string] $Mode)
-    $shipped = Get-YLFrozenFileSha256 (Join-Path $PlayerData $Catalog)
-    if ($shipped -cne $Build['shippedCatalogSha256']) { throw 'The actual shipped Catalog differs from the Player build.' }
+        [string] $PlayerData, [string] $DeliveryRoot, [string] $Mode, [string] $Application, [string] $ReleaseId, [string] $LoopbackPrefix,
+        [ValidateSet('Remote','Embedded','Mixed', IgnoreCase = $false)][string] $DeliveryLayout = 'Remote', [string] $OrdinaryRoot)
+
+    $PlayerData = Get-YLTestPath $PlayerData
+    $DeliveryRoot = Get-YLTestPath $DeliveryRoot
     $descriptionPath = Join-Path $PlayerData 'yl-encrypted-bundles.json'
     if ($Mode -ceq 'Disabled') {
-        if ($Build['descriptionSha256'] -or [IO.Path]::Exists($descriptionPath) -or [IO.Path]::Exists($DeliveryRoot)) {
+        if ($Build['descriptionSha256'] -or $Build['deliverySha256'] -or [IO.Path]::Exists($descriptionPath) -or
+            [IO.Path]::Exists((Join-Path $PlayerData 'yl-encrypted')) -or [IO.Path]::Exists($DeliveryRoot)) {
             throw 'The disabled Player shipped an encrypted description or delivery.'
+        }
+        if ((Get-YLFrozenFileSha256 (Join-Path $PlayerData $Catalog)) -cne $Build['shippedCatalogSha256']) {
+            throw 'The actual shipped Catalog differs from the Player build.'
         }
         return
     }
-    $description = Read-YLPackageEvidenceJson $descriptionPath -ExpectedSha256 $Build['descriptionSha256']
+
+    $token = '\A[A-Za-z0-9][A-Za-z0-9_.-]{0,255}\z'
+    $hex32 = '\A[0-9a-f]{32}\z'
+    $hex64 = '\A[0-9a-f]{64}\z'
+    $ordinal = [StringComparer]::Ordinal
+    $windowsNames = [StringComparer]::OrdinalIgnoreCase
+    if ($Application -cnotmatch $token -or $ReleaseId -cnotmatch $token -or -not $ordinal.Equals([IO.Path]::GetFileName($DeliveryRoot), $ReleaseId)) {
+        throw 'Expected application and releaseId for the final delivery directory.'
+    }
+    if ($LoopbackPrefix -cnotmatch '\Ahttp://127\.0\.0\.1:([1-9][0-9]{0,4})/\z' -or [int]$Matches[1] -gt 65535 -or
+        ([uri]$LoopbackPrefix).AbsoluteUri -cne $LoopbackPrefix) { throw 'Expected the canonical fixture loopback prefix.' }
+    $prefix = if ($DeliveryLayout -cne 'Embedded') { "${LoopbackPrefix}r/$ReleaseId/" }
+    $aa = 'Player/P_Data/StreamingAssets/aa'
+    if (-not $windowsNames.Equals($PlayerData, (Get-YLTestPath (Join-Path $DeliveryRoot $aa)))) {
+        throw 'Verify the pristine Player from the final release, not a test copy.'
+    }
+
+    foreach ($field in 'catalogSha256', 'shippedCatalogSha256', 'settingsSha256', 'routesSha256', 'descriptionSha256', 'deliverySha256') {
+        if ($Build[$field] -isnot [string] -or $Build[$field] -cnotmatch $hex64) { throw "Invalid Build identity: $field" }
+    }
+    if ($Build['catalogSha256'] -cne $Build['shippedCatalogSha256']) { throw 'Catalog identities differ in the pristine Build.' }
+    $identity = @{ application = $Application; releaseId = $ReleaseId; releasePrefix = $prefix; platform = 'StandaloneWindows64'; catalog = $Catalog
+        catalogSha256 = $Build['catalogSha256']; settingsSha256 = $Build['settingsSha256']; routesSha256 = $Build['routesSha256'] }
+    $fields = @('version') + @($identity.Keys)
     $delivery = Read-YLPackageEvidenceJson (Join-Path $DeliveryRoot 'delivery.json') -ExpectedSha256 $Build['deliverySha256']
-    $wrong = $Mode -ceq 'WrongRoute'
-    if ($description['catalog'] -cne $Catalog -or $description['catalogSha256'] -cne $shipped -or
-        $delivery['catalogSha256'] -cne $Build['catalogSha256'] -or
-        ($shipped -cne $delivery['catalogSha256']) -ne $wrong -or
-        ($Build['descriptionSha256'] -cne $delivery['descriptionSha256']) -ne $wrong) {
-        throw 'The Catalog or encrypted description differs from the expected delivery pairing.'
+    if ([IO.FileInfo]::new((Get-YLTestPath $descriptionPath)).Length -gt 4MB) { throw 'The shipped description exceeds its size bound.' }
+    $description = Read-YLPackageEvidenceJson $descriptionPath -ExpectedSha256 $Build['descriptionSha256']
+    Assert-YLFrozenDeliveryFields $delivery ($fields + @('descriptionSha256', 'files', 'uploads')) 'delivery receipt'
+    Assert-YLFrozenDeliveryFields $description ($fields + @('format', 'providerId', 'bundles')) 'encrypted description'
+    foreach ($record in $delivery, $description) {
+        if ($record['version'] -isnot [long] -or $record['version'] -ne 2L) { throw 'Expected frozen delivery version 2.' }
+        foreach ($field in $identity.Keys) {
+            $value = $record[$field]
+            if (($null -eq $identity[$field] -and $null -ne $value) -or ($null -ne $identity[$field] -and
+                ($value -isnot [string] -or -not $ordinal.Equals($value, $identity[$field])))) { throw "The delivery $field differs from the expected identity." }
+        }
     }
-    $paths = @($Build['protectedPaths'])
-    $described = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
-    foreach ($row in $description['bundles']) {
-        if ($row['path'] -isnot [string] -or -not $described.TryAdd($row['path'], $row)) { throw 'Duplicate or invalid protected Bundle description.' }
+    if ($delivery['descriptionSha256'] -isnot [string] -or -not $ordinal.Equals($delivery['descriptionSha256'], $Build['descriptionSha256']) -or
+        $delivery['files'] -isnot [array] -or $delivery['uploads'] -isnot [array]) { throw 'The delivery receipt description identity or inventory differs.' }
+    if ($description['format'] -isnot [string] -or -not $ordinal.Equals($description['format'], 'AES256_GCM_HKDF_1MB') -or
+        $description['providerId'] -isnot [string] -or -not $ordinal.Equals($description['providerId'], 'YLFramework.Resource.Encryption.EncryptedAssetBundleProvider') -or
+        $description['bundles'] -isnot [array] -or $description['bundles'].Count -lt 1 -or $description['bundles'].Count -gt 4096) {
+        throw 'Invalid v2 encrypted description.'
     }
-    if ($paths.Count -eq 0 -or $delivery['files'] -isnot [array] -or $delivery['files'].Count -ne $paths.Count -or
-        $described.Count -ne $paths.Count -or @(Get-YLTestTreeFiles $DeliveryRoot).Count -ne ($paths.Count + 1)) {
-        throw 'The protected delivery inventory count differs.'
-    }
-    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $total = 0L
+
+    $files = [Collections.Generic.Dictionary[string, object]]::new($windowsNames)
     foreach ($row in $delivery['files']) {
+        Assert-YLFrozenDeliveryFields $row @('path', 'bytes', 'sha256') 'delivery file'
         $name = $row['path']
-        if ($name -isnot [string] -or -not $name -or $name -cne [IO.Path]::GetFileName($name) -or $name -ceq 'delivery.json' -or
-            $name -cnotin $paths -or -not $seen.Add($name) -or -not $described.ContainsKey($name) -or $row['bytes'] -isnot [long] -or
-            $row['bytes'] -le 0 -or $row['bytes'] -ne $described[$name]['cipherLength'] -or $row['sha256'] -cnotmatch '^[0-9a-f]{64}$' -or
-            $row['sha256'] -cne $described[$name]['cipherSha256']) { throw 'The protected delivery file inventory differs from the shipped description.' }
-        $path = Get-YLTestPath (Join-Path $DeliveryRoot $name)
-        if ([IO.FileInfo]::new($path).Length -ne $row['bytes'] -or (Get-YLFrozenFileSha256 $path) -cne $row['sha256']) {
-            throw "The protected delivery file differs: $name"
+        if ($name -isnot [string] -or $name -cnotmatch '\A(?:Player|Upload|ContentState)(?:/[^/\\:<>"|?*\x00-\x1f]+)+\z' -or
+            @($name.Split('/') | Where-Object { $_ -match '[. ]\z|\A(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\.|\z)' }).Count) {
+            throw "Invalid release-relative file path: $name"
         }
-        if ($Mode -ceq 'Performance') {
-            $clear = Get-YLTestPath (Join-Path ([IO.Path]::GetDirectoryName($DeliveryRoot)) "Private/Packed/$name")
-            if ([IO.FileInfo]::new($clear).Length -ne $described[$name]['plainLength'] -or (Get-YLFrozenFileSha256 $clear) -cne $described[$name]['plainSha256']) {
-                throw "The plain performance control differs from the original protected Bundle: $name"
-            }
+        if ($row['bytes'] -isnot [long] -or $row['bytes'] -lt 0 -or $row['sha256'] -isnot [string] -or $row['sha256'] -cnotmatch $hex64) {
+            throw "Invalid delivery file identity: $name"
         }
-        $total += $row['bytes']
+        if (-not $files.TryAdd($name, $row)) { throw "Collision in delivery file inventory: $name" }
     }
-    if ($total -ne $Build['protectedBytes']) { throw 'The protected delivery byte count differs.' }
-    return $delivery['files']
+    $archive = @('ContentState/addressables_content_state.bin', 'ContentState/buildlayout.json')
+    $metadata = @{ "$aa/$Catalog" = $Build['catalogSha256']; "$aa/settings.json" = $Build['settingsSha256']
+        "$aa/yl-encrypted-bundles.json" = $Build['descriptionSha256'] }
+    foreach ($name in @('Player/P.exe') + $archive + @($metadata.Keys)) {
+        if (-not $files.ContainsKey($name) -or -not $ordinal.Equals($files[$name]['path'], $name) -or $files[$name]['bytes'] -le 0 -or
+            ($metadata.ContainsKey($name) -and $files[$name]['sha256'] -cne $metadata[$name])) {
+            throw "The required delivery file inventory differs: $name"
+        }
+    }
+
+    $protected = [Collections.Generic.List[object]]::new()
+    $paths = [Collections.Generic.HashSet[string]]::new($ordinal)
+    $embedded = [Collections.Generic.HashSet[string]]::new($ordinal)
+    $leaves = [Collections.Generic.HashSet[string]]::new($windowsNames)
+    $names = [Collections.Generic.HashSet[string]]::new($windowsNames)
+    $digests = [Collections.Generic.HashSet[string]]::new($ordinal)
+    $groups = @{}
+    $modes = [Collections.Generic.HashSet[string]]::new($ordinal)
+    $uploadRoutes = [Collections.Generic.Dictionary[string, object]]::new($ordinal)
+    $embeddedBase = "$aa/yl-encrypted/"
+    [long] $total = 0
+    foreach ($row in $description['bundles']) {
+        Assert-YLFrozenDeliveryFields $row @('mode','groupGuid','bundleName','bundleHash','path','keyId','plainLength','plainSha256','cipherLength','cipherSha256') 'protected Bundle'
+        $leaf = $row['path']
+        $guid = $row['groupGuid']
+        $deliveryMode = $row['mode']
+        $plain = $row['plainLength']
+        if (-not (Test-YLFrozenDeliveryBundleLeaf $leaf) -or $deliveryMode -isnot [string] -or $deliveryMode -cnotmatch '\A(?:RemoteHttps|Embedded)\z' -or
+            $guid -isnot [string] -or $guid -cnotmatch $hex32 -or $row['bundleHash'] -isnot [string] -or $row['bundleHash'] -cnotmatch $hex32 -or
+            $row['bundleName'] -isnot [string] -or $row['bundleName'] -cnotmatch $token -or $row['keyId'] -isnot [string] -or $row['keyId'] -cnotmatch $token -or
+            $row['plainSha256'] -isnot [string] -or $row['plainSha256'] -cnotmatch $hex64 -or $row['cipherSha256'] -isnot [string] -or
+            $row['cipherSha256'] -cnotmatch $hex64 -or $plain -isnot [long] -or $plain -le 0 -or $plain -gt (4294967296L * 1048560L - 40L) -or
+            $row['cipherLength'] -isnot [long]) { throw "Invalid protected Bundle record: $guid/$leaf" }
+        # A 40-byte stream header and a 16-byte tag per 1 MiB segment.
+        $cipherLength = $plain + 40L + 16L * (1L + [Math]::Floor([decimal]($plain + 39L) / 1048560L))
+        if ($row['cipherLength'] -ne $cipherLength -or -not $leaves.Add($leaf) -or -not $names.Add($row['bundleName']) -or
+            -not $digests.Add($row['cipherSha256']) -or ($groups.ContainsKey($guid) -and
+            ($groups[$guid]['mode'] -cne $deliveryMode -or $groups[$guid]['keyId'] -cne $row['keyId']))) {
+            throw "Conflicting protected Bundle identity or ciphertext length: $guid/$leaf"
+        }
+        $groups[$guid] = $row
+        $groupPath = "$guid/$leaf"
+        $null = $paths.Add($groupPath)
+        $null = $modes.Add($deliveryMode)
+        if ($deliveryMode -ceq 'RemoteHttps') {
+            $name = "Upload/protected/$groupPath"
+            $uploadRoutes.Add($name, @{ url = $prefix + $groupPath; category = 'protected' })
+        } else {
+            $name = $embeddedBase + $groupPath
+            $null = $embedded.Add($name)
+        }
+        if (-not $files.ContainsKey($name) -or -not $ordinal.Equals($files[$name]['path'], $name) -or $files[$name]['bytes'] -ne $row['cipherLength'] -or
+            $files[$name]['sha256'] -cne $row['cipherSha256']) { throw "The protected delivery file inventory differs: $name" }
+        if ($Mode -ceq 'Performance') {
+            $clear = Join-Path ([IO.Path]::GetDirectoryName($DeliveryRoot)) "Private/Packed/$groupPath"
+            Assert-YLFrozenDeliveryFile $clear $plain $row['plainSha256'] "The original protected Bundle $groupPath"
+        }
+        $total += $row['cipherLength']
+        $protected.Add($files[$name])
+    }
+    $expectedModes = switch -CaseSensitive ($DeliveryLayout) { Remote { 'RemoteHttps' } Embedded { 'Embedded' } Mixed { 'RemoteHttps'; 'Embedded' } }
+    if (-not $modes.SetEquals([string[]]$expectedModes)) { throw 'The protected delivery modes differ from the selected layout.' }
+    if ($Build['protectedPaths'] -isnot [array] -or $Build['protectedPaths'].Count -ne $paths.Count -or
+        $Build['protectedBytes'] -isnot [long] -or $Build['protectedBytes'] -ne $total) { throw 'The Build protected inventory differs.' }
+    foreach ($path in $Build['protectedPaths']) {
+        if ($path -isnot [string] -or -not $paths.Remove($path)) { throw "The Build protected path differs: $path" }
+    }
+
+    # The original official ordinary outputs, not the upload tree, establish completeness and bytes.
+    $OrdinaryRoot = Get-YLTestPath $OrdinaryRoot
+    if ($windowsNames.Equals($OrdinaryRoot, $DeliveryRoot) -or $OrdinaryRoot.StartsWith($DeliveryRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        $DeliveryRoot.StartsWith($OrdinaryRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        $Build['ordinaryPaths'] -isnot [array]) { throw 'Expected an independent ordinary source root and Build inventory.' }
+    $ordinary = [Collections.Generic.HashSet[string]]::new($ordinal)
+    if ([IO.Path]::Exists($OrdinaryRoot)) {
+        if (-not [IO.Directory]::Exists($OrdinaryRoot)) { throw 'The ordinary source root is not a directory.' }
+        foreach ($file in Get-YLTestTreeFiles $OrdinaryRoot) {
+            $leaf = [IO.Path]::GetRelativePath($OrdinaryRoot, $file)
+            if (-not (Test-YLFrozenDeliveryBundleLeaf $leaf) -or -not $ordinary.Add($leaf)) { throw "Unexpected ordinary source path: $leaf" }
+        }
+    }
+    foreach ($leaf in $Build['ordinaryPaths']) {
+        if (-not (Test-YLFrozenDeliveryBundleLeaf $leaf) -or -not $ordinary.Remove($leaf) -or -not $leaves.Add($leaf)) {
+            throw "Missing or colliding ordinary source Bundle: $leaf"
+        }
+        $name = "Upload/ordinary/$leaf"
+        if (-not $files.ContainsKey($name) -or -not $ordinal.Equals($files[$name]['path'], $name) -or $files[$name]['bytes'] -le 0) {
+            throw "Missing ordinary delivery file: $leaf"
+        }
+        Assert-YLFrozenDeliveryFile (Join-Path $OrdinaryRoot $leaf) $files[$name]['bytes'] $files[$name]['sha256'] "The ordinary source Bundle $leaf"
+        $uploadRoutes.Add($name, @{ url = "${LoopbackPrefix}o/$leaf"; category = 'ordinary' })
+    }
+    if ($ordinary.Count) { throw 'The Build ordinary inventory omits official source files.' }
+
+    $otherCatalog = if ($Catalog -ceq 'catalog.bin') { "$aa/catalog.json" } else { "$aa/catalog.bin" }
+    foreach ($name in $files.Keys) {
+        if (($name.StartsWith('Upload/', [StringComparison]::Ordinal) -and -not $uploadRoutes.ContainsKey($name)) -or
+            ($name.StartsWith('ContentState/', [StringComparison]::Ordinal) -and [Array]::IndexOf($archive, $name) -lt 0) -or
+            ($name.StartsWith($embeddedBase, [StringComparison]::OrdinalIgnoreCase) -and -not $embedded.Contains($name)) -or
+            $windowsNames.Equals($name, $otherCatalog)) { throw "Unexpected delivery file inventory path: $name" }
+    }
+    foreach ($row in $delivery['uploads']) {
+        Assert-YLFrozenDeliveryFields $row @('path','url','category','bytes','sha256') 'delivery upload'
+        $name = $row['path']
+        if ($name -isnot [string] -or -not $uploadRoutes.ContainsKey($name) -or $row['bytes'] -isnot [long] -or
+            $row['bytes'] -ne $files[$name]['bytes'] -or $row['sha256'] -isnot [string] -or -not $ordinal.Equals($row['sha256'], $files[$name]['sha256'])) {
+            throw "The delivery upload inventory differs: $name"
+        }
+        if ($row['category'] -isnot [string] -or -not $ordinal.Equals($row['category'], $uploadRoutes[$name]['category'])) { throw "Wrong upload category: $name" }
+        if ($row['url'] -isnot [string] -or -not $ordinal.Equals($row['url'], $uploadRoutes[$name]['url'])) { throw "Wrong upload URL: $name" }
+        $null = $uploadRoutes.Remove($name)
+    }
+    if ($uploadRoutes.Count) { throw "Missing required upload routes: $($uploadRoutes.Keys -join ', ')" }
+
+    # Publication contains only file parents and the required, possibly empty, Upload directory.
+    $directories = [Collections.Generic.Dictionary[string, string]]::new($windowsNames)
+    $directories.Add('Upload', 'Upload')
+    foreach ($name in $files.Keys) {
+        for ($slash = $name.LastIndexOf('/'); $slash -ge 0; $slash = $directory.LastIndexOf('/')) {
+            $directory = $name.Substring(0, $slash)
+            if ($files.ContainsKey($directory)) { throw "File and directory path collision: $directory" }
+            if ($directories.TryAdd($directory, $directory)) { continue }
+            if (-not $ordinal.Equals($directories[$directory], $directory)) { throw "Directory path collision: $directory" }
+            break
+        }
+    }
+    $pending = [Collections.Generic.Stack[IO.DirectoryInfo]]::new()
+    $pending.Push([IO.DirectoryInfo]::new($DeliveryRoot))
+    $receiptSeen = $false
+    $count = 0
+    while ($pending.Count) {
+        foreach ($entry in $pending.Pop().EnumerateFileSystemInfos()) {
+            $name = [IO.Path]::GetRelativePath($DeliveryRoot, $entry.FullName).Replace('\', '/')
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Linked path in the delivery inventory: $name" }
+            if ($entry -is [IO.DirectoryInfo]) {
+                if (-not $directories.ContainsKey($name) -or -not $ordinal.Equals($directories[$name], $name)) { throw "Unexpected directory in the delivery inventory: $name" }
+                $null = $directories.Remove($name)
+                $pending.Push($entry)
+                continue
+            }
+            if ($ordinal.Equals($name, 'delivery.json')) { $receiptSeen = $true; continue }
+            if (-not $files.ContainsKey($name) -or -not $ordinal.Equals($files[$name]['path'], $name)) { throw "Unlisted path in the actual delivery inventory: $name" }
+            Assert-YLFrozenDeliveryFile $entry.FullName $files[$name]['bytes'] $files[$name]['sha256'] "The shipped file $name"
+            $count++
+        }
+    }
+    if (-not $receiptSeen -or $directories.Count -or $count -ne $files.Count) { throw 'The actual delivery inventory differs from the receipt.' }
+    return $protected.ToArray()
 }

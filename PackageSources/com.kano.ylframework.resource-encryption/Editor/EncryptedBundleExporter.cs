@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -20,126 +21,99 @@ using Object = UnityEngine.Object;
 
 namespace YLFramework.Resource.Encryption.Editor
 {
-    /// <summary>Builds and audits a fixed Player plus a separate immutable encrypted release directory.</summary>
+    /// <summary>Audits and publishes one immutable Windows x64 encrypted delivery.</summary>
     public static class EncryptedBundleExporter
     {
-        /// <summary>Call from the author's Win64 release entry point. The key source must only provide current local CI key material.</summary>
-        public static void Build(AddressableAssetSettings settings, AddressableAssetGroup group, BuildPlayerOptions player,
-            string applicationNamespace, string privateRoot, string releaseRoot, IEncryptedBundleKeySource keys)
+        private const string ReceiptName = "delivery.json";
+        private const string StateName = "addressables_content_state.bin";
+        private const string LayoutName = "buildlayout.json";
+        private const string SettingsName = "settings.json";
+        private const string LocalLink = "AddressablesLink/link.xml";
+        private const string ProtectedCategory = "protected";
+        private const string OrdinaryCategory = "ordinary";
+        private const string NativePluginName = "ylresource_tink.dll";
+        private static bool _isBuilding;
+
+        /// <summary>Builds the fixed Player and its upload inventory into a single, new release directory.</summary>
+        /// <remarks>
+        /// Use an exclusive publisher account. Build and key callbacks must finish all writes before returning and must not
+        /// change staging permissions. The staged and published tree stays publisher-only; this is not a sandbox for callbacks.
+        /// </remarks>
+        public static void Build(AddressableAssetSettings settings, IReadOnlyList<AddressableAssetGroup> groups,
+            BuildPlayerOptions player, string applicationNamespace, string privateRoot, string releaseRoot, IEncryptedBundleKeySource keys)
         {
-            BuildCore(settings, group, player, applicationNamespace, privateRoot, releaseRoot, keys, false);
+            BuildCore(settings, groups, player, applicationNamespace, privateRoot, releaseRoot, keys, false);
         }
 
-        internal static EncryptedBundleDescription BuildCore(AddressableAssetSettings settings, AddressableAssetGroup group,
-            BuildPlayerOptions player, string applicationNamespace, string privateRoot, string releaseRoot,
-            IEncryptedBundleKeySource keys, bool allowLoopback)
+        internal static EncryptedBundleDescription BuildCore(AddressableAssetSettings settings, IReadOnlyList<AddressableAssetGroup> groups,
+            BuildPlayerOptions player, string applicationNamespace, string privateRoot, string releaseRoot, IEncryptedBundleKeySource keys,
+            bool allowLoopback)
         {
-            if (!settings || !group || group.Settings != settings || keys == null)
-                throw new ArgumentException("A group, its settings and an authoring key source are required.");
-            var auth = group.GetSchema<EncryptedBundleGroupSchema>();
-            var packed = group.GetSchema<BundledAssetGroupSchema>();
-            if (!auth || !packed || !packed.IncludeInBuild || packed.Compression != BundledAssetGroupSchema.BundleCompressionMode.LZ4 ||
-                packed.AssetBundleProviderType.Value != typeof(EncryptedAssetBundleProvider) || packed.BundledAssetProviderType.Value != typeof(BundledAssetProvider) ||
-                packed.UseAssetBundleCache || packed.BundleNaming == BundledAssetGroupSchema.BundleNamingStyle.NoHash ||
-                packed.AssetLoadMode != AssetLoadMode.RequestedAssetAndDependencies ||
-                settings.groups.Any(other => other && other != group && (other.HasSchema<EncryptedBundleGroupSchema>() ||
-                    other.GetSchema<BundledAssetGroupSchema>()?.AssetBundleProviderType.Value == typeof(EncryptedAssetBundleProvider))))
-                throw new InvalidDataException("Choose exactly one remote LZ4 group with EncryptedAssetBundleProvider, hashed Bundle names, stock requested-asset loading, and no Unity Bundle cache.");
+            if (!settings || groups == null || groups.Count == 0 || groups.Count > 4096 || keys == null)
+                throw new ArgumentException("Select the settings, protected groups and authoring key source.");
+            if (_isBuilding)
+                throw new InvalidOperationException("Encrypted delivery does not allow nested Player builds.");
+            _isBuilding = true;
+            try
+            {
+                return BuildRelease(settings, groups.ToArray(), player, applicationNamespace, privateRoot, releaseRoot, keys, allowLoopback);
+            }
+            finally
+            {
+                _isBuilding = false;
+            }
+        }
 
-            string buildPath = Path.GetFullPath(Addressables.BuildPath);
-            var serialized = new SerializedObject(settings);
-            var backend = PlayerSettings.GetScriptingBackend(NamedBuildTarget.Standalone);
-            bool x64 = player.target == BuildTarget.StandaloneWindows64;
-#if UNITY_6000_3_OR_NEWER
-            x64 &= UnityEditor.WindowsStandalone.UserBuildSettings.architecture == OSArchitecture.x64;
-#endif
-            if (AddressableAssetSettingsDefaultObject.Settings != settings || settings.BuildRemoteCatalog || !settings.DisableCatalogUpdateOnStartup || settings.InitializationObjects.Count != 0 ||
-                serialized.FindProperty("m_ExtractTypeTreeData")?.boolValue == true || serialized.FindProperty("m_BundleLocalCatalog")?.boolValue == true ||
-                settings.BuildAddressablesWithPlayerBuild != AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer ||
-                EditorUserBuildSettings.activeBuildTarget != BuildTarget.StandaloneWindows64 || !x64 ||
-                (backend != ScriptingImplementation.IL2CPP && backend != ScriptingImplementation.Mono2x) ||
-                (player.options & (BuildOptions.Development | BuildOptions.AutoRunPlayer | BuildOptions.BuildScriptsOnly | BuildOptions.AcceptExternalModificationsToPlayer)) != 0 ||
-                player.scenes == null || player.scenes.Length == 0)
-                throw new InvalidDataException("Encrypted release requires a fixed local Catalog, no startup update or initialization hooks, no Player content rebuild, and Windows x64 Release Mono or IL2CPP.");
-            bool hasDirtyScene = Enumerable.Range(0, UnityEngine.SceneManagement.SceneManager.sceneCount)
-                .Any(index => UnityEngine.SceneManagement.SceneManager.GetSceneAt(index).isDirty);
-            if (hasDirtyScene)
-                throw new InvalidOperationException("Save the selected build scenes before the encrypted build.");
+        private static EncryptedBundleDescription BuildRelease(AddressableAssetSettings settings, AddressableAssetGroup[] groups,
+            BuildPlayerOptions player, string application, string privateRoot, string releaseRoot, IEncryptedBundleKeySource keys, bool allowLoopback)
+        {
+            var backend = ValidatePlayer(settings, player);
+            var nativePlugin = FreezeInstalledPlugin();
+            player.scenes = (string[])player.scenes.Clone();
+            privateRoot = LocalPath(privateRoot);
+            releaseRoot = LocalPath(releaseRoot);
+            player.locationPathName = LocalPath(player.locationPathName);
+            string exe = Path.GetFileName(player.locationPathName);
+            if (!exe.EndsWith(".exe", StringComparison.Ordinal) || exe.Length == 4 ||
+                !SamePath(Path.GetDirectoryName(player.locationPathName), Path.Combine(releaseRoot, "Player")))
+                throw new InvalidDataException("Player output must be <releaseRoot>/Player/<name>.exe.");
+            string releaseId = EncryptedBundleBinding.Token(Path.GetFileName(releaseRoot), "releaseId");
+            EncryptedBundleBinding.Token(application, "application");
 
-            privateRoot = OwnedWindowsFiles.LocalAbsolute(privateRoot);
-            releaseRoot = OwnedWindowsFiles.LocalAbsolute(releaseRoot);
-            player.locationPathName = OwnedWindowsFiles.LocalAbsolute(player.locationPathName);
-            string playerRoot = Path.GetDirectoryName(player.locationPathName);
             string project = Path.GetDirectoryName(Application.dataPath);
-            using var paths = new BuildOutputPaths();
             string library = Path.Combine(project, "Library", "com.unity.addressables");
             string buildReports = Path.Combine(library, "BuildReports");
-            string bundleScratch = Path.Combine(project, "Temp", "com.unity.addressables", "AssetBundles");
+            string buildPath = Path.GetFullPath(Addressables.BuildPath);
+            string scratch = Path.Combine(project, "Temp", "com.unity.addressables", "AssetBundles");
             if (!SamePath(Addressables.LibraryPath, library) || !SamePath(Addressables.BuildReportPath, buildReports) ||
-                !SamePath(settings.buildSettings.bundleBuildPath, bundleScratch) || !StrictlyBelow(buildPath, Path.Combine(library, "aa")))
+                !SamePath(settings.buildSettings.bundleBuildPath, scratch) || !StrictlyBelow(buildPath, Path.Combine(library, "aa")))
                 throw new InvalidDataException("Official Addressables output path is not the project's fixed Library/Temp layout.");
-            // Inspect even when there is no ordinary local group. The official builder always writes here.
-            string[] officialRoots = { library, buildReports, buildPath, bundleScratch };
+            string[] reserved = { Application.dataPath, Path.Combine(project, "Packages"), Path.Combine(project, "PackageSources"),
+                Path.Combine(project, "ProjectSettings"), Path.Combine(project, "Library"), Path.Combine(project, "Temp") };
+            using var paths = new BuildOutputPaths();
+            string[] officialRoots = { library, buildReports, buildPath, scratch };
             foreach (string root in officialRoots)
                 paths.Identity(root);
-            string[] destinations = { privateRoot, releaseRoot, playerRoot };
-            string[] reserved = { Application.dataPath, Path.Combine(project, "Packages"), Path.Combine(project, "ProjectSettings"),
-                Path.Combine(project, "Library"), Path.Combine(project, "Temp") };
-            foreach (string root in destinations)
+            foreach (string root in new[] { privateRoot, releaseRoot })
             {
-                foreach (string forbidden in reserved)
-                    if (Overlaps(paths.Identity(root), paths.Identity(forbidden)))
-                        throw new InvalidDataException("Encrypted output must not physically intersect project input or intermediate data: " + root);
+                if (reserved.Any(forbidden => paths.Overlap(root, forbidden)))
+                    throw new InvalidDataException("Encrypted output physically intersects project input or intermediate data: " + root);
+                RequireAbsent(root);
             }
-            if (paths.Overlap(privateRoot, releaseRoot) || paths.Overlap(privateRoot, playerRoot) || paths.Overlap(releaseRoot, playerRoot) ||
-                Directory.Exists(privateRoot) || File.Exists(privateRoot) || Directory.Exists(releaseRoot) || File.Exists(releaseRoot) ||
-                Directory.Exists(playerRoot) || File.Exists(playerRoot))
-                throw new InvalidDataException("Use separate, fresh private, Player and immutable release paths.");
-            if (!string.Equals(Path.GetPathRoot(privateRoot), Path.GetPathRoot(playerRoot), StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("Private and final Player paths must be on the same local volume for publication.");
+            string physicalRelease = paths.Identity(releaseRoot);
+            if (paths.Overlap(privateRoot, releaseRoot) || Volume(paths.Identity(privateRoot)) != Volume(physicalRelease))
+                throw new InvalidDataException("Use disjoint fresh private and release directories on one physical local volume.");
             using var privateParent = OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(privateRoot), false);
             using var releaseParent = OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(releaseRoot), false);
-            using var playerParent = OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(playerRoot), false);
-            string inputRoot = Path.GetFullPath(packed.BuildPath.GetValue(settings));
-            ProtectedAssetAudit.Relative(privateRoot, inputRoot);
-            if (!StrictlyBelow(paths.Identity(inputRoot), paths.Identity(privateRoot)))
-                throw new InvalidDataException("Protected staging must physically belong to the private root.");
-            string stateFolder = OwnedWindowsFiles.LocalAbsolute(settings.profileSettings.EvaluateString(settings.activeProfileId, settings.ContentStateBuildPath));
-            ProtectedAssetAudit.Relative(privateRoot, stateFolder);
-            if (!StrictlyBelow(paths.Identity(stateFolder), paths.Identity(privateRoot)))
+
+            string stateFolder = LocalPath(settings.profileSettings.EvaluateString(settings.activeProfileId, settings.ContentStateBuildPath));
+            if (!StrictlyBelow(stateFolder, privateRoot) || !StrictlyBelow(paths.Identity(stateFolder), paths.Identity(privateRoot)))
                 throw new InvalidDataException("Official content state must physically belong to the private root.");
-            string playerCandidate = Path.Combine(privateRoot, ".yl-player-" + Guid.NewGuid().ToString("N"));
-            string shippingLibrary = Path.Combine(privateRoot, ".yl-aa-" + Guid.NewGuid().ToString("N"));
-            if (new[] { playerCandidate, shippingLibrary }.Any(root => paths.Overlap(root, inputRoot) || paths.Overlap(root, stateFolder)))
-                throw new InvalidDataException("Player staging overlaps an authoring output.");
-            string prefix = packed.LoadPath.GetValue(settings);
-            if (!prefix.EndsWith("/", StringComparison.Ordinal))
-                prefix += "/";
-            _ = new EncryptedBundleBinding(applicationNamespace, prefix, group.Guid, "validate", new string('0', 32), packed.GetBundleCachedProviderId(),
-                "validate.bundle", auth.KeyId, 1, new string('0', 64), allowLoopback);
-            if (!allowLoopback && !string.Equals(new Uri(prefix).Segments.Last().TrimEnd('/'), Path.GetFileName(releaseRoot), StringComparison.Ordinal))
-                throw new InvalidDataException("The final folder must name the new immutable URL release identity.");
-
-            var ordinaryRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var other in settings.groups.Where(candidate => candidate && candidate != group))
-            {
-                var schema = other.GetSchema<BundledAssetGroupSchema>();
-                if (!schema || !schema.IncludeInBuild)
-                    continue;
-                string ordinary = Path.GetFullPath(schema.BuildPath.GetValue(settings));
-                string load = schema.LoadPath.GetValue(settings).TrimEnd('/') + "/";
-                bool local = BelowOrEqual(ordinary, buildPath) && BelowOrEqual(paths.Identity(ordinary), paths.Identity(buildPath));
-                if (destinations.Any(root => paths.Overlap(ordinary, root)) ||
-                    (!local && reserved.Any(root => paths.Overlap(ordinary, root))) ||
-                    load.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || prefix.StartsWith(load, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("Ordinary Bundle build path overlaps a protected, Player, or non-owned root: " + other.Name);
-                if (!local && (Directory.Exists(ordinary) || File.Exists(ordinary)))
-                    throw new InvalidDataException("Ordinary remote bundles also require a fresh private staging path for this audited release: " + other.Name);
-                ordinaryRoots.Add(ordinary);
-            }
-
-            var audit = new ProtectedAssetAudit(group, auth.PublicDependencyGuids);
-            foreach (string root in new[] { library, bundleScratch })
+            var plans = PlanGroups(settings, groups, paths, privateRoot, releaseRoot, stateFolder, buildPath, reserved,
+                application, releaseId, allowLoopback, out string prefix);
+            string[] groupOrder = groups.Select(group => group.Guid).ToArray();
+            var audit = new ProtectedAssetAudit(groups, player.scenes);
+            foreach (string root in new[] { library, scratch })
             {
                 if (!Directory.Exists(root))
                     continue;
@@ -148,300 +122,715 @@ namespace YLFramework.Resource.Encryption.Editor
                     {
                     }
             }
-            foreach (string root in officialRoots.Concat(ordinaryRoots).Append(privateRoot).Append(inputRoot).Append(stateFolder))
+
+            // All profile/physical identity checks above are write-free. Do not take over an existing private or remote root.
+            paths.CreateFresh(privateRoot);
+            foreach (string root in plans.Values.Where(plan => plan.IsOrdinaryRemote).Select(plan => plan.Root).Distinct(StringComparer.OrdinalIgnoreCase))
+                paths.CreateFresh(root);
+            foreach (string root in officialRoots.Append(stateFolder).Concat(plans.Values.Select(plan => plan.Root)))
                 paths.Prepare(root);
-            // The official accessor creates the configured folder, so only invoke it after the write-free preflight.
             string state = Path.GetFullPath(ContentUpdateScript.GetContentStateDataPath(false, settings));
-            if (!SamePath(state, Path.Combine(stateFolder, "addressables_content_state.bin")))
+            if (!SamePath(state, Path.Combine(stateFolder, StateName)))
                 throw new InvalidDataException("Official content state resolved to an unsupported path.");
-            string reportPath = Path.GetFullPath(Path.Combine(Addressables.LibraryPath, "buildlayout.json"));
-            string priorLayout = File.Exists(reportPath) ? ProtectedAssetAudit.DigestFile(reportPath) : null;
+
+            string layoutPath = Path.Combine(library, LayoutName);
+            string previousLayout = File.Exists(layoutPath) ? ProtectedAssetAudit.DigestFile(layoutPath) : null;
+            string catalogName;
+            string routesHash;
+            var sources = new Dictionary<string, FrozenFile>(StringComparer.OrdinalIgnoreCase) { [nativePlugin.Path] = nativePlugin };
+            var streaming = new Dictionary<string, FrozenFile>(StringComparer.Ordinal);
+            List<BundleSource> bundles;
             var builder = ScriptableObject.CreateInstance<EncryptedPackedBuilder>();
             try
             {
-                builder.ProtectedGroup = group;
-                builder.ApplicationNamespace = applicationNamespace;
+                builder.ProtectedGroups = groups;
+                builder.ApplicationNamespace = application;
+                builder.ReleaseId = releaseId;
                 builder.ReleasePrefix = prefix;
-                builder.KeyId = auth.KeyId;
                 builder.Loopback = allowLoopback;
                 builder.PlayerScenes = player.scenes;
-                bool oldLayout = ProjectConfigData.GenerateBuildLayout;
-                var oldFormat = ProjectConfigData.BuildLayoutReportFileFormat;
-                AddressablesPlayerBuildResult output;
-                try
-                {
-                    ProjectConfigData.GenerateBuildLayout = true;
-                    ProjectConfigData.BuildLayoutReportFileFormat = ProjectConfigData.ReportFileFormat.JSON;
-                    output = builder.BuildData<AddressablesPlayerBuildResult>(new AddressablesDataBuilderInput(settings));
-                }
-                finally
-                {
-                    ProjectConfigData.BuildLayoutReportFileFormat = oldFormat;
-                    ProjectConfigData.GenerateBuildLayout = oldLayout;
-                }
+                var output = BuildPacked(settings, builder);
                 if (output == null || !string.IsNullOrEmpty(output.Error) || output.IsUpdateContentBuild ||
-                    !File.Exists(reportPath) || ProtectedAssetAudit.DigestFile(reportPath) == priorLayout || !File.Exists(state))
+                    !File.Exists(layoutPath) || ProtectedAssetAudit.DigestFile(layoutPath) == previousLayout || !File.Exists(state))
                     throw new InvalidDataException("Official Packed Builder did not produce current Bundle, content state and Build Layout outputs: " + output?.Error);
 
-                string archivedLayout = Path.Combine(privateRoot, "official-buildlayout.json");
-                string archivedState = Path.Combine(privateRoot, "official-addressables-content-state.bin");
-                File.Copy(reportPath, archivedLayout, false);
-                File.Copy(state, archivedState, false);
-                var layout = BuildLayout.Open(archivedLayout, readHeader: true, readFullFile: true);
-                try
-                {
-                    var protectedNames = new HashSet<string>(builder.Bindings.Values.Select(row => row.RelativePath), StringComparer.Ordinal);
-                    var allNames = new HashSet<string>(output.AssetBundleBuildResults.Select(bundle => Path.GetFileName(bundle.FilePath)), StringComparer.Ordinal);
-                    if (allNames.Count != output.AssetBundleBuildResults.Count || protectedNames.Count != builder.Bindings.Count)
-                        throw new InvalidDataException("Ambiguous or nested official Bundle names cannot be audited.");
-                    audit.AuditLayout(layout, protectedNames, allNames);
-                }
-                finally { layout?.Close(); }
-
-                var protectedInputs = new Dictionary<string, (string Path, EncryptedBundleBinding Binding)>(StringComparer.Ordinal);
-                var ordinaryInputs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                var expectedStreaming = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                string settingsPath = Path.Combine(buildPath, "settings.json");
-                string catalogPath = Path.Combine(buildPath, builder.CatalogName);
+                catalogName = builder.CatalogName;
+                routesHash = builder.RoutesSha256;
+                string catalogPath = Path.Combine(buildPath, catalogName);
+                string settingsPath = Path.Combine(buildPath, SettingsName);
                 using (var input = OwnedWindowsFiles.OpenRead(settingsPath))
-                    FrozenAddressablesRoutes.CheckRuntimeSettings(EncryptedDeliverySession.ReadText(input), builder.CatalogName);
-                string settingsHash = ProtectedAssetAudit.DigestFile(settingsPath);
-                string catalogHash = ProtectedAssetAudit.DigestFile(catalogPath);
-                expectedStreaming.Add("aa/settings.json", settingsHash);
-                expectedStreaming.Add("aa/" + builder.CatalogName, catalogHash);
-                const string link = "AddressablesLink/link.xml";
-                expectedStreaming.Add("aa/" + link, ProtectedAssetAudit.DigestFile(Path.Combine(buildPath, link)));
-                foreach (var result in output.AssetBundleBuildResults)
                 {
-                    string file = Path.GetFullPath(result.FilePath);
-                    using var source = OwnedWindowsFiles.OpenRead(file);
-                    string digest = AuthenticatedBundleStream.Hash(source, default);
-                    if (result.SourceAssetGroup == group)
-                    {
-                        if (!builder.Bindings.TryGetValue(result.InternalBundleName, out var planned) || result.Hash != planned.BundleHash ||
-                            ProtectedAssetAudit.Relative(inputRoot, file) != planned.RelativePath || source.Length != planned.PlainLength)
-                            throw new InvalidDataException("Actual source Bundle does not match its protected Packed Builder record.");
-                        var binding = new EncryptedBundleBinding(planned.Application, planned.ReleasePrefix, planned.GroupGuid, planned.BundleName,
-                            planned.BundleHash, planned.ProviderId, planned.RelativePath, planned.KeyId, planned.PlainLength, digest, builder.Loopback);
-                        protectedInputs.Add(planned.RelativePath, (file, binding));
-                    }
-                    else if (BelowOrEqual(file, buildPath))
-                        expectedStreaming.Add("aa/" + ProtectedAssetAudit.Relative(buildPath, file), digest);
-                    else
-                        ordinaryInputs.Add(file, digest);
+                    sources.Add(settingsPath, new FrozenFile(settingsPath, input.Length, AuthenticatedBundleStream.Hash(input, default)));
+                    input.Position = 0;
+                    FrozenAddressablesRoutes.CheckRuntimeSettings(EncryptedDeliverySession.ReadText(input), catalogName);
                 }
-                if (protectedInputs.Count != builder.Bindings.Count)
-                    throw new InvalidDataException("The audited protected inventory is incomplete.");
+                foreach (string path in new[] { state, catalogPath, Path.Combine(buildPath, LocalLink) })
+                    sources.Add(path, ReadFile(path));
+                foreach (string relative in new[] { SettingsName, catalogName, LocalLink })
+                    streaming.Add("aa/" + relative, sources[Path.Combine(buildPath, relative)]);
 
-                // The stock Player processor copies all of Addressables.BuildPath, not just this build's results.
-                BuildReport report;
-                string libraryPath = Addressables.LibraryPath;
-                using (OwnedWindowsFiles.CreatePublicationDirectory(playerCandidate))
+                using (var input = OwnedWindowsFiles.OpenRead(layoutPath))
                 {
+                    sources.Add(layoutPath, new FrozenFile(layoutPath, input.Length, AuthenticatedBundleStream.Hash(input, default)));
+                    input.Position = 0;
+                    using var text = new StreamReader(input, new UTF8Encoding(false, true));
+                    var layout = new BuildLayout();
+                    // BuildLayout.ReadFull uses this deserializer, but its default File.Open requests write access.
+                    EditorJsonUtility.FromJsonOverwrite(text.ReadToEnd(), layout);
+                    audit.AuditLayout(layout, builder);
                 }
-                player.locationPathName = Path.Combine(playerCandidate, Path.GetFileName(player.locationPathName));
-                player.options |= BuildOptions.DetailedBuildReport | BuildOptions.StrictMode;
-                try
-                {
-                    Addressables.LibraryPath = shippingLibrary + Path.DirectorySeparatorChar;
-                    string shippingBuildPath = Path.GetFullPath(Addressables.BuildPath);
-                    if (!StrictlyBelow(shippingBuildPath, shippingLibrary))
-                        throw new InvalidDataException("The stock Player processor did not resolve the private Addressables input.");
-                    foreach (var item in expectedStreaming)
-                    {
-                        string relative = item.Key.Substring("aa/".Length);
-                        string destination = Path.Combine(shippingBuildPath, relative);
-                        paths.Prepare(Path.GetDirectoryName(destination));
-                        using var source = OwnedWindowsFiles.OpenRead(Path.Combine(buildPath, relative));
-                        using var copy = OwnedWindowsFiles.CreateTemporaryPinned(destination);
-                        source.CopyTo(copy);
-                        copy.Flush(true);
-                        if (AuthenticatedBundleStream.Hash(copy, default) != item.Value)
-                            throw new InvalidDataException("Audited Addressables Player input changed: " + relative);
-                    }
-                    report = BuildPipeline.BuildPlayer(player);
-                }
-                finally { Addressables.LibraryPath = libraryPath; }
-                if (report.summary.result != BuildResult.Succeeded || report.summary.totalErrors != 0)
-                    throw new InvalidDataException("The Win64 Player failed to build.");
-                string streaming = Path.Combine(playerCandidate, Path.GetFileNameWithoutExtension(player.locationPathName) + "_Data", "StreamingAssets");
-                audit.AuditPlayer(report, player.scenes, streaming, expectedStreaming);
-                if (ProtectedAssetAudit.DigestFile(state) != ProtectedAssetAudit.DigestFile(archivedState))
-                    throw new InvalidDataException("Official Addressables state changed during Player build.");
-                foreach (var ordinary in ordinaryInputs)
-                    if (ProtectedAssetAudit.DigestFile(ordinary.Key) != ordinary.Value)
-                        throw new InvalidDataException("Audited ordinary Bundle changed during Player build: " + Path.GetFileName(ordinary.Key));
-                return Export(protectedInputs, builder, keys, audit, report, privateRoot, releaseRoot, playerCandidate, playerRoot, streaming,
-                    catalogHash, settingsHash, archivedLayout, archivedState);
-            }
-            finally { Object.DestroyImmediate(builder); }
-        }
-
-        private static EncryptedBundleDescription Export(Dictionary<string, (string Path, EncryptedBundleBinding Binding)> inputs, EncryptedPackedBuilder builder,
-            IEncryptedBundleKeySource keys, ProtectedAssetAudit audit, BuildReport report,
-            string privateRoot, string releaseRoot, string playerCandidate, string playerRoot, string streaming, string catalogHash, string settingsHash,
-            string layout, string state)
-        {
-            string stage = Path.Combine(Path.GetDirectoryName(releaseRoot), ".yl-protected-" + Guid.NewGuid().ToString("N"));
-            string aa = Path.Combine(streaming, "aa");
-            var auditedPlayer = PlayerInventory(playerCandidate);
-            if (ProtectedAssetAudit.DigestFile(Path.Combine(aa, builder.CatalogName)) != catalogHash ||
-                ProtectedAssetAudit.DigestFile(Path.Combine(aa, "settings.json")) != settingsHash)
-                throw new InvalidDataException("Staged Player metadata differs after auditing.");
-            using var key = EncryptedBundleKeyLease.Rent(keys, builder.KeyId) ?? throw new EncryptedBundleKeyUnavailableException(builder.KeyId);
-            var rows = new List<EncryptedBundleRecord>();
-            using var ownedStage = OwnedWindowsFiles.CreatePublicationDirectory(stage);
-            foreach (var item in inputs.Values)
-            {
-                var binding = item.Binding;
-                using var source = OwnedWindowsFiles.OpenRead(item.Path);
-                using var cipher = OwnedWindowsFiles.CreateTemporaryPinned(Path.Combine(stage, binding.RelativePath));
-                try
-                {
-                    AuthenticatedBundleStream.Seal(source, cipher, binding, key);
-                }
-                catch (InvalidDataException error) { throw new InvalidDataException("Audited plaintext Bundle changed: " + binding.RelativePath, error); }
-                rows.Add(new EncryptedBundleRecord(binding, cipher.Length, AuthenticatedBundleStream.Hash(cipher, default)));
-            }
-
-            key.Dispose(); // Run application callbacks before checking or publishing the finished bytes.
-            string[] names = rows.Select(row => row.Binding.RelativePath).ToArray();
-            CheckInventory(stage, names);
-            var sealedPlayer = PlayerInventory(playerCandidate);
-            if (sealedPlayer.Count != auditedPlayer.Count || sealedPlayer.Any(file => !auditedPlayer.TryGetValue(file.Key, out string hash) || file.Value != hash))
-                throw new InvalidDataException("Staged Player inventory changed after the audit.");
-            var description = new EncryptedBundleDescription(builder.CatalogName, catalogHash, settingsHash, builder.RoutesSha256, rows);
-            // Windows will not rename a directory with locked children. Move the ciphertext first, then commit the
-            // deployment manifest while the verified children are locked. A directory without it is incomplete.
-            OwnedWindowsFiles.Publish(ownedStage, releaseRoot);
-            var verified = new List<FileStream>(rows.Count);
-            FileStream playerDescription = null, manifest = null;
-            bool committed = false;
-            try
-            {
-                foreach (var row in rows)
-                {
-                    var cipher = OwnedWindowsFiles.ReadPinned(Path.Combine(releaseRoot, row.Binding.RelativePath));
-                    verified.Add(cipher);
-                    AuthenticatedBundleStream.ValidateCipher(cipher, row, default);
-                }
-                string pending = ".yl-manifest-" + Guid.NewGuid().ToString("N") + ".part";
-                playerDescription = WritePending(Path.Combine(aa, pending), description.Encode());
-                manifest = WritePending(Path.Combine(releaseRoot, pending), new JObject
-                {
-                    ["releasePrefix"] = rows[0].Binding.ReleasePrefix,
-                    ["descriptionSha256"] = AuthenticatedBundleStream.Hash(playerDescription, default),
-                    ["catalogSha256"] = catalogHash,
-                    ["files"] = new JArray(rows.Select(row => new JObject
-                    {
-                        ["path"] = row.Binding.RelativePath,
-                        ["bytes"] = row.CipherLength,
-                        ["sha256"] = row.CipherSha256
-                    }))
-                }.ToString(Formatting.Indented));
-                WriteNew(Path.Combine(privateRoot, "audit.json"), new JObject
-                {
-                    ["layoutSha256"] = ProtectedAssetAudit.DigestFile(layout),
-                    ["contentStateSha256"] = ProtectedAssetAudit.DigestFile(state),
-                    ["catalogSha256"] = catalogHash,
-                    ["settingsSha256"] = settingsHash,
-                    ["routesSha256"] = description.RoutesSha256,
-                    ["playerResult"] = report.summary.result.ToString(),
-                    ["playerBuildGuid"] = report.summary.guid.ToString(),
-                    ["playerExeSha256"] = ProtectedAssetAudit.DigestFile(report.summary.outputPath),
-                    ["protectedAssets"] = audit.Report()
-                }.ToString(Formatting.Indented));
-                CheckInventory(releaseRoot, names.Append(pending));
-                OwnedWindowsFiles.Publish(playerDescription, Path.Combine(aa, EncryptedBundleDescription.FileName));
-                FinishPending(playerDescription, true);
-                playerDescription = null;
-                // There must be no open child handles when committing the already audited Win64 directory.
-                using var ownedPlayer = OwnedWindowsFiles.OpenPublicationDirectory(playerCandidate);
-                OwnedWindowsFiles.Publish(ownedPlayer, playerRoot);
-                try
-                {
-                    OwnedWindowsFiles.Publish(manifest, Path.Combine(releaseRoot, "delivery.json"));
-                }
-                catch (IOException publicationError)
-                {
-                    try
-                    {
-                        OwnedWindowsFiles.Publish(ownedPlayer, playerCandidate);
-                    }
-                    catch (IOException rollbackError)
-                    {
-                        throw new IOException("Manifest commit failed and the audited Player could not be withdrawn. Do not publish either output.",
-                            new AggregateException(publicationError, rollbackError));
-                    }
-                    throw;
-                }
-                committed = true;
-                return description;
+                bundles = FreezeBundles(output, builder, plans, player.scenes, buildPath, catalogPath, streaming, sources, allowLoopback);
+                CheckLooseRoots(plans.Values, bundles);
             }
             finally
             {
-                try
-                {
-                    FinishPending(manifest, committed);
-                }
-                finally
-                {
-                    try
-                    {
-                        FinishPending(playerDescription, committed);
-                    }
-                    finally { foreach (var cipher in verified) cipher.Dispose(); }
-                }
+                Object.DestroyImmediate(builder);
             }
+
+            string rawPlayer = Path.Combine(privateRoot, ".yl-player-" + Guid.NewGuid().ToString("N"));
+            string shippingLibrary = Path.Combine(privateRoot, ".yl-aa-" + Guid.NewGuid().ToString("N"));
+            if (plans.Values.Select(plan => plan.Root).Append(stateFolder).Any(root => paths.Overlap(root, rawPlayer) || paths.Overlap(root, shippingLibrary)))
+                throw new InvalidDataException("Private Player staging overlaps an authoring output.");
+            paths.CreateFresh(rawPlayer);
+            paths.CreateFresh(shippingLibrary);
+            player.locationPathName = Path.Combine(rawPlayer, exe);
+            var report = BuildPlayer(player, shippingLibrary, streaming);
+            string data = Path.GetFileNameWithoutExtension(exe) + "_Data";
+            string streamingRoot = Path.Combine(rawPlayer, data, "StreamingAssets");
+            audit.AuditPlayer(report, streamingRoot, streaming.ToDictionary(row => row.Key, row => row.Value.Sha256, StringComparer.Ordinal));
+            var playerFiles = FreezePlayer(report, rawPlayer, exe, data, backend, streaming, nativePlugin);
+
+            string stage = Path.Combine(privateRoot, ".yl-release-" + Guid.NewGuid().ToString("N"));
+            using var ownedStage = OwnedWindowsFiles.CreatePublicationDirectory(stage);
+            using var candidate = new CandidateFiles(stage);
+            string aa = "Player/" + data + "/StreamingAssets/aa/";
+            var expected = new Dictionary<string, FrozenFile>(StringComparer.Ordinal);
+            foreach (var file in playerFiles)
+                expected.Add("Player/" + file.Key, candidate.Copy("Player/" + file.Key, file.Value));
+            expected.Add("ContentState/" + LayoutName, candidate.Copy("ContentState/" + LayoutName, sources[layoutPath]));
+            expected.Add("ContentState/" + StateName, candidate.Copy("ContentState/" + StateName, sources[state]));
+
+            var uploads = new List<Upload>();
+            foreach (var bundle in bundles.Where(bundle => bundle.Plan.IsOrdinaryRemote))
+            {
+                expected.Add(bundle.Relative, candidate.Copy(bundle.Relative, bundle.File));
+                uploads.Add(new Upload(bundle.Relative, bundle.Url, OrdinaryCategory));
+            }
+            // Reserve every cipher and descriptor pathname before running application key callbacks.
+            string descriptionPath = aa + EncryptedBundleDescription.FileName;
+            var descriptionOutput = candidate.Create(descriptionPath);
+            var rows = SealGroups(groupOrder, bundles, keys, candidate, aa, expected, uploads);
+            var description = new EncryptedBundleDescription(catalogName, streaming["aa/" + catalogName].Sha256,
+                streaming["aa/" + SettingsName].Sha256, routesHash, rows);
+            expected.Add(descriptionPath, WriteFile(descriptionOutput, description.Encode()));
+
+            // No application callback may run after this point. Already-frozen hashes, not a new baseline, validate each input and output.
+            foreach (var bundle in bundles)
+                RequireFile(bundle.File, bundle.Binding != null ? "Audited plaintext Bundle changed" : "Audited ordinary Bundle changed");
+            foreach (var file in sources.Values.Concat(playerFiles.Values))
+                RequireFile(file, "Audited delivery source changed");
+            CheckLooseRoots(plans.Values, bundles);
+            CheckUploadUrls(uploads);
+
+            string receipt = EncodeReceipt(application, releaseId, prefix, description, expected[descriptionPath].Sha256, expected, uploads);
+            expected.Add(ReceiptName, WriteFile(candidate.Create(ReceiptName), receipt));
+            using (var auditFile = OwnedWindowsFiles.CreateTemporaryPinned(Path.Combine(privateRoot, "audit.json")))
+            {
+                WriteFile(auditFile, new JObject
+                {
+                    ["layoutSha256"] = sources[layoutPath].Sha256,
+                    ["contentStateSha256"] = sources[state].Sha256,
+                    ["catalogSha256"] = description.CatalogSha256,
+                    ["settingsSha256"] = description.SettingsSha256,
+                    ["routesSha256"] = routesHash,
+                    ["playerResult"] = report.summary.result.ToString(),
+                    ["playerBuildGuid"] = report.summary.guid.ToString(),
+                    ["playerExeSha256"] = playerFiles[exe].Sha256,
+                    ["protectedAssets"] = audit.Report(),
+                    ["authorGroups"] = audit.Authors()
+                }.ToString(Formatting.Indented));
+            }
+            candidate.Verify(expected);
+            // Windows requires closing the child handles. The publisher-only DACL and both parent pins remain in force.
+            candidate.Dispose();
+            OwnedWindowsFiles.Publish(ownedStage, physicalRelease);
+            return description;
         }
 
-        private static Dictionary<string, string> PlayerInventory(string root) => ProtectedAssetAudit.EnumerateOwnedFiles(root)
-            .ToDictionary(file => ProtectedAssetAudit.Relative(root, file), ProtectedAssetAudit.DigestFile, StringComparer.OrdinalIgnoreCase);
-
-        private static void CheckInventory(string root, IEnumerable<string> expected)
+        private static Dictionary<string, GroupPlan> PlanGroups(AddressableAssetSettings settings, AddressableAssetGroup[] groups,
+            BuildOutputPaths paths, string privateRoot, string releaseRoot, string stateFolder, string buildPath, string[] reserved,
+            string application, string releaseId, bool allowLoopback, out string releasePrefix)
         {
-            var names = new HashSet<string>(expected, StringComparer.Ordinal);
-            if (Directory.EnumerateFileSystemEntries(root).Any(path => !names.Remove(Path.GetFileName(path))) || names.Count != 0)
-                throw new InvalidDataException("Staged delivery inventory differs from the audited Bundle list.");
+            if (groups.Any(group => !group || group.Settings != settings || !settings.groups.Contains(group) || !group.HasSchema<EncryptedBundleGroupSchema>()) ||
+                groups.Distinct().Count() != groups.Length || groups.Contains(settings.DefaultGroup))
+                throw new InvalidDataException("Select distinct protected groups in this project; the shared default group must remain ordinary.");
+            releasePrefix = null;
+            var allNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var plans = new Dictionary<string, GroupPlan>(StringComparer.Ordinal);
+            foreach (var group in settings.groups.Where(group => group))
+            {
+                var schema = group.GetSchema<BundledAssetGroupSchema>();
+                var auth = group.GetSchema<EncryptedBundleGroupSchema>();
+                bool protect = groups.Contains(group);
+                if ((auth != null) != protect || (schema?.AssetBundleProviderType.Value == typeof(EncryptedAssetBundleProvider)) != protect)
+                    throw new InvalidDataException("All and only encrypted-provider groups must be selected: " + group.Name);
+                if (!schema || !schema.IncludeInBuild)
+                {
+                    if (protect)
+                        throw new InvalidDataException("A protected group is excluded from the build: " + group.Name);
+                    continue;
+                }
+                string name = group.Name.Replace(" ", "").Replace('\\', '/').Replace("//", "/");
+                if (name.Length == 0 || !allNames.Add(name))
+                    throw new InvalidDataException("Groups have an ambiguous normalized official Bundle name: " + group.Name);
+                if (schema.BundledAssetProviderType.Value != typeof(BundledAssetProvider))
+                    throw new InvalidDataException("Encrypted delivery requires official asset providers: " + group.Name);
+                string guid = EncryptedBundleBinding.Hex(group.Guid, 32, "groupGuid");
+                string build = schema.BuildPath.GetValue(settings);
+                string root = LocalPath(Path.GetFullPath(build));
+                string load = EncryptedPackedBuilder.NormalizeLoadPrefix(schema.LoadPath.GetValue(settings));
+                EncryptedBundleDeliveryMode? mode = null;
+                bool local = false;
+                if (protect)
+                {
+                    mode = auth.DeliveryMode;
+                    if (schema.Compression != BundledAssetGroupSchema.BundleCompressionMode.LZ4 || schema.UseAssetBundleCache ||
+                        schema.ForceUniqueProvider || schema.AssetLoadMode != AssetLoadMode.RequestedAssetAndDependencies ||
+                        schema.UseUnityWebRequestForLocalBundles || schema.GetBundleCachedProviderId() != typeof(EncryptedAssetBundleProvider).FullName
+#if UNITY_6000_3_OR_NEWER
+                        || schema.StripDownloadOptions
+#endif
+                        )
+                        throw new InvalidDataException("Protected groups require LZ4, one encrypted provider, requested-asset loading, and uncached download options.");
+                    if (!SamePath(root, LocalPath(build)) || !StrictlyBelow(root, privateRoot) ||
+                        !StrictlyBelow(paths.Identity(root), paths.Identity(privateRoot)) || paths.Overlap(root, stateFolder))
+                        throw new InvalidDataException("Each protected BuildPath must be a distinct private plaintext staging directory: " + group.Name);
+                    if (mode == EncryptedBundleDeliveryMode.RemoteHttps)
+                    {
+                        CheckRemoteUrl(load, allowLoopback);
+                        if (releasePrefix != null && load != releasePrefix)
+                            throw new InvalidDataException("Protected remote groups must use one immutable LoadPath prefix.");
+                        releasePrefix = load;
+                    }
+                    else if (mode != EncryptedBundleDeliveryMode.Embedded || load != FrozenAddressablesRoutes.EmbeddedPrefix)
+                        throw new InvalidDataException("An embedded group must use the canonical yl-encrypted LoadPath.");
+                    EncryptedBundleBinding.Token(auth.KeyId, "keyId");
+                }
+                else
+                {
+                    if (schema.AssetBundleProviderType.Value != typeof(AssetBundleProvider))
+                        throw new InvalidDataException("An ordinary group must use the stock Bundle provider: " + group.Name);
+                    local = BelowOrEqual(root, buildPath) && BelowOrEqual(paths.Identity(root), paths.Identity(buildPath));
+                    if (paths.Overlap(root, privateRoot) || paths.Overlap(root, releaseRoot) ||
+                        (!local && reserved.Any(forbidden => paths.Overlap(root, forbidden))))
+                        throw new InvalidDataException("Ordinary Bundle build path overlaps protected, Player or non-owned output: " + group.Name);
+                    if (local)
+                    {
+                        string subfolder = SamePath(buildPath, root) ? "" : ProtectedAssetAudit.Relative(buildPath, root) + "/";
+                        if (load != FrozenAddressablesRoutes.RuntimeToken + "/" + subfolder || load.StartsWith(FrozenAddressablesRoutes.EmbeddedPrefix, StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidDataException("A stock local Bundle path must match its official installed aa path: " + group.Name);
+                    }
+                    else
+                    {
+                        if (!SamePath(root, LocalPath(build)))
+                            throw new InvalidDataException("Use an absolute ordinary remote output root: " + group.Name);
+                        RequireAbsent(root);
+                        using (OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(root), false))
+                        {
+                        }
+                        CheckRemoteUrl(load, allowLoopback);
+                    }
+                }
+                if (!local && schema.BundleNaming == BundledAssetGroupSchema.BundleNamingStyle.NoHash)
+                    throw new InvalidDataException("Protected and ordinary remote groups require hashed Bundle filenames: " + group.Name);
+                var plan = new GroupPlan(guid, root, load, schema.GetBundleCachedProviderId(), mode, auth?.KeyId, local);
+                foreach (var prior in plans.Values.Where(prior => paths.Overlap(prior.Root, root)))
+                {
+                    bool sharedOrdinary = prior.Mode == null && mode == null && prior.IsOrdinaryLocal == local &&
+                        (local || SamePath(prior.Root, root));
+                    if (!sharedOrdinary)
+                        throw new InvalidDataException("Ambiguous Bundle staging roots: " + group.Name);
+                }
+                if (!plans.TryAdd(guid, plan))
+                    throw new InvalidDataException("Duplicate authoring group GUID: " + guid);
+            }
+            foreach (var plan in plans.Values.Where(plan => plan.Mode.HasValue))
+                _ = new EncryptedBundleBinding(application, releaseId, releasePrefix, plan.Mode.Value, plan.Guid, "validate", new string('0', 32),
+                    plan.ProviderId, "validate.bundle", plan.KeyId, 1, new string('0', 64), allowLoopback);
+            return plans;
         }
 
-        private static FileStream WritePending(string path, string content)
+        private static ScriptingImplementation ValidatePlayer(AddressableAssetSettings settings, BuildPlayerOptions player)
         {
-            var file = OwnedWindowsFiles.CreateTemporaryPinned(path);
+            var serialized = new SerializedObject(settings);
+            var backend = PlayerSettings.GetScriptingBackend(NamedBuildTarget.Standalone);
+            bool x64 = player.target == BuildTarget.StandaloneWindows64;
+#if UNITY_6000_3_OR_NEWER
+            x64 &= UnityEditor.WindowsStandalone.UserBuildSettings.architecture == OSArchitecture.x64;
+#endif
+            const BuildOptions Forbidden = BuildOptions.Development | BuildOptions.AutoRunPlayer | BuildOptions.BuildScriptsOnly |
+                BuildOptions.AcceptExternalModificationsToPlayer | BuildOptions.AllowDebugging;
+            if (AddressableAssetSettingsDefaultObject.Settings != settings || settings.BuildRemoteCatalog || !settings.DisableCatalogUpdateOnStartup ||
+                settings.InitializationObjects.Count != 0 || serialized.FindProperty("m_ExtractTypeTreeData")?.boolValue == true ||
+                serialized.FindProperty("m_BundleLocalCatalog")?.boolValue == true ||
+                settings.BuildAddressablesWithPlayerBuild != AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer ||
+                EditorUserBuildSettings.activeBuildTarget != BuildTarget.StandaloneWindows64 || !x64 || player.subtarget == (int)StandaloneBuildSubtarget.Server ||
+                (backend != ScriptingImplementation.IL2CPP && backend != ScriptingImplementation.Mono2x) || (player.options & Forbidden) != 0 ||
+                player.scenes == null || player.scenes.Length == 0 || player.scenes.Distinct(StringComparer.OrdinalIgnoreCase).Count() != player.scenes.Length ||
+                player.scenes.Any(scene => string.IsNullOrEmpty(scene) || AssetDatabase.GetMainAssetTypeAtPath(scene) != typeof(SceneAsset)))
+                throw new InvalidDataException("Encrypted release requires a fixed local Catalog and a Windows x64 Release Player without startup hooks or Player content rebuild.");
+            if (Enumerable.Range(0, UnityEngine.SceneManagement.SceneManager.sceneCount)
+                .Any(index => UnityEngine.SceneManagement.SceneManager.GetSceneAt(index).isDirty))
+                throw new InvalidOperationException("Save the selected build scenes before the encrypted build.");
+            return backend;
+        }
+
+        private static AddressablesPlayerBuildResult BuildPacked(AddressableAssetSettings settings, EncryptedPackedBuilder builder)
+        {
+            bool oldLayout = ProjectConfigData.GenerateBuildLayout;
+            var oldFormat = ProjectConfigData.BuildLayoutReportFileFormat;
             try
             {
-                byte[] bytes = new UTF8Encoding(false).GetBytes(content);
-                file.Write(bytes, 0, bytes.Length);
-                file.Flush(true);
+                ProjectConfigData.GenerateBuildLayout = true;
+                ProjectConfigData.BuildLayoutReportFileFormat = ProjectConfigData.ReportFileFormat.JSON;
+                return builder.BuildData<AddressablesPlayerBuildResult>(new AddressablesDataBuilderInput(settings));
+            }
+            finally
+            {
+                ProjectConfigData.BuildLayoutReportFileFormat = oldFormat;
+                ProjectConfigData.GenerateBuildLayout = oldLayout;
+            }
+        }
+
+        private static List<BundleSource> FreezeBundles(AddressablesPlayerBuildResult output, EncryptedPackedBuilder builder,
+            Dictionary<string, GroupPlan> plans, string[] scenes, string buildPath, string catalogPath,
+            Dictionary<string, FrozenFile> streaming, Dictionary<string, FrozenFile> sources, bool loopback)
+        {
+            var actual = builder.VerifySerializedCatalog(catalogPath, scenes);
+            var bundles = new List<BundleSource>(output.AssetBundleBuildResults.Count);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var result in output.AssetBundleBuildResults)
+            {
+                if (!result.SourceAssetGroup || !plans.TryGetValue(result.SourceAssetGroup.Guid, out var plan) ||
+                    !seen.Add(result.InternalBundleName) || !builder.Bundles.TryGetValue(result.InternalBundleName, out var packed) ||
+                    packed.InternalName != result.InternalBundleName || packed.GroupGuid != plan.Guid || packed.Hash != result.Hash || packed.ProviderId != plan.ProviderId)
+                    throw new InvalidDataException("Actual BuildResult Bundle does not match its attributed SBP group/name/hash.");
+                string path = LocalPath(Path.GetFullPath(result.FilePath));
+                if (ProtectedAssetAudit.Relative(plan.Root, path) != packed.FileName || packed.SourceId != plan.LoadPrefix +
+                    (plan.Mode.HasValue ? plan.Guid + "/" : "") + packed.FileName)
+                    throw new InvalidDataException("Actual BuildResult path or serialized route differs from the frozen group: " + packed.FileName);
+                var file = ReadFile(path);
+                sources.Add(path, file);
+                var options = (AssetBundleRequestOptions)actual[packed.SourceId].Data;
+                EncryptedBundleBinding binding = null;
+                string relative = null;
+                string url = null;
+                if (packed.Binding != null)
+                {
+                    var planned = packed.Binding;
+                    if (planned.Mode != plan.Mode || planned.KeyId != plan.KeyId || planned.PlainLength != file.Bytes)
+                        throw new InvalidDataException("Actual protected source length or group schema differs from its authoring identity.");
+                    binding = new EncryptedBundleBinding(planned.Application, planned.ReleaseId, planned.ReleasePrefix, planned.Mode, planned.GroupGuid,
+                        planned.BundleName, planned.BundleHash, planned.ProviderId, planned.RelativePath, planned.KeyId, file.Bytes, file.Sha256, loopback);
+                    if (binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps)
+                    {
+                        url = packed.SourceId;
+                        relative = "Upload/protected/" + binding.GroupPath;
+                    }
+                }
+                else if (plan.IsOrdinaryLocal)
+                {
+                    if (options.BundleSize != 0 && options.BundleSize != file.Bytes)
+                        throw new InvalidDataException("Stock local Bundle byte count differs from the official result: " + packed.SourceId);
+                    streaming.Add("aa/" + ProtectedAssetAudit.Relative(buildPath, path), file);
+                }
+                else
+                {
+                    url = CheckRemoteUrl(packed.SourceId, loopback);
+                    relative = "Upload/ordinary/" + packed.FileName;
+                    if (options.BundleSize != file.Bytes)
+                        throw new InvalidDataException("Ordinary remote Catalog Bundle byte count differs from its physical source: " + url);
+                }
+                bundles.Add(new BundleSource(plan, file, binding, relative, url));
+            }
+            if (seen.Count != builder.Bundles.Count)
+                throw new InvalidDataException("Official physical and serialized Bundle inventories differ.");
+            return bundles;
+        }
+
+        private static BuildReport BuildPlayer(BuildPlayerOptions player, string shippingLibrary, Dictionary<string, FrozenFile> streaming)
+        {
+            string previous = Addressables.LibraryPath;
+            BuildReport report;
+            try
+            {
+                Addressables.LibraryPath = shippingLibrary + Path.DirectorySeparatorChar;
+                string aa = Path.GetFullPath(Addressables.BuildPath);
+                if (!StrictlyBelow(aa, shippingLibrary))
+                    throw new InvalidDataException("Stock Player processor did not resolve the private Addressables input.");
+                foreach (var file in streaming)
+                {
+                    string path = Path.Combine(aa, file.Key.Substring("aa/".Length));
+                    using var pin = OwnedWindowsFiles.PinDirectory(Path.GetDirectoryName(path), true);
+                    using var output = OwnedWindowsFiles.CreateTemporaryPinned(path);
+                    CopyVerified(file.Value, output);
+                }
+                player.options |= BuildOptions.DetailedBuildReport | BuildOptions.StrictMode;
+                report = BuildPipeline.BuildPlayer(player);
+            }
+            finally
+            {
+                Addressables.LibraryPath = previous;
+            }
+            if (report == null || report.summary.result != BuildResult.Succeeded || report.summary.totalErrors != 0 ||
+                !SamePath(report.summary.outputPath, player.locationPathName))
+                throw new InvalidDataException("The audited Windows x64 Player failed to build.");
+            return report;
+        }
+
+        private static FrozenFile FreezeInstalledPlugin()
+        {
+            var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(EncryptedDeliverySession).Assembly);
+            if (package?.name != "com.kano.ylframework.resource-encryption" || string.IsNullOrEmpty(package.resolvedPath))
+                throw new InvalidDataException("Cannot resolve the installed encrypted delivery package.");
+            string path = Path.Combine(package.resolvedPath, "Runtime/Plugins/Win64", NativePluginName);
+            using var input = OwnedWindowsFiles.OpenRead(path);
+            ProtectedAssetAudit.RequireWin64NativePlugin(input);
+            return new FrozenFile(path, input.Length, AuthenticatedBundleStream.Hash(input, default));
+        }
+
+        private static Dictionary<string, FrozenFile> FreezePlayer(BuildReport report, string root, string exe, string data,
+            ScriptingImplementation backend, Dictionary<string, FrozenFile> streaming, FrozenFile nativePlugin)
+        {
+            const string Streaming = "/StreamingAssets/";
+            string outputName = Path.GetFileNameWithoutExtension(exe);
+            string nativePath = data + "/Plugins/x86_64/" + NativePluginName;
+            var reported = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in report.GetFiles())
+            {
+                string file = Path.GetFullPath(item.path);
+                if (!StrictlyBelow(file, root))
+                    continue;
+                string relative = ProtectedAssetAudit.Relative(root, file);
+                if (relative.Split('/').Any(component => IsNonShipping(component, outputName)))
+                    continue;
+                if (reported.TryGetValue(relative, out ulong size) && size != item.size)
+                    throw new InvalidDataException("The audited Player report gives conflicting sizes: " + relative);
+                reported[relative] = item.size;
+            }
+            var files = new Dictionary<string, FrozenFile>(StringComparer.Ordinal);
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using var pin = OwnedWindowsFiles.PinDirectory(root, false);
+            foreach (string file in ProtectedAssetAudit.EnumerateTree(root, path => !IsNonShipping(ProtectedAssetAudit.Relative(root, path), outputName)))
+            {
+                string path = ProtectedAssetAudit.Relative(root, file);
+                if (Path.GetFileName(file).Equals(NativePluginName, StringComparison.OrdinalIgnoreCase) && path != nativePath)
+                    throw new InvalidDataException("Player contains a native encryption plugin outside its canonical path: " + path);
+                if (!names.Add(path) || !IsPlayerFile(file, path, exe, data, backend, reported.ContainsKey(path), streaming))
+                    throw new InvalidDataException("Unrecognized file outside the Win64 Player release allowlist: " + path);
+                var frozen = ReadFile(file);
+                if (reported.TryGetValue(path, out ulong size) && size != (ulong)frozen.Bytes)
+                    throw new InvalidDataException("The audited Player file size differs from the official build report: " + path);
+                files.Add(path, frozen);
+            }
+            if (!files.TryGetValue(nativePath, out var actualPlugin) || actualPlugin.Bytes != nativePlugin.Bytes ||
+                actualPlugin.Sha256 != nativePlugin.Sha256)
+                throw new InvalidDataException("Player native plugin is missing or differs from the frozen installed Win64 plugin: " + nativePath);
+            var backendFiles = backend == ScriptingImplementation.IL2CPP
+                ? new[] { "GameAssembly.dll", "baselib.dll", data + "/il2cpp_data/Metadata/global-metadata.dat" }
+                : new[] { "MonoBleedingEdge/EmbedRuntime/mono-2.0-bdwgc.dll", data + "/Managed/mscorlib.dll",
+                    data + "/Managed/" + typeof(EncryptedDeliverySession).Assembly.GetName().Name + ".dll" };
+            foreach (string path in backendFiles)
+                if (!files.TryGetValue(path, out var file) || file.Bytes <= 0)
+                    throw new InvalidDataException("The audited Player missed a required backend file: " + path);
+            foreach (string path in reported.Keys.Concat(new[] { exe, "UnityPlayer.dll", data + "/boot.config" })
+                .Concat(streaming.Keys.Select(path => data + Streaming + path)))
+                if (!files.ContainsKey(path))
+                    throw new InvalidDataException("The audited Player missed an expected official file: " + path);
+            if (!files.ContainsKey(data + "/globalgamemanagers") && !files.ContainsKey(data + "/data.unity3d"))
+                throw new InvalidDataException("The audited Player missed its generated boot data.");
+            if (files.Any(file => file.Key.StartsWith(data + Streaming, StringComparison.Ordinal) &&
+                file.Value.Sha256 != streaming[file.Key.Substring(data.Length + Streaming.Length)].Sha256))
+                throw new InvalidDataException("Actual Player StreamingAssets bytes differ from the frozen inputs.");
+            return files;
+        }
+
+        private static bool IsNonShipping(string path, string outputName) =>
+            path.Equals(outputName + "_BackUpThisFolder_ButDontShipItWithYourGame", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals(outputName + "_BurstDebugInformation_DoNotShip", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals(outputName + "_DebugInformation_DoNotShip", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".mdb", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsPlayerFile(string file, string path, string exe, string data, ScriptingImplementation backend, bool reported,
+            Dictionary<string, FrozenFile> streaming)
+        {
+            string streamingPrefix = data + "/StreamingAssets/";
+            if (path.StartsWith(streamingPrefix, StringComparison.Ordinal))
+                return streaming.ContainsKey(path.Substring(streamingPrefix.Length));
+            if (path == "baselib.dll")
+                return backend == ScriptingImplementation.IL2CPP && MatchesRuntimeTemplate(file, path, "il2cpp");
+            if (path == exe || path == "UnityPlayer.dll" || path == "UnityCrashHandler64.exe" || path == "GameAssembly.dll" ||
+                path == "D3D12/D3D12Core.dll")
+                return true;
+            if (path.StartsWith("MonoBleedingEdge/EmbedRuntime/", StringComparison.Ordinal) || path.StartsWith("MonoBleedingEdge/etc/mono/", StringComparison.Ordinal))
+                return backend == ScriptingImplementation.Mono2x && MatchesRuntimeTemplate(file, path, "mono");
+            if (!path.StartsWith(data + "/", StringComparison.Ordinal))
+                return false;
+            string relative = path.Substring(data.Length + 1);
+            if (relative == "app.info" || relative == "boot.config" || relative == "RuntimeInitializeOnLoads.json" || relative == "ScriptingAssemblies.json" ||
+                relative == "globalgamemanagers" || relative == "data.unity3d" || relative == "il2cpp_data/Metadata/global-metadata.dat" ||
+                relative == "Resources/unity default resources" || relative == "Resources/unity_builtin_extra")
+                return true;
+            if ((relative.StartsWith("Managed/", StringComparison.Ordinal) || relative.StartsWith("Plugins/", StringComparison.Ordinal)) &&
+                path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                return reported;
+            return reported && Regex.IsMatch(relative,
+                @"\A(?:level\d+|(?:globalgamemanagers|resources|sharedassets\d+)\.assets|.+\.(?:resS|resource)|il2cpp_data/Resources/[A-Za-z0-9_.-]+\.dat)\z",
+                RegexOptions.CultureInvariant);
+        }
+
+        private static bool MatchesRuntimeTemplate(string file, string relative, string backend)
+        {
+            string template = Path.Combine(EditorApplication.applicationContentsPath,
+                "PlaybackEngines/WindowsStandaloneSupport/Variations/win64_player_nondevelopment_" + backend, relative);
+            if (!File.Exists(template))
+                return false;
+            using var input = File.OpenRead(template);
+            return ProtectedAssetAudit.DigestFile(file) == AuthenticatedBundleStream.Hash(input, default);
+        }
+
+        private static List<EncryptedBundleRecord> SealGroups(string[] groupOrder, List<BundleSource> bundles, IEncryptedBundleKeySource keys,
+            CandidateFiles candidate, string aa, Dictionary<string, FrozenFile> expected, List<Upload> uploads)
+        {
+            var streams = new Dictionary<BundleSource, (string Relative, FileStream File)>();
+            var rows = new List<EncryptedBundleRecord>();
+            // Snapshot group order and all key/route identities before asking the application for its first lease.
+            var byGroup = bundles.Where(bundle => bundle.Binding != null).ToLookup(bundle => bundle.Binding.GroupGuid, StringComparer.Ordinal);
+            foreach (var bundle in byGroup.SelectMany(group => group))
+            {
+                string relative = bundle.Relative ?? aa + EncryptedBundleBinding.EmbeddedFolder + "/" + bundle.Binding.GroupPath;
+                streams.Add(bundle, (relative, candidate.Create(relative)));
+            }
+            foreach (string guid in groupOrder)
+            {
+                string keyId = byGroup[guid].First().Binding.KeyId;
+                using var lease = EncryptedBundleKeyLease.Rent(keys, keyId) ?? throw new EncryptedBundleKeyUnavailableException(keyId);
+                foreach (var bundle in byGroup[guid])
+                {
+                    var (relative, output) = streams[bundle];
+                    using var input = OwnedWindowsFiles.OpenRead(bundle.File.Path);
+                    try
+                    {
+                        AuthenticatedBundleStream.Seal(input, output, bundle.Binding, lease);
+                    }
+                    catch (InvalidDataException error)
+                    {
+                        throw new InvalidDataException("Audited plaintext Bundle changed: " + bundle.Binding.GroupPath, error);
+                    }
+                    var row = new EncryptedBundleRecord(bundle.Binding, output.Length, AuthenticatedBundleStream.Hash(output, default));
+                    rows.Add(row);
+                    expected.Add(relative, new FrozenFile(null, row.CipherLength, row.CipherSha256));
+                    if (bundle.Url != null)
+                        uploads.Add(new Upload(relative, bundle.Url, ProtectedCategory));
+                }
+            }
+            return rows;
+        }
+
+        private static void CheckLooseRoots(IEnumerable<GroupPlan> plans, List<BundleSource> bundles)
+        {
+            foreach (var group in plans.Where(plan => !plan.IsOrdinaryLocal).GroupBy(plan => plan.Root, StringComparer.OrdinalIgnoreCase))
+            {
+                var expected = new HashSet<string>(bundles.Where(bundle => SamePath(bundle.Plan.Root, group.Key)).Select(bundle => bundle.File.Path),
+                    StringComparer.Ordinal);
+                if (ProtectedAssetAudit.EnumerateOwnedFiles(group.Key).Any(file => !expected.Remove(file)) || expected.Count != 0)
+                    throw new InvalidDataException("Loose Bundle roots contain missing or unowned output: " + group.Key);
+            }
+        }
+
+        private static string CheckRemoteUrl(string value, bool allowLoopback)
+        {
+            if (value.Length > 1536 || !Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.AbsoluteUri != value ||
+                (uri.Scheme != Uri.UriSchemeHttps && !(allowLoopback && uri.Scheme == Uri.UriSchemeHttp && uri.Host == "127.0.0.1")) ||
+                uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || uri.Query.Length != 0 || uri.Host.Length == 0 ||
+                (value.IndexOf('%') >= 0) || (uri.AbsolutePath.Length > 1 && uri.AbsolutePath.Substring(1).TrimEnd('/').Split('/').Any(part => part.Length == 0)))
+                throw new InvalidDataException("Ordinary or protected Bundle route is not a canonical immutable HTTPS URL: " + value);
+            return value;
+        }
+
+        private static void CheckUploadUrls(List<Upload> uploads)
+        {
+            var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (uploads.Any(row => !urls.Add(row.Url) || !files.Add(row.Relative)))
+                throw new InvalidDataException("Upload files or exact target URLs are not unique.");
+        }
+
+        private static string EncodeReceipt(string application, string releaseId, string releasePrefix, EncryptedBundleDescription description,
+            string descriptionHash, Dictionary<string, FrozenFile> files, List<Upload> uploads) => new JObject
+            {
+                ["version"] = EncryptedBundleBinding.Version,
+                ["application"] = application,
+                ["platform"] = EncryptedBundleBinding.Platform,
+                ["releaseId"] = releaseId,
+                ["releasePrefix"] = releasePrefix,
+                ["catalog"] = description.CatalogName,
+                ["catalogSha256"] = description.CatalogSha256,
+                ["settingsSha256"] = description.SettingsSha256,
+                ["routesSha256"] = description.RoutesSha256,
+                ["descriptionSha256"] = descriptionHash,
+                ["files"] = new JArray(files.OrderBy(row => row.Key, StringComparer.Ordinal).Select(row => FileRow(row.Key, row.Value))),
+                ["uploads"] = new JArray(uploads.OrderBy(row => row.Relative, StringComparer.Ordinal).Select(row =>
+                {
+                    var json = FileRow(row.Relative, files[row.Relative]);
+                    json.Add("url", row.Url);
+                    json.Add("category", row.Category);
+                    return json;
+                }))
+            }.ToString(Formatting.Indented);
+
+        private static JObject FileRow(string relative, FrozenFile file) => new JObject
+        {
+            ["path"] = relative,
+            ["bytes"] = file.Bytes,
+            ["sha256"] = file.Sha256
+        };
+
+        private sealed class CandidateFiles : IDisposable
+        {
+            private readonly string _root;
+            private readonly Dictionary<string, FileStream> _files = new Dictionary<string, FileStream>(StringComparer.Ordinal);
+            private readonly HashSet<string> _dirs = new HashSet<string>(new[] { "Player", "Upload", "ContentState" }, StringComparer.Ordinal);
+
+            internal CandidateFiles(string root)
+            {
+                _root = root;
+                foreach (string dir in _dirs)
+                    Directory.CreateDirectory(Path.Combine(_root, dir));
+            }
+
+            internal FrozenFile Copy(string relative, FrozenFile source)
+            {
+                CopyVerified(source, Create(relative));
+                return source;
+            }
+
+            internal FileStream Create(string relative)
+            {
+                int slash = relative.LastIndexOf('/');
+                while (slash >= 0)
+                {
+                    string dir = relative.Substring(0, slash);
+                    if (_dirs.Add(dir))
+                        Directory.CreateDirectory(Path.Combine(_root, dir));
+                    slash = dir.LastIndexOf('/');
+                }
+                var file = OwnedWindowsFiles.CreateTemporaryPinned(Path.Combine(_root, relative));
+                _files.Add(relative, file);
                 return file;
             }
-            catch { FinishPending(file, false); throw; }
+
+            internal void Verify(Dictionary<string, FrozenFile> expectedFiles)
+            {
+                var seenFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var seenDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string file in ProtectedAssetAudit.EnumerateTree(_root, path =>
+                {
+                    if (Directory.Exists(path))
+                    {
+                        string relative = ProtectedAssetAudit.Relative(_root, path);
+                        if (!_dirs.Contains(relative) || !seenDirs.Add(relative))
+                            throw new InvalidDataException("Staged delivery inventory contains an unexpected directory: " + relative);
+                    }
+                    return true;
+                }))
+                {
+                    string relative = ProtectedAssetAudit.Relative(_root, file);
+                    if (!seenFiles.Add(relative) || !expectedFiles.TryGetValue(relative, out var expected) ||
+                        !_files.TryGetValue(relative, out var input))
+                        throw new InvalidDataException("Staged delivery inventory contains an unexpected file: " + relative);
+                    OwnedWindowsFiles.CheckPublicationFile(input);
+                    CheckBytes(input, expected, "Staged delivery inventory bytes changed: " + relative);
+                }
+                if (seenFiles.Count != expectedFiles.Count || seenDirs.Count != _dirs.Count)
+                    throw new InvalidDataException("Staged delivery inventory missed a frozen output.");
+            }
+
+            public void Dispose()
+            {
+                foreach (var file in _files.Values)
+                    file.Dispose();
+                _files.Clear();
+            }
         }
 
-        private static void FinishPending(FileStream file, bool keep)
+        private static void CopyVerified(FrozenFile source, FileStream output)
         {
-            if (file == null)
+            using var input = OwnedWindowsFiles.OpenRead(source.Path);
+            input.CopyTo(output);
+            output.Flush(true);
+            CheckBytes(output, source, "Frozen build input changed before copying: " + source.Path);
+        }
+
+        private static FrozenFile ReadFile(string path)
+        {
+            using var file = OwnedWindowsFiles.OpenRead(path);
+            return new FrozenFile(path, file.Length, AuthenticatedBundleStream.Hash(file, default));
+        }
+
+        private static FrozenFile WriteFile(FileStream file, string text)
+        {
+            byte[] utf8 = Encoding.UTF8.GetBytes(text);
+            file.Write(utf8, 0, utf8.Length);
+            file.Flush(true);
+            return new FrozenFile(null, utf8.Length, AuthenticatedBundleStream.Hash(file, default));
+        }
+
+        private static void RequireFile(FrozenFile file, string error)
+        {
+            using var input = OwnedWindowsFiles.OpenRead(file.Path);
+            CheckBytes(input, file, error + ": " + file.Path);
+        }
+
+        private static void CheckBytes(Stream input, FrozenFile file, string error)
+        {
+            if (input.Length != file.Bytes || AuthenticatedBundleStream.Hash(input, default) != file.Sha256)
+                throw new InvalidDataException(error);
+        }
+
+        private static void RequireAbsent(string path)
+        {
+            try
+            {
+                File.GetAttributes(path);
+            }
+            catch (FileNotFoundException)
+            {
                 return;
-            using (file)
-                if (!keep)
-                    OwnedWindowsFiles.DeleteOpen(file);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return;
+            }
+            throw new InvalidDataException("Encrypted delivery requires a new, unoccupied output: " + path);
         }
 
-        private static bool Overlaps(string first, string second)
+        private static string LocalPath(string path)
         {
-            first = Path.GetFullPath(first).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
-            second = Path.GetFullPath(second).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
-            return first.StartsWith(second, StringComparison.OrdinalIgnoreCase) || second.StartsWith(first, StringComparison.OrdinalIgnoreCase);
+            string full = OwnedWindowsFiles.LocalAbsolute(path).TrimEnd('\\', '/');
+            if (full.Length <= 2)
+                throw new InvalidDataException("A volume root cannot be a delivery output.");
+            foreach (string part in full.Substring(3).Split('\\'))
+                ProtectedAssetAudit.CheckWindowsLeaf(part);
+            return full;
         }
 
-        private static bool BelowOrEqual(string candidate, string parent) =>
-            (candidate.TrimEnd('\\', '/') + Path.DirectorySeparatorChar).StartsWith(parent.TrimEnd('\\', '/') + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-
-        private static bool SamePath(string left, string right) => string.Equals(Path.GetFullPath(left).TrimEnd('\\', '/'),
-            Path.GetFullPath(right).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
-
+        private static string Volume(string physical) => physical.Substring(0, physical.IndexOf('}') + 1).ToUpperInvariant();
+        private static string WithSeparator(string path) => path.TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+        private static bool BelowOrEqual(string candidate, string parent) => WithSeparator(candidate).StartsWith(WithSeparator(parent), StringComparison.OrdinalIgnoreCase);
+        private static bool SamePath(string left, string right) => WithSeparator(Path.GetFullPath(left)).Equals(WithSeparator(Path.GetFullPath(right)), StringComparison.OrdinalIgnoreCase);
         private static bool StrictlyBelow(string candidate, string parent) => BelowOrEqual(candidate, parent) &&
-            !string.Equals(candidate.TrimEnd('\\', '/'), parent.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+            !WithSeparator(candidate).Equals(WithSeparator(parent), StringComparison.OrdinalIgnoreCase);
 
         private sealed class BuildOutputPaths : IDisposable
         {
@@ -457,14 +846,22 @@ namespace YLFramework.Resource.Encryption.Editor
                 return physical;
             }
 
-            internal bool Overlap(string first, string second) => Overlaps(Identity(first), Identity(second));
+            internal bool Overlap(string first, string second) => BelowOrEqual(Identity(first), Identity(second)) || BelowOrEqual(Identity(second), Identity(first));
+
+            internal void CreateFresh(string path)
+            {
+                using (OwnedWindowsFiles.CreatePublicationDirectory(path))
+                {
+                }
+                Prepare(path);
+            }
 
             internal void Prepare(string path)
             {
                 string expected = Identity(path);
                 _owned.Add(OwnedWindowsFiles.PinDirectory(path, true));
                 using var pin = OwnedWindowsFiles.InspectDirectory(path, out string actual);
-                if (!string.Equals(expected.TrimEnd('\\'), actual.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                if (!WithSeparator(expected).Equals(WithSeparator(actual), StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("A build output moved outside its audited physical identity: " + path);
             }
 
@@ -476,11 +873,74 @@ namespace YLFramework.Resource.Encryption.Editor
             }
         }
 
-        private static void WriteNew(string path, string content)
+        private sealed class GroupPlan
         {
-            using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            using var writer = new StreamWriter(file, new UTF8Encoding(false));
-            writer.Write(content);
+            internal readonly string Guid;
+            internal readonly string Root;
+            internal readonly string LoadPrefix;
+            internal readonly string ProviderId;
+            internal readonly EncryptedBundleDeliveryMode? Mode;
+            internal readonly string KeyId;
+            internal readonly bool IsOrdinaryLocal;
+
+            internal bool IsOrdinaryRemote => Mode == null && !IsOrdinaryLocal;
+
+            internal GroupPlan(string guid, string root, string load, string providerId, EncryptedBundleDeliveryMode? mode, string keyId, bool local)
+            {
+                Guid = guid;
+                Root = root;
+                LoadPrefix = load;
+                ProviderId = providerId;
+                Mode = mode;
+                KeyId = keyId;
+                IsOrdinaryLocal = local;
+            }
+        }
+
+        private sealed class BundleSource
+        {
+            internal readonly GroupPlan Plan;
+            internal readonly FrozenFile File;
+            internal readonly EncryptedBundleBinding Binding;
+            internal readonly string Relative;
+            internal readonly string Url;
+
+            internal BundleSource(GroupPlan plan, FrozenFile file, EncryptedBundleBinding binding, string relative, string url)
+            {
+                Plan = plan;
+                File = file;
+                Binding = binding;
+                Relative = relative;
+                Url = url;
+            }
+        }
+
+        private readonly struct FrozenFile
+        {
+            internal readonly string Path;
+            internal readonly long Bytes;
+            internal readonly string Sha256;
+
+            internal FrozenFile(string path, long bytes, string sha256)
+            {
+                Path = path;
+                Bytes = bytes;
+                Sha256 = sha256;
+            }
+        }
+
+        private readonly struct Upload
+        {
+            internal readonly string Relative;
+            internal readonly string Url;
+            internal readonly string Category;
+
+            internal Upload(string relative, string url, string category)
+            {
+                Relative = relative;
+                Url = url;
+                Category = category;
+            }
         }
     }
 }

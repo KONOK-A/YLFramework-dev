@@ -18,6 +18,7 @@ namespace YLFramework.Resource.Encryption
         private readonly string _root;
         private readonly Dictionary<string, Entry> _entries = new Dictionary<string, Entry>(StringComparer.Ordinal);
         private readonly HashSet<EncryptedBundleRecord> _description;
+        private readonly HashSet<Task> _mountWork = new HashSet<Task>();
         private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
         private readonly IDisposable _parents;
         private readonly SafeFileHandle _owner;
@@ -28,12 +29,30 @@ namespace YLFramework.Resource.Encryption
         // Bytes read by successful full ciphertext SHA-256 checks, not native reads or OS disk I/O.
         internal long VerifiedCipherHashBytes => Interlocked.Read(ref _verifiedCipherHashBytes);
 
+        private enum EntryState
+        {
+            Unknown, Available, Invalidated
+        }
+
         private sealed class Entry
         {
             internal string Path;
-            internal bool Verified;
-            internal Task Shared;
-            internal TransferProgress Progress;
+            internal EntryState State;
+            internal Attempt Current;
+        }
+
+        private sealed class Attempt
+        {
+            internal readonly bool HadHit;
+            internal readonly TransferProgress Progress;
+            internal readonly TaskCompletionSource<bool> Ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal Task Work;
+
+            internal Attempt(Entry entry, EncryptedBundleRecord record)
+            {
+                HadHit = entry.State == EntryState.Available;
+                Progress = new TransferProgress(HadHit ? 0 : record.CipherLength);
+            }
         }
 
         internal sealed class TransferProgress
@@ -50,15 +69,15 @@ namespace YLFramework.Resource.Encryption
             internal void SetDownloadedBytes(long bytes) => Interlocked.Exchange(ref _downloadedBytes, bytes);
         }
 
-        private EncryptedBundleCache(string root, EncryptedBundleDescription description)
+        private EncryptedBundleCache(string root, EncryptedBundleDescription description, string excludedRoot)
         {
             _root = OwnedWindowsFiles.LocalAbsolute(root);
             if (_root.TrimEnd('\\') == Path.GetPathRoot(_root).TrimEnd('\\'))
             {
                 throw new ArgumentException("The cipher cache must own a dedicated subdirectory.", nameof(root));
             }
-            _description = new HashSet<EncryptedBundleRecord>(description.Bundles);
-            _parents = OwnedWindowsFiles.PinDirectory(_root, create: true);
+            _description = new HashSet<EncryptedBundleRecord>(description.Bundles.Where(row => row.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps));
+            _parents = PinCacheRoot(_root, excludedRoot);
             try
             {
                 _owner = OwnedWindowsFiles.LockPinned(Path.Combine(_root, ".yl-cache.lock"));
@@ -79,15 +98,36 @@ namespace YLFramework.Resource.Encryption
             }
         }
 
-        internal static Task<EncryptedBundleCache> OpenAsync(string root, EncryptedBundleDescription description, CancellationToken token = default)
+        private static IDisposable PinCacheRoot(string root, string excludedRoot)
+        {
+            if (excludedRoot == null)
+                return OwnedWindowsFiles.PinDirectory(root, create: true);
+            using var installed = OwnedWindowsFiles.InspectDirectory(excludedRoot, out string installedPath);
+            using var expected = OwnedWindowsFiles.InspectDirectory(root, out string expectedPath);
+            static string Prefix(string path) => path.TrimEnd('\\') + "\\";
+            if (Prefix(installedPath).StartsWith(Prefix(expectedPath), StringComparison.OrdinalIgnoreCase) ||
+                Prefix(expectedPath).StartsWith(Prefix(installedPath), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The protected cache must not overlap this version's installed content.");
+            using var created = OwnedWindowsFiles.PinDirectory(root, create: true);
+            var actual = OwnedWindowsFiles.InspectDirectory(root, out string actualPath);
+            if (!string.Equals(expectedPath, actualPath, StringComparison.OrdinalIgnoreCase))
+            {
+                actual.Dispose();
+                throw new IOException("The physical cipher cache directory changed during preparation.");
+            }
+            return actual;
+        }
+
+        internal static Task<EncryptedBundleCache> OpenAsync(string root, EncryptedBundleDescription description,
+            CancellationToken token = default, string excludedRoot = null)
         {
             return Task.Run(() =>
             {
                 token.ThrowIfCancellationRequested();
-                var cache = new EncryptedBundleCache(root, description);
+                var cache = new EncryptedBundleCache(root, description, excludedRoot);
                 try
                 {
-                    cache.Scan(description, token);
+                    cache.Scan(token);
                     return cache;
                 }
                 catch
@@ -98,7 +138,7 @@ namespace YLFramework.Resource.Encryption
             }, token);
         }
 
-        private void Scan(EncryptedBundleDescription description, CancellationToken token)
+        private void Scan(CancellationToken token)
         {
             foreach (string abandoned in Directory.EnumerateFiles(_root, TemporaryPrefix + "*.part", SearchOption.TopDirectoryOnly))
             {
@@ -111,7 +151,7 @@ namespace YLFramework.Resource.Encryption
                     OwnedWindowsFiles.DeleteOpen(file);
                 }
             }
-            foreach (var record in description.Bundles)
+            foreach (var record in _description)
             {
                 token.ThrowIfCancellationRequested();
                 if (_entries.ContainsKey(record.CipherSha256))
@@ -120,9 +160,10 @@ namespace YLFramework.Resource.Encryption
                 _entries.Add(record.CipherSha256, entry);
                 try
                 {
-                    entry.Verified = CheckExisting(entry.Path, record, token);
+                    if (CheckExisting(entry.Path, record, token))
+                        entry.State = EntryState.Available;
                 }
-                catch (EncryptedBundleIntegrityException) { entry.Verified = false; }
+                catch (EncryptedBundleIntegrityException) { entry.State = EntryState.Invalidated; }
             }
         }
 
@@ -134,7 +175,7 @@ namespace YLFramework.Resource.Encryption
             lock (_gate)
             {
                 Entry entry = GetEntry(record);
-                path = _closing == null && entry.Verified ? entry.Path : null;
+                path = _closing == null && entry.State == EntryState.Available ? entry.Path : null;
                 return path != null;
             }
         }
@@ -144,26 +185,29 @@ namespace YLFramework.Resource.Encryption
         {
             if (observer.IsCancellationRequested)
                 return Task.FromCanceled(observer);
-            Task shared;
-            TransferProgress progress;
+            Attempt attempt;
             lock (_gate)
             {
                 if (_closing != null)
                     throw new ObjectDisposedException(nameof(EncryptedBundleCache));
                 var entry = GetEntry(record);
-                if (entry.Shared == null || entry.Shared.IsCompleted)
+                attempt = entry.Current;
+                if (attempt == null || attempt.Ready.Task.IsCompleted)
                 {
-                    var attempt = new TransferProgress(entry.Verified ? 0 : record.CipherLength);
-                    entry.Progress = attempt;
-                    entry.Shared = Task.Run(() => EnsureCoreAsync(entry, record, attempt, _lifetime.Token));
-                    _ = entry.Shared.ContinueWith(done => { _ = done.Exception; }, CancellationToken.None,
-                        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                    attempt = NewAttempt(entry, record);
+                    attempt.Work = Task.Run(() => EnsureCoreAsync(entry, record, attempt, _lifetime.Token));
                 }
-                shared = entry.Shared;
-                progress = entry.Progress;
             }
-            reportProgress?.Invoke(progress);
-            return observer.CanBeCanceled ? ObserveAsync(shared, observer) : shared;
+            reportProgress?.Invoke(attempt.Progress);
+            return observer.CanBeCanceled ? ObserveAsync(attempt.Ready.Task, observer) : attempt.Ready.Task;
+        }
+
+        private static Attempt NewAttempt(Entry entry, EncryptedBundleRecord record)
+        {
+            var attempt = entry.Current = new Attempt(entry, record);
+            _ = attempt.Ready.Task.ContinueWith(done => { _ = done.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            return attempt;
         }
 
         private Entry GetEntry(EncryptedBundleRecord record)
@@ -173,77 +217,129 @@ namespace YLFramework.Resource.Encryption
             return _entries[record.CipherSha256];
         }
 
-        private async Task EnsureCoreAsync(Entry entry, EncryptedBundleRecord record, TransferProgress progress, CancellationToken token)
+        private async Task EnsureCoreAsync(Entry entry, EncryptedBundleRecord record, Attempt attempt, CancellationToken token)
         {
-            token.ThrowIfCancellationRequested();
             try
             {
                 if (CheckExisting(entry.Path, record, token))
                 {
-                    progress.SetTotalBytes(0);
-                    lock (_gate)
-                    {
-                        entry.Verified = true;
-                    }
-                    return;
+                    attempt.Progress.SetTotalBytes(0);
                 }
-                lock (_gate)
-                {
-                    if (entry.Verified)
-                    {
-                        throw new EncryptedBundleIntegrityException("A previously verified ciphertext disappeared.");
-                    }
-                }
+                else
+                    await DownloadMissingAsync(entry, record, attempt, token).ConfigureAwait(false);
+                PublishHit(entry, attempt);
             }
-            catch (EncryptedBundleIntegrityException)
+            catch (Exception error)
             {
-                lock (_gate)
-                {
-                    entry.Verified = false;
-                }
-                RemoveOnlyIfDamaged(entry.Path, record, token);
-                throw;
-            }
-
-            progress.SetTotalBytes(record.CipherLength);
-            await DownloadAsync(entry.Path, record, progress, token).ConfigureAwait(false);
-            lock (_gate)
-            {
-                entry.Verified = true;
+                attempt.Ready.TrySetException(ResolveFailure(entry, record, attempt, error, token));
             }
         }
 
-        internal async Task<AuthenticatedBundleStream> OpenAuthenticatedAsync(EncryptedBundleRecord record, IEncryptedBundleKeySource keys,
+        private void PublishHit(Entry entry, Attempt attempt)
+        {
+            lock (_gate)
+            {
+                if (entry.Current == attempt)
+                    entry.State = EntryState.Available;
+            }
+            attempt.Ready.TrySetResult(true);
+        }
+
+        private Exception ResolveFailure(Entry entry, EncryptedBundleRecord record, Attempt attempt, Exception error, CancellationToken token)
+        {
+            if (error is FileNotFoundException)
+                error = new EncryptedBundleIntegrityException("Ciphertext disappeared before authentication.", error);
+            if (error is not EncryptedBundleIntegrityException)
+                return error;
+            lock (_gate)
+            {
+                if (entry.Current != attempt)
+                    return error;
+                entry.State = EntryState.Invalidated;
+            }
+            try
+            {
+                RemoveOnlyIfDamaged(entry.Path, record, token);
+            }
+            catch (Exception cleanup) { return new AggregateException("Ciphertext validation and cache cleanup both failed.", error, cleanup); }
+            return error;
+        }
+
+        private Task DownloadMissingAsync(Entry entry, EncryptedBundleRecord record, Attempt attempt, CancellationToken token)
+        {
+            if (attempt.HadHit)
+                throw new EncryptedBundleIntegrityException("A previously verified ciphertext disappeared.");
+            attempt.Progress.SetTotalBytes(record.CipherLength);
+            return DownloadAsync(entry.Path, record, attempt.Progress, token);
+        }
+
+        internal Task<AuthenticatedBundleStream> OpenAuthenticatedAsync(EncryptedBundleRecord record, IEncryptedBundleKeySource keys,
             CancellationToken token = default, Action<TransferProgress> reportProgress = null)
         {
-            await EnsureAsync(record, token, reportProgress).ConfigureAwait(false);
-            return await Task.Run(() =>
+            if (token.IsCancellationRequested)
+                return Task.FromCanceled<AuthenticatedBundleStream>(token);
+            Attempt attempt;
+            Task<AuthenticatedBundleStream> work;
+            lock (_gate)
             {
+                if (_closing != null)
+                    throw new ObjectDisposedException(nameof(EncryptedBundleCache));
                 var entry = GetEntry(record);
-                using var pin = OwnedWindowsFiles.PinDirectory(_root, create: false);
+                attempt = entry.Current;
+                bool begins = attempt == null || attempt.Ready.Task.IsCompleted;
+                if (begins)
+                    attempt = NewAttempt(entry, record);
+                work = Task.Run(() => MountCoreAsync(entry, record, keys, attempt, begins, token));
+                if (begins)
+                    attempt.Work = work;
+                _mountWork.Add(work);
+                _ = work.ContinueWith(done =>
+                {
+                    lock (_gate)
+                        _mountWork.Remove(done);
+                }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+            reportProgress?.Invoke(attempt.Progress);
+            return work;
+        }
+
+        private async Task<AuthenticatedBundleStream> MountCoreAsync(Entry entry, EncryptedBundleRecord record,
+            IEncryptedBundleKeySource keys, Attempt attempt, bool begins, CancellationToken observer)
+        {
+            var lifetime = _lifetime.Token;
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(observer, lifetime);
+            if (!begins)
+                await ObserveAsync(attempt.Ready.Task, linked.Token).ConfigureAwait(false);
+            try
+            {
+                FileStream file;
                 try
                 {
-                    // Nothing can replace, write or delete this file from digest computation through the last Unity read.
-                    return AuthenticatedBundleStream.OpenVerified(OwnedWindowsFiles.ReadPinned(entry.Path), record, keys, token, RecordVerifiedCipherHash);
+                    file = OwnedWindowsFiles.ReadPinned(entry.Path);
                 }
-                catch (FileNotFoundException error)
+                catch (FileNotFoundException) when (begins)
                 {
-                    lock (_gate)
-                    {
-                        entry.Verified = false;
-                    }
-                    throw new EncryptedBundleIntegrityException("Ciphertext disappeared before authentication.", error);
+                    await DownloadMissingAsync(entry, record, attempt, lifetime).ConfigureAwait(false);
+                    file = OwnedWindowsFiles.ReadPinned(entry.Path);
                 }
-                catch (EncryptedBundleIntegrityException)
+                // Only the exact bytes on this deny-write/delete handle may reach the decryptor.
+                return AuthenticatedBundleStream.OpenVerified(file, record, keys, linked.Token, bytes =>
                 {
-                    lock (_gate)
-                    {
-                        entry.Verified = false;
-                    }
-                    RemoveOnlyIfDamaged(entry.Path, record, token);
+                    RecordVerifiedCipherHash(bytes);
+                    if (begins && attempt.Progress.DownloadedBytes == 0)
+                        attempt.Progress.SetTotalBytes(0);
+                    PublishHit(entry, attempt);
+                }, begins ? lifetime : linked.Token);
+            }
+            catch (Exception error)
+            {
+                var failure = ResolveFailure(entry, record, attempt, error, lifetime);
+                if (begins)
+                    attempt.Ready.TrySetException(failure);
+                if (failure == error)
                     throw;
-                }
-            }, token).ConfigureAwait(false);
+                throw failure;
+            }
         }
 
         private bool CheckExisting(string path, EncryptedBundleRecord record, CancellationToken token)
@@ -344,7 +440,7 @@ namespace YLFramework.Resource.Encryption
             }
         }
 
-        private static async Task ObserveAsync(Task shared, CancellationToken token)
+        internal static async Task ObserveAsync(Task shared, CancellationToken token)
         {
             var canceled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             using (token.Register(() => canceled.TrySetResult(true)))
@@ -364,7 +460,7 @@ namespace YLFramework.Resource.Encryption
                 if (_closing == null)
                 {
                     _lifetime.Cancel();
-                    _closing = CloseCoreAsync(_entries.Values.Select(entry => entry.Shared).Where(task => task != null).ToArray());
+                    _closing = CloseCoreAsync(_entries.Values.Select(entry => entry.Current?.Work).Where(task => task != null).Concat(_mountWork).Distinct().ToArray());
                 }
                 return _closing;
             }

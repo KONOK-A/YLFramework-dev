@@ -2,7 +2,7 @@
 
 > [资源管理](../Resource.md) · [内容交付](Delivery.md) · [文档首页](../../README.md)
 
-在官方 Addressables Settings、Groups、Labels、Profiles 和 Entries 中编辑内容，场景和脚本通过地址或 `AssetReference` 引用。YL 提供校验、导航、常量生成和正式构建编排。这里是普通内容流程；固定目录加密另见[可选的远端 Bundle 加密](Delivery.md#可选的远端-bundle-加密)。
+在官方 Addressables Settings、Groups、Labels、Profiles 和 Entries 中编辑内容，场景和脚本通过地址或 `AssetReference` 引用。YL 提供校验、导航、常量生成和正式构建编排。这里是普通内容流程；加密另见[可选的 Bundle 加密](Delivery.md#可选的-bundle-加密)。
 
 ## 第一次配置
 

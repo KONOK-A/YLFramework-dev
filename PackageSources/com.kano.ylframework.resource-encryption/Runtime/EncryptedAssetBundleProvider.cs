@@ -27,7 +27,7 @@ namespace YLFramework.Resource.Encryption
         public AssetBundle GetAssetBundle() => Bundle;
     }
 
-    /// <summary>Addressables Bundle Provider for the single fixed protected group. Assets still use BundledAssetProvider.</summary>
+    /// <summary>Addressables Bundle Provider for the fixed protected Catalog. Assets still use BundledAssetProvider.</summary>
     [Preserve]
     public sealed class EncryptedAssetBundleProvider : ResourceProviderBase
     {
@@ -143,7 +143,7 @@ namespace YLFramework.Resource.Encryption
                 if (location.ResourceType == typeof(IAssetBundleResource))
                 {
                     var record = owner.ResolveTransfer(location);
-                    await owner.Cache.EnsureAsync(record, reportProgress: ReportProgress);
+                    await owner.EnsureCiphertextAsync(record, ReportProgress);
                     owner.CheckUnchanged();
                     CheckUnloadSucceeded();
                     result = CiphertextReceipt.Instance;
@@ -159,7 +159,7 @@ namespace YLFramework.Resource.Encryption
                         owner.CheckUnchanged();
                         CheckUnloadSucceeded();
                     }
-                    var reader = await owner.Cache.OpenAuthenticatedAsync(record, owner.Keys, reportProgress: ReportProgress);
+                    var reader = await owner.OpenBundleAsync(record, ReportProgress);
                     EncryptedMountedBundle mounted = null;
                     bool createUnconfirmed = false;
                     try

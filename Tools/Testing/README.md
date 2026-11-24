@@ -157,9 +157,13 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLResourceAdd
 
 常规验收的两种 `-BuildFlavor` 都构建 Windows x64 IL2CPP（`Medium` 裁剪）。默认 `Release`；`Development` 用于采集支持的分配指标，不作为发行耗时依据。默认 Player 无图形，`-Graphics` 要求实际图形设备。常规验收在独立进程中验证首次 HTTP 下载、二次官方缓存，以及 Bare Addressables 与 YL 的本地负载。`-ScopeCloseBenchmark` 仅允许 `Release -Graphics`，并追加三轮独立 Scope 关闭测量。Editor 构建限时 30 分钟，每个常规 Player 进程限时 180 秒。
 
-`-EncryptedRemoteGroup` 仅用于 `Release -Graphics`，两版 Editor 串行运行，支持 `-Backend IL2CPP`（默认，`Medium`）或 `-Backend Mono`（`Disabled`）。默认用例检查冷启动、在线零请求热启动、离线可用、错钥/缺钥、坏缓存、共享下载取消和恢复，并验证仍由官方句柄拥有的 Bundle。`-EncryptionCase Performance` 比较相同物理明文 Bundle 的 8 MiB 和 128 MiB 以上双包并发。每个后端独立构建，明文和密文各跑一次冷载及三次独立进程在线热载，热载必须零请求（含 HEAD）。报告分列启动校验、素材可用时间、原生读取、加密层缓冲核算及进程内存采样；Release 引擎内存峰值不可得时不记为零。其余用例可单独验证明文副本、路由错误、同步等待和输出目录重叠。P0 的旧行为对照用 `-StockSizeControl`、`-VerifiedSizeSnapshot` 或 `-HeldDownload Stock|Separated` 显式选择，仍使用 IL2CPP。
+`-EncryptedRemoteGroup` 仅用于 `Release -Graphics`，两版 Editor 串行运行，支持 `-Backend IL2CPP`（默认，`Medium`）或 `-Backend Mono`（`Disabled`）。`-DeliveryLayout Remote|Embedded|Mixed` 默认 `Remote`；正式验收在两版和两个后端上各跑三个布局。纯远端用例覆盖冷/热、断网、错钥/缺钥、坏缓存和共享操作。随包和混合布局从独立安装目录启动；断网轮只提供第一章密钥，以 NTFS ACL 禁止实际 Player 身份写入，并复核运行前后文件、目录及权限；混合轮另持有远端缓存锁。测试 HTTP 端点停用不等于验证公网 TLS。P0 的旧行为对照用 `-StockSizeControl`、`-VerifiedSizeSnapshot` 或 `-HeldDownload Stock|Separated`，与布局选项互斥。
 
-性能回执的原生读量分为预认证和 Unity 读取，另列启动扫描、加载阶段成功完成 SHA-256 的托管密文读取量；它们是应用读取字节，不是物理磁盘 I/O。目录用量在计时结束后测量：密文夹具的单份原子写入峰值等于完成量，普通 Unity 缓存的瞬时峰值和内部读取不可得，记 `-1`。进程内存在加载期间抽样，不代表引擎的精确峰值。
+`-EncryptionCase Performance` 两边使用独立构建的官方 Catalog 和同一 `Addressables.LoadAssetAsync<TextAsset>`，比较相同 Bundle 原始字节。各跑一次冷载，然后交错运行五个独立进程，暖载时端点在线，且必须零请求（含 HEAD）。`elapsedMs` 从发出双请求计到两份素材长度和哨兵都正确；另列从 `SubsystemRegistration` 到首份、两份均可用的端到端时间，以及 Catalog 门禁和混合远端准备耗时。v3 明文计时不读取旁路密文元数据或密钥，Harness 在进程外核对原始 Bundle，Player 停表后记录自己的 Catalog 摘要。8 MiB + 128 MiB 双包暖载中位数目标 ≤1000 ms；加密层每活动流的容量上界 ≤4 MiB。密文预认证读量、Unity 回读与成功的托管密文 SHA 读取分别计，不等同物理磁盘 I/O。进程内存是采样，Unity 引擎峰值、普通缓存内部读量及未测到的目录峰值不记为零。
+
+远端端到端门禁用 `ResourceEncryption/Compare-FrozenRemotePerformance.ps1`，分别传 `-CandidateReceipt` / `-CandidateSha256`（v3）和 `-BaselineReceipt` / `-BaselineSha256`（`8a848d4e` 以新计时口径实测的 Remote 对照），另传新的 `-Output` 路径。同一受控串行测试窗口用 `-ControlledStartUtc` / `-ControlledEndUtc` 声明，不把互不受控的历史批次圈入一个窗口。只有版本、后端、裁剪、主机、文件缓存口径和两包明文 SHA 一致，且进程确实在该窗口内串行执行，才比较首份与两份素材可用的暖载中位数。退步或不可比均返回非零，并保留 `Regression` / `NotComparable` 回执；Player 自身的双包加载通过不代表历史对照通过。
+
+`MissingPlayerRuntime`、`ChangedPlayerOutput` 用真实 Player 构建回调验证提前拒绝。`LocalNoHash` 和 `LocalNoHashCollision` 都用 `-DeliveryLayout Embedded`，分别验证官方 `NoHash` 本地组可共存与实际名称冲突仍被拦截。
 
 固定提交验收从干净 worktree 运行，`-ReleaseManifest` 和完整 `-SourceCommit` 必须同时给出；直接核对提交 blob、已物化的本地 Git LFS 对象、实际安装的 `LocalTarball`、包内文件与随包 Catalog。安装未启用和移除重建使用 `Invoke-P0NativeDelivery.ps1`。示例（两版、两后端分别运行）：
 
@@ -171,6 +175,14 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-P0NativeDeliv
 未提交的诊断包用 `ResourceEncryption/Invoke-LocalEncryptionPack.ps1`，将回执传给 `-EncryptionPackReceipt`（安装入口为 `-PackReceipt`）；不能同时传固定提交参数。不传任何包输入时，功能入口仅验证源码投影。诊断包与源码投影的结果均不能作为固定提交或 Registry 发布凭据。加密功能/性能回执为 `<WorkspaceRoot>/Results/FrozenEncryption/<run-id>/frozen.json`，安装和移除回执为 `<WorkspaceRoot>/Results/NativeDeliveryFinal/<run-id>/p0-c.json`。
 
 `ResourceEncryption/Invoke-Contracts.ps1 -Root <新建的自有测试输出路径> -OracleJar <tink-1.18.0.jar>` 使用当前仓库的 Win64 插件做互读和缓存合同测试，可用 `-NativeDll` 指定另一个待测构建。Java 对照 JAR 必须匹配脚本固定的 SHA-256。
+
+原生读流基准可独立复跑。先物化包内 LFS DLL，再用新的自有输出子目录运行：
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/ResourceEncryption/Measure-EncryptionStreams.ps1 -Root $freshOwnedChild -FreshSeed
+```
+
+`-FreshSeed` 生成共用的确定性夹具，不冒充历史 Bundle；不传旧 DLL 或 CNG 输入时，相应对照列明确标为不可用。历史同字节回放需显式给出 `-HistoricalResult`、`-PackedRoot`、`-BaselineDll` 和 `-CandidateDll`，核对原始清单及文件。`-Smoke` 验输入和小夹具，不产出完整时间矩阵。v2 原生顺读样本包含第二遍完整明文 SHA，不能直接和 v1 哨兵计时做时间对比。
 
 每轮分别预载 1、100、1000 个不同的 `TextAsset`，只测 `CloseAsync()`。`slices` 在实际清理步之后记录归还数和释放调用的累计时间。还有租约待还时，一步最多归还 32 份，少于 32 份必须已用到约 1 ms 的同步释放预算。`maxSliceReleaseTicks` 是各步累计释放时间的最大值，`closeWallTicks` 是调用者观察到的关闭总延迟；二者都不是完整 Unity 帧的峰值。一次不可抢占的释放可以越过时间阈值。
 

@@ -7,13 +7,14 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.AddressableAssets;
 using UnityEditor.AddressableAssets.Build;
-using UnityEditor.AddressableAssets.Build.Layout;
+using UnityEditor.AddressableAssets.Build.DataBuilders;
 using UnityEditor.AddressableAssets.Settings;
 using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEditor.Build;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.Initialization;
 using UnityEngine.ResourceManagement.ResourceProviders;
 using YLFramework.Resource.Encryption;
 using YLFramework.Resource.Encryption.Editor;
@@ -25,6 +26,7 @@ namespace YLFramework.Testing
     public static class FrozenDeliveryEntry
     {
         private const string Root = "Assets/FrozenData";
+        private const string ReleaseId = "Delivery";
 
         public static void Build()
         {
@@ -37,12 +39,14 @@ namespace YLFramework.Testing
                 "Expected the owned batch fixture request path.");
             var input = JObject.Parse(File.ReadAllText(requestPath));
             string mode = (string)input["mode"], token = (string)input["token"], prefix = (string)input["prefix"];
+            string layout = (string)input["deliveryLayout"];
             using var process = System.Diagnostics.Process.GetCurrentProcess();
             var report = new JObject { ["status"] = "Failed", ["token"] = token, ["mode"] = mode, ["pid"] = process.Id,
                 ["unity"] = Application.unityVersion, ["input"] = (string)input["input"], ["requestSha256"] = ProtectedAssetAudit.DigestFile(requestPath) };
             int code = 1;
             try
             {
+                report["deliveryLayout"] = layout;
                 string backend = (string)input["backend"];
                 string catalogName = (string)input["catalogName"];
                 string inputHash = (string)input["input"];
@@ -78,6 +82,18 @@ namespace YLFramework.Testing
 
                 var local = settings.DefaultGroup;
                 var localSchema = Configure(settings, local, AddressableAssetSettings.kLocalBuildPath, AddressableAssetSettings.kLocalLoadPath);
+                if (mode is "LocalNoHash" or "LocalNoHashCollision")
+                {
+                    local.Name = "Plain Local";
+                    localSchema.BundleNaming = BundledAssetGroupSchema.BundleNamingStyle.NoHash;
+                    if (mode == "LocalNoHashCollision")
+                    {
+                        var collision = settings.CreateGroup("PlainLocal", false, false, false, null, typeof(BundledAssetGroupSchema));
+                        var collisionSchema = Configure(settings, collision, AddressableAssetSettings.kLocalBuildPath, AddressableAssetSettings.kLocalLoadPath);
+                        collisionSchema.BundleNaming = BundledAssetGroupSchema.BundleNamingStyle.NoHash;
+                        AddText(settings, collision, "Colliding.txt", "colliding:" + token, "frozen/nohash-collision");
+                    }
+                }
 #if UNITY_6000_3_OR_NEWER
                 if (mode == "Positive")
                 {
@@ -93,39 +109,70 @@ namespace YLFramework.Testing
                     return;
                 }
                 var plain = settings.CreateGroup("Plain", false, false, false, null, typeof(BundledAssetGroupSchema));
-                var secret = settings.CreateGroup("Protected", false, false, false, null, typeof(BundledAssetGroupSchema), typeof(EncryptedBundleGroupSchema));
                 settings.profileSettings.CreateValue("FrozenPlainBuild", Path.Combine(host, mode == "OutputOverlap" ? "Delivery" : "Ordinary").Replace('\\','/'));
                 settings.profileSettings.CreateValue("FrozenPlainLoad", prefix + "o");
                 Configure(settings, plain, "FrozenPlainBuild", "FrozenPlainLoad");
-                settings.profileSettings.CreateValue("FrozenPrivateBuild", Path.Combine(privateRoot, "Packed").Replace('\\','/'));
-                settings.profileSettings.CreateValue("FrozenPrivateLoad", prefix + "r");
-                var schema = Configure(settings, secret, "FrozenPrivateBuild", "FrozenPrivateLoad");
-                schema.UseAssetBundleCache = false;
-                var bundleFields = new SerializedObject(schema);
-                var provider = bundleFields.FindProperty("m_AssetBundleProviderType");
-                provider.FindPropertyRelative("m_AssemblyName").stringValue = typeof(EncryptedAssetBundleProvider).Assembly.FullName;
-                provider.FindPropertyRelative("m_ClassName").stringValue = typeof(EncryptedAssetBundleProvider).FullName;
-                bundleFields.ApplyModifiedPropertiesWithoutUndo();
-                var keyField = new SerializedObject(secret.GetSchema<EncryptedBundleGroupSchema>());
-                keyField.FindProperty("_keyId").stringValue = "K1";
-                keyField.ApplyModifiedPropertiesWithoutUndo();
+                string remotePrefix = layout == "Embedded" ? null : prefix + "r/" + ReleaseId + "/";
+                var secret = MakeProtected(settings, mode == "AmbiguousGroups" ? "A B" : "Protected", "K1", layout != "Remote", remotePrefix, privateRoot);
+                var peer = layout == "Remote" && mode is not ("PublishChanged" or "LateKeyFailure" or "AmbiguousGroups" or "PrePublishAbort") ? secret :
+                    MakeProtected(settings, mode == "AmbiguousGroups" ? "AB" : "ProtectedPeer", "K2", layout == "Embedded", remotePrefix, privateRoot);
+                var groups = peer == secret ? new[] { secret } : new[] { secret, peer };
 
                 AddressableAssetEntry hidden = null;
                 var ordinary = AddText(settings, plain, "Ordinary.txt", "ordinary:" + token, OrdinaryKey);
                 Sprite sprite = null;
                 if (mode == "Performance")
                 {
-                    schema.BundleMode = BundledAssetGroupSchema.BundlePackingMode.PackSeparately;
+                    foreach (var group in groups) group.GetSchema<BundledAssetGroupSchema>().BundleMode = BundledAssetGroupSchema.BundlePackingMode.PackSeparately;
                     AddPayload(settings, secret, "Small", 8 * 1024 * 1024, 97, SmallKey);
-                    AddPayload(settings, secret, "Large", 128 * 1024 * 1024, 173, LargeKey);
+                    AddPayload(settings, peer, "Large", 128 * 1024 * 1024, 173, LargeKey);
                 }
                 else
                 {
                     hidden = AddText(settings, secret, "Secret.txt", token, ProtectedKey);
-                    AddText(settings, secret, "Twin.txt", token, ProtectedTwinKey);
+                    var twin = AddText(settings, peer, "Twin.txt", peer == secret ? token : "peer:" + token, ProtectedTwinKey);
+                    if (mode == "MultiGroup")
+                    {
+                        var secondLocal = MakeProtected(settings, "SecondEmbedded", "K1", true, remotePrefix, privateRoot);
+                        var secondRemote = MakeProtected(settings, "SecondRemote", "K2", false, remotePrefix, privateRoot);
+                        groups = new[] { secret, peer, secondLocal, secondRemote };
+                        settings.AddLabel(FourGroupLabel);
+                        hidden.SetLabel(FourGroupLabel, true);
+                        twin.SetLabel(FourGroupLabel, true);
+                        AddText(settings, secondLocal, "SecondEmbedded.txt", "local-2:" + token, "frozen/second-local").SetLabel(FourGroupLabel, true);
+                        AddText(settings, secondRemote, "SecondRemote.txt", "remote-2:" + token, "frozen/second-remote").SetLabel(FourGroupLabel, true);
+                    }
                     sprite = MakeSprite();
                     Prefab(settings, secret, "PrivatePrefab", sprite, "frozen/private-prefab");
                     if (mode == "PlainBundleCopy" || mode == "OutputOverlap") Prefab(settings, plain, "PublicCopy", sprite, "frozen/public-prefab");
+                    if (mode == "BadDependency")
+                    {
+                        string guid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(sprite));
+                        settings.CreateOrMoveEntry(guid, secret).address = "frozen/pinned-sprite";
+                        Prefab(settings, peer, "RemoteWithEmbedded", sprite, "frozen/remote-with-embedded");
+                    }
+                    if (mode is "RemoteClosure" or "OrdinaryDependency")
+                    {
+                        Require(layout == "Mixed", "The fixture requires a mixed layout.");
+                        var publicSprite = MakeSprite("public-texture");
+                        string publicGuid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(publicSprite));
+                        settings.CreateOrMoveEntry(publicGuid, plain).address = "frozen/public-sprite";
+                        if (mode == "RemoteClosure")
+                        {
+                            var bridge = Prefab(settings, local, "LocalBridge", publicSprite, "frozen/local-bridge");
+                            var root = ScriptableObject.CreateInstance<FrozenDependencyFixture>();
+                            root.Target = AssetDatabase.LoadAssetAtPath<GameObject>(bridge.AssetPath);
+                            const string path = Root + "/EmbeddedRoot.asset";
+                            AssetDatabase.CreateAsset(root, path);
+                            settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(path), secret).address = "frozen/embedded-root";
+                            PublicDependencies(secret, bridge.guid, publicGuid);
+                        }
+                        else
+                        {
+                            Prefab(settings, peer, "RemoteWithOrdinary", publicSprite, "frozen/remote-with-ordinary");
+                            PublicDependencies(peer, publicGuid);
+                        }
+                    }
                 }
                 string scenePath = CreateScene(token, backend, inputHash, catalogName, mode == "PlayerCopy" ? sprite : null, mode == "Positive");
 #if !UNITY_6000_3_OR_NEWER
@@ -136,7 +183,8 @@ namespace YLFramework.Testing
                         "This fixture must publish the default built-in scene aliases.");
                 }
 #endif
-                string player = Path.Combine(host, "P", "P.exe");
+                string releaseRoot = Path.Combine(host, ReleaseId);
+                string player = Path.Combine(releaseRoot, "Player", "P.exe");
                 if (mode == "SourceChanged") PlaintextDriftFixture.Arm(secret, privateRoot);
                 if (mode == "OfficialOutput")
                 {
@@ -145,19 +193,38 @@ namespace YLFramework.Testing
                     File.WriteAllText(Path.Combine(foreign, "must-remain"), "unchanged");
                     Addressables.LibraryPath = "ForeignOutput/";
                 }
-                using var keys = new Keys(Path.Combine(host, "fixture.key"), "author",
-                    mode == "PublishChanged" ? () => AddStagedFile(host) : (Action)null);
+                using var keys = new Keys(Path.Combine(host, "fixture.key"), mode == "LateKeyFailure" ? mode : "author",
+                    peerKeyFile: Path.Combine(host, "fixture-peer.key"));
+                if (mode == "PublishChanged") keys.OnReturn = () =>
+                {
+                    if (keys.Returns == groups.Length) ChangeOrdinaryFile(host);
+                };
+                if (mode == "LateKeyFailure") keys.OnReturn = () => report["firstKeyReturned"] = keys.Returns == 1 && !Directory.Exists(releaseRoot);
+                if (mode == "PrePublishAbort") keys.OnReturn = () =>
+                {
+                    if (keys.Returns != groups.Length) return;
+                    var stage = Directory.GetDirectories(privateRoot, ".yl-release-*").Single();
+                    Require(keys.Opens == groups.Length && File.Exists(Path.Combine(stage, "Player", "P.exe")) && !Directory.Exists(releaseRoot),
+                        "The final key return did not observe a private candidate.");
+                    report["interruptedAtFinalKeyReturn"] = true;
+                    throw new OperationCanceledException("Fixture stopped before publication.");
+                };
+                if (mode == "TargetConflict") keys.OnReturn = () =>
+                {
+                    Directory.CreateDirectory(releaseRoot);
+                    File.WriteAllText(Path.Combine(releaseRoot, "must-remain"), "unchanged");
+                };
                 var options = new BuildPlayerOptions
                 {
                     scenes = new[] { scenePath }, locationPathName = player, target = BuildTarget.StandaloneWindows64
                 };
-                string releaseRoot = Path.Combine(host, "Delivery");
+                if (mode is "MissingPlayerRuntime" or "ChangedPlayerOutput") PlayerOutputDriftFixture.Arm(privateRoot, backend, mode);
                 if (mode == "Positive")
                 {
                     void AssertNoWrites(string expected)
                     {
                         bool rejected = false;
-                        try { EncryptedBundleExporter.BuildCore(settings, secret, options, "yl.frozen.acceptance", privateRoot, releaseRoot, keys, true); }
+                        try { EncryptedBundleExporter.BuildCore(settings, groups, options, "yl.frozen.acceptance", privateRoot, releaseRoot, keys, true); }
                         catch (InvalidDataException error) when (error.Message.Contains(expected)) { rejected = true; }
                         Require(rejected && !Directory.Exists(privateRoot) && !Directory.Exists(releaseRoot) && !Directory.Exists(Path.GetDirectoryName(player)) && keys.Opens == 0,
                             "Preflight must reject before creating a build output or opening a key: " + expected);
@@ -185,8 +252,14 @@ namespace YLFramework.Testing
                     Directory.CreateDirectory(Addressables.BuildPath);
                     File.WriteAllText(oldBundle, "unrelated output from a previous fixture build");
                 }
-                var description = EncryptedBundleExporter.BuildCore(settings, secret, options, "yl.frozen.acceptance", privateRoot, releaseRoot, keys, allowLoopback: true);
-                string data = Path.Combine(host, "P", "P_Data");
+                if (mode == "Performance") BuildPlainControl(host, settings, groups, prefix);
+                var description = EncryptedBundleExporter.BuildCore(settings, groups, options, "yl.frozen.acceptance", privateRoot, releaseRoot, keys, allowLoopback: true);
+                if (mode is "MissingPlayerRuntime" or "ChangedPlayerOutput")
+                    throw new InvalidOperationException("The exporter published after the Player callback changed " + PlayerOutputDriftFixture.Changed);
+                string data = Path.Combine(Path.GetDirectoryName(player), "P_Data");
+                if (mode == "LocalNoHash")
+                    Require(File.Exists(Path.Combine(data, "StreamingAssets", "aa", "StandaloneWindows64", FrozenDeliveryProbe.NoHashBundle)),
+                        "The actual installed local Bundle must retain its stock NoHash name.");
                 if (mode == "Positive")
                 {
                     Require(File.Exists(oldBundle) && !File.Exists(Path.Combine(data, "StreamingAssets", "aa", Path.GetFileName(oldBundle))),
@@ -194,16 +267,31 @@ namespace YLFramework.Testing
                     report["excludedStaleAddressables"] = true;
                 }
                 report["catalogSha256"] = description.CatalogSha256;
+                report["settingsSha256"] = description.SettingsSha256;
                 report["routesSha256"] = description.RoutesSha256;
                 FrozenPlayerBuildEvidence.Capture(report, backend, player, ProtectedAssetAudit.DigestFile, "YLFramework.Resource.Encryption", typeof(FrozenDeliveryProbe));
                 report["pluginSha256"] = ProtectedAssetAudit.DigestFile(Directory.GetFiles(data, "ylresource_tink.dll", SearchOption.AllDirectories).Single());
-                report["protectedPaths"] = new JArray(description.Bundles.Select(row => row.Binding.RelativePath));
+                report["protectedPaths"] = new JArray(description.Bundles.Select(row => row.Binding.GroupPath));
+                report["remoteProtectedPaths"] = new JArray(description.Bundles.Where(row => row.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps).Select(row => row.Binding.GroupPath));
+                report["embeddedProtectedPaths"] = new JArray(description.Bundles.Where(row => row.Binding.Mode == EncryptedBundleDeliveryMode.Embedded).Select(row => row.Binding.GroupPath));
                 report["protectedBytes"] = description.Bundles.Sum(row => row.CipherLength);
+                report["remoteProtectedBytes"] = description.Bundles.Where(row => row.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps).Sum(row => row.CipherLength);
                 report["ordinaryPaths"] = new JArray(Directory.GetFiles(Path.Combine(host, "Ordinary"), "*.bundle").Select(Path.GetFileName));
                 report["auditPath"] = Path.Combine(privateRoot, "audit.json");
                 if (mode == "SourceChanged") report["sameLengthReplacement"] = PlaintextDriftFixture.Changed;
-                if (mode == "WrongRoute") ReplaceWithDifferentOfficialCatalog(settings, secret, hidden, ordinary, description, prefix, data);
                 CaptureShippedContent(report, data, catalogName);
+                if (mode == "WrongRoute")
+                {
+                    string target = Path.Combine(host, "PWrong");
+                    CopyFixtureTree(Path.GetDirectoryName(player), target);
+                    string changedData = Path.Combine(target, "P_Data");
+                    ReplaceWithDifferentOfficialCatalog(settings, groups, hidden, ordinary, description, changedData);
+                    var changed = new JObject();
+                    CaptureShippedContent(changed, changedData, catalogName);
+                    report["changedCatalogSha256"] = changed["shippedCatalogSha256"];
+                    report["changedDescriptionSha256"] = changed["descriptionSha256"];
+                }
+                if (mode == "Performance") StagePlainControl(host, Path.GetDirectoryName(player), catalogName, description, report);
                 report["deliverySha256"] = ProtectedAssetAudit.DigestFile(Path.Combine(releaseRoot, "delivery.json"));
                 report["status"] = "Built";
                 code = 0;
@@ -225,7 +313,15 @@ namespace YLFramework.Testing
                 report["status"] = "Rejected";
                 report["error"] = error.Message;
                 report["sameLengthReplacement"] = PlaintextDriftFixture.Changed;
-                report["opaqueLayoutRejected"] = PlaintextDriftFixture.OpaqueLayoutRejected;
+                code = 0;
+            }
+            catch (InvalidDataException error) when ((mode is "MissingPlayerRuntime" or "ChangedPlayerOutput") &&
+                PlayerOutputDriftFixture.Changed != null && error.Message.Contains(PlayerOutputDriftFixture.Changed) &&
+                error.Message.StartsWith("The audited Player ", StringComparison.Ordinal))
+            {
+                report["status"] = "Rejected";
+                report["error"] = error.Message;
+                report["changedPlayerFile"] = PlayerOutputDriftFixture.Changed;
                 code = 0;
             }
             catch (InvalidDataException error) when (mode == "OfficialOutput" && error.Message.Contains("Official Addressables output path"))
@@ -234,11 +330,36 @@ namespace YLFramework.Testing
                 report["error"] = error.Message;
                 code = 0;
             }
-            catch (InvalidDataException error) when (mode == "PublishChanged" && error.Message.Contains("Staged delivery inventory"))
+            catch (Exception error) when (mode == "PublishChanged" && _stagedChanged && (error is IOException || error is InvalidDataException))
             {
                 report["status"] = "Rejected";
                 report["error"] = error.Message;
                 report["stagedChanged"] = _stagedChanged;
+                code = 0;
+            }
+            catch (EncryptedBundleKeyUnavailableException error) when (mode == "LateKeyFailure" && (bool?)report["firstKeyReturned"] == true)
+            {
+                report["error"] = error.Message;
+                report["status"] = "Rejected";
+                code = 0;
+            }
+            catch (EncryptedBundleKeySourceException error) when (mode == "PrePublishAbort" && (bool?)report["interruptedAtFinalKeyReturn"] == true)
+            {
+                report["error"] = error.Message;
+                report["status"] = "Rejected";
+                code = 0;
+            }
+            catch (IOException error) when (mode == "TargetConflict" && File.Exists(Path.Combine(host, ReleaseId, "must-remain")))
+            {
+                report["error"] = error.Message;
+                report["status"] = "Rejected";
+                code = 0;
+            }
+            catch (InvalidDataException error) when ((mode == "RemoteClosure" && error.Message.Contains("Embedded Bundle closure contains a remote dependency")) ||
+                ((mode is "AmbiguousGroups" or "LocalNoHashCollision") && error.Message.Contains("ambiguous normalized official Bundle name")))
+            {
+                report["error"] = error.Message;
+                report["status"] = "Rejected";
                 code = 0;
             }
             catch (Exception error) { report["error"] = error.ToString(); Debug.LogException(error); }
@@ -252,20 +373,23 @@ namespace YLFramework.Testing
 
         private static bool _stagedChanged;
 
-        private static void AddStagedFile(string host)
+        private static void ChangeOrdinaryFile(string host)
         {
-            string stage = Directory.GetDirectories(host, ".yl-protected-*", SearchOption.TopDirectoryOnly).Single();
-            Require(Directory.GetFiles(stage, "*.bundle").Length == 1, "The export fixture has no staged ciphertext yet.");
-            File.WriteAllText(Path.Combine(stage, "unexpected.txt"), "test-only publication drift");
+            string path = Directory.GetFiles(Path.Combine(host, "Ordinary"), "*.bundle").Single();
+            using var file = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            int original = file.ReadByte();
+            Require(original >= 0, "No ordinary source bytes to change.");
+            file.Position = 0;
+            file.WriteByte((byte)(original ^ 1));
             _stagedChanged = true;
         }
 
-        internal sealed class PlaintextDriftFixture : IPreprocessBuildWithReport, IPostprocessBuildWithReport
+        internal sealed class PlaintextDriftFixture : IPreprocessBuildWithReport
         {
             private static AddressableAssetGroup _group;
             private static string _privateRoot;
             private static bool _armed;
-            internal static bool Changed, OpaqueLayoutRejected;
+            internal static bool Changed;
             public int callbackOrder => 0;
 
             internal static void Arm(AddressableAssetGroup group, string privateRoot)
@@ -279,7 +403,7 @@ namespace YLFramework.Testing
             {
                 if (!_armed) return;
                 _armed = false;
-                string root = Path.Combine(_privateRoot, "Packed");
+                string root = Path.Combine(_privateRoot, "Packed", _group.Guid);
                 string source = Directory.GetFiles(root, "*.bundle").Single();
                 using var file = new FileStream(source, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
                 long size = file.Length;
@@ -291,24 +415,42 @@ namespace YLFramework.Testing
                 Changed = file.Length == size;
             }
 
+        }
+
+        internal sealed class PlayerOutputDriftFixture : IPostprocessBuildWithReport
+        {
+            private static string _privateRoot, _backend, _mode;
+            internal static string Changed;
+            public int callbackOrder => 1000;
+
+            internal static void Arm(string privateRoot, string backend, string mode)
+            {
+                _privateRoot = privateRoot;
+                _backend = backend;
+                _mode = mode;
+            }
+
             public void OnPostprocessBuild(UnityEditor.Build.Reporting.BuildReport report)
             {
-                if (!Changed) return;
-                // Calibrate the gate against one unattributed ordinary row in memory; do not alter the saved official Layout.
-                var layout = BuildLayout.Open(Path.Combine(_privateRoot, "official-buildlayout.json"), readHeader: true, readFullFile: true);
-                try
+                if (_mode == null) return;
+                string mode = _mode;
+                _mode = null;
+                string root = Path.GetDirectoryName(report.summary.outputPath);
+                Require(Path.GetDirectoryName(root) == _privateRoot && Path.GetFileName(root).StartsWith(".yl-player-", StringComparison.Ordinal),
+                    "Only the fixture's staged Player may change.");
+                string relative = mode == "ChangedPlayerOutput" ? "UnityPlayer.dll" :
+                    _backend == "IL2CPP" ? "GameAssembly.dll" : "MonoBleedingEdge/EmbedRuntime/mono-2.0-bdwgc.dll";
+                string file = Path.Combine(root, relative);
+                long size = new FileInfo(file).Length;
+                Require(size > 0 && report.GetFiles().Any(item => Path.GetFullPath(item.path).Equals(Path.GetFullPath(file), StringComparison.OrdinalIgnoreCase) &&
+                    item.size == (ulong)size), "The real Player report must already identify the subject file.");
+                if (mode == "MissingPlayerRuntime") File.Delete(file);
+                else
                 {
-                    var bundles = layout.Groups.SelectMany(group => group.Bundles).Concat(layout.BuiltInBundles).ToArray();
-                    var @protected = new HashSet<string>(Directory.GetFiles(Path.Combine(_privateRoot, "Packed"), "*.bundle").Select(Path.GetFileName), StringComparer.Ordinal);
-                    var physical = new HashSet<string>(bundles.Select(bundle => bundle.Name), StringComparer.Ordinal);
-                    var ordinary = bundles.Single(bundle => bundle.Name.StartsWith("plain_", StringComparison.Ordinal));
-                    const string unknown = "Library/UnidentifiedPayload.asset";
-                    ordinary.Files[0].OtherAssets.Add(new BuildLayout.DataFromOtherAsset { AssetGuid = "", AssetPath = unknown });
-                    try { new ProtectedAssetAudit(_group, Array.Empty<string>()).AuditLayout(layout, @protected, physical); }
-                    catch (InvalidDataException error) when (error.Message.Contains(unknown) && error.Message.Contains("unattributed")) { OpaqueLayoutRejected = true; }
-                    Require(OpaqueLayoutRejected, "The actual Layout with an unattributed packed row was permitted.");
+                    using (var output = new FileStream(file, FileMode.Append, FileAccess.Write, FileShare.None)) output.WriteByte(0);
+                    Require(new FileInfo(file).Length == size + 1, "The reported Player file did not change length.");
                 }
-                finally { layout?.Close(); }
+                Changed = relative;
             }
         }
 
@@ -347,12 +489,95 @@ namespace YLFramework.Testing
             report["descriptionSha256"] = File.Exists(description) ? ProtectedAssetAudit.DigestFile(description) : null;
         }
 
-        private static Sprite MakeSprite()
+        private const string ControlLibrary = "Library/PlainControl/";
+
+        private static void BuildPlainControl(string host, AddressableAssetSettings settings, AddressableAssetGroup[] groups, string prefix)
+        {
+            string plainPacked = Path.Combine(host, "PlainPacked");
+            string library = Addressables.LibraryPath;
+            string state = settings.ContentStateBuildPath;
+            var ordinary = settings.FindGroup("Plain").GetSchema<BundledAssetGroupSchema>();
+            settings.profileSettings.CreateValue("ControlBuild", plainPacked.Replace('\\', '/'));
+            settings.profileSettings.CreateValue("ControlLoad", prefix + "p");
+            settings.profileSettings.CreateValue("ControlOrdinaryBuild", Path.Combine(host, "PlainOrdinary").Replace('\\', '/'));
+            var builder = ScriptableObject.CreateInstance<BuildScriptPackedMode>();
+            try
+            {
+                Addressables.LibraryPath = ControlLibrary;
+                AddressablesRuntimeProperties.ClearCachedPropertyValues();
+                settings.ContentStateBuildPath = Path.Combine(host, "PlainState").Replace('\\', '/');
+                foreach (var group in groups)
+                {
+                    var schema = group.GetSchema<BundledAssetGroupSchema>();
+                    bool embedded = group.GetSchema<EncryptedBundleGroupSchema>().DeliveryMode == EncryptedBundleDeliveryMode.Embedded;
+                    schema.BuildPath.SetVariableByName(settings, embedded ? AddressableAssetSettings.kLocalBuildPath : "ControlBuild");
+                    schema.LoadPath.SetVariableByName(settings, embedded ? AddressableAssetSettings.kLocalLoadPath : "ControlLoad");
+                    schema.UseAssetBundleCache = true;
+                    SetProvider(schema, typeof(AssetBundleProvider));
+                }
+                ordinary.BuildPath.SetVariableByName(settings, "ControlOrdinaryBuild");
+                var content = builder.BuildData<AddressablesPlayerBuildResult>(new AddressablesDataBuilderInput(settings));
+                Require(string.IsNullOrEmpty(content.Error), "Stock performance control failed: " + content.Error);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(builder);
+                foreach (var group in groups)
+                {
+                    var schema = group.GetSchema<BundledAssetGroupSchema>();
+                    schema.BuildPath.SetVariableByName(settings, "ProtectedBuild" + group.Guid);
+                    schema.LoadPath.SetVariableByName(settings, "ProtectedLoad" + group.Guid);
+                    schema.UseAssetBundleCache = false;
+                    SetProvider(schema, typeof(EncryptedAssetBundleProvider));
+                }
+                ordinary.BuildPath.SetVariableByName(settings, "FrozenPlainBuild");
+                settings.ContentStateBuildPath = state;
+                Addressables.LibraryPath = library;
+                AddressablesRuntimeProperties.ClearCachedPropertyValues();
+            }
+        }
+
+        private static void StagePlainControl(string host, string original, string catalogName, EncryptedBundleDescription description, JObject report)
+        {
+            const string aa = "P_Data/StreamingAssets/aa";
+            string control = Path.Combine(host, "PPlain"), local = Path.Combine(control, aa);
+            string library = Addressables.LibraryPath;
+            CopyFixtureTree(original, control, aa + "/");
+            Addressables.LibraryPath = ControlLibrary;
+            try { CopyFixtureTree(Addressables.BuildPath, local); }
+            finally { Addressables.LibraryPath = library; }
+            report["performanceInputs"] = new JArray(description.Bundles.OrderBy(row => row.Binding.PlainLength).Select(row =>
+            {
+                bool embedded = row.Binding.Mode == EncryptedBundleDeliveryMode.Embedded;
+                string source = Directory.GetFiles(embedded ? local : Path.Combine(host, "PlainPacked"), row.Binding.RelativePath, SearchOption.AllDirectories).Single();
+                Require(new FileInfo(source).Length == row.Binding.PlainLength && ProtectedAssetAudit.DigestFile(source) == row.Binding.PlainSha256,
+                    "The stock Catalog did not build byte-identical Bundle input: " + row.Binding.RelativePath);
+                return new JObject { ["path"] = row.Binding.RelativePath,
+                    ["plainPath"] = Path.GetRelativePath(host, source).Replace('\\', '/'),
+                    ["clearBytes"] = row.Binding.PlainLength, ["clearSha256"] = row.Binding.PlainSha256,
+                    ["cipherBytes"] = row.CipherLength, ["cipherSha256"] = row.CipherSha256, ["mode"] = row.Binding.Mode.ToString() };
+            }));
+            report["plainCatalogSha256"] = ProtectedAssetAudit.DigestFile(Path.Combine(control, aa, catalogName));
+        }
+
+        private static void CopyFixtureTree(string from, string to, string skip = null)
+        {
+            foreach (var source in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
+            {
+                string relative = Path.GetRelativePath(from, source).Replace('\\', '/');
+                if (skip != null && relative.StartsWith(skip, StringComparison.OrdinalIgnoreCase)) continue;
+                string destination = Path.Combine(to, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                File.Copy(source, destination);
+            }
+        }
+
+        private static Sprite MakeSprite(string name = "private-texture")
         {
             var texture = new Texture2D(8, 8, TextureFormat.RGBA32, false);
             var pixels = Enumerable.Range(0, 64).Select(value => new Color32((byte)(value * 3), (byte)(37 * value), 231, 255)).ToArray();
             texture.SetPixels32(pixels); texture.Apply();
-            string path = Root + "/private-texture.png";
+            string path = Root + "/" + name + ".png";
             File.WriteAllBytes(path, texture.EncodeToPNG());
             UnityEngine.Object.DestroyImmediate(texture);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
@@ -385,16 +610,17 @@ namespace YLFramework.Testing
             entry.SetLabel(Mixed, true);
         }
 
-        private static void ReplaceWithDifferentOfficialCatalog(AddressableAssetSettings settings, AddressableAssetGroup group,
-            AddressableAssetEntry oldProtected, AddressableAssetEntry oldPlain, EncryptedBundleDescription expected, string prefix, string playerData)
+        private static void ReplaceWithDifferentOfficialCatalog(AddressableAssetSettings settings, AddressableAssetGroup[] groups,
+            AddressableAssetEntry oldProtected, AddressableAssetEntry oldPlain, EncryptedBundleDescription expected, string playerData)
         {
             oldProtected.address = "frozen/original-asset";
             oldPlain.address = ProtectedKey;
             var builder = ScriptableObject.CreateInstance<EncryptedPackedBuilder>();
             try
             {
-                builder.ProtectedGroup = group; builder.ApplicationNamespace = "yl.frozen.acceptance";
-                builder.ReleasePrefix = prefix + "r/"; builder.KeyId = "K1"; builder.Loopback = true;
+                builder.ProtectedGroups = groups; builder.ApplicationNamespace = expected.Application;
+                builder.ReleaseId = expected.ReleaseId; builder.ReleasePrefix = expected.ReleasePrefix; builder.Loopback = true;
+                builder.PlayerScenes = new[] { Root + "/Boot.unity" };
                 var output = builder.BuildData<AddressablesPlayerBuildResult>(new AddressablesDataBuilderInput(settings));
                 Require(string.IsNullOrEmpty(output.Error) && builder.RoutesSha256 != expected.RoutesSha256, "Could not emit the real changed-route default Catalog.");
                 string aa = Path.Combine(playerData, "StreamingAssets", "aa");
@@ -406,6 +632,38 @@ namespace YLFramework.Testing
                 File.WriteAllText(Path.Combine(aa, EncryptedBundleDescription.FileName), changed.Encode());
             }
             finally { UnityEngine.Object.DestroyImmediate(builder); }
+        }
+
+        private static AddressableAssetGroup MakeProtected(AddressableAssetSettings settings, string name, string keyId, bool embedded,
+            string remotePrefix, string privateRoot)
+        {
+            var group = settings.CreateGroup(name, false, false, false, null, typeof(BundledAssetGroupSchema), typeof(EncryptedBundleGroupSchema));
+            string build = "ProtectedBuild" + group.Guid, load = "ProtectedLoad" + group.Guid;
+            settings.profileSettings.CreateValue(build, Path.Combine(privateRoot, "Packed", group.Guid).Replace('\\', '/'));
+            settings.profileSettings.CreateValue(load, embedded ? FrozenAddressablesRoutes.RuntimeToken + "/yl-encrypted" : remotePrefix);
+            var schema = Configure(settings, group, build, load);
+            schema.UseAssetBundleCache = false;
+            schema.ForceUniqueProvider = false;
+            SetProvider(schema, typeof(EncryptedAssetBundleProvider));
+            var fields = new SerializedObject(group.GetSchema<EncryptedBundleGroupSchema>());
+            fields.FindProperty("_keyId").stringValue = keyId;
+            fields.FindProperty("_deliveryMode").enumValueIndex = embedded ? 1 : 0;
+            fields.ApplyModifiedPropertiesWithoutUndo();
+            return group;
+        }
+
+        private static void SetProvider(BundledAssetGroupSchema schema, Type type)
+        {
+            // A fresh SerializedType also clears the type cached by the official builder during the prior pack.
+            var provider = new UnityEngine.ResourceManagement.Util.SerializedType { Value = type };
+#if UNITY_6000_3_OR_NEWER
+            schema.AssetBundleProviderType = provider;
+#else
+            var setter = typeof(BundledAssetGroupSchema).GetProperty(nameof(schema.AssetBundleProviderType)).GetSetMethod(true);
+            Require(setter != null, "The pinned Addressables 1.25 provider setter is unavailable.");
+            setter.Invoke(schema, new object[] { provider });
+#endif
+            Require(schema.AssetBundleProviderType.Value == type, "The official bundle provider did not change.");
         }
 
         private static BundledAssetGroupSchema Configure(AddressableAssetSettings settings, AddressableAssetGroup group, string build, string load)
@@ -432,7 +690,16 @@ namespace YLFramework.Testing
             return entry;
         }
 
-        private static void Prefab(AddressableAssetSettings settings, AddressableAssetGroup group, string name, Sprite sprite, string address)
+        private static void PublicDependencies(AddressableAssetGroup group, params string[] guids)
+        {
+            var schema = new SerializedObject(group.GetSchema<EncryptedBundleGroupSchema>());
+            var values = schema.FindProperty("_publicDependencyGuids");
+            values.arraySize = guids.Length;
+            for (int i = 0; i < guids.Length; i++) values.GetArrayElementAtIndex(i).stringValue = guids[i];
+            schema.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static AddressableAssetEntry Prefab(AddressableAssetSettings settings, AddressableAssetGroup group, string name, Sprite sprite, string address)
         {
             var instance = new GameObject(name);
             try
@@ -440,7 +707,9 @@ namespace YLFramework.Testing
                 instance.AddComponent<SpriteRenderer>().sprite = sprite;
                 string path = Root + "/" + name + ".prefab";
                 Require(PrefabUtility.SaveAsPrefabAsset(instance, path), "Prefab was not created.");
-                settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(path), group).address = address;
+                var entry = settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(path), group);
+                entry.address = address;
+                return entry;
             }
             finally { UnityEngine.Object.DestroyImmediate(instance); }
         }

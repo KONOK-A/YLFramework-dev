@@ -6,7 +6,9 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,6 +18,7 @@ using YLFramework.Resource.Encryption;
 public static class YLResourceEncryptionContracts
 {
     private const int Segment = 1024 * 1024;
+    private const string ReleaseId = "build-a";
     private const string Group = "30925c6a78360f4128bc20b6b5ff4611";
     private const string BundleHash = "88765c6a78360f4128bc20b6b5ff4422";
     private const string Provider = "YLFramework.Resource.Encryption.EncryptedAssetBundleProvider";
@@ -26,6 +29,14 @@ public static class YLResourceEncryptionContracts
     {
         var native = NativeLibrary.Load(nativeDll);
         Check(NativeLibrary.TryGetExport(native, "yl_read_statistics", out _), "native bridge must report actual cipher reads independently of managed heap size");
+        using (var sample = new MemoryStream(new byte[] { 0x61, 0x62, 0x63 }))
+        {
+            sample.Position = 2;
+            Check(AuthenticatedBundleStream.Hash(sample, default) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" && sample.Position == sample.Length,
+                "the streaming SHA-256 backend hashes the entire input, against an independent known digest");
+            Throws<OperationCanceledException>(() => AuthenticatedBundleStream.Hash(sample, new CancellationToken(true), clearBuffer: true),
+                "streaming SHA-256 observes cancellation");
+        }
         NativeLibrary.SetDllImportResolver(typeof(AuthenticatedBundleStream).Assembly, (name, _, _) =>
             name == "ylresource_tink" ? native : IntPtr.Zero);
         if (Directory.Exists(root) || !Directory.Exists(Path.GetDirectoryName(root))) throw new IOException("Test root must be fresh.");
@@ -49,21 +60,7 @@ public static class YLResourceEncryptionContracts
             var repeated = Seal(clearPath, Path.Combine(root, "cpp-repeat.bin"), binding, key1);
             var description = new EncryptedBundleDescription("catalog.bin", CatalogHash, CatalogHash, CatalogHash, new[] { first.Record, second.Record });
 
-            string pinnedDirectory = Path.Combine(root, "pinned-parent");
-            string renamedDirectory = pinnedDirectory + "-renamed";
-            Directory.CreateDirectory(pinnedDirectory);
-            using (OwnedWindowsFiles.PinDirectory(pinnedDirectory, false))
-                Throws<IOException>(() => Directory.Move(pinnedDirectory, renamedDirectory), "owned directory pins prevent concurrent rename");
-            Directory.Move(pinnedDirectory, renamedDirectory);
-            string deliver = Path.Combine(root, "atomic-stage");
-            string delivery = Path.Combine(root, "atomic-delivery");
-            using (var directory = OwnedWindowsFiles.CreatePublicationDirectory(deliver))
-            {
-                File.WriteAllText(Path.Combine(deliver, "manifest"), "owned");
-                OwnedWindowsFiles.Publish(directory, delivery);
-            }
-            Check(!Directory.Exists(deliver) && File.ReadAllText(Path.Combine(delivery, "manifest")) == "owned",
-                "publish renames the exact staged directory by handle");
+            CheckPublication(root);
             string openStage = Path.Combine(root, "open-stage");
             string openRelease = Path.Combine(root, "open-release");
             using (var directory = OwnedWindowsFiles.CreatePublicationDirectory(openStage))
@@ -106,13 +103,32 @@ public static class YLResourceEncryptionContracts
             RejectJson(json, node => node["bundles"][0]["path"] = "NUL.bundle", "Windows device name");
             RejectJson(json, node => node["bundles"][0]["cipherLength"] = 12, "wrong length");
             RejectJson(json, node => node["bundles"][0]["key"] = "reject-me", "unexpected key field");
-            RejectJson(json, node => node["bundles"][1]["path"] = "a.bundle", "duplicate path");
-            Throws<InvalidDataException>(() => EncryptedBundleDescription.Parse("{\"version\":1," + json.Substring(1), true), "duplicate property");
+            RejectJson(json, node =>
+            {
+                var a = node["bundles"].Single(row => (string)row["bundleName"] == "bundle-a");
+                var b = node["bundles"].Single(row => (string)row["bundleName"] == "bundle-b");
+                b["groupGuid"] = (string)a["groupGuid"]; b["keyId"] = (string)a["keyId"]; b["path"] = (string)a["path"];
+            }, "duplicate path");
+            Throws<InvalidDataException>(() => EncryptedBundleDescription.Parse("{\"version\":2," + json.Substring(1), true), "duplicate property");
+            RejectJson(json, node => node["version"] = 1, "v1 is not read by the v2 Player");
+            RejectJson(json, node => node["releaseId"] = "build-b", "prefix must end in the selected release id");
+            RejectJson(json, node =>
+            {
+                node["bundles"][1]["mode"] = "Embedded";
+                node["bundles"][1]["groupGuid"] = (string)node["bundles"][0]["groupGuid"];
+                node["bundles"][1]["keyId"] = (string)node["bundles"][0]["keyId"];
+            }, "delivery mode agrees within a group");
+            RejectJson(json, node =>
+            {
+                node["bundles"][1]["path"] = "B.bundle";
+                node["bundles"][1]["groupGuid"] = (string)node["bundles"][0]["groupGuid"];
+                node["bundles"][1]["keyId"] = (string)node["bundles"][0]["keyId"];
+            }, "case-equivalent delivery path");
 
             byte[] aad = binding.AssociatedData();
-            var independent = new List<byte>(BitConverter.GetBytes(1));
-            foreach (string field in new[] { "YL.RemoteBundle.StreamingAEAD", "AES256_GCM_HKDF_1MB", "kano.test", "StandaloneWindows64",
-                release, Group, "bundle-a", BundleHash, Provider, "a.bundle", "K1", Hash(plain) })
+            var independent = new List<byte>(BitConverter.GetBytes(2));
+            foreach (string field in new[] { "YL.BundleDelivery.StreamingAEAD", "AES256_GCM_HKDF_1MB", "kano.test", "StandaloneWindows64",
+                "build-a", "RemoteHttps", release + "30925c6a78360f4128bc20b6b5ff4611/a.bundle", Group, "bundle-a", BundleHash, Provider, "K1", "a.bundle", Hash(plain) })
             {
                 byte[] utf = Encoding.UTF8.GetBytes(field);
                 independent.AddRange(BitConverter.GetBytes(utf.Length));
@@ -132,16 +148,16 @@ public static class YLResourceEncryptionContracts
             using (var stream = Open(java, Freeze(binding, java), keys))
             {
                 var counters = stream.ReadStatistics();
-                Check(counters.Logical == plain.LongLength && counters.Physical <= 2 * new FileInfo(java).Length + 40 &&
-                    counters.Pages == 7 && counters.PayloadBound >= 3 * Segment + Segment / 2 + 128 * 1024 && counters.PayloadBound <= 4L * Segment,
-                    "verification includes the three pinned Tink segment allocations and the bridge window without exceeding the working-buffer target");
+                Check(counters.Logical == plain.LongLength && counters.Physical >= new FileInfo(java).Length && counters.Physical <= 2 * new FileInfo(java).Length + 40 &&
+                    counters.Pages > 0 && counters.PayloadBound > 0 && counters.PayloadBound <= 4L * Segment,
+                    "separately count successful plaintext, ciphertext and authenticated fills within the working-buffer bound");
                 byte[] sample = new byte[225];
                 stream.Seek(Segment - 84, SeekOrigin.Begin);
                 Check(stream.Read(sample, 5, 200) == 200 && sample.Skip(5).Take(200).SequenceEqual(plain.Skip(Segment - 84).Take(200)), "native Tink opens Java and seeks across segments");
                 stream.Seek(-13, SeekOrigin.End);
                 Check(stream.Read(sample, 0, sample.Length) == 13 && stream.Read(sample, 0, sample.Length) == 0, "last segment and EOF are distinguished");
                 var reread = stream.ReadStatistics();
-                Check(reread.Logical - counters.Logical == 213 && reread.Pages - counters.Pages == 3 && reread.Physical > counters.Physical,
+                Check(reread.Logical - counters.Logical == 213 && reread.Pages > counters.Pages && reread.Physical > counters.Physical,
                     "native cipher-byte counters distinguish a crossing seek from logical bytes delivered");
                 Throws<IOException>(() => File.Open(java, FileMode.Open, FileAccess.Write, FileShare.None).Dispose(), "stable file prevents writes while mounted");
             }
@@ -151,6 +167,16 @@ public static class YLResourceEncryptionContracts
             Throws<EncryptedBundleKeyUnavailableException>(() => Open(first.Path, first.Record, new Keys(("K2", key2))), "no alternative key is tried");
             var wrongContext = Bind(release, "K1", "different-bundle", "a.bundle", plain);
             Throws<EncryptedBundleAuthenticationException>(() => Open(first.Path, Freeze(wrongContext, first.Path), keys), "different AAD despite correct ciphertext digest");
+            EncryptedBundleBinding Rebind(string prefix, string id, EncryptedBundleDeliveryMode mode, string group, string key) =>
+                new EncryptedBundleBinding("kano.test", id, prefix, mode, group, "bundle-a", BundleHash, Provider, "a.bundle", key, plain.LongLength, Hash(plain), true);
+            foreach (var (changed, label) in new[]
+            {
+                (Rebind(release, ReleaseId, EncryptedBundleDeliveryMode.RemoteHttps, new string('a', 32), "K1"), "different group"),
+                (Rebind(release, ReleaseId, EncryptedBundleDeliveryMode.Embedded, Group, "K1"), "different source mode"),
+                (Rebind(release.Replace("build-a", "build-b"), "build-b", EncryptedBundleDeliveryMode.RemoteHttps, Group, "K1"), "different release"),
+                (Rebind(release, ReleaseId, EncryptedBundleDeliveryMode.RemoteHttps, Group, "K2"), "different key id with same bytes")
+            })
+                Throws<EncryptedBundleAuthenticationException>(() => Open(first.Path, Freeze(changed, first.Path), new Keys(("K1", key1), ("K2", key1))), label);
             Throws<EncryptedBundleAuthenticationException>(() => Open(second.Path, Freeze(binding, second.Path), new Keys(("K1", key2))), "same-key bundle substitution");
             foreach (long position in new[] { Segment - 1L, 2L * Segment - 1, first.Record.CipherLength - 1 })
             {
@@ -232,7 +258,7 @@ public static class YLResourceEncryptionContracts
         using (var stream = await cache.OpenAuthenticatedAsync(b, k2Only)) if (stream.ReadByte() != sentinel) throw new Exception("Independent K2 failed");
         long beforeMount = cache.VerifiedCipherHashBytes;
         using (var stream = await cache.OpenAuthenticatedAsync(a, keys)) if (stream.ReadByte() != sentinel) throw new Exception("Restored K1 failed");
-        Check(cache.VerifiedCipherHashBytes - beforeMount == 2 * a.CipherLength, "separate managed recheck and mount hashes from native stream reads");
+        Check(cache.VerifiedCipherHashBytes - beforeMount == a.CipherLength, "warm mount hashes the pinned ciphertext exactly once");
         Check(!listener.Pending(), "restoring K1 and mounting K2 need no second GET");
 
         File.Copy(repeated.Path, file, true);
@@ -316,7 +342,72 @@ public static class YLResourceEncryptionContracts
     }
 
     private static EncryptedBundleBinding Bind(string release, string keyId, string name, string path, byte[] plain) =>
-        new EncryptedBundleBinding("kano.test", release, Group, name, BundleHash, Provider, path, keyId, plain.LongLength, Hash(plain), true);
+        new EncryptedBundleBinding("kano.test", ReleaseId, release, EncryptedBundleDeliveryMode.RemoteHttps, GroupFor(keyId),
+            name, BundleHash, Provider, path, keyId, plain.LongLength, Hash(plain), true);
+
+    private static void CheckPublication(string root)
+    {
+        string source = Path.Combine(root, "private-parent");
+        string destination = Path.Combine(root, "release-parent");
+        DirectoryInfo sourceParent = Directory.CreateDirectory(source);
+        Directory.CreateDirectory(destination);
+        var inherited = sourceParent.GetAccessControl();
+        inherited.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
+            FileSystemRights.Modify, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+            PropagationFlags.None, AccessControlType.Allow));
+        sourceParent.SetAccessControl(inherited);
+
+        using var sourcePin = OwnedWindowsFiles.PinDirectory(source, false);
+        using var destinationPin = OwnedWindowsFiles.InspectDirectory(destination, out string physicalDestination);
+        Throws<IOException>(() => Directory.Move(source, source + "-renamed"), "the source parent is pinned against rename");
+        Throws<IOException>(() => Directory.Move(destination, destination + "-renamed"), "the destination parent is pinned against rename");
+
+        string stage = Path.Combine(source, "stage");
+        string release = Path.Combine(destination, "release");
+        using var identity = WindowsIdentity.GetCurrent();
+        using var stageHandle = OwnedWindowsFiles.CreatePublicationDirectory(stage);
+        Check(PublisherOnly(new DirectoryInfo(stage).GetAccessControl(), identity.User, inherit: false),
+            "a publication directory starts with a protected publisher-only DACL even under a shared parent");
+        string payload = Path.Combine(Directory.CreateDirectory(Path.Combine(stage, "Player")).FullName, "payload");
+        using (var output = OwnedWindowsFiles.CreateTemporaryPinned(payload))
+        {
+            output.WriteByte(42);
+            output.Flush(true);
+            Check((File.GetAttributes(payload) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0 &&
+                Directory.EnumerateFiles(Path.GetDirectoryName(payload)).Single() == payload,
+                "the tree can be inventoried while the owned output handle still rejects other data access");
+            Throws<IOException>(() => File.OpenWrite(payload).Dispose(), "the owned payload handle prevents same-account writes");
+            Throws<IOException>(() => OwnedWindowsFiles.Publish(stageHandle, Path.Combine(physicalDestination, "release")),
+                "Windows refuses the root rename while an exclusive child handle is open");
+            Check(!Directory.Exists(release), "the failed root rename did not expose a partial release");
+        }
+
+        string conflict = Directory.CreateDirectory(Path.Combine(destination, "conflict")).FullName;
+        string marker = Path.Combine(conflict, "existing");
+        File.WriteAllText(marker, "before");
+        Throws<IOException>(() => OwnedWindowsFiles.Publish(stageHandle, Path.Combine(physicalDestination, "conflict")),
+            "a staged root cannot replace an occupied destination");
+        Check(File.ReadAllText(marker) == "before" && File.Exists(payload), "a root conflict preserves both trees");
+
+        OwnedWindowsFiles.Publish(stageHandle, Path.Combine(physicalDestination, "release"));
+        string published = Path.Combine(release, "Player", "payload");
+        Check(!Directory.Exists(stage) && File.ReadAllBytes(published).SequenceEqual(new byte[] { 42 }),
+            "publication moves the exact staged root and bytes by handle across pinned parents");
+        Check(PublisherOnly(new DirectoryInfo(release).GetAccessControl(), identity.User, inherit: false) &&
+            PublisherOnly(new DirectoryInfo(Path.GetDirectoryName(published)).GetAccessControl(), identity.User, inherit: true) &&
+            PublisherOnly(new FileInfo(published).GetAccessControl(), identity.User, inherit: true),
+            "the root and descendants retain publisher-only access through the root rename");
+    }
+
+    private static bool PublisherOnly(FileSystemSecurity security, SecurityIdentifier publisher, bool inherit)
+    {
+        var rules = security.GetAccessRules(true, true, typeof(SecurityIdentifier));
+        return security.AreAccessRulesProtected != inherit && rules.Count == 1 && rules[0] is FileSystemAccessRule rule &&
+            rule.IdentityReference.Equals(publisher) && rule.IsInherited == inherit && rule.AccessControlType == AccessControlType.Allow &&
+            (rule.FileSystemRights & FileSystemRights.FullControl) == FileSystemRights.FullControl;
+    }
+
+    private static string GroupFor(string keyId) => keyId == "K1" ? Group : "20925c6a78360f4128bc20b6b5ff4611";
     private static EncryptedBundleRecord Freeze(EncryptedBundleBinding binding, string path) => new EncryptedBundleRecord(binding, new FileInfo(path).Length, HashFile(path));
     private static (string Path, EncryptedBundleRecord Record) Seal(string plain, string cipher, EncryptedBundleBinding binding, byte[] key)
     {

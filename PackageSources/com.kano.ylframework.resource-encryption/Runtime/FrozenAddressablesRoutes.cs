@@ -18,11 +18,12 @@ namespace YLFramework.Resource.Encryption
     internal static class FrozenAddressablesRoutes
     {
         internal const string RuntimeToken = "{UnityEngine.AddressableAssets.Addressables.RuntimePath}";
+        internal const string EmbeddedPrefix = EncryptedBundleBinding.EmbeddedPrefix;
         internal const string MountPrefix = "yl-encrypted-mount/";
         private const string BuiltInLocator = "DynamicResourceLocator";
         private const string LocalCatalogId = "AddressablesMainContentCatalog";
 
-        internal static string MountId(EncryptedBundleBinding item) => MountPrefix + item.BundleName;
+        internal static string MountId(EncryptedBundleBinding item) => MountPrefix + item.GroupPath;
         internal static bool IsBundle(Type type) => type == typeof(IAssetBundleResource) || type == typeof(EncryptedMountedBundle);
         internal static bool NoUnityCacheVersion(string hash) => string.IsNullOrEmpty(hash) || hash == "00000000000000000000000000000000";
         internal static bool IsSupportedAssetProvider(string provider, int dependencies) =>
@@ -42,7 +43,7 @@ namespace YLFramework.Resource.Encryption
 
         internal static void CheckAlias(object key, int sceneIndex)
         {
-            if ((key is string alias && !alias.StartsWith(MountPrefix, StringComparison.Ordinal)) ||
+            if ((key is string alias && alias.Length != 0 && !alias.StartsWith(MountPrefix, StringComparison.OrdinalIgnoreCase)) ||
                 (key is int index && sceneIndex >= 0 && index == sceneIndex))
                 return;
             throw new InvalidDataException("Unexpected Catalog alias or built-in scene index.");
@@ -51,12 +52,17 @@ namespace YLFramework.Resource.Encryption
         internal static bool IsStockLocalBundle(string id, string provider)
         {
             const string prefix = RuntimeToken + "/";
-            string stock = typeof(AssetBundleProvider).FullName;
-            return (provider == stock || (provider.StartsWith(stock + "_", StringComparison.Ordinal) &&
-                provider.Length == stock.Length + 33 && Guid.TryParseExact(provider.Substring(stock.Length + 1), "N", out _))) &&
-                id.StartsWith(prefix, StringComparison.Ordinal) && id.EndsWith(".bundle", StringComparison.Ordinal) &&
+            return IsStockBundleProvider(provider) && id.StartsWith(prefix, StringComparison.Ordinal) &&
+                !id.StartsWith(EmbeddedPrefix, StringComparison.OrdinalIgnoreCase) && id.EndsWith(".bundle", StringComparison.Ordinal) &&
                 id.Substring(prefix.Length).Split('/').All(part => part.Length != 0 && !part.EndsWith(".", StringComparison.Ordinal) &&
                     !part.EndsWith(" ", StringComparison.Ordinal) && part.IndexOfAny(Path.GetInvalidFileNameChars()) < 0);
+        }
+
+        internal static bool IsStockBundleProvider(string provider)
+        {
+            string stock = typeof(AssetBundleProvider).FullName;
+            return provider == stock || (provider != null && provider.StartsWith(stock + "_", StringComparison.Ordinal) &&
+                provider.Length == stock.Length + 33 && Guid.TryParseExact(provider.Substring(stock.Length + 1), "N", out _));
         }
 
         internal static void CheckRuntimeSettings(string settings, string catalogName)
@@ -95,11 +101,7 @@ namespace YLFramework.Resource.Encryption
             {
                 throw new InvalidDataException("A catalog location has no complete identity.");
             }
-            string normalized = id.Replace('\\', '/');
-            string prefix = localRoot.Replace('\\', '/').TrimEnd('/') + "/";
-            if (normalized.StartsWith(prefix, StringComparison.Ordinal))
-                normalized = RuntimeToken + "/" + normalized.Substring(prefix.Length);
-            var row = new JArray(normalized, provider, type.FullName + ", " + type.Assembly.GetName().Name);
+            var row = new JArray(CanonicalId(id, localRoot), provider, type.FullName + ", " + type.Assembly.GetName().Name);
             if (type == typeof(IAssetBundleResource))
             {
                 if (!(data is AssetBundleRequestOptions bundle))
@@ -108,6 +110,14 @@ namespace YLFramework.Resource.Encryption
                     bundle.BundleSize, bundle.Crc, bundle.UseUnityWebRequestForLocalBundles));
             }
             return row.ToString(Formatting.None);
+        }
+
+        internal static string CanonicalId(string id, string localRoot)
+        {
+            string normalized = id.Replace('\\', '/');
+            string prefix = localRoot.Replace('\\', '/').TrimEnd('/') + "/";
+            return normalized.StartsWith(prefix, StringComparison.Ordinal)
+                ? RuntimeToken + "/" + normalized.Substring(prefix.Length) : normalized;
         }
 
         internal static string Row(object key, int candidateIndex, string asset, IEnumerable<string> dependencies)
@@ -129,27 +139,119 @@ namespace YLFramework.Resource.Encryption
 
         internal static void CheckResolved(IResourceLocator catalog, EncryptedBundleDescription description)
         {
-            var rows = new List<string>();
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            var transfers = description.Bundles.ToDictionary(item => item.Binding.Url, StringComparer.Ordinal);
-            var mounts = description.Bundles.ToDictionary(item => MountId(item.Binding), StringComparer.Ordinal);
-            var name = description.Bundles[0].Binding.ProviderId;
-            string localRoot = Addressables.RuntimePath;
             var scenes = Enumerable.Range(0, SceneManager.sceneCountInBuildSettings).Select(SceneUtility.GetScenePathByBuildIndex)
                 .Select(BuiltInSceneId).ToArray();
             var manager = Addressables.ResourceManager;
             if (manager.ResourceProviders.Count(provider => provider.GetType() == typeof(ContentCatalogProvider)) != 1 ||
                 manager.ResourceProviders.Count(provider => provider.GetType() == typeof(JsonAssetProvider)) != 1)
                 throw new InvalidDataException("The official metadata providers were not registered by default startup.");
+
+            CheckCatalog(catalog, description.Bundles.Select(item => item.Binding), description.RoutesSha256,
+                scenes, Addressables.RuntimePath, (location, expected) =>
+            {
+                var actual = manager.GetResourceProvider(IsBundle(location.ResourceType) ? typeof(IAssetBundleResource) : location.ResourceType,
+                    location)?.GetType();
+                if (expected != null ? actual != expected : actual == null || actual.FullName != location.ProviderId ||
+                    actual.Assembly != typeof(BundledAssetProvider).Assembly)
+                    throw new InvalidDataException("Catalog route did not select its expected provider: " + location.PrimaryKey);
+            });
+        }
+
+        // Audit the official serialized Catalog at build time and again after runtime resolves it.
+        internal static Dictionary<string, IResourceLocation> CheckCatalog(IResourceLocator catalog,
+            IEnumerable<EncryptedBundleBinding> bindings, string expectedDigest, string[] scenes, string localRoot,
+            Action<IResourceLocation, Type> checkProvider = null)
+        {
+            var rows = new List<string>();
+            var seenTransfers = new HashSet<string>(StringComparer.Ordinal);
+            var seenMounts = new HashSet<string>(StringComparer.Ordinal);
+            var transfers = bindings.ToDictionary(item => item.SourceId, StringComparer.Ordinal);
+            var mounts = transfers.Values.ToDictionary(MountId, StringComparer.Ordinal);
+            string encryptedProvider = transfers.Values.First().ProviderId;
+            var bundles = new Dictionary<string, IResourceLocation>(StringComparer.Ordinal);
+            var bundleNodes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var bundleKeys = new HashSet<string>(StringComparer.Ordinal);
+#if UNITY_6000_3_OR_NEWER
+            var officialIdentities = new Dictionary<IResourceLocation, string>(new ResourceLocationComparer());
+#else
+            var compactBuckets = new HashSet<string>(StringComparer.Ordinal);
+            var dependencySets = new HashSet<string>(StringComparer.Ordinal);
+#endif
+
+            void CheckEquality(IResourceLocation location, string identity)
+            {
+#if UNITY_6000_3_OR_NEWER
+                // The official 2.10 comparer considers equal hashes the same location during dependency and download deduplication.
+                if (officialIdentities.TryGetValue(location, out string previous) && previous != identity)
+                    throw new InvalidDataException("Addressables conflates different frozen Catalog locations: " + location.PrimaryKey);
+                officialIdentities[location] = identity;
+#endif
+            }
+
+            string CheckBundle(IResourceLocation bundle)
+            {
+                if (!IsBundle(bundle.ResourceType) || bundle.HasDependencies)
+                    throw new InvalidDataException("Unsupported catalog dependency structure.");
+                string id = CanonicalId(bundle.InternalId, localRoot);
+                string node = Node(bundle.InternalId, bundle.ProviderId, bundle.ResourceType, bundle.Data, localRoot);
+                if (bundleNodes.TryGetValue(id, out string previous) && previous != node)
+                    throw new InvalidDataException("Conflicting frozen Bundle route: " + id);
+                if (bundles.TryGetValue(id, out var existing) && existing.PrimaryKey != bundle.PrimaryKey)
+                    throw new InvalidDataException("A frozen Bundle has conflicting Catalog keys: " + id);
+                if (!bundles.ContainsKey(id) && bundleNodes.ContainsKey(id))
+                    throw new InvalidDataException("Windows-equivalent frozen Bundle routes: " + id);
+                bundles[id] = bundle;
+                bundleNodes[id] = node;
+                CheckEquality(bundle, node);
+                if (bundle.ProviderId == encryptedProvider)
+                {
+                    if (bundle.ResourceType == typeof(EncryptedMountedBundle))
+                    {
+                        if (!mounts.ContainsKey(id) || bundle.PrimaryKey != id || bundle.Data != null)
+                            throw new InvalidDataException("Unrecognized protected mount: " + id);
+                    }
+                    else if (!transfers.TryGetValue(id, out var item) || bundle.PrimaryKey != item.RelativePath ||
+                        !(bundle.Data is AssetBundleRequestOptions stock) || stock.AssetLoadMode != AssetLoadMode.RequestedAssetAndDependencies ||
+                        stock.BundleSize != EncryptedBundleBinding.GetCipherLength(item.PlainLength) || stock.BundleName != item.BundleName ||
+                        !NoUnityCacheVersion(stock.Hash) || stock.UseUnityWebRequestForLocalBundles)
+                        throw new InvalidDataException("Protected transfer route does not match its frozen cipher identity: " + id);
+                    checkProvider?.Invoke(bundle, typeof(EncryptedAssetBundleProvider));
+                }
+                else
+                {
+                    if (bundle.ResourceType != typeof(IAssetBundleResource) || !IsStockBundleProvider(bundle.ProviderId) ||
+                        id.StartsWith(EmbeddedPrefix, StringComparison.OrdinalIgnoreCase) ||
+                        id.StartsWith(MountPrefix, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("An ordinary Bundle route uses a reserved source or unsupported provider: " + id);
+                    checkProvider?.Invoke(bundle, typeof(AssetBundleProvider));
+                }
+                return node;
+            }
+
             foreach (object key in catalog.Keys)
             {
-                if (!catalog.Locate(key, typeof(object), out var locations))
-                    continue;
+                if (!catalog.Locate(key, typeof(object), out var locations) || locations.Count == 0)
+                    throw new InvalidDataException("An official Catalog key does not resolve: " + key);
+                if (locations.Any(location => IsBundle(location.ResourceType)))
+                {
+                    foreach (var location in locations)
+                        CheckBundle(location);
+                    if (key is string bundleKey && locations.Count == 1 && locations[0].PrimaryKey == bundleKey)
+                    {
+                        bundleKeys.Add(bundleKey);
+                        continue;
+                    }
+#if !UNITY_6000_3_OR_NEWER
+                    // 1.25 adds a numeric bucket for each distinct dependency list before writing JSON.
+                    if (locations.Count >= 2 && key is string compact && int.TryParse(compact, out _) &&
+                        compactBuckets.Add(DependencyKeys(locations)))
+                        continue;
+#endif
+                    throw new InvalidDataException("Unexpected or conflicting Catalog Bundle key: " + key);
+                }
                 int candidateIndex = 0;
                 foreach (var location in locations)
                 {
-                    if (IsBundle(location.ResourceType))
-                        continue;
                     var depends = location.Dependencies ?? Array.Empty<IResourceLocation>();
                     if (IsBuiltInScene(location.ProviderId, location.ResourceType, location.Data, depends.Count))
                     {
@@ -157,7 +259,9 @@ namespace YLFramework.Resource.Encryption
                         if (index < 0)
                             throw new InvalidDataException("A built-in scene route is absent from the actual Player scene list.");
                         CheckAlias(key, index);
-                        rows.Add(Row(key, candidateIndex++, Node(location.InternalId, location.ProviderId, location.ResourceType, null, localRoot), Array.Empty<string>()));
+                        string scene = Node(location.InternalId, location.ProviderId, location.ResourceType, null, localRoot);
+                        CheckEquality(location, scene);
+                        rows.Add(Row(key, candidateIndex++, scene, Array.Empty<string>()));
                         continue;
                     }
                     CheckAlias(key, -1);
@@ -165,42 +269,54 @@ namespace YLFramework.Resource.Encryption
                     {
                         throw new InvalidDataException("Asset routes must retain the official asset or legacy Resources provider.");
                     }
-                    var assetProvider = manager.GetResourceProvider(location.ResourceType, location)?.GetType();
-                    if (assetProvider == null || assetProvider.FullName != location.ProviderId || assetProvider.Assembly != typeof(BundledAssetProvider).Assembly)
-                        throw new InvalidDataException("Asset route did not select its expected official asset provider.");
-                    foreach (var dep in depends)
+                    checkProvider?.Invoke(location, null);
+                    string asset = Node(location.InternalId, location.ProviderId, location.ResourceType, location.Data, localRoot);
+                    var nodes = new List<string>(depends.Count);
+                    for (int i = 0; i < depends.Count; i++)
                     {
-                        if (!IsBundle(dep.ResourceType) || dep.HasDependencies)
-                            throw new InvalidDataException("Unsupported catalog dependency structure.");
-                        if (dep.ProviderId == name)
+                        var dep = depends[i];
+                        nodes.Add(CheckBundle(dep));
+                        if (dep.ProviderId != encryptedProvider)
+                            continue;
+                        string id = CanonicalId(dep.InternalId, localRoot);
+                        if (dep.ResourceType == typeof(EncryptedMountedBundle))
                         {
-                            if (dep.ResourceType == typeof(EncryptedMountedBundle))
-                            {
-                                if (!mounts.ContainsKey(dep.InternalId))
-                                    throw new InvalidDataException("Unrecognized protected mount.");
-                            }
-                            else
-                            {
-                                if (!transfers.TryGetValue(dep.InternalId, out var item) || !(dep.Data is AssetBundleRequestOptions stock) ||
-                                    stock.BundleSize != item.CipherLength || stock.BundleName != item.Binding.BundleName || !NoUnityCacheVersion(stock.Hash))
-                                {
-                                    throw new InvalidDataException("Protected transfer route does not match its frozen cipher identity: " + dep.PrimaryKey);
-                                }
-                                seen.Add(dep.InternalId);
-                            }
+                            if (i == 0 || CanonicalId(depends[i - 1].InternalId, localRoot) != mounts[id].SourceId)
+                                throw new InvalidDataException("A protected mount lost its adjacent transfer: " + id);
+                            seenMounts.Add(id);
                         }
-                        Type expected = dep.ProviderId == name ? typeof(EncryptedAssetBundleProvider) : typeof(AssetBundleProvider);
-                        if (manager.GetResourceProvider(typeof(IAssetBundleResource), dep)?.GetType() != expected)
-                            throw new InvalidDataException("Bundle route did not select its expected provider.");
+                        else
+                        {
+                            if (i + 1 == depends.Count || CanonicalId(depends[i + 1].InternalId, localRoot) != MountId(transfers[id]))
+                                throw new InvalidDataException("A protected transfer lost its adjacent mount: " + id);
+                            seenTransfers.Add(id);
+                        }
                     }
-                    rows.Add(Row(key, candidateIndex++, Node(location.InternalId, location.ProviderId, location.ResourceType, location.Data, localRoot),
-                        depends.Select(dep => Node(dep.InternalId, dep.ProviderId, dep.ResourceType, dep.Data, localRoot))));
+                    if (nodes.Distinct(StringComparer.Ordinal).Count() != nodes.Count)
+                        throw new InvalidDataException("A Catalog asset repeats a Bundle dependency: " + location.PrimaryKey);
+#if !UNITY_6000_3_OR_NEWER
+                    if (depends.Count >= 2)
+                        dependencySets.Add(DependencyKeys(depends));
+#endif
+                    CheckEquality(location, new JArray(asset, new JArray(nodes)).ToString(Formatting.None));
+                    rows.Add(Row(key, candidateIndex++, asset, nodes));
                 }
             }
-            if (seen.Count != transfers.Count || Digest(rows) != description.RoutesSha256)
+            if (seenTransfers.Count != transfers.Count || seenMounts.Count != mounts.Count || Digest(rows) != expectedDigest ||
+                bundles.Values.Any(bundle => !bundleKeys.Contains(bundle.PrimaryKey))
+#if !UNITY_6000_3_OR_NEWER
+                || !compactBuckets.SetEquals(dependencySets)
+#endif
+                )
             {
                 throw new InvalidDataException("Resolved Addressables asset and Bundle routes differ from the independent authoring audit.");
             }
+            return bundles;
         }
+
+#if !UNITY_6000_3_OR_NEWER
+        private static string DependencyKeys(IEnumerable<IResourceLocation> dependencies) =>
+            new JArray(dependencies.Select(location => location.PrimaryKey)).ToString(Formatting.None);
+#endif
     }
 }

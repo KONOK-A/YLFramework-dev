@@ -12,8 +12,9 @@ param(
     [switch] $StockSizeControl,
     [switch] $VerifiedSizeSnapshot,
     [ValidateSet('Stock', 'Separated', IgnoreCase = $false)][string] $HeldDownload,
-    [ValidateSet('Positive','PlainBundleCopy','PlayerCopy','WrongRoute','Disabled','Performance','OutputOverlap','SourceChanged','SyncWait','GuardReview','OfficialOutput','PublishChanged', IgnoreCase = $false)]
+    [ValidateSet('Positive','PlainBundleCopy','PlayerCopy','WrongRoute','Disabled','Performance','OutputOverlap','SourceChanged','SyncWait','GuardReview','OfficialOutput','PublishChanged','LateKeyFailure','TargetConflict','AmbiguousGroups','RemoteClosure','OrdinaryDependency','BadDependency','MultiGroup','PrePublishAbort','MissingPlayerRuntime','ChangedPlayerOutput','LocalNoHash','LocalNoHashCollision', IgnoreCase = $false)]
     [string] $EncryptionCase = 'Positive',
+    [ValidateSet('Remote','Embedded','Mixed', IgnoreCase = $false)][string] $DeliveryLayout = 'Remote',
     [string] $EncryptionPackReceipt,
     [string] $ReleaseManifest,
     [string] $SourceCommit,
@@ -37,7 +38,7 @@ $fixedRelease = $PSBoundParameters.ContainsKey('ReleaseManifest') -or $PSBoundPa
 if ($fixedRelease -and ([string]::IsNullOrWhiteSpace($ReleaseManifest) -or [string]::IsNullOrWhiteSpace($SourceCommit) -or $PSBoundParameters.ContainsKey('EncryptionPackReceipt'))) {
     throw '-ReleaseManifest and -SourceCommit must be supplied together, without -EncryptionPackReceipt.'
 }
-if (($PSBoundParameters.ContainsKey('EncryptionCase') -or $EncryptionPackReceipt -or $fixedRelease) -and (-not $EncryptedRemoteGroup -or $HeldDownload -or $VerifiedSizeSnapshot -or $StockSizeControl)) {
+if (($PSBoundParameters.ContainsKey('EncryptionCase') -or $PSBoundParameters.ContainsKey('DeliveryLayout') -or $EncryptionPackReceipt -or $fixedRelease) -and (-not $EncryptedRemoteGroup -or $HeldDownload -or $VerifiedSizeSnapshot -or $StockSizeControl)) {
     throw 'Select exactly one encrypted Player workload.'
 }
 if ($Backend -ceq 'Mono' -and (-not $EncryptedRemoteGroup -or $HeldDownload -or $VerifiedSizeSnapshot -or $StockSizeControl)) {
@@ -60,7 +61,7 @@ if ($EncryptedRemoteGroup -and -not ($HeldDownload -or $VerifiedSizeSnapshot -or
     $artifactArguments = if ($fixedRelease) { @{ ReleaseManifest = $ReleaseManifest; SourceCommit = $SourceCommit } }
         elseif ($EncryptionPackReceipt) { @{ PackReceipt = $EncryptionPackReceipt } } else { @{} }
     & (Join-Path $PSScriptRoot 'ResourceEncryption/Invoke-FrozenDelivery.ps1') -Profile $Profile -Unity $Unity -WorkspaceRoot $root `
-        -Mode $EncryptionCase -Backend $Backend -KeepArtifacts:$KeepArtifacts @artifactArguments
+        -Mode $EncryptionCase -DeliveryLayout $DeliveryLayout -Backend $Backend -KeepArtifacts:$KeepArtifacts @artifactArguments
     return
 }
 $configurationPath = 'Tools/Testing/TestSuites.json'

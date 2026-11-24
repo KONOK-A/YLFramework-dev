@@ -54,9 +54,11 @@ Addressables 可能回退到缓存或内置目录。远端 hash 缺失、读取�
 
 应用级版本事务、恢复和回滚不在当前合同内。Catalog hash 不等于发布者密码学签名。
 
-## 可选的远端 Bundle 加密
+## 可选的 Bundle 加密
 
-`com.kano.ylframework.resource-encryption` 是 Windows x64 Release Player 的选装扩展，不是主包依赖，也不自动启用。它用固定 Catalog 为一个远端组交付加密 Bundle；不使用本页的远端 Catalog 更新与普通构建入口。构建需产出配套 Player 和密文；应用先开启加密会话，再开放 Addressables 与 YL 消费者，退出时先归还业务及官方句柄。启用、换版或停用时都须重新构建配套内容，且不在旧密文 URL 发布明文。
+`com.kano.ylframework.resource-encryption` 是 Windows x64 Release Player 的选装扩展，不是主包依赖，也不自动启用。一个 Catalog 可以同时包含 `Embedded`、`RemoteHttps` 和普通组。用扩展的构建入口交付完整目录；只分发 `Player/`，按清单上传 `Upload/` 中的文件，并保存初始版本 A 的官方内容状态和加密描述。不要把构建成功当成上传成功。
+
+启动加密会话后再开放 Addressables 与 YL 消费者。纯随包或混合布局可用本地密钥离线读取随包章节；混合布局用 `PrepareRemoteAsync` 显式准备远端，之前保护远端项只报告保守下载量。退出前先归还业务及官方句柄。当前扩展固定本次会话选定的版本，不接管内容升级或回滚。v1 加密包不能直接读取；停用时恢复官方 Provider 和路径，重新构建，勿在旧密文 URL 发布明文。
 
 先按[安装指南](../../Installation.md#选装远端资源加密)安装，需要组配置、密钥、示例和支持范围时打开扩展自带的 `Documentation~/README.md`，或阅读源码仓库当前的[远端资源加密手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.resource-encryption/Documentation~/README.md)。
 

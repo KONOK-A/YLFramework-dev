@@ -366,9 +366,12 @@ $heldClient.Timeout = [TimeSpan]::FromSeconds(8)
 try {
     Check ($null -ne $heldServer.GetType().GetMethod('HoldNextProtectedTransfer')) 'The frozen fixture cannot hold a protected GET in flight.'
     $heldDirectory = Join-Path $sandbox 'HeldGet'; $null = [IO.Directory]::CreateDirectory($heldDirectory)
-    $heldServer.SetRoutes($content, $content, [string[]]@('bundle.bundle'), [string[]]@())
+    $cipherRoot = Join-Path $sandbox 'CipherRoutes'; $group = '8b68c841d42f4930aee0c370546e862f'
+    $null = [IO.Directory]::CreateDirectory((Join-Path $cipherRoot $group))
+    [IO.File]::Copy((Join-Path $content 'bundle.bundle'), (Join-Path $cipherRoot "$group/bundle.bundle"))
+    $heldServer.SetRoutes($cipherRoot, $content, [string[]]@("$group/bundle.bundle"), [string[]]@())
     $heldServer.HoldNextProtectedTransfer($heldDirectory)
-    $heldGet = $heldClient.GetStringAsync($heldServer.Prefix + 'r/bundle.bundle')
+    $heldGet = $heldClient.GetStringAsync($heldServer.Prefix + "r/Delivery/$group/bundle.bundle")
     $clock = [Diagnostics.Stopwatch]::StartNew()
     while (-not [IO.File]::Exists((Join-Path $heldDirectory 'in-flight')) -and $clock.Elapsed.TotalSeconds -lt 3) {
         Start-Sleep -Milliseconds 10

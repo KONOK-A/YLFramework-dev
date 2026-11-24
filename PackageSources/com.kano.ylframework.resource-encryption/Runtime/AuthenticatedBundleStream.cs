@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -18,6 +19,14 @@ namespace YLFramework.Resource.Encryption
         private IntPtr _reader;
         private long _position;
         internal long PreAuthenticationCipherBytes
+        {
+            get; private set;
+        }
+        internal double CipherShaMs
+        {
+            get; private set;
+        }
+        internal double AuthenticationMs
         {
             get; private set;
         }
@@ -53,13 +62,16 @@ namespace YLFramework.Resource.Encryption
 
         // Takes ownership of the exact handle used for both hashes, including on failure.
         internal static AuthenticatedBundleStream OpenVerified(FileStream cipher, EncryptedBundleRecord record,
-            IEncryptedBundleKeySource keys, CancellationToken cancellationToken, Action<long> onCipherVerified = null)
+            IEncryptedBundleKeySource keys, CancellationToken cancellationToken, Action<long> onCipherVerified = null,
+            CancellationToken? sharedCipherValidation = null)
         {
             EncryptedBundleKeyLease key = null;
             AuthenticatedBundleStream result = null;
             try
             {
-                long checkedBytes = ValidateCipher(cipher, record, cancellationToken);
+                long started = Stopwatch.GetTimestamp();
+                long checkedBytes = ValidateCipher(cipher, record, sharedCipherValidation ?? cancellationToken);
+                double cipherShaMs = ElapsedMs(started);
                 onCipherVerified?.Invoke(checkedBytes);
                 cancellationToken.ThrowIfCancellationRequested();
                 key = EncryptedBundleKeyLease.Rent(keys, record.Binding.KeyId);
@@ -67,12 +79,15 @@ namespace YLFramework.Resource.Encryption
                 {
                     throw new EncryptedBundleKeyUnavailableException(record.Binding.KeyId);
                 }
+                started = Stopwatch.GetTimestamp();
                 result = new AuthenticatedBundleStream(cipher, key, record.Binding);
                 if (Hash(result, cancellationToken, clearBuffer: true) != record.Binding.PlainSha256)
                 {
                     throw new EncryptedBundleAuthenticationException();
                 }
                 result.PreAuthenticationCipherBytes = result.ReadStatistics().Physical;
+                result.CipherShaMs = cipherShaMs;
+                result.AuthenticationMs = ElapsedMs(started);
                 result.Position = 0;
                 return result;
             }
@@ -126,34 +141,70 @@ namespace YLFramework.Resource.Encryption
 
         internal static string Hash(Stream input, CancellationToken token, bool clearBuffer = false) => HashCore(input, token, clearBuffer, out _);
 
+        internal static double ElapsedMs(long start) => (Stopwatch.GetTimestamp() - start) * (1000d / Stopwatch.Frequency);
+
         private static string HashCore(Stream input, CancellationToken token, bool clearBuffer, out long bytesRead)
         {
             input.Position = 0;
             bytesRead = 0;
-            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            token.ThrowIfCancellationRequested();
             var buffer = new byte[ReadLimit];
+            // Let the Windows primitive provider dispatch SHA-256, independent of Mono's managed implementation.
+            CheckSha(BCryptOpenAlgorithmProvider(out IntPtr algorithm, "SHA256", "Microsoft Primitive Provider", 0));
             try
             {
-                while (true)
+                CheckSha(BCryptCreateHash(algorithm, out IntPtr hash, IntPtr.Zero, 0, IntPtr.Zero, 0, 0));
+                try
                 {
-                    token.ThrowIfCancellationRequested();
-                    int read = input.Read(buffer, 0, buffer.Length);
-                    if (read == 0)
+                    var pinned = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+                    try
                     {
-                        return Hex(hash.GetHashAndReset());
+                        IntPtr bytes = pinned.AddrOfPinnedObject();
+                        while (true)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            int read = input.Read(buffer, 0, buffer.Length);
+                            if (read == 0)
+                                break;
+                            CheckSha(BCryptHashData(hash, bytes, read, 0));
+                            bytesRead += read;
+                        }
+                        var digest = new byte[32];
+                        CheckSha(BCryptFinishHash(hash, digest, digest.Length, 0));
+                        return Hex(digest);
                     }
-                    hash.AppendData(buffer, 0, read);
-                    bytesRead += read;
+                    finally { pinned.Free(); }
                 }
+                finally { BCryptDestroyHash(hash); }
             }
             finally
             {
+                BCryptCloseAlgorithmProvider(algorithm, 0);
                 if (clearBuffer)
                 {
                     Array.Clear(buffer, 0, buffer.Length);
                 }
             }
         }
+
+        private static void CheckSha(int status)
+        {
+            if (status < 0)
+                throw new CryptographicException("Windows SHA-256 failed: NTSTATUS 0x" + status.ToString("X8"));
+        }
+
+        [DllImport("bcrypt.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int BCryptOpenAlgorithmProvider(out IntPtr algorithm, string id, string implementation, uint flags);
+        [DllImport("bcrypt.dll", ExactSpelling = true)]
+        private static extern int BCryptCreateHash(IntPtr algorithm, out IntPtr hash, IntPtr hashObject, uint objectSize, IntPtr secret, uint secretSize, uint flags);
+        [DllImport("bcrypt.dll", ExactSpelling = true)]
+        private static extern int BCryptHashData(IntPtr hash, IntPtr input, int byteCount, uint flags);
+        [DllImport("bcrypt.dll", ExactSpelling = true)]
+        private static extern int BCryptFinishHash(IntPtr hash, [Out] byte[] output, int byteCount, uint flags);
+        [DllImport("bcrypt.dll", ExactSpelling = true)]
+        private static extern int BCryptDestroyHash(IntPtr hash);
+        [DllImport("bcrypt.dll", ExactSpelling = true)]
+        private static extern int BCryptCloseAlgorithmProvider(IntPtr algorithm, uint flags);
 
         internal static string Hex(byte[] bytes) => BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
 

@@ -97,8 +97,11 @@ jobs:
       - name: Test Addressables Player evidence contracts, not Unity acceptance
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLResourceAddressablesPlayerNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
 
-      - name: Test frozen encryption evidence contracts, not Unity acceptance
+      - name: Test frozen inventory and paired performance contracts, not Unity acceptance
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLFrozenEncryptionNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+
+      - name: Test native stream harness inputs, not performance acceptance
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLEncryptionStreamsNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
 
       - name: Test UPM manifest and sample ownership contracts
         run: |

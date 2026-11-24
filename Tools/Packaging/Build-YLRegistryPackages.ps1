@@ -143,7 +143,7 @@ function Get-YLRegistryPayload {
                     if (-not $pe.PEHeaders.IsDll -or $pe.PEHeaders.CoffHeader.Machine -ne [Reflection.PortableExecutable.Machine]::Amd64 -or
                         $null -eq $pe.PEHeaders.PEHeader -or $pe.PEHeaders.PEHeader.Magic -ne [Reflection.PortableExecutable.PEMagic]::PE32Plus -or
                         $pe.HasMetadata -or $null -ne $pe.PEHeaders.CorHeader) { throw "Tink native DLL must be a Win64-only native PE: $id/$path" }
-                    if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ine '963ba62687c2f895649923138083b78acff7bba470ce92ba90228c27e9a46f5c') {
+                    if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ine '6968545e0378b18291998fc8fa49a7c83429d85c90d13915ad87c9d85d9cf9fa') {
                         throw "Tink native DLL byte identity differs: $id/$path"
                     }
                     if (-not $Contents.ContainsKey($path + '.meta') -or

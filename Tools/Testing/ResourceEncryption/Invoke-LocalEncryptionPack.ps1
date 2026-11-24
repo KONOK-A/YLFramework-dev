@@ -15,8 +15,10 @@ if ([IO.Path]::Exists($out) -or -not $out.StartsWith('G:\Unity\Tests\', [StringC
 $null = [IO.Directory]::CreateDirectory($out)
 $base = 'com.kano.ylframework'
 $extension = "$base.resource-encryption"
+$baseCommit = git -C ([IO.Path]::GetDirectoryName($sourceRoot)) rev-parse --verify HEAD
+if ($LASTEXITCODE -ne 0 -or $baseCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'Cannot identify the local source baseline.' }
 $receipt = [ordered]@{ purpose = 'YLResource.LocalEncryptionPack'; formalCandidate = $false; status = 'Incomplete';
-    baseCommit = 'c23dc67ebfb1b3557446648a0e518752ce9aa656'; source = $sourceRoot; artifacts = [ordered]@{}; negatives = [ordered]@{} }
+    baseCommit = $baseCommit; source = $sourceRoot; artifacts = [ordered]@{}; negatives = [ordered]@{} }
 function Hex([byte[]]$bytes) { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant() }
 function Reject([string]$name, [string]$pattern, [scriptblock]$operation) {
     try { $null = & $operation } catch {

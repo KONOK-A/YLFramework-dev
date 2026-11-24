@@ -77,14 +77,17 @@ namespace YLFramework.Testing
         {
             lock (_routes)
             {
-                foreach (var file in cipher) Add("/r/", protectedRoot, file);
+                foreach (var file in cipher) Add("/r/Delivery/", protectedRoot, file);
                 foreach (var file in plain) Add("/o/", ordinaryRoot, file);
             }
         }
 
         private void Add(string segment, string root, string relative)
         {
-            if (relative != Path.GetFileName(relative)) throw new InvalidDataException("Fixture route must name one file.");
+            var parts = relative.Split('/');
+            if (parts.Length > (segment == "/r/Delivery/" ? 2 : 1) || Array.Exists(parts,
+                part => part.Length == 0 || part == "." || part == ".." || part.IndexOfAny(new[] { '\\', ':', '%', '?', '#' }) >= 0))
+                throw new InvalidDataException("Fixture route must name one owned file.");
             string path = Path.Combine(root, relative);
             if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new IOException("Unexpected loopback source link.");
             _routes.Add(segment + relative, (path, relative));

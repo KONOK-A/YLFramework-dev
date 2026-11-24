@@ -99,7 +99,7 @@ Workspace/
 
 普通 Addressables 项目只装主包，不需要加密扩展、加密程序集或原生 DLL。有明确的远端 Bundle 加密需求时，先提供同一批次的主包，再在 Package Manager 选择 `PackageSources/com.kano.ylframework.resource-encryption/package.json`。使用已取得的本地 `.tgz` 时，从同一批次依次安装主包和扩展包，两者均用 `Add package from tarball...`。
 
-安装不会启用加密。要使用它，须显式配置远端组、构建配套 Player 和密文内容，并在应用启动时注入密钥。先读[加密与普通交付的区别](Modules/Resource/Delivery.md#可选的远端-bundle-加密)，详细步骤见加密包所带的 `Documentation~/README.md`。
+安装不会启用加密。要使用它，须显式配置随包或 HTTPS 加密组，构建配套 Player 和密文内容，并在应用启动时提供密钥。先读[加密与普通交付的区别](Modules/Resource/Delivery.md#可选的-bundle-加密)，详细步骤见加密包所带的 `Documentation~/README.md`。
 
 ## Git 接入
 

@@ -6,7 +6,7 @@ YL Resource 以官方 Addressables 为唯一资源内核。官方负责定位、
 
 Runtime namespace 为 `YLFramework.Resource`，Editor 为 `YLFramework.Editor.Resource`，属于主包。主包正式依赖 Addressables；安装包、构造配置、读取 `ResourceSystem.Current` 或打开工作台都不会初始化资源。操作及 Unity 对象访问在主线程，不把 `Task.Run` 当加载入口。
 
-先按[作者指南](Resource/Authoring.md#第一次配置)配置官方 Settings 与 Entries。需要 Windows x64 固定 Catalog 的加密 Bundle 时，[另选加密交付](Resource/Delivery.md#可选的远端-bundle-加密)，不改变普通资源的安装要求。
+先按[作者指南](Resource/Authoring.md#第一次配置)配置官方 Settings 与 Entries。需要 Windows x64 加密 Bundle 时，[另选加密交付](Resource/Delivery.md#可选的-bundle-加密)，不改变普通资源的安装要求。
 
 ## 最小接入
 
