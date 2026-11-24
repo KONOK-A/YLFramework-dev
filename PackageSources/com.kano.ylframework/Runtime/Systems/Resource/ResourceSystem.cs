@@ -10,6 +10,7 @@ using UnityEngine.AddressableAssets;
 using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.ResourceManagement;
 using UnityEngine.ResourceManagement.AsyncOperations;
+using UnityEngine.ResourceManagement.Exceptions;
 using UnityEngine.ResourceManagement.ResourceLocations;
 using YLFramework.Events;
 using YLFramework.Singletons;
@@ -130,10 +131,13 @@ namespace YLFramework.Resource
         private static void InitializeEditorThread() => _mainThreadId = Thread.CurrentThread.ManagedThreadId;
 #endif
 
+        partial void StartEventSession();
+
         private ResourceSystem(ResourceConfiguration configuration, ResourceStartup startup)
         {
             Configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _startup = startup;
+            StartEventSession();
             _update = UpdateManager.AddUpdateEvent(Tick);
         }
 
@@ -233,21 +237,26 @@ namespace YLFramework.Resource
             where T : UnityEngine.Object => AcquireAssetAsync<T>(key, cancellation);
 
         internal ResourceRequest<AssetLease<T>> AcquireAssetAsync<T>(string key, CancellationToken cancellation,
-            ResourceScope scope = null) where T : UnityEngine.Object
+            ResourceScope scope = null, ResourceEventTrace trace = default) where T : UnityEngine.Object
         {
             CheckThread();
-            var request = new ResourceRequest<AssetLease<T>>(lease => lease.Dispose());
+            if (scope == null)
+            {
+                trace = BeginEvent(ResourceEventSource.Acquire, key);
+                trace = trace.WithLoad(trace.Id);
+            }
+            var request = new ResourceRequest<AssetLease<T>>(lease => lease.Dispose()) { EventTrace = trace };
             if (!IsAvailable)
                 return Fail(request, AdmissionError());
-            Track(request, key, operation: nameof(AcquireAsync));
             if (string.IsNullOrWhiteSpace(key))
                 return Fail(request, new ResourceException(ResourceError.InvalidAddress, "An exact Addressables key is required."));
+            Track(request, key, operation: nameof(AcquireAsync));
             _businessStarted = true;
             BindCancellation(request, cancellation);
             if (!request.IsDone)
             {
                 scope?.BeginAssetWork();
-                Run(AcquireRoutine(key, request, scope), error => Fail(request, error));
+                Run(AcquireRoutine(key, request, scope), error => Fail(request, scope == null ? error : ScopedAssetError(error)));
             }
             return request;
         }
@@ -267,19 +276,27 @@ namespace YLFramework.Resource
             {
                 if (request.IsDone)
                     yield break;
+                var work = request.EventTrace.StartWork(ResourceEventPhase.Locate);
                 var handle = Addressables.LoadResourceLocationsAsync(key, typeof(T));
                 owner = AddressablesHandleOwner<IList<IResourceLocation>>.TakeOwnership(Addressables.ResourceManager, handle);
+                owner.WorkTrace = work;
                 while (!handle.IsDone && !request.IsDone)
                     yield return null;
                 if (request.IsDone)
                     yield break;
+                owner.ObserveWork(false);
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                     throw handle.OperationException ?? new InvalidOperationException("Location resolution failed: " + key);
                 var locations = handle.Result;
                 if (!HasOneDistinctLocation(locations))
                 {
                     if (locations == null || locations.Count == 0)
-                        throw new ResourceException(ResourceError.AddressNotFound, "An asset key must resolve to exactly one location: " + key);
+                    {
+                        var missing = new ResourceException(ResourceError.AddressNotFound, "An asset key must resolve to exactly one location: " + key);
+                        if (scope != null)
+                            throw new ScopedAssetContentFailure(missing);
+                        throw missing;
+                    }
                     throw CreateAmbiguousAssetError(key, typeof(T), locations);
                 }
                 yield return AcquireLocationRoutine(locations[0], key, request, scope);
@@ -288,7 +305,7 @@ namespace YLFramework.Resource
             {
                 try
                 {
-                    DisposeOwner(owner, request.DiagnosticIdentity, scope);
+                    DisposeOwner(owner, request.DiagnosticIdentity, scope, request.Status == ResourceRequestStatus.Canceled || request.Status == ResourceRequestStatus.Invalidated);
                 }
                 finally
                 {
@@ -360,8 +377,14 @@ namespace YLFramework.Resource
         private IEnumerator AcquireLocationRoutine<T>(IResourceLocation location, string key, ResourceRequest<AssetLease<T>> request,
             ResourceScope scope = null) where T : UnityEngine.Object
         {
-            var handle = Addressables.ResourceManager.ProvideResource<T>(location);
-            var owner = AddressablesHandleOwner<T>.TakeOwnership(Addressables.ResourceManager, handle);
+            var manager = Addressables.ResourceManager;
+            // Official typed ProvideResource can turn an unmatched provider into a failed operation with a null provider.
+            if (scope != null && manager.GetResourceProvider(typeof(T), location) == null)
+                throw new UnknownResourceProviderException(location);
+            var work = request.EventTrace.StartWork(ResourceEventPhase.Provide);
+            var handle = manager.ProvideResource<T>(location);
+            var owner = AddressablesHandleOwner<T>.TakeOwnership(manager, handle);
+            owner.WorkTrace = work;
             try
             {
                 request.SetProgressReader(() => handle.IsValid() ? handle.PercentComplete : 0);
@@ -369,9 +392,10 @@ namespace YLFramework.Resource
                     yield return null;
                 if (request.IsDone)
                     yield break;
+                owner.ObserveWork(false);
                 RequireAvailable();
                 if (handle.Status != AsyncOperationStatus.Succeeded)
-                    throw handle.OperationException ?? new InvalidOperationException("Asset loading failed: " + key);
+                    throw AssetProviderError(scope, location, handle.OperationException, key);
                 if (!handle.Result)
                     throw new ResourceException(ResourceError.LoadFailed, "The loaded Unity object is missing: " + key);
                 var lease = new AssetLease<T>(this, key, owner, location);
@@ -381,8 +405,51 @@ namespace YLFramework.Resource
             }
             finally
             {
-                DisposeOwner(owner, request.DiagnosticIdentity, scope);
+                DisposeOwner(owner, request.DiagnosticIdentity, scope, request.Status == ResourceRequestStatus.Canceled || request.Status == ResourceRequestStatus.Invalidated);
             }
+        }
+
+        private static Exception AssetProviderError(ResourceScope scope, IResourceLocation location, Exception cause, string key)
+        {
+            if (scope == null || cause == null || !IsProviderContentFailure(cause))
+                return cause ?? new InvalidOperationException("Asset loading failed: " + key);
+            var provider = new ProviderException(cause.Message, location, cause);
+            var original = cause as ResourceException;
+            return new ScopedAssetContentFailure(new ResourceException(original?.Kind ?? ResourceError.LoadFailed,
+                cause.Message, provider, original?.Address, original?.SourceId));
+        }
+
+        private static bool IsProviderContentFailure(Exception error)
+        {
+            if (error is OperationCanceledException or UnknownResourceProviderException ||
+                error is ResourceException resource &&
+                resource.Kind is not (ResourceError.AddressNotFound or ResourceError.TypeMismatch or ResourceError.LoadFailed))
+                return false;
+            // Addressables reports dependency failures as inner causes. Keep the official chain intact.
+            if (error is AggregateException aggregate)
+                return aggregate.InnerExceptions.Count != 0 && aggregate.InnerExceptions.All(IsProviderContentFailure);
+            return error.InnerException == null || IsProviderContentFailure(error.InnerException);
+        }
+
+        private static ResourceException ScopedAssetError(Exception error)
+        {
+            if (error is ScopedAssetContentFailure content)
+                return content.Error;
+            var failure = Wrap(error);
+            if (failure.InnerException is ProviderException ||
+                (failure.Kind == ResourceError.AddressNotFound && failure.InnerException == null))
+                return new ResourceException(failure.Kind, failure.Message, failure, failure.Address, failure.SourceId);
+            return failure;
+        }
+
+        // This never leaves the load routine. It survives unwinding the handles before notifying the request.
+        private sealed class ScopedAssetContentFailure : Exception
+        {
+            internal ResourceException Error
+            {
+                get;
+            }
+            internal ScopedAssetContentFailure(ResourceException error) : base(error.Message, error) => Error = error;
         }
 
         /// <summary>只从 YL 已持有的就绪引用增持；不会阻塞、加载或查询官方私有缓存。</summary>
@@ -447,6 +514,9 @@ namespace YLFramework.Resource
             if (!_requests.Add(request))
                 return request;
             request.DiagnosticId = ++_nextRequestId;
+#if UNITY_EDITOR
+            request.EventTrace.DiagnosticId = request.DiagnosticId;
+#endif
             request.DiagnosticIdentity = (operation, key, owner);
             request.OwnershipEnded += () => _requests.Remove(request);
             return request;
@@ -605,10 +675,11 @@ namespace YLFramework.Resource
         }
 
         private void DisposeOwner<T>(AddressablesHandleOwner<T> owner,
-            (string Operation, string Key, string Owner) identity = default, ResourceScope scope = null)
+            (string Operation, string Key, string Owner) identity = default, ResourceScope scope = null, bool late = false)
         {
             if (owner == null)
                 return;
+            owner.SetLate(late);
             try
             {
                 owner.Dispose();
@@ -617,11 +688,18 @@ namespace YLFramework.Resource
             {
                 // 请求可能已失效，不能依赖其失败回调替服务保留释放错误。
                 RecordCleanupError(error);
-                throw;
+                if (scope == null)
+                    throw;
+                scope.RecordAssetCleanupError(error);
+                return;
             }
             if (!owner.IsDraining)
                 return;
-            owner.DrainReleaseFailed = RecordCleanupError;
+            owner.DrainReleaseFailed = error =>
+            {
+                scope?.RecordAssetCleanupError(error);
+                RecordCleanupError(error);
+            };
             // Resolve/provide 工作退出前，把尚未归还的同一份引用计入来源 Scope 的排空。
             scope?.BeginAssetWork();
             _drains.Add((() =>

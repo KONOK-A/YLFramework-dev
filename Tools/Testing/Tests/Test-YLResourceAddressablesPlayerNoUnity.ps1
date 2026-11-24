@@ -47,7 +47,7 @@ $report = @{
     isEditor = $false; isBatchMode = $true; platform = 'WindowsPlayer'; round = 1; pid = $process.pid
     runtimeAssembly = 'YLFramework.Runtime'; probeAssembly = 'YLFramework.ResourceAddressables.Acceptance'
     loadedAssemblies = @('YLFramework.Runtime', 'YLFramework.ResourceAddressables.Acceptance', 'Unity.Addressables', 'Unity.ResourceManager')
-    checks = @('ScopeReadOnce', 'IndependentLease', 'StopBusy', 'FreshVsRent', 'AdditiveSceneClosed', 'OfficialCache', 'FinalOwnershipZero')
+    checks = @('ScopeReadOnce', 'ScopedFinalReleaseFailure', 'ProviderProgressReentrantCancel', 'IndependentLease', 'StopBusy', 'FreshVsRent', 'AdditiveSceneClosed', 'OfficialCache', 'FinalOwnershipZero')
     cachePath = (Join-Path $sandbox 'Cache'); cacheBefore = $false; cacheAfter = $true
     cachedBundleName = 'fixture_bundle'; cachedBundleHash = ('c' * 32); downloadBytesBefore = 123; downloadBytesAfter = 0
     leaseCount = 0; scopeCount = 0; requestCount = 0; pendingWorkCount = 0; drainingHandleCount = 0; cleanupErrors = @()
@@ -117,6 +117,8 @@ foreach ($change in @(
     { param($r) $r['packedSprite'] = $null },
     { param($r) $r.checks = @($r.checks | Where-Object { $_ -cne 'PackedSpriteTypedOwnership' }) },
     { param($r) $r.checks = @($r.checks | Where-Object { $_ -cne 'PackedSpriteBroadAmbiguity' }) },
+    { param($r) $r.checks = @($r.checks | Where-Object { $_ -cne 'ScopedFinalReleaseFailure' }) },
+    { param($r) $r.checks = @($r.checks | Where-Object { $_ -cne 'ProviderProgressReentrantCancel' }) },
     { param($r) $r.checks = @($r.checks | Where-Object { $_ -cne 'OfficialCache' }) },
     { param($r) $r.packedSprite.guid = 'a' * 32 },
     { param($r) $r.packedSprite.texture.assetType = 'UnityEngine.Sprite' },

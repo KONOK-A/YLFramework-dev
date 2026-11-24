@@ -85,6 +85,10 @@ namespace YLFramework.Resource
         public ResourceRequest<AssetLease<Texture2D>> AcquireImageAsync(string location, CancellationToken cancellation = default)
         {
             CheckThread();
+            var request = new ResourceRequest<AssetLease<Texture2D>>(lease => lease.Dispose())
+            {
+                EventTrace = BeginEvent(ResourceEventSource.Image, location)
+            };
             try
             {
                 RequireAvailable();
@@ -92,7 +96,7 @@ namespace YLFramework.Resource
                 var resourceLocation = AddressablesImageProvider.CreateLocation(location, _imageContext);
                 TrimImageCache();
                 _businessStarted = true;
-                var request = Track(new ResourceRequest<AssetLease<Texture2D>>(lease => lease.Dispose()), resourceLocation.PrimaryKey);
+                Track(request, resourceLocation.PrimaryKey);
                 BindCancellation(request, cancellation);
                 if (!request.IsDone)
                 {
@@ -102,16 +106,16 @@ namespace YLFramework.Resource
             }
             catch (ResourceException error)
             {
-                return Failure<AssetLease<Texture2D>>(error);
+                return Fail(request, error);
             }
             catch (NotSupportedException error)
             {
-                return Failure<AssetLease<Texture2D>>(new ResourceException(ResourceError.Unsupported,
+                return Fail(request, new ResourceException(ResourceError.Unsupported,
                     "This platform does not support the requested dynamic image input.", error));
             }
             catch (ArgumentException error)
             {
-                return Failure<AssetLease<Texture2D>>(new ResourceException(ResourceError.InvalidAddress,
+                return Fail(request, new ResourceException(ResourceError.InvalidAddress,
                     "Invalid dynamic image location.", error));
             }
         }

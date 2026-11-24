@@ -23,6 +23,12 @@ namespace YLFramework.Resource
         private readonly List<ResourceRequest<bool>> _unloadWaiters = new();
         private readonly List<(Scene Scene, int Frame)> _earlyUnloadEvents = new();
         private ResourceRequest<SceneLease> _loadRequest;
+        private readonly ResourceEventTrace _trace;
+        private ResourceEventTrace _locateWork;
+        private ResourceEventTrace _loadWork;
+        private ResourceEventTrace _unloadWork;
+        private bool _loadWaitEnded;
+        private bool _loadObservedLate;
         private AsyncOperationHandle<IList<IResourceLocation>> _locations;
         private AsyncOperationHandle<SceneInstance> _loadHandle;
         private IDisposable _tick;
@@ -162,6 +168,7 @@ namespace YLFramework.Resource
         {
             System = system;
             _loadRequest = request;
+            _trace = request.EventTrace;
             Key = key;
             Mode = mode;
             LoadSequence = sequence;
@@ -179,11 +186,13 @@ namespace YLFramework.Resource
             _tick = System.AddTick(Pump);
             try
             {
+                _locateWork = _trace.StartWork(ResourceEventPhase.SceneLocate);
                 _locations = Addressables.LoadResourceLocationsAsync(Key, typeof(SceneInstance));
                 _ownsLocations = true;
             }
             catch (Exception error)
             {
+                _locateWork.Record(ResourceEventKind.Work, ResourceRequestStatus.Failed, ResourceError.LoadFailed, _loadWaitEnded);
                 BeginClose();
                 FailLoad(Error(ResourceError.LoadFailed, "Scene location lookup could not start.", error));
                 Settle();
@@ -195,17 +204,20 @@ namespace YLFramework.Resource
         public ResourceRequest<bool> ActivateAsync()
         {
             System.CheckThread();
+            var request = new ResourceRequest<bool> { EventTrace = System.BeginEvent(ResourceEventSource.SceneActivate, Key, Scope?.OwnerLabel).WithLoad(_trace.LoadId) };
             if (IsDisposed)
-                return ResourceSystem.Failure<bool>(new ObjectDisposedException(nameof(SceneLease)));
+                return ResourceSystem.Fail(request, new ObjectDisposedException(nameof(SceneLease)));
             if (!System.IsSessionActive)
-                return ResourceSystem.Failure<bool>(Error(ResourceError.SessionUnavailable, "The scene session ended."));
+                return ResourceSystem.Fail(request, Error(ResourceError.SessionUnavailable, "The scene session ended."));
             if (_unloadedFrame >= 0)
-                return ResourceSystem.Failure<bool>(Error(ResourceError.SceneUnloaded, "The scene has been unloaded."));
+                return ResourceSystem.Fail(request, Error(ResourceError.SceneUnloaded, "The scene has been unloaded."));
             if (_activated)
-                return ResourceSystem.Success(true);
+            {
+                request.SetSuccess(true);
+                return request;
+            }
             _roundFailed = false;
             LastError = null;
-            var request = new ResourceRequest<bool>();
             _activationWaiters.Add(request);
             request.Attach(() => _activationWaiters.Remove(request), () => _activation?.progress ?? 0);
             _activationRequested = true;
@@ -246,6 +258,7 @@ namespace YLFramework.Resource
         {
             if (IsSettled || _closeRequested)
                 return;
+            _loadWaitEnded |= _loadRequest?.IsDone == true;
             IsDisposed = true;
             _closeRequested = true;
             _activationRequested = true;
@@ -340,10 +353,17 @@ namespace YLFramework.Resource
         private void ResolveAndStart()
         {
             var locations = _locations;
+            var locateObservedLate = _loadWaitEnded;
             _locations = default;
             _ownsLocations = false;
             try
             {
+                if (_locateWork.Id != 0)
+                {
+                    var succeeded = locations.Status == AsyncOperationStatus.Succeeded;
+                    _locateWork.Record(ResourceEventKind.Work, succeeded ? ResourceRequestStatus.Succeeded : ResourceRequestStatus.Failed,
+                        succeeded ? (ResourceError?)null : ResourceError.LoadFailed, locateObservedLate);
+                }
                 if (_closeRequested)
                 {
                     return;
@@ -374,6 +394,7 @@ namespace YLFramework.Resource
                 // Register native intent before entering provider/Unity code, including synchronous callbacks.
                 _nativeStarted = true;
                 _activationDeadline = Time.realtimeSinceStartup + _activationTimeoutSeconds;
+                _loadWork = _trace.StartWork(ResourceEventPhase.SceneLoad);
                 _loadHandle = System.ProvideResourceScene(location, Mode, _activateOnLoad, _priority);
                 if (!_loadHandle.IsValid())
                     throw new InvalidOperationException("SceneProvider returned an invalid scene load handle.");
@@ -381,12 +402,14 @@ namespace YLFramework.Resource
             }
             catch (Exception error)
             {
+                if (_nativeStarted)
+                    _loadWork.Record(ResourceEventKind.Work, ResourceRequestStatus.Failed, ResourceError.LoadFailed, _loadWaitEnded);
                 BeginClose();
                 FailLoad(error as ResourceException ?? Error(ResourceError.LoadFailed, "Scene loading could not start.", error));
             }
             finally
             {
-                Addressables.ResourceManager.Release(locations);
+                ReleaseSceneHandle(locations, _locateWork, locateObservedLate);
                 if (!_ownsLoadHandle)
                     Settle();
             }
@@ -407,7 +430,11 @@ namespace YLFramework.Resource
             }
             _earlyUnloadEvents.Clear();
 
-            if (_loadHandle.Status != AsyncOperationStatus.Succeeded)
+            _loadObservedLate = _loadWaitEnded;
+            var succeeded = _loadHandle.Status == AsyncOperationStatus.Succeeded;
+            _loadWork.Record(ResourceEventKind.Work, succeeded ? ResourceRequestStatus.Succeeded : ResourceRequestStatus.Failed,
+                succeeded ? (ResourceError?)null : ResourceError.LoadFailed, _loadObservedLate);
+            if (!succeeded)
             {
                 BeginClose();
                 FailLoad(Error(ResourceError.LoadFailed, "Scene loading failed.", _loadHandle.OperationException));
@@ -450,14 +477,15 @@ namespace YLFramework.Resource
                 _activationStarted = true;
                 try
                 {
-                    _activation = _loadHandle.Result.ActivateAsync();
+                    var instance = _loadHandle.Result;
+                    _activation = System.SceneActivator == null ? instance.ActivateAsync() : System.SceneActivator(instance);
                     if (_activation == null)
                         throw new InvalidOperationException("Scene activation returned no native operation.");
                 }
                 catch (Exception error)
                 {
                     _activationStarted = false;
-                    FailRound(Error(ResourceError.LoadFailed, "Scene activation failed; ownership is retained.", error));
+                    FailActivation(Error(ResourceError.LoadFailed, "Scene activation failed; ownership is retained.", error));
                     return;
                 }
             }
@@ -465,11 +493,27 @@ namespace YLFramework.Resource
                 return;
             if (!_scene.IsValid() || !_scene.isLoaded)
             {
-                FailRound(Error(ResourceError.SceneUnloaded, "Native activation ended without a loaded scene; ownership is retained until its unload event."));
+                if (_scene.IsValid())
+                {
+                    // A completed operation cannot activate the still-valid deferred scene on retry.
+                    _activation = null;
+                    _activationStarted = false;
+                }
+                FailActivation(Error(ResourceError.SceneUnloaded, "Native activation ended without a loaded scene; ownership is retained until its unload event."));
                 return;
             }
             _activated = true;
             CompleteWaiters(_activationWaiters, null);
+        }
+
+        private void FailActivation(ResourceException error)
+        {
+            if (_closeRequested)
+            {
+                _trace.StartWork(ResourceEventPhase.SceneCleanup).Record(ResourceEventKind.Work,
+                    ResourceRequestStatus.Failed, error.Kind, _loadWaitEnded);
+            }
+            FailRound(error);
         }
 
         private void AdvanceUnload()
@@ -505,9 +549,12 @@ namespace YLFramework.Resource
             var failure = System.CheckSceneUnload(this);
             if (failure != null)
             {
+                _trace.StartWork(ResourceEventPhase.SceneCleanup).Record(ResourceEventKind.Work,
+                    ResourceRequestStatus.Failed, failure.Kind, _loadWaitEnded);
                 FailRound(failure);
                 return;
             }
+            _unloadWork = _trace.StartWork(ResourceEventPhase.SceneUnload);
             _unloadSubmitting = true;
             try
             {
@@ -545,6 +592,7 @@ namespace YLFramework.Resource
         private void FailLoad(ResourceException error, ResourceRequestStatus status = ResourceRequestStatus.Failed)
         {
             LastError = error;
+            _loadWaitEnded = true;
             var request = _loadRequest;
             _loadRequest = null;
             if (request == null || request.IsDone)
@@ -555,6 +603,11 @@ namespace YLFramework.Resource
 
         private void FailRound(ResourceException error)
         {
+            if (_unloadWork.Id != 0)
+            {
+                _unloadWork.Record(ResourceEventKind.Work, ResourceRequestStatus.Failed, error.Kind, _loadWaitEnded);
+                _unloadWork = default;
+            }
             LastError = error;
             _roundFailed = true;
             var activation = _activationWaiters.ToArray();
@@ -573,18 +626,22 @@ namespace YLFramework.Resource
         {
             if (IsSettled || _releaseFailed)
                 return;
+            _unloadWork.Record(ResourceEventKind.Work, ResourceRequestStatus.Succeeded, late: _loadWaitEnded);
+            _unloadWork = default;
+            var cleanup = _trace.StartWork(ResourceEventPhase.SceneCleanup);
             if (_ownsLoadHandle && !_releasedLoadHandle)
             {
                 _releasedLoadHandle = true;
                 try
                 {
                     // H is the initial ProvideScene reference, not an extra guard pin or an AA unload handle.
-                    Addressables.ResourceManager.Release(_loadHandle);
+                    ReleaseSceneHandle(_loadHandle, _loadWork, _loadObservedLate);
                     _ownsLoadHandle = false;
                     _loadHandle = default;
                 }
                 catch (Exception error)
                 {
+                    cleanup.Record(ResourceEventKind.Work, ResourceRequestStatus.Failed, ResourceError.LoadFailed, _loadWaitEnded);
                     _releaseFailed = true;
                     FailRound(Error(ResourceError.LoadFailed, "Returning the scene load handle failed; its owner is retained for diagnosis.", error));
                     return;
@@ -597,8 +654,23 @@ namespace YLFramework.Resource
             _tick = null;
             _earlyUnloadEvents.Clear();
             System.ForgetResourceScene(this);
+            cleanup.Record(ResourceEventKind.Work, ResourceRequestStatus.Succeeded, late: _loadWaitEnded);
             CompleteWaiters(_activationWaiters, Error(ResourceError.SceneUnloaded, "The scene ended before activation could be observed."));
             CompleteWaiters(_unloadWaiters, null);
+        }
+
+        private static void ReleaseSceneHandle(AsyncOperationHandle handle, ResourceEventTrace work, bool observedLate)
+        {
+            try
+            {
+                Addressables.ResourceManager.Release(handle);
+            }
+            catch
+            {
+                work.Record(ResourceEventKind.Release, ResourceRequestStatus.Failed, ResourceError.LoadFailed, observedLate);
+                throw;
+            }
+            work.Record(ResourceEventKind.Release, ResourceRequestStatus.Succeeded, late: observedLate);
         }
 
         private static void CompleteWaiters(List<ResourceRequest<bool>> waiters, ResourceException error)

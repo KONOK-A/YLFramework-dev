@@ -355,6 +355,7 @@
         "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceRequestAwaitTests.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Resource/AddressablesHandleOwnerTests.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.History.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceCostCounterTests.cs",
         "Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceAddressablesBuildTests.cs",
         "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesUpdateTests.cs"

@@ -24,12 +24,23 @@ namespace YLFramework.Editor.Resource
         private IReadOnlyList<ResourceDiagnosticsReport> _history;
         private bool _showHistory;
 
+        private long _displayRevision = -1;
+        internal string[] DisplayedEvents { get; private set; } = Array.Empty<string>();
+
+        [MenuItem("YLFramework/Resource/Record Next Play")]
+        internal static void ArmNextPlay() => SessionState.SetBool(ResourceEventHistory.NextPlayFlag, true);
+
+        [MenuItem("YLFramework/Resource/Record Next Play", true)]
+        private static bool CanArmNextPlay() => !EditorApplication.isPlayingOrWillChangePlaymode;
+
         [MenuItem("YLFramework/Resource/Workbench %#r")]
         public static void OpenWorkbench()
         {
             var window = GetWindow<ResourceWorkbenchWindow>("YL Addressables");
             window.minSize = new Vector2(540, 360);
             window.settings = Selection.activeObject as AddressableAssetSettings ?? AddressableAssetSettingsDefaultObject.GetSettings(false);
+            if (EditorApplication.isPlaying && (ResourceEventHistory.IsRecording || ResourceEventHistory.Count > 0))
+                window._selectedTab = 1;
             window.Show();
         }
 
@@ -104,11 +115,51 @@ namespace YLFramework.Editor.Resource
             }
         }
 
+        private void OnInspectorUpdate()
+        {
+            if (_selectedTab == 1 && _displayRevision != ResourceEventHistory.Revision)
+                Repaint();
+        }
+
+        private void DrawEvents()
+        {
+            GUILayout.Label("请求事件 / Request Events", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField($"最近 {ResourceEventHistory.Count} 条，已淘汰 {ResourceEventHistory.Dropped} 条。资产定位与提供、官方交付、场景句柄显示工作结果；批次子项、实例创建与租用、图片排队与缓存等子操作仅显示请求终态。", EditorStyles.wordWrappedLabel);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(!EditorApplication.isPlaying ||
+                    (!ResourceEventHistory.IsRecording && ResourceSystem.Current == null)))
+                {
+                    if (GUILayout.Button(ResourceEventHistory.IsRecording ? "停止录制" : "开始录制"))
+                        ResourceEventHistory.SetRecording(!ResourceEventHistory.IsRecording);
+                }
+                if (GUILayout.Button("清空事件"))
+                    ResourceEventHistory.Clear();
+            }
+            if (_displayRevision != ResourceEventHistory.Revision)
+            {
+                DisplayedEvents = ResourceEventHistory.Read().Reverse().Select(FormatEvent).ToArray();
+                _displayRevision = ResourceEventHistory.Revision;
+            }
+            foreach (var line in DisplayedEvents)
+                EditorGUILayout.LabelField(line, EditorStyles.wordWrappedLabel);
+        }
+
+        private static string FormatEvent(ResourceEventRow row)
+        {
+            string Fingerprint(ulong value) => value == 0 ? "(empty)" : value.ToString("X16");
+            string diagnostic = row.DiagnosticId == 0 ? "" : $" Snapshot DiagnosticId {row.DiagnosticId}";
+            return $"#{row.Sequence} session {row.SessionId} request {row.RequestId}{diagnostic} load {row.LoadId} work {row.WorkId} | " +
+                $"{row.Source} {row.Phase} {row.Kind} {row.Role} | key {Fingerprint(row.KeyFingerprint)} owner {Fingerprint(row.OwnerFingerprint)} | " +
+                $"{row.ElapsedMilliseconds:F2} ms | {row.Status} {row.Error}{(row.Late ? " (late)" : "")}";
+        }
+
         private void DrawDiagnostics()
         {
             using var scroll = new EditorGUILayout.ScrollViewScope(_diagnosticsScroll);
             _diagnosticsScroll = scroll.scrollPosition;
-            EditorGUILayout.HelpBox("Snapshots copy YL responsibilities only. No automatic sampling, asset loading, or native reference-count estimate.", MessageType.Info);
+            DrawEvents();
+            EditorGUILayout.HelpBox("Manual snapshots may contain original keys, owners and error details. Snapshots copy YL responsibilities only. No automatic sampling, asset loading, or native reference-count estimate.", MessageType.Info);
             bool canCapture = EditorApplication.isPlaying && ResourceSystem.Current != null;
             using (new EditorGUI.DisabledScope(!canCapture))
             {

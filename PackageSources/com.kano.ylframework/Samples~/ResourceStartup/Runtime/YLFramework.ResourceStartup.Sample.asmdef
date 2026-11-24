@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.ResourceStartup.Sample",
     "rootNamespace": "YLFramework.Samples.Resource",
-    "references": ["YLFramework.Runtime", "Unity.Addressables", "UnityEngine.UI"],
+    "references": ["YLFramework.Runtime", "Unity.Addressables", "Unity.ResourceManager", "UnityEngine.UI"],
     "overrideReferences": true,
     "precompiledReferences": [],
     "autoReferenced": true

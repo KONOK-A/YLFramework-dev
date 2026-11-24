@@ -18,10 +18,13 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.AddressableAssets.ResourceLocators;
+using UnityEngine.ResourceManagement;
+using UnityEngine.ResourceManagement.Exceptions;
 using UnityEngine.ResourceManagement.ResourceLocations;
 using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
+using UnityEngine.UI;
 using YLFramework.Core;
 using YLFramework.Editor.Resource;
 using YLFramework.Resource;
@@ -359,7 +362,8 @@ namespace YLFramework.Tests.ResourceBuild
             Assert.That(example.Result, Does.StartWith("Running: "));
             _lastSystem = example.Startup.Resources;
             Assert.That(_lastSystem, Is.SameAs(ResourceSystem.Current));
-            CollectionAssert.AreEquivalent(new[] { "Core.ApplicationScenes", "ResourceStartupExample/" + example.GetInstanceID() },
+            var label = "ResourceStartupExample/" + example.GetInstanceID();
+            CollectionAssert.AreEquivalent(new[] { "Core.ApplicationScenes", label, label + "/preview" },
                 _lastSystem.GetDiagnostics().Scopes.Select(scope => scope.Owner));
             Assert.That(_lastSystem.GetDiagnostics().LeaseCount, Is.GreaterThan(0));
             Assert.That(example.Startup.AudioProviders.Keys, Is.EquivalentTo(new[] { project }));
@@ -475,6 +479,7 @@ namespace YLFramework.Tests.ResourceBuild
             Assert.That(result, Does.Contain("image=skipped (" + key + ": TypeMismatch)"));
             Assert.That(result, Does.Contain("RawImage requires a Texture"));
             Assert.That(result, Does.Contain("audio=ok"));
+            AssertVisiblePlaceholder(example);
             Assert.That(example.LastFailure, Is.Null);
             Assert.That(example.Result, Does.StartWith("Running: "));
             _lastSystem = example.Startup.Resources;
@@ -485,22 +490,24 @@ namespace YLFramework.Tests.ResourceBuild
         }
 
         [UnityTest]
-        public IEnumerator OptionalPreviewRetainsBothProviderCausesAfterClearingTheBinding()
+        public IEnumerator OptionalPreviewRetainsBothProviderCausesAndKeepsItsPlaceholder()
         {
             PreparePlay();
             yield return new EnterPlayMode();
-            yield return VerifyPreviewProviderError();
+            yield return VerifyPreviewProviderError(false);
+            yield return VerifyPreviewProviderError(true);
+            yield return VerifyPreviewProviderError(false, true);
             yield return new ExitPlayMode();
         }
 
-        private static IEnumerator VerifyPreviewProviderError()
+        private static IEnumerator VerifyPreviewProviderError(bool aggregated, bool typeMismatch = false)
         {
             var example = Example();
             var key = Guid.NewGuid().ToString("N");
             example.preview = new AssetReferenceT<Texture2D>(key);
             var initialized = Addressables.InitializeAsync(false);
             yield return initialized;
-            var provider = new FailingPreviewProvider();
+            var provider = new FailingPreviewProvider { Aggregated = aggregated, TypeMismatch = typeMismatch };
             var locator = new ResourceLocationMap(key);
             locator.Add(key, new ResourceLocationBase(key, key, provider.ProviderId, typeof(Texture2D)));
             Addressables.ResourceManager.ResourceProviders.Add(provider);
@@ -511,8 +518,14 @@ namespace YLFramework.Tests.ResourceBuild
                 var run = example.StartExampleAsync();
                 yield return Wait(() => run.IsCompleted, "optional preview provider failure");
                 var result = run.GetAwaiter().GetResult();
-                Assert.That(result, Does.Contain("image=skipped (" + key + ": LoadFailed)").And.Contain("audio=ok"));
-                Assert.That(result, Does.Contain("sample-preview-provider").And.Contain("sample-preview-restore"));
+                var expectedKind = typeMismatch ? ResourceError.TypeMismatch : ResourceError.LoadFailed;
+                Assert.That(result, Does.Contain($"image=skipped ({key}: {expectedKind})").And.Contain("audio=ok"));
+                Assert.That(result, Does.Contain("sample-preview-provider"));
+                if (aggregated)
+                {
+                    Assert.That(result, Does.Contain("sample-preview-decode").And.Contain("sample-preview-read"));
+                }
+                AssertVisiblePlaceholder(example);
                 Assert.That(example.LastFailure, Is.Null);
                 _lastSystem = example.Startup.Resources;
                 var stop = example.StopExampleAsync();
@@ -528,12 +541,653 @@ namespace YLFramework.Tests.ResourceBuild
             }
         }
 
+        private static void AssertVisiblePlaceholder(ResourceStartupExample example)
+        {
+            var target = example.GetComponentInChildren<RawImage>();
+            Assert.That(target && target.isActiveAndEnabled && target.canvas && target.canvas.isActiveAndEnabled, Is.True);
+            Assert.That(target.texture && target.texture == Texture2D.whiteTexture, Is.True);
+        }
+
         private sealed class FailingPreviewProvider : ResourceProviderBase
         {
-            internal readonly AggregateException Failure = new AggregateException("sample-preview-provider",
-                new InvalidOperationException("sample-preview-decode"), new IOException("sample-preview-restore"));
+            public FailingPreviewProvider() => Initialize(Guid.NewGuid().ToString("N"), null);
 
-            public override void Provide(ProvideHandle handle) => handle.Complete<Texture2D>(null, false, Failure);
+            public bool Aggregated;
+            public bool TypeMismatch;
+            private readonly AggregateException Failure = new AggregateException("sample-preview-provider",
+                new InvalidOperationException("sample-preview-decode"), new IOException("sample-preview-read"));
+
+            public override void Provide(ProvideHandle handle)
+            {
+                Exception error = new IOException("sample-preview-provider");
+                if (TypeMismatch)
+                {
+                    error = new ResourceException(ResourceError.TypeMismatch, "sample-preview-provider", error);
+                }
+                handle.Complete<Texture2D>(null, false, Aggregated ? Failure : error);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator PreviewSynchronousProviderErrorDoesNotDegrade()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            const string cause = "sample-preview-synchronous-provider";
+            var error = new ResourceException(ResourceError.LoadFailed, cause, new ProviderException(cause, null));
+            yield return VerifyRejectedPreview(ResourceError.LoadFailed, error, null);
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
+        public IEnumerator PreviewSynchronousAddressErrorDoesNotDegrade()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            var error = new ResourceException(ResourceError.AddressNotFound, "sample-preview-synchronous-address");
+            yield return VerifyRejectedPreview(ResourceError.AddressNotFound, error, null);
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
+        public IEnumerator PreviewMissingProviderDoesNotDegrade()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return VerifyRejectedPreview(ResourceError.LoadFailed, null, null);
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
+        public IEnumerator PreviewProviderCancellationDoesNotDegrade()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            var error = new OperationCanceledException("sample-preview-provider-canceled");
+            yield return VerifyRejectedPreview(ResourceError.LoadFailed, null, error);
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
+        public IEnumerator PreviewMissingDependencyProviderDoesNotDegrade()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return VerifyRejectedPreview(ResourceError.LoadFailed, null, null, failedDependency: true);
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
+        public IEnumerator PreviewDependencyProviderCancellationDoesNotDegrade()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            var error = new OperationCanceledException("sample-preview-dependency-canceled");
+            yield return VerifyRejectedPreview(ResourceError.LoadFailed, null, error, failedDependency: true);
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator VerifyRejectedPreview(ResourceError expectedKind, Exception submissionError, Exception provideError,
+            bool failedDependency = false)
+        {
+            var example = Example();
+            var key = Guid.NewGuid().ToString("N");
+            var dependencyKey = key + "-dependency";
+            example.preview = new AssetReferenceT<Texture2D>(key);
+            var initialized = Addressables.InitializeAsync(false);
+            yield return initialized;
+            var provider = submissionError != null || provideError != null ? new RejectingPreviewProvider(submissionError, provideError) : null;
+            var providerId = provider?.ProviderId ?? Guid.NewGuid().ToString("N");
+            var locator = new ResourceLocationMap(key);
+            RejectingPreviewProvider previewProvider = null;
+            if (failedDependency)
+            {
+                previewProvider = new RejectingPreviewProvider(null, null);
+                var dependency = new ResourceLocationBase(dependencyKey, dependencyKey, providerId, typeof(IAssetBundleResource));
+                locator.Add(key, new ResourceLocationBase(key, key, previewProvider.ProviderId, typeof(Texture2D), dependency));
+                Addressables.ResourceManager.ResourceProviders.Add(previewProvider);
+            }
+            else
+            {
+                locator.Add(key, new ResourceLocationBase(key, key, providerId, typeof(Texture2D)));
+            }
+            if (provider != null)
+            {
+                Addressables.ResourceManager.ResourceProviders.Add(provider);
+            }
+            Addressables.AddResourceLocator(locator);
+            var previousExceptionHandler = ResourceManager.ExceptionHandler;
+            ResourceManager.ExceptionHandler = (operation, error) =>
+            {
+                // Forward unrelated errors and consume only the official failure attached to this fixture.
+                var cause = error.GetBaseException();
+                if (operation.DebugName.IndexOf(key, StringComparison.Ordinal) < 0 &&
+                    !ReferenceEquals(cause, provideError) &&
+                    !(cause is UnknownResourceProviderException missing && missing.Location?.InternalId == dependencyKey))
+                {
+                    previousExceptionHandler?.Invoke(operation, error);
+                }
+            };
+            try
+            {
+                var run = example.StartExampleAsync();
+                var reportedRunning = false;
+                yield return Wait(() =>
+                {
+                    reportedRunning |= example.Result.StartsWith("Running:", StringComparison.Ordinal);
+                    return run.IsCompleted;
+                }, "rejected preview startup");
+                var resourceError = run.Exception?.InnerException as ResourceException;
+                var closedBeforeReturn = example.Startup.Resources == null && ResourceSystem.Current == null;
+                var stop = example.StopExampleAsync();
+                yield return Wait(() => stop.IsCompleted, "rejected preview owner shutdown");
+                stop.GetAwaiter().GetResult();
+
+                Assert.That(resourceError, Is.Not.Null, "Startup must fail when the optional preview did not have a content failure.");
+                Assert.That(resourceError.Kind, Is.EqualTo(expectedKind));
+                Assert.That(reportedRunning, Is.False);
+                Assert.That(closedBeforeReturn, Is.True);
+                if (provider != null)
+                {
+                    Assert.That(resourceError.ToString(), Does.Contain((submissionError ?? provideError).Message));
+                    Assert.That(provider.Provides, Is.EqualTo(provideError == null ? 0 : 1));
+                }
+                else
+                {
+                    Assert.That(resourceError.GetBaseException(), Is.TypeOf<UnknownResourceProviderException>());
+                }
+                if (previewProvider != null)
+                {
+                    Assert.That(previewProvider.Provides, Is.Zero, "Official dependency failure must prevent the preview Provider from running.");
+                }
+            }
+            finally
+            {
+                ResourceManager.ExceptionHandler = previousExceptionHandler;
+                Addressables.RemoveResourceLocator(locator);
+                if (provider != null)
+                {
+                    Addressables.ResourceManager.ResourceProviders.Remove(provider);
+                }
+                if (previewProvider != null)
+                {
+                    Addressables.ResourceManager.ResourceProviders.Remove(previewProvider);
+                }
+                Addressables.Release(initialized);
+            }
+        }
+
+        private sealed class RejectingPreviewProvider : ResourceProviderBase
+        {
+            private readonly Exception _submissionError;
+            private readonly Exception _provideError;
+            internal int Provides
+            {
+                get; private set;
+            }
+
+            internal RejectingPreviewProvider(Exception submissionError, Exception provideError)
+            {
+                Initialize(Guid.NewGuid().ToString("N"), null);
+                _submissionError = submissionError;
+                _provideError = provideError;
+            }
+
+            public override bool CanProvide(Type type, IResourceLocation location)
+            {
+                if (_submissionError != null)
+                {
+                    throw _submissionError;
+                }
+                return type.IsAssignableFrom(location.ResourceType);
+            }
+
+            public override Type GetDefaultType(IResourceLocation location) => location.ResourceType;
+
+            public override void Provide(ProvideHandle handle)
+            {
+                Provides++;
+                handle.Complete<Texture2D>(null, false, _provideError);
+            }
+        }
+
+        private sealed class GatedPreviewProvider : ResourceProviderBase
+        {
+            public GatedPreviewProvider() => Initialize(Guid.NewGuid().ToString("N"), null);
+
+            public ProvideHandle? Pending;
+            public int Releases;
+            public bool ThrowOnRelease;
+            public override void Provide(ProvideHandle handle) => Pending = handle;
+
+            public void Finish(Object asset)
+            {
+                var handle = Pending.Value;
+                Pending = null;
+                handle.Complete(asset, true, null);
+            }
+
+            public override void Release(IResourceLocation location, object asset)
+            {
+                Releases++;
+                if (ThrowOnRelease)
+                {
+                    throw new ProviderException("sample-final-release", location);
+                }
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator PreviewReleaseAndDirtyCallbacksKeepTheirDistinctCauses()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return RunPreviewCase("release", true);
+            yield return RunPreviewCase("release", false);
+            yield return RunPreviewCase("dirty", false);
+            yield return RunPreviewCase("replacement", false);
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
+        public IEnumerator InFlightPreviewRespectsCallerStopDestructionAndSessionInvalidation()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return RunPreviewCase("canvas", false);
+            yield return RunPreviewCase("cancel", false);
+            yield return RunPreviewCase("stop", false);
+            yield return RunPreviewCase("invalidate", false);
+            yield return RunPreviewCase("destroy", false);
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator RunPreviewCase(string mode, bool record)
+        {
+            var example = Example();
+            var key = Guid.NewGuid().ToString("N");
+            example.preview = new AssetReferenceT<Texture2D>(key);
+            example.scene = null;
+            example.audioCue = null;
+            example.audioPreloadLabel = null;
+            var init = Addressables.InitializeAsync(false);
+            yield return init;
+            var provider = new GatedPreviewProvider { ThrowOnRelease = mode == "release" };
+            var locator = new ResourceLocationMap(key);
+            locator.Add(key, new ResourceLocationBase(key, key, provider.ProviderId, mode == "release" ? typeof(TextAsset) : typeof(Texture2D)));
+            Addressables.ResourceManager.ResourceProviders.Add(provider);
+            Addressables.AddResourceLocator(locator);
+            using var cancel = new CancellationTokenSource();
+            var previousRecording = ResourceEventHistory.IsRecording;
+            Object supplied = mode == "release" ? (Object)new TextAsset("wrong type") : new Texture2D(2, 2);
+            try
+            {
+                ResourceEventHistory.SetRecording(record);
+                var run = example.StartExampleAsync(cancel.Token);
+                yield return Wait(() => provider.Pending.HasValue, "real Addressables provider started");
+                var resources = example.Startup.Resources;
+                Assert.That(ResourceEventHistory.IsRecording, Is.EqualTo(record));
+                var target = example.GetComponentInChildren<RawImage>();
+                AssertVisiblePlaceholder(example);
+                Assert.That(run.IsCompleted, Is.False);
+                var shown = 0;
+                var restored = 0;
+                var replaced = false;
+                target.RegisterDirtyVerticesCallback(() =>
+                {
+                    if (mode == "dirty")
+                    {
+                        if (target.texture == supplied && shown == 0)
+                        {
+                            shown++;
+                            throw new InvalidOperationException("sample-ui-display");
+                        }
+                        if (target.texture == null && shown != 0 && restored == 0)
+                        {
+                            restored++;
+                            throw new IOException("sample-ui-restore");
+                        }
+                    }
+                    if (replaced && target.texture != Texture2D.blackTexture)
+                    {
+                        restored++;
+                    }
+                });
+                Task stop = null;
+                if (mode == "canvas")
+                {
+                    target.canvas.enabled = false;
+                    Assert.That(example && resources.IsAvailable, Is.True);
+                }
+                if (mode == "cancel")
+                {
+                    cancel.Cancel();
+                }
+                if (mode == "stop")
+                {
+                    stop = example.StopExampleAsync();
+                }
+                if (mode == "destroy")
+                {
+                    Object.Destroy(example.gameObject);
+                    yield return Wait(() => !example, "owner destruction during the real provide");
+                }
+                if (mode == "invalidate")
+                {
+                    // Invoke the same service transition used by the editor exiting Play, while the test still owns its provider gate.
+                    typeof(ResourceSystem).GetMethod("Invalidate", System.Reflection.BindingFlags.Instance |
+                        System.Reflection.BindingFlags.NonPublic).Invoke(resources, null);
+                    Assert.That(resources.IsSessionActive, Is.False);
+                }
+                provider.Finish(supplied);
+                yield return Wait(() =>
+                {
+                    if (example && mode != "replacement")
+                    {
+                        Assert.That(example.Result, Does.Not.Contain("Running:").And.Not.Contain("image=skipped"));
+                    }
+                    return run.IsCompleted;
+                }, mode + " start outcome");
+
+                if (mode == "replacement")
+                {
+                    Assert.That(run.GetAwaiter().GetResult(), Does.Contain("image=ok"));
+                    Assert.That(target.texture, Is.SameAs(supplied));
+                    target.texture = Texture2D.blackTexture;
+                    replaced = true;
+                    stop = example.StopExampleAsync();
+                }
+                else if (mode == "release")
+                {
+                    Assert.That(run.IsFaulted, Is.True);
+                    Assert.That(run.Exception.ToString(), Does.Contain("RawImage requires a Texture").And.Contain("sample-final-release"));
+                    var rows = ResourceEventHistory.Read();
+                    if (record)
+                    {
+                        var release = rows.Single(row => row.Kind == ResourceEventKind.Release && row.Status == ResourceRequestStatus.Failed &&
+                            row.Source == ResourceEventSource.ScopeAcquire && row.Phase == ResourceEventPhase.Provide);
+                        Assert.That(release.WorkId, Is.Positive);
+                        Assert.That(release.LoadId, Is.Positive);
+                        Assert.That(rows.Count(row => row.WorkId == release.WorkId && row.Kind == ResourceEventKind.Work &&
+                            row.Status == ResourceRequestStatus.Succeeded), Is.EqualTo(1));
+                        Assert.That(rows.Count(row => row.LoadId == release.LoadId && row.KeyFingerprint == release.KeyFingerprint &&
+                            row.Source == ResourceEventSource.ScopeLoad && row.Kind == ResourceEventKind.Terminal &&
+                            row.Status == ResourceRequestStatus.Succeeded), Is.EqualTo(1));
+                    }
+                    else
+                    {
+                        Assert.That(rows, Is.Empty);
+                    }
+                }
+                else if (mode == "canvas")
+                {
+                    Assert.That(run.IsFaulted, Is.True);
+                    Assert.That(run.Exception.ToString(), Does.Contain("preview is no longer displayed"));
+                }
+                else if (mode == "dirty")
+                {
+                    Assert.That(run.IsFaulted, Is.True);
+                    Assert.That(run.Exception.ToString(), Does.Contain("sample-ui-display").And.Contain("sample-ui-restore"));
+                    Assert.That(shown, Is.EqualTo(1));
+                    Assert.That(restored, Is.EqualTo(1));
+                }
+                else
+                {
+                    Assert.That(run.IsCanceled || run.IsFaulted, Is.True);
+                }
+                if (stop != null)
+                {
+                    yield return Wait(() => stop.IsCompleted, "original owner shutdown");
+                    stop.GetAwaiter().GetResult();
+                }
+                yield return Wait(() => provider.Releases == 1 && resources.GetDiagnostics().PendingWorkCount == 0 &&
+                    resources.GetDiagnostics().DrainingHandleCount == 0, mode + " settles the final real reference");
+                Assert.That(resources.GetDiagnostics().LeaseCount, Is.Zero);
+                Assert.That(Texture2D.whiteTexture && Texture2D.blackTexture && supplied, Is.True);
+                if (mode == "invalidate")
+                {
+                    yield return Wait(() => example.Startup.Resources == null, "retired service drained");
+                    var retry = example.StopExampleAsync();
+                    yield return Wait(() => retry.IsCompleted, "invalidated original owner finishes");
+                    retry.GetAwaiter().GetResult();
+                }
+                if (mode == "replacement")
+                {
+                    Assert.That(restored, Is.Zero);
+                }
+            }
+            finally
+            {
+                if (provider.Pending.HasValue)
+                {
+                    provider.Finish(supplied);
+                }
+                ResourceEventHistory.SetRecording(previousRecording);
+                Addressables.RemoveResourceLocator(locator);
+                Addressables.ResourceManager.ResourceProviders.Remove(provider);
+                Addressables.Release(init);
+                Object.Destroy(supplied);
+            }
+        }
+
+        private sealed class SiblingReleaseProvider : ResourceProviderBase
+        {
+            public SiblingReleaseProvider() => Initialize(Guid.NewGuid().ToString("N"), null);
+
+            public TextAsset Asset;
+            public int Releases;
+
+            public override void Provide(ProvideHandle handle) => handle.Complete(Asset, true, null);
+
+            public override void Release(IResourceLocation location, object asset)
+            {
+                Releases++;
+                throw new ProviderException("sibling-scope-release", location);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator UnrelatedScopeReleaseFailureDoesNotInvalidateOptionalPreview()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return VerifySiblingScope();
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator VerifySiblingScope()
+        {
+            var example = Example();
+            var previewKey = Guid.NewGuid().ToString("N");
+            var siblingKey = Guid.NewGuid().ToString("N");
+            example.preview = new AssetReferenceT<Texture2D>(previewKey);
+            var init = Addressables.InitializeAsync(false);
+            yield return init;
+            var gate = new GatedPreviewProvider();
+            var sibling = new SiblingReleaseProvider { Asset = new TextAsset("sibling") };
+            var locator = new ResourceLocationMap(previewKey);
+            locator.Add(previewKey, new ResourceLocationBase(previewKey, previewKey, gate.ProviderId, typeof(Texture2D)));
+            locator.Add(siblingKey, new ResourceLocationBase(siblingKey, siblingKey, sibling.ProviderId, typeof(TextAsset)));
+            Addressables.ResourceManager.ResourceProviders.Add(gate);
+            Addressables.ResourceManager.ResourceProviders.Add(sibling);
+            Addressables.AddResourceLocator(locator);
+            try
+            {
+                var run = example.StartExampleAsync();
+                yield return Wait(() => gate.Pending.HasValue, "preview before unrelated failure");
+                var resources = example.Startup.Resources;
+                var scope = resources.CreateScope("sibling");
+                using var load = scope.LoadAsync<TextAsset>(siblingKey);
+                yield return Wait(() => load.IsDone, "sibling gets its unique live asset");
+                Assert.That(load.TakeResult(), Is.SameAs(sibling.Asset));
+                using var close = scope.CloseAsync();
+                yield return Wait(() => close.IsDone, "unrelated last release fails");
+                Assert.That(close.Status, Is.EqualTo(ResourceRequestStatus.Failed));
+                Assert.That(close.Error.ToString(), Does.Contain("sibling-scope-release"));
+                Assert.That(sibling.Releases, Is.EqualTo(1));
+                LogAssert.Expect(LogType.Error, new Regex("optional-preview-read"));
+                var pending = gate.Pending.Value;
+                gate.Pending = null;
+                pending.Complete<Texture2D>(null, false, new IOException("optional-preview-read"));
+                yield return Wait(() => run.IsCompleted, "optional failure settles independent preview");
+                var result = run.GetAwaiter().GetResult();
+                Assert.That(result, Does.Contain("image=skipped").And.Contain("optional-preview-read").And.Not.Contain("sibling-scope-release"));
+                AssertVisiblePlaceholder(example);
+                using var retry = scope.CloseAsync();
+                yield return Wait(() => retry.IsDone, "settle only the sibling owner's remaining cleanup");
+                Assert.That(retry.TakeResult(), Is.True);
+                Assert.That(sibling.Releases, Is.EqualTo(1));
+                var stop = example.StopExampleAsync();
+                yield return Wait(() => stop.IsCompleted, "finish preview owner");
+                stop.GetAwaiter().GetResult();
+            }
+            finally
+            {
+                Addressables.RemoveResourceLocator(locator);
+                Addressables.ResourceManager.ResourceProviders.Remove(gate);
+                Addressables.ResourceManager.ResourceProviders.Remove(sibling);
+                Addressables.Release(init);
+                Object.Destroy(sibling.Asset);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator MissingAndUnconfiguredPreviewHaveDistinctVisibleResults()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return VerifyMissingOrOffPreview(true);
+            yield return VerifyMissingOrOffPreview(false);
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator VerifyMissingOrOffPreview(bool configured)
+        {
+            var example = Example();
+            example.preview = configured ? new AssetReferenceT<Texture2D>(Guid.NewGuid().ToString("N")) : null;
+            var run = example.StartExampleAsync();
+            yield return Wait(() => run.IsCompleted, "optional missing or off");
+            var result = run.GetAwaiter().GetResult();
+            if (configured)
+            {
+                Assert.That(result, Does.Contain("image=skipped").And.Contain("AddressNotFound"));
+                AssertVisiblePlaceholder(example);
+            }
+            else
+            {
+                Assert.That(result, Does.Contain("image=off"));
+                Assert.That(example.GetComponentsInChildren<RawImage>(true), Is.Empty);
+            }
+            var stop = example.StopExampleAsync();
+            yield return Wait(() => stop.IsCompleted, "shutdown after optional preview");
+            stop.GetAwaiter().GetResult();
+        }
+
+        [UnityTest]
+        public IEnumerator RequiredDataFailurePreservesPriorMessageAndExternalOwnership()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return VerifyDataFailure();
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator VerifyDataFailure()
+        {
+            var example = Example();
+            var key = Guid.NewGuid().ToString("N");
+            example.data = new AssetReferenceT<ResourceStartupExampleData>(key);
+            var init = Addressables.InitializeAsync(false);
+            yield return init;
+            var provider = new GatedPreviewProvider();
+            var locator = new ResourceLocationMap(key);
+            locator.Add(key, new ResourceLocationBase(key, key, provider.ProviderId, typeof(ResourceStartupExampleData)));
+            Addressables.ResourceManager.ResourceProviders.Add(provider);
+            Addressables.AddResourceLocator(locator);
+            AssetLease<TextAsset> external = null;
+            try
+            {
+                var run = example.StartExampleAsync();
+                yield return Wait(() => provider.Pending.HasValue, "required data provide after message was acquired");
+                var owner = example.Startup;
+                var system = owner.Resources;
+                Assert.That(system.GetDiagnostics().Leases.Any(lease => lease.Key == example.message.AssetGUID), Is.True);
+                using var acquire = system.AcquireAsync<TextAsset>(example.message.AssetGUID);
+                yield return Wait(() => acquire.IsDone, "another consumer takes its own message");
+                external = acquire.TakeResult();
+                LogAssert.Expect(LogType.Error, new Regex("sample-required-data"));
+                var pending = provider.Pending.Value;
+                provider.Pending = null;
+                pending.Complete<ResourceStartupExampleData>(null, false, new IOException("sample-required-data"));
+                yield return Wait(() =>
+                {
+                    Assert.That(example.Result, Does.Not.StartWith("Running:"));
+                    return run.IsCompleted;
+                }, "data failure and Busy shutdown");
+                Assert.That(run.IsFaulted, Is.True);
+                Assert.That(run.Exception.ToString(), Does.Contain("sample-required-data").And.Contain("independent resource leases"));
+                Assert.That(external.IsValid && external.Asset, Is.True);
+                Assert.That(example.Startup, Is.SameAs(owner));
+                Assert.That(system.GetDiagnostics().Scopes.Select(scope => scope.Owner), Does.Not.Contain("ResourceStartupExample/" + example.GetInstanceID()));
+                external.Dispose();
+                var retry = example.StopExampleAsync();
+                yield return Wait(() => retry.IsCompleted, "original owner retries after external return");
+                retry.GetAwaiter().GetResult();
+                AssertClosed(system);
+            }
+            finally
+            {
+                external?.Dispose();
+                Addressables.RemoveResourceLocator(locator);
+                Addressables.ResourceManager.ResourceProviders.Remove(provider);
+                Addressables.Release(init);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AudioLabelMismatchAndFinalBatchReleaseReachTheStartupCaller()
+        {
+            PreparePlay();
+            yield return new EnterPlayMode();
+            yield return VerifyBatchRelease();
+            yield return new ExitPlayMode();
+        }
+
+        private static IEnumerator VerifyBatchRelease()
+        {
+            var example = Example();
+            var label = Guid.NewGuid().ToString("N");
+            example.audioPreloadLabel = label;
+            example.preview = null;
+            var init = Addressables.InitializeAsync(false);
+            yield return init;
+            var provider = new GatedPreviewProvider { ThrowOnRelease = true };
+            var locator = new ResourceLocationMap(label);
+            locator.Add(label, new ResourceLocationBase(label, label, provider.ProviderId, typeof(AudioClip)));
+            Addressables.ResourceManager.ResourceProviders.Add(provider);
+            Addressables.AddResourceLocator(locator);
+            var other = AudioClip.Create("Distinct label member", 64, 1, 8000, false);
+            try
+            {
+                var run = example.StartExampleAsync();
+                yield return Wait(() => provider.Pending.HasValue, "real mismatching audio batch member");
+                provider.Finish(other);
+                yield return Wait(() =>
+                {
+                    Assert.That(example.Result, Does.Not.StartWith("Running:"));
+                    return run.IsCompleted;
+                }, "audio business and local batch cleanup");
+                Assert.That(run.IsFaulted, Is.True);
+                Assert.That(run.Exception.ToString(), Does.Contain("does not contain").And.Contain("sample-final-release"));
+                Assert.That(provider.Releases, Is.EqualTo(1));
+            }
+            finally
+            {
+                Addressables.RemoveResourceLocator(locator);
+                Addressables.ResourceManager.ResourceProviders.Remove(provider);
+                Addressables.Release(init);
+                Object.Destroy(other);
+            }
         }
 
         [UnityTest]

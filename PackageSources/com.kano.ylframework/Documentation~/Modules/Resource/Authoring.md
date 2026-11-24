@@ -63,4 +63,6 @@ UnityEngine.Debug.Log(report.Summary);
 2. 打开生成的 `Bootstrap.unity`，进入 Play Mode。在 `ResourceStartupExample` 组件上下文菜单选择 **Start Addressables Example (Play Only)**，查看 Inspector 的 **Runtime Result**。
 3. 用 **Stop Or Retry Example Shutdown** 等待正常关闭；Player 验证则先按上述流程构建正式内容。源码见[样例运行组件](../../../Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs)。
 
+若需复查进入 Play 时很快结束的请求，先选 **YLFramework → Resource → Record Next Play**，复现后打开 **Workbench → Runtime Diagnostics** 查看请求事件。录制周期、指纹与手动快照的区别见[停止与诊断](../Resource.md#停止与诊断)。
+
 旧私有资源配置与制品不是官方 Addressables 构建输入。保留项目原资产与 `.meta`，在官方 Groups 中登记源资产并重新构建配套内容；不能把旧 Catalog、Bundle 或 HybridCLR 基座当作本次构建输出。

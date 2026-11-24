@@ -18,6 +18,7 @@ namespace YLFramework.Resource
         private readonly HashSet<IResourceRequest> _requests = new();
         private readonly HashSet<ResourceRequest<InstanceLease>> _pendingInstances = new();
         private int _pendingAssetWork;
+        private Exception _assetCleanupError;
         private IDisposable _pendingInstanceSweep;
         private readonly List<ResourceRequest<bool>> _closeWaiters = new();
         private IDisposable _destroyBinding;
@@ -50,24 +51,25 @@ namespace YLFramework.Resource
         public ResourceRequest<T> LoadAsync<T>(string key, CancellationToken cancellation = default) where T : UnityEngine.Object
         {
             CheckAvailable();
+            var trace = _system.BeginEvent(ResourceEventSource.ScopeLoad, key, OwnerLabel);
             if (string.IsNullOrWhiteSpace(key))
-                return ResourceSystem.Failure<T>(new ArgumentException("An exact key is required."));
+                return ResourceSystem.Fail(new ResourceRequest<T> { EventTrace = trace }, new ArgumentException("An exact key is required."));
             var entryKey = (key, typeof(T));
             if (!_entries.TryGetValue(entryKey, out var value))
             {
                 var entry = new Entry<T>(this, key);
                 _entries.Add(entryKey, entry);
-                var waiting = entry.Wait(cancellation);
+                var waiting = entry.Wait(cancellation, trace);
                 entry.Start();
                 return waiting;
             }
             var existing = (Entry<T>)value;
             if (existing.CanReuse)
-                return existing.Wait(cancellation);
+                return existing.Wait(cancellation, trace);
             existing.ReleaseStale();
             var replacement = new Entry<T>(this, key);
             _entries[entryKey] = replacement;
-            var result = replacement.Wait(cancellation);
+            var result = replacement.Wait(cancellation, trace);
             replacement.Start();
             return result;
         }
@@ -128,24 +130,34 @@ namespace YLFramework.Resource
         internal void ForgetLease(IResourceLease lease) => _leases.Remove(lease);
         internal void BeginAssetWork() => _pendingAssetWork++;
         internal void EndAssetWork() => _pendingAssetWork--;
+        internal void RecordAssetCleanupError(Exception error) =>
+            _assetCleanupError = _assetCleanupError == null ? error : new AggregateException(_assetCleanupError, error);
 
         /// <summary>每次新建并由本 Scope 持有，不隐式复用旧组件状态。</summary>
         public ResourceRequest<GameObject> InstantiateAsync(string key, Transform parent = null, Scene scene = default, CancellationToken cancellation = default) =>
-            BorrowInstanceAsync(key, nameof(InstantiateAsync), () => _system.InstantiateAsync(key, parent, scene, cancellation));
+            BorrowInstanceAsync(key, parent, scene, cancellation, false);
 
         /// <summary>显式借用可复用实例；Scope 关闭时归还本次 checkout。</summary>
         public ResourceRequest<GameObject> RentAsync(string key, Transform parent = null, Scene scene = default, CancellationToken cancellation = default) =>
-            BorrowInstanceAsync(key, nameof(RentAsync), () => _system.RentAsync(key, parent, scene, cancellation));
+            BorrowInstanceAsync(key, parent, scene, cancellation, true);
 
-        private ResourceRequest<GameObject> BorrowInstanceAsync(string key, string operation,
-            Func<ResourceRequest<InstanceLease>> startLeaseRequest)
+        private ResourceRequest<GameObject> BorrowInstanceAsync(string key, Transform parent, Scene scene,
+            CancellationToken cancellation, bool reusable)
         {
             CheckAvailable();
-            var borrowRequest = Track(new ResourceRequest<GameObject>(), key, operation);
-            var leaseRequest = startLeaseRequest();
-            _pendingInstances.Add(leaseRequest);
-            _pendingInstanceSweep ??= _system.AddTick(PrunePendingInstances);
-            borrowRequest.Attach(leaseRequest.Dispose, () => leaseRequest.Progress);
+            var source = reusable ? ResourceEventSource.ScopeRent : ResourceEventSource.ScopeInstantiate;
+            var borrowRequest = new ResourceRequest<GameObject> { EventTrace = _system.BeginEvent(source, key, OwnerLabel) };
+            var leaseRequest = _system.CreateInstanceAsync(key, parent, scene, cancellation, reusable, admitted =>
+            {
+                Track(borrowRequest, key, reusable ? nameof(RentAsync) : nameof(InstantiateAsync));
+                borrowRequest.EventTrace = borrowRequest.EventTrace.WithLoad(admitted.EventTrace.Id);
+                borrowRequest.Attach(() => admitted.Dispose(IsDisposed ? ResourceEventRole.ScopeClose : ResourceEventRole.Caller), () => admitted.Progress);
+                _pendingInstances.Add(admitted);
+                _pendingInstanceSweep ??= _system.AddTick(PrunePendingInstances);
+            });
+            borrowRequest.EventTrace = borrowRequest.EventTrace.WithLoad(leaseRequest.EventTrace.Id);
+            if (borrowRequest.IsDone)
+                return borrowRequest;
             leaseRequest.Completed += completed =>
             {
                 try
@@ -156,6 +168,8 @@ namespace YLFramework.Resource
                     }
                     if (completed.Status != ResourceRequestStatus.Succeeded)
                     {
+                        if (completed.Status == ResourceRequestStatus.Canceled && completed.Cancellation.IsCancellationRequested)
+                            borrowRequest.EventTrace = borrowRequest.EventTrace.WithRole(ResourceEventRole.Caller);
                         borrowRequest.SetFailure(completed.Status, completed.Error);
                         return;
                     }
@@ -197,14 +211,19 @@ namespace YLFramework.Resource
         public ResourceRequest<Scene> LoadSceneAsync(string key, LoadSceneMode mode = LoadSceneMode.Additive, CancellationToken cancellation = default)
         {
             CheckAvailable();
-            var borrowRequest = Track(new ResourceRequest<Scene>(), key, nameof(LoadSceneAsync));
-            var leaseRequest = _system.LoadSceneAsync(key, mode, true, 100, cancellation);
-            var pendingLease = _system.GetPendingSceneLease(leaseRequest);
-            if (pendingLease != null)
+            var borrowRequest = new ResourceRequest<Scene> { EventTrace = _system.BeginEvent(ResourceEventSource.ScopeScene, key, OwnerLabel) };
+            var leaseRequest = _system.LoadSceneCore(key, mode, true, 100, cancellation, 30, admitted =>
             {
-                Own(pendingLease);
-            }
-            borrowRequest.Attach(leaseRequest.Dispose, () => leaseRequest.Progress);
+                Track(borrowRequest, key, nameof(LoadSceneAsync));
+                borrowRequest.EventTrace = borrowRequest.EventTrace.WithLoad(admitted.EventTrace.Id);
+                borrowRequest.Attach(() => admitted.Dispose(IsDisposed ? ResourceEventRole.ScopeClose : ResourceEventRole.Caller), () => admitted.Progress);
+                var pendingLease = _system.GetPendingSceneLease(admitted);
+                if (pendingLease != null)
+                    Own(pendingLease);
+            });
+            borrowRequest.EventTrace = borrowRequest.EventTrace.WithLoad(leaseRequest.EventTrace.Id);
+            if (borrowRequest.IsDone)
+                return borrowRequest;
             leaseRequest.Completed += completed =>
             {
                 try
@@ -215,6 +234,8 @@ namespace YLFramework.Resource
                     }
                     if (completed.Status != ResourceRequestStatus.Succeeded)
                     {
+                        if (completed.Status == ResourceRequestStatus.Canceled && completed.Cancellation.IsCancellationRequested)
+                            borrowRequest.EventTrace = borrowRequest.EventTrace.WithRole(ResourceEventRole.Caller);
                         borrowRequest.SetFailure(completed.Status, completed.Error);
                         return;
                     }
@@ -308,7 +329,7 @@ namespace YLFramework.Resource
             var pending = _requests.ToArray();
             _requests.Clear();
             foreach (var waiting in pending)
-                waiting.Dispose();
+                waiting.DisposeFromScope();
             _system.Run(CloseRoutine(), FinishClose);
             return request;
         }
@@ -376,7 +397,13 @@ namespace YLFramework.Resource
                     }
                     if (close.Status != ResourceRequestStatus.Succeeded)
                     {
-                        throw close.Error ?? new ResourceException(ResourceError.LoadFailed, "Lease cleanup did not succeed.");
+                        var error = close.Error ?? new ResourceException(ResourceError.LoadFailed, "Lease cleanup did not succeed.");
+                        if (lease is IResourceAssetLease && lease.IsSettled)
+                        {
+                            RecordAssetCleanupError(error);
+                            continue;
+                        }
+                        throw error;
                     }
                     if (!lease.IsSettled)
                     {
@@ -386,6 +413,12 @@ namespace YLFramework.Resource
             }
             while (_pendingAssetWork != 0)
                 yield return null;
+            if (_assetCleanupError != null)
+            {
+                var error = _assetCleanupError;
+                _assetCleanupError = null;
+                throw error;
+            }
             _leases.Clear();
             _entries.Clear();
             _settled = true;
@@ -461,13 +494,24 @@ namespace YLFramework.Resource
             }
             internal void ReleaseStale()
             {
-                _lease?.Dispose();
-                Remove();
+                try
+                {
+                    _lease?.Dispose();
+                }
+                catch (Exception error)
+                {
+                    _scope.RecordAssetCleanupError(error);
+                    throw;
+                }
+                finally
+                {
+                    Remove();
+                }
             }
 
-            internal ResourceRequest<T> Wait(CancellationToken token)
+            internal ResourceRequest<T> Wait(CancellationToken token, ResourceEventTrace trace)
             {
-                var request = _scope.Track(new ResourceRequest<T>(), _key, nameof(LoadAsync));
+                var request = _scope.Track(new ResourceRequest<T> { EventTrace = trace.WithLoad(_input?.EventTrace.Id ?? 0) }, _key, nameof(LoadAsync));
                 request.ValidateBeforeTake = CheckBorrow;
                 if (Ready)
                 {
@@ -486,7 +530,7 @@ namespace YLFramework.Resource
                     if (_waiting.Count == 0 && !Ready)
                     {
                         Remove();
-                        _input?.Dispose();
+                        _input?.Dispose(_scope.IsDisposed ? ResourceEventRole.ScopeClose : ResourceEventRole.Caller);
                     }
                 }, () => _input?.Progress ?? 0);
                 _scope._system.BindCancellation(request, token);
@@ -500,7 +544,11 @@ namespace YLFramework.Resource
                     Remove();
                     return;
                 }
-                _input = _scope._system.AcquireAssetAsync<T>(_key, default, _scope);
+                var load = _scope._system.BeginEvent(ResourceEventSource.ScopeAcquire, _key, _scope.OwnerLabel);
+                load = load.WithLoad(load.Id);
+                foreach (var request in _waiting)
+                    request.EventTrace = request.EventTrace.WithLoad(load.Id);
+                _input = _scope._system.AcquireAssetAsync<T>(_key, default, _scope, load);
                 _input.Completed += done =>
                 {
                     try
@@ -524,7 +572,14 @@ namespace YLFramework.Resource
                         }
                         catch
                         {
-                            lease.Dispose();
+                            try
+                            {
+                                lease.Dispose();
+                            }
+                            catch (Exception releaseError)
+                            {
+                                _scope.RecordAssetCleanupError(releaseError);
+                            }
                             throw;
                         }
                         foreach (var request in _waiting.ToArray())
@@ -538,13 +593,23 @@ namespace YLFramework.Resource
                     catch (Exception error)
                     {
                         Remove();
+                        var cause = ResourceSystem.Wrap(error);
+                        var delivery = new ResourceException(cause.Kind, "The scoped asset could not be delivered.", cause,
+                            cause.Address, cause.SourceId);
                         foreach (var request in _waiting.ToArray())
-                            ResourceSystem.Fail(request, error);
+                            ResourceSystem.Fail(request, delivery);
                     }
                     finally
                     {
                         _waiting.Clear();
-                        done.Dispose();
+                        try
+                        {
+                            done.Dispose();
+                        }
+                        catch (Exception releaseError)
+                        {
+                            _scope.RecordAssetCleanupError(releaseError);
+                        }
                     }
                 };
             }

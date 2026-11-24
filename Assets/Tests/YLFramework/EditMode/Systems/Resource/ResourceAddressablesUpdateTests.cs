@@ -73,6 +73,9 @@ namespace YLFramework.Tests.Resource
             RequireOwnedHost();
             if (Application.isPlaying && SessionState.GetBool(StateKey + "saved", false))
             {
+                ResourceEventHistory.SetRecording(false);
+                ResourceEventHistory.Clear();
+                _provider?.CompleteDownload();
                 _provider?.CompleteHashes();
                 for (var i = _owned.Count - 1; i >= 0; i--) _owned[i].Dispose();
                 _owned.Clear();
@@ -268,6 +271,196 @@ namespace YLFramework.Tests.Resource
         }
 
         [UnityTest]
+        public IEnumerator CanceledDownload_ObservesOfficialResultAndReturnsPinAfterProviderCompletes()
+        {
+            yield return Start();
+            ResourceEventHistory.SetRecording(true);
+            const string key = "updates/download";
+            AddGatedDownload(key);
+
+            var download = Own(_startup.Resources.DownloadDependenciesAsync(new[] { key }));
+            yield return Until(() => _provider.DownloadPending);
+            download.Cancel();
+            Assert.That(download.Status, Is.EqualTo(ResourceRequestStatus.Canceled));
+            Assert.That(_provider.DownloadReleases, Is.Zero);
+            Assert.That(ResourceEventHistory.Read().Count(row => row.RequestId == download.EventTrace.Id), Is.EqualTo(1));
+            _provider.CompleteDownload();
+            yield return Until(() => _provider.DownloadReleases == 1);
+            AssertLateDelivery(download.EventTrace.Id, ResourceEventSource.Download);
+        }
+
+        private void AddGatedDownload(string key, Action onLocate = null)
+        {
+            _provider = new HashProvider();
+            Addressables.ResourceManager.ResourceProviders.Add(_provider);
+            var locator = new DownloadLocationMap(key, onLocate);
+            _locators.Add(locator);
+            var bundle = new ResourceLocationBase(key + "/bundle", key + "/bundle", _provider.ProviderId, typeof(IAssetBundleResource));
+            locator.Add(key, new ResourceLocationBase(key, key, _provider.ProviderId, typeof(TextAsset), bundle));
+            Addressables.AddResourceLocator(locator);
+        }
+
+        // DownloadDependenciesAsync resolves through this real locator before returning its official handle.
+        private sealed class DownloadLocationMap : ResourceLocationMap, IResourceLocator
+        {
+            private Action _onLocate;
+            internal DownloadLocationMap(string id, Action onLocate) : base(id) => _onLocate = onLocate;
+            bool IResourceLocator.Locate(object key, Type type, out IList<IResourceLocation> locations)
+            {
+                var found = Locate(key, type, out locations);
+                if (found && _onLocate != null)
+                {
+                    var action = _onLocate;
+                    _onLocate = null;
+                    action();
+                }
+                return found;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator DeliveryWorkIncludesSynchronousOfficialStart()
+        {
+            yield return Start();
+            ResourceEventHistory.SetRecording(true);
+            const string key = "updates/synchronous-start";
+            long nestedRequest = 0;
+            var interval = new System.Diagnostics.Stopwatch();
+            using var scope = _startup.Resources.CreateScope("timing");
+            AddGatedDownload(key, () =>
+            {
+                interval.Start();
+                using var marker = scope.LoadAsync<TextAsset>(string.Empty);
+                nestedRequest = marker.EventTrace.Id;
+                Thread.Sleep(20);
+                interval.Stop();
+            });
+            var request = Own(_startup.Resources.DownloadDependenciesAsync(new[] { key }));
+            yield return Until(() => _provider.DownloadPending);
+            _provider.CompleteDownload();
+            yield return Wait(request);
+            Assert.That(request.TakeResult(), Is.True);
+            var work = ResourceEventHistory.Read().Single(row => row.RequestId == request.EventTrace.Id && row.Kind == ResourceEventKind.Work);
+            Assert.That(nestedRequest, Is.GreaterThan(0));
+            Assert.That(work.WorkId, Is.LessThan(nestedRequest), "The work clock must start before the synchronous locator call.");
+            Assert.That(work.ElapsedMilliseconds, Is.GreaterThanOrEqualTo(interval.Elapsed.TotalMilliseconds));
+        }
+
+        [UnityTest]
+        public IEnumerator CanceledDownloadReleaseFailureReachesStopWithoutHistory() => CanceledDownloadReleaseFailure(false);
+
+        [UnityTest]
+        public IEnumerator CanceledDownloadReleaseFailureReachesStopWithHistory() => CanceledDownloadReleaseFailure(true);
+
+        private IEnumerator CanceledDownloadReleaseFailure(bool recording)
+        {
+            yield return Start();
+            ResourceEventHistory.SetRecording(recording);
+            const string key = "updates/download-fault";
+            AddGatedDownload(key);
+            var download = Own(_startup.Resources.DownloadDependenciesAsync(new[] { key }));
+            yield return Until(() => _provider.DownloadPending);
+            download.Cancel();
+            const string expectedStopFailure = "download-final-pin-release";
+            _provider.DownloadReleaseFault = new InvalidOperationException(expectedStopFailure);
+            LogAssert.Expect(LogType.Exception, new System.Text.RegularExpressions.Regex(expectedStopFailure));
+            _provider.CompleteDownload();
+            using var stop = _startup.StopAsync();
+            yield return Wait(stop);
+            // This test observes the final shutdown itself, including its expected permanent cleanup error.
+            _startup = null;
+            Assert.That(download.Status, Is.EqualTo(ResourceRequestStatus.Canceled));
+            Assert.That(stop.Error?.ToString(), Does.Contain(expectedStopFailure));
+            Assert.That(_provider.DownloadReleases, Is.EqualTo(1));
+            if (recording)
+            {
+                var release = ResourceEventHistory.Read().Single(row => row.RequestId == download.EventTrace.Id && row.Kind == ResourceEventKind.Release);
+                Assert.That(release.Status, Is.EqualTo(ResourceRequestStatus.Failed));
+                Assert.That(release.Late, Is.True);
+            }
+            else
+                Assert.That(ResourceEventHistory.Read(), Is.Empty);
+        }
+
+        [UnityTest]
+        public IEnumerator CatalogSnapshotAndReleaseFailuresSurviveWithoutHistory() => CatalogSnapshotAndReleaseFailures(false);
+
+        [UnityTest]
+        public IEnumerator CatalogSnapshotAndReleaseFailuresSurviveWithHistory() => CatalogSnapshotAndReleaseFailures(true);
+
+        [UnityTest]
+        public IEnumerator CatalogReleaseCancelsFailedSnapshotAndStopReceivesBothCauses()
+        {
+            yield return Start(true);
+            ResourceEventHistory.SetRecording(false);
+            AddControlledCatalog("updates/cancel-in-release");
+            var system = _startup.Resources;
+            var check = Own(system.CheckForCatalogUpdatesAsync());
+            yield return Until(() => _provider.Pending != 0);
+            const string releaseMessage = "reentrant-final-pin-release";
+            _provider.BeforeHashRelease = check.Cancel;
+            _provider.HashReleaseFault = new InvalidOperationException(releaseMessage);
+            LogAssert.Expect(LogType.Exception, "ResourceException: Addressables could not read the remote catalog hash.");
+            _provider.CompleteHashes(" ");
+            yield return Wait(check);
+            using var stop = _startup.StopAsync();
+            yield return Wait(stop);
+            _startup = null;
+            Assert.That(check.Status, Is.EqualTo(ResourceRequestStatus.Canceled));
+            Assert.That(_provider.Releases, Is.EqualTo(1));
+            Assert.That(stop.Status, Is.EqualTo(ResourceRequestStatus.Failed));
+            Assert.That(stop.Error.ToString(), Does.Contain("could not read the remote catalog hash"));
+            Assert.That(stop.Error.ToString(), Does.Contain(releaseMessage));
+        }
+
+        private IEnumerator CatalogSnapshotAndReleaseFailures(bool recording)
+        {
+            yield return Start(true);
+            ResourceEventHistory.SetRecording(recording);
+            AddControlledCatalog("updates/double-fault");
+            var system = _startup.Resources;
+            var check = Own(system.CheckForCatalogUpdatesAsync());
+            yield return Until(() => _provider.Pending != 0);
+            const string unknown = "updates/unknown";
+            Assert.That(Addressables.GetLocatorInfo(unknown), Is.Null);
+            var next = Own(system.ApplyCatalogUpdatesAsync(new[] { unknown }));
+            Assert.That(next.Status, Is.EqualTo(ResourceRequestStatus.Pending));
+            _provider.HashReleaseFault = new InvalidOperationException("catalog-final-pin-release");
+            _provider.CompleteHashes(" ");
+            yield return Wait(check);
+            Assert.That(check.Error?.ToString(), Does.Contain("could not read the remote catalog hash"));
+            Assert.That(check.Error?.ToString(), Does.Contain("catalog-final-pin-release"));
+            yield return Wait(next);
+            Assert.That(next.Status, Is.EqualTo(ResourceRequestStatus.Failed),
+                $"Queued Apply target={unknown}, progress={next.Progress}, work={system.GetDiagnostics().PendingWorkCount}, " +
+                $"provides={_provider.Provides}, releases={_provider.Releases}, catalogs={string.Join(", ", _provider.CatalogsProvided)}");
+            Assert.That(next.Error?.Kind, Is.EqualTo(ResourceError.AddressNotFound));
+            Assert.That(system.IsAvailable, Is.True);
+            Assert.That(_provider.Releases, Is.EqualTo(1));
+            if (recording)
+            {
+                var rows = ResourceEventHistory.Read().Where(row => row.RequestId == check.EventTrace.Id).ToArray();
+                Assert.That(rows.Single(row => row.Kind == ResourceEventKind.Work).Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
+                Assert.That(rows.Single(row => row.Kind == ResourceEventKind.Release).Status, Is.EqualTo(ResourceRequestStatus.Failed));
+            }
+            else
+                Assert.That(ResourceEventHistory.Read(), Is.Empty);
+        }
+
+        private static void AssertLateDelivery(long requestId, ResourceEventSource source)
+        {
+            var rows = ResourceEventHistory.Read().Where(row => row.RequestId == requestId).ToArray();
+            Assert.That(rows.Select(row => row.Kind), Is.EqualTo(new[] {
+                ResourceEventKind.Terminal, ResourceEventKind.Work, ResourceEventKind.Release }));
+            Assert.That(rows.All(row => row.Source == source), Is.True);
+            Assert.That(rows[0].Status, Is.EqualTo(ResourceRequestStatus.Canceled));
+            Assert.That(rows[1].WorkId, Is.GreaterThan(0));
+            Assert.That(rows[2].WorkId, Is.EqualTo(rows[1].WorkId));
+            Assert.That(rows.Skip(1).All(row => row.Phase == ResourceEventPhase.Delivery && row.Late &&
+                row.Status == ResourceRequestStatus.Succeeded), Is.True);
+        }
+
+        [UnityTest]
         public IEnumerator CheckResult_IsAReadOnlySnapshot_AndReentrantCheckWaitsForRelease()
         {
             yield return Start();
@@ -294,6 +487,7 @@ namespace YLFramework.Tests.Resource
         public IEnumerator CancelRunningCheck_OnlyExitsWaiting_QueuedCheckCannotOverlap()
         {
             yield return Start();
+            ResourceEventHistory.SetRecording(true);
             AddControlledCatalog("updates/cancel");
             using var token = new CancellationTokenSource();
             var first = Own(_startup.Resources.CheckForCatalogUpdatesAsync(token.Token));
@@ -308,6 +502,7 @@ namespace YLFramework.Tests.Resource
             _provider.CompleteHashes();
             yield return Until(() => _provider.Provides == 2);
             Assert.That(_provider.Releases, Is.EqualTo(1));
+            AssertLateDelivery(first.EventTrace.Id, ResourceEventSource.CatalogCheck);
             _provider.CompleteHashes();
             yield return Wait(second);
             Assert.That(second.TakeResult(), Is.EqualTo(new[] { "updates/cancel" }));
@@ -434,14 +629,30 @@ namespace YLFramework.Tests.Resource
         public IEnumerator CanceledApplyStillRefusesBusinessUntilItsOfficialOperationSettles()
         {
             yield return Start(true);
+            ResourceEventHistory.SetRecording(true);
             AddControlledCatalog("updates/delayed-apply");
             var system = _startup.Resources;
             var apply = Own(system.ApplyCatalogUpdatesAsync(new[] { "updates/delayed-apply" }));
             yield return Until(() => _provider.Pending != 0);
             Assert.That(apply.IsDone, Is.False);
+            var active = system.GetDiagnostics();
             using var before = system.AcquireAsync<TextAsset>("ownership/message");
             Assert.That(before.Status, Is.EqualTo(ResourceRequestStatus.Failed));
             Assert.That(before.Error.Kind, Is.EqualTo(ResourceError.Busy));
+            before.Dispose();
+            var rejected = ResourceEventHistory.Read().Single(row => row.RequestId == before.EventTrace.Id);
+            Assert.That(rejected.Source, Is.EqualTo(ResourceEventSource.Acquire));
+            Assert.That(rejected.Kind, Is.EqualTo(ResourceEventKind.Terminal));
+            Assert.That(rejected.Status, Is.EqualTo(ResourceRequestStatus.Failed));
+            Assert.That(rejected.Error, Is.EqualTo(ResourceError.Busy));
+            Assert.That(rejected.WorkId, Is.Zero);
+            using var rejectedCheck = system.CheckForCatalogUpdatesAsync();
+            Assert.That(rejectedCheck.Error.Kind, Is.EqualTo(ResourceError.Busy));
+            Assert.That(ResourceEventHistory.Read().Single(row => row.RequestId == rejectedCheck.EventTrace.Id).Kind,
+                Is.EqualTo(ResourceEventKind.Terminal));
+            var stillActive = system.GetDiagnostics();
+            Assert.That(stillActive.RequestCount, Is.EqualTo(active.RequestCount));
+            Assert.That(stillActive.PendingWorkCount, Is.EqualTo(active.PendingWorkCount));
             apply.Cancel();
             Assert.That(apply.Status, Is.EqualTo(ResourceRequestStatus.Canceled));
             using var afterCancel = system.AcquireAsync<TextAsset>("ownership/message");
@@ -451,12 +662,45 @@ namespace YLFramework.Tests.Resource
             _provider.CompleteHashes();
             yield return Until(() => system.IsAvailable && system.GetDiagnostics().PendingWorkCount == 0);
             Assert.That(_provider.CatalogsProvided, Is.EqualTo(new[] { "updates/delayed-apply" }));
+            AssertLateDelivery(apply.EventTrace.Id, ResourceEventSource.CatalogApply);
             using var accepted = system.AcquireAsync<TextAsset>("ownership/message");
             yield return Wait(accepted);
             using var lease = accepted.TakeResult();
             Assert.That(lease.Asset.text, Is.EqualTo("official addressables content"));
             using var tooLate = system.ApplyCatalogUpdatesAsync(new[] { "updates/delayed-apply" });
             Assert.That(tooLate.Error.Kind, Is.EqualTo(ResourceError.Busy));
+        }
+
+        [UnityTest]
+        public IEnumerator CancelAfterOfficialCompletionKeepsObservedCatalogWorkOnTime()
+        {
+            yield return Start(true);
+            const string id = "updates/completed-before-cancel";
+            ResourceEventHistory.SetRecording(true);
+            AddControlledCatalog(id);
+            var system = _startup.Resources;
+            var apply = Own(system.ApplyCatalogUpdatesAsync(new[] { id }));
+            yield return Until(() => _provider.Pending != 0);
+            // The official active UpdateCatalogs alias reports completion after YL's already registered callback.
+            var active = Addressables.UpdateCatalogs(new[] { id }, false);
+            bool canceledOnCompletion = false;
+            active.Completed += _ =>
+            {
+                canceledOnCompletion = !apply.IsDone;
+                apply.Cancel();
+            };
+            _provider.CompleteHashes();
+            yield return Until(() => system.IsAvailable && system.GetDiagnostics().PendingWorkCount == 0);
+            Assert.That(canceledOnCompletion, Is.True);
+            Assert.That(apply.Status, Is.EqualTo(ResourceRequestStatus.Canceled));
+            Assert.That(_provider.CatalogsProvided, Is.EqualTo(new[] { id }));
+            var rows = ResourceEventHistory.Read().Where(row => row.RequestId == apply.EventTrace.Id).ToArray();
+            Assert.That(rows.Select(row => row.Kind), Is.EqualTo(new[] {
+                ResourceEventKind.Work, ResourceEventKind.Terminal, ResourceEventKind.Release }));
+            Assert.That(rows[0].Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
+            Assert.That(rows[0].Late, Is.False);
+            Assert.That(rows[2].Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
+            Assert.That(rows[2].WorkId, Is.EqualTo(rows[0].WorkId));
         }
 
         [UnityTest]
@@ -501,11 +745,17 @@ namespace YLFramework.Tests.Resource
         {
             yield return Start(true);
             var locators = Addressables.ResourceLocators.ToArray();
+            var initial = _startup.Resources.GetDiagnostics();
+            ResourceEventHistory.SetRecording(true);
             foreach (var input in new IEnumerable<string>[] { null, Array.Empty<string>(), new[] { "" }, new[] { " " } })
             {
                 using var size = _startup.Resources.GetDownloadSizeAsync(input);
                 using var download = _startup.Resources.DownloadDependenciesAsync(input);
                 using var apply = _startup.Resources.ApplyCatalogUpdatesAsync(input);
+                var snapshot = _startup.Resources.GetDiagnostics();
+                Assert.That(new[] { size.DiagnosticId, download.DiagnosticId, apply.DiagnosticId }, Is.All.EqualTo(0));
+                Assert.That(snapshot.RequestCount, Is.EqualTo(initial.RequestCount));
+                Assert.That(snapshot.PendingWorkCount, Is.EqualTo(initial.PendingWorkCount));
                 yield return Wait(size);
                 yield return Wait(download);
                 yield return Wait(apply);
@@ -513,7 +763,43 @@ namespace YLFramework.Tests.Resource
                 Assert.That(download.Status, Is.EqualTo(ResourceRequestStatus.Failed));
                 Assert.That(apply.Status, Is.EqualTo(ResourceRequestStatus.Failed));
             }
+            var rows = ResourceEventHistory.Read();
+            Assert.That(rows.Length, Is.EqualTo(12));
+            Assert.That(rows.All(row => row.Kind == ResourceEventKind.Terminal && row.Error == ResourceError.InvalidAddress), Is.True);
             CollectionAssert.AreEqual(locators, Addressables.ResourceLocators.ToArray());
+        }
+
+        [UnityTest]
+        public IEnumerator StoppingInsideKeyEnumerationInvalidatesTheUnregisteredRequestEvenIfEnumerationThrows()
+        {
+            yield return Start(true);
+            ResourceEventHistory.SetRecording(true);
+            var system = _startup.Resources;
+            int baseline = system.GetDiagnostics().RequestCount;
+            int observed = -1;
+            ResourceRequest<bool> stop = null;
+
+            IEnumerable<string> Keys()
+            {
+                yield return "updates/first";
+                observed = system.GetDiagnostics().RequestCount;
+                stop = Own(_startup.StopAsync());
+                throw new InvalidOperationException("Iterator failed after stopping its service.");
+            }
+
+            using var size = system.GetDownloadSizeAsync(Keys());
+            Assert.That(observed, Is.EqualTo(baseline));
+            Assert.That(size.DiagnosticId, Is.Zero);
+            Assert.That(size.Status, Is.EqualTo(ResourceRequestStatus.Invalidated));
+            Assert.That(size.Error.Kind, Is.EqualTo(ResourceError.SessionUnavailable));
+            Assert.That(size.IsDisposed, Is.True);
+            var row = ResourceEventHistory.Read().Single();
+            Assert.That(row.Source, Is.EqualTo(ResourceEventSource.DownloadSize));
+            Assert.That(row.Kind, Is.EqualTo(ResourceEventKind.Terminal));
+            Assert.That(row.Status, Is.EqualTo(size.Status));
+            Assert.That(row.Error, Is.EqualTo(size.Error.Kind));
+            yield return Wait(stop);
+            Assert.That(stop.TakeResult(), Is.True);
         }
 
         private ResourceLocatorInfo AddPackedCatalog()
@@ -567,8 +853,25 @@ namespace YLFramework.Tests.Resource
                 "The test catalog must satisfy this Addressables version's official dependency contract.");
         }
 
-        private sealed class HashProvider : ResourceProviderBase
+        private sealed class HashProvider : ResourceProviderBase, IAssetBundleResource
         {
+            private ProvideHandle? _download;
+            internal bool DownloadPending => _download.HasValue;
+            internal int DownloadReleases;
+            internal Exception DownloadReleaseFault;
+            internal Exception HashReleaseFault;
+            internal Action BeforeHashRelease;
+            public AssetBundle GetAssetBundle() => null;
+
+            internal void CompleteDownload()
+            {
+                if (!_download.HasValue)
+                    return;
+                var handle = _download.Value;
+                _download = null;
+                handle.Complete<IAssetBundleResource>(this, true, null);
+            }
+
             private readonly Queue<ProvideHandle> _pending = new();
             internal int Provides;
             internal int Releases;
@@ -581,7 +884,9 @@ namespace YLFramework.Tests.Resource
             public override Type GetDefaultType(IResourceLocation location) => location.ResourceType;
             public override void Provide(ProvideHandle handle)
             {
-                if (handle.Type == typeof(string))
+                if (handle.Type == typeof(IAssetBundleResource))
+                    _download = handle;
+                else if (handle.Type == typeof(string))
                 {
                     Provides++;
                     if (AutomaticHashes) handle.Complete("new", true, null);
@@ -593,13 +898,25 @@ namespace YLFramework.Tests.Resource
                     handle.Complete<object>(new ResourceLocationMap(handle.Location.PrimaryKey), true, null);
                 }
             }
-            internal void CompleteHashes()
+            internal void CompleteHashes(string hash = "new")
             {
-                while (_pending.Count != 0) _pending.Dequeue().Complete("new", true, null);
+                while (_pending.Count != 0) _pending.Dequeue().Complete(hash, true, null);
             }
             public override void Release(IResourceLocation location, object asset)
             {
-                if (asset is string) Releases++;
+                if (asset is string)
+                {
+                    Releases++;
+                    BeforeHashRelease?.Invoke();
+                    if (HashReleaseFault != null)
+                        throw HashReleaseFault;
+                }
+                if (ReferenceEquals(asset, this))
+                {
+                    DownloadReleases++;
+                    if (DownloadReleaseFault != null)
+                        throw DownloadReleaseFault;
+                }
             }
         }
 

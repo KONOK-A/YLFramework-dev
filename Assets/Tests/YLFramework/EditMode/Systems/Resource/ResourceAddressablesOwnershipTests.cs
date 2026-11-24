@@ -26,7 +26,7 @@ using YLFramework.Resource;
 namespace YLFramework.Tests.Resource
 {
     [Category("YL.Resource.Addressables")]
-    public sealed class ResourceAddressablesOwnershipTests
+    public sealed partial class ResourceAddressablesOwnershipTests
     {
         [UnitySetUp]
         public IEnumerator Prepare()
@@ -485,6 +485,7 @@ namespace YLFramework.Tests.Resource
             internal TextAsset Asset { get; } = new TextAsset("deferred required entry");
             internal int Provides { get; private set; }
             internal int Releases { get; private set; }
+            internal Exception ReleaseFault { get; set; }
 
             internal DeferredBatchProvider()
             {
@@ -514,6 +515,10 @@ namespace YLFramework.Tests.Resource
             {
                 Assert.That(asset, Is.SameAs(Asset));
                 Releases++;
+                if (ReleaseFault != null)
+                {
+                    throw ReleaseFault;
+                }
             }
 
             public void Dispose()

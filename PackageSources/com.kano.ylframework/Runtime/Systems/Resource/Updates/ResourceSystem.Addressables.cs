@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
@@ -115,12 +116,12 @@ namespace YLFramework.Resource
         public ResourceRequest<long> GetDownloadSizeAsync(IEnumerable<string> keys, CancellationToken cancellation = default)
         {
             CheckThread();
-            var request = Track(new ResourceRequest<long>());
+            var request = new ResourceRequest<long> { EventTrace = BeginEvent(ResourceEventSource.DownloadSize) };
             try
             {
                 RequireAvailable();
-                var frozen = FreezeDeliveryKeys(keys);
-                request.DiagnosticIdentity.Key = string.Join(", ", frozen);
+                if (!TryTrackFrozenKeys(request, keys, out var frozen))
+                    return request;
                 BindCancellation(request, cancellation);
                 if (!request.IsDone)
                     Run(ObserveDelivery(request, () => Addressables.GetDownloadSizeAsync(frozen), handle => handle.Result, true), error => Fail(request, error));
@@ -137,12 +138,12 @@ namespace YLFramework.Resource
         public ResourceRequest<bool> DownloadDependenciesAsync(IEnumerable<string> keys, CancellationToken cancellation = default)
         {
             CheckThread();
-            var request = Track(new ResourceRequest<bool>());
+            var request = new ResourceRequest<bool> { EventTrace = BeginEvent(ResourceEventSource.Download) };
             try
             {
                 RequireAvailable();
-                var frozen = FreezeDeliveryKeys(keys);
-                request.DiagnosticIdentity.Key = string.Join(", ", frozen);
+                if (!TryTrackFrozenKeys(request, keys, out var frozen))
+                    return request;
                 BindCancellation(request, cancellation);
                 if (!request.IsDone)
                     Run(ObserveDelivery(request, () => Addressables.DownloadDependenciesAsync(frozen, Addressables.MergeMode.Union, false)
@@ -160,10 +161,11 @@ namespace YLFramework.Resource
         public ResourceRequest<IReadOnlyList<string>> CheckForCatalogUpdatesAsync(CancellationToken cancellation = default)
         {
             CheckThread();
-            var request = Track(new ResourceRequest<IReadOnlyList<string>>());
+            var request = new ResourceRequest<IReadOnlyList<string>> { EventTrace = BeginEvent(ResourceEventSource.CatalogCheck) };
             try
             {
                 RequireAvailable();
+                Track(request);
                 BindCancellation(request, cancellation);
                 QueueCatalogControl(request, () => Addressables.CheckForCatalogUpdates(true), SnapshotCatalogCheck);
             }
@@ -183,13 +185,13 @@ namespace YLFramework.Resource
         public ResourceRequest<bool> ApplyCatalogUpdatesAsync(IEnumerable<string> catalogIds, CancellationToken cancellation = default)
         {
             CheckThread();
-            var request = Track(new ResourceRequest<bool>());
+            var request = new ResourceRequest<bool> { EventTrace = BeginEvent(ResourceEventSource.CatalogApply) };
             try
             {
                 RequireAvailable();
                 RequireStartupCatalogUpdateWindow();
-                var frozen = FreezeDeliveryKeys(catalogIds);
-                request.DiagnosticIdentity.Key = string.Join(", ", frozen);
+                if (!TryTrackFrozenKeys(request, catalogIds, out var frozen))
+                    return request;
                 BindCancellation(request, cancellation);
                 var targets = new (ResourceLocatorInfo Info, IResourceLocator Before, string LocalHash, bool HasRemoteHash)[frozen.Length];
                 QueueCatalogControl(request, () =>
@@ -285,6 +287,32 @@ namespace YLFramework.Resource
                 throw new ResourceException(ResourceError.InvalidConfiguration, "Controlled startup catalog updates were not explicitly enabled and verified before official initialization.");
         }
 
+        private bool TryTrackFrozenKeys<T>(ResourceRequest<T> request, IEnumerable<string> keys, out string[] frozen,
+            [CallerMemberName] string operation = null)
+        {
+            try
+            {
+                frozen = FreezeDeliveryKeys(keys);
+                request.EventTrace = request.EventTrace.WithKeys(frozen);
+            }
+            finally
+            {
+                // A caller-owned iterator can stop this service even when MoveNext or Dispose throws.
+                if (State != ResourceSystemState.Ready || !IsSessionActive)
+                {
+                    IResourceRequest invalidated = request;
+                    invalidated.PrepareInvalidation();
+                    invalidated.ReleaseInvalidatedResult();
+                    invalidated.NotifyInvalidation();
+                }
+            }
+            if (request.IsDone)
+                return false;
+            RequireAvailable();
+            Track(request, string.Join(", ", frozen), operation: operation);
+            return true;
+        }
+
         private static string[] FreezeDeliveryKeys(IEnumerable<string> keys)
         {
             if (keys == null)
@@ -330,11 +358,13 @@ namespace YLFramework.Resource
                     yield break;
                 RequireAvailable();
                 var manager = Addressables.ResourceManager;
+                var work = request.EventTrace.StartWork(ResourceEventPhase.Delivery);
                 var handle = start();
                 try
                 {
                     // Check/Update 可能返回官方共享别名，必须立即独立 Acquire，不能 Take 掉别人的原引用。
                     pin = AddressablesHandleOwner<TValue>.AcquireReference(manager, handle);
+                    pin.WorkTrace = work;
                 }
                 finally
                 {
@@ -344,18 +374,32 @@ namespace YLFramework.Resource
                 request.SetProgressReader(() => handle.IsValid() ? handle.PercentComplete : 1);
                 // IsDone 可能先于 deferred Completed/官方 auto-release；必须先观察真实完成回调。
                 var completionObserved = false;
-                handle.Completed += _ => completionObserved = true;
+                handle.Completed += _ =>
+                {
+                    completionObserved = true;
+#if UNITY_EDITOR
+                    pin.ObserveWork(request.IsDone);
+#endif
+                };
                 while (!completionObserved)
                     yield return null;
                 if (request.IsDone)
                     yield break;
-                if (!IsSessionActive || State != ResourceSystemState.Ready)
-                    throw AdmissionError();
-                if (handle.Status != AsyncOperationStatus.Succeeded)
-                    throw new ResourceException(ResourceError.LoadFailed, "The official Addressables delivery operation failed.", handle.OperationException);
-                var result = snapshot(handle);
-                pin.Dispose();
-                pin = null;
+                TResult result;
+                try
+                {
+                    if (!IsSessionActive || State != ResourceSystemState.Ready)
+                        throw AdmissionError();
+                    if (handle.Status != AsyncOperationStatus.Succeeded)
+                        throw new ResourceException(ResourceError.LoadFailed, "The official Addressables delivery operation failed.", handle.OperationException);
+                    result = snapshot(handle);
+                }
+                catch (Exception deliveryError)
+                {
+                    ReleaseDeliveryPin(ref pin, request, deliveryError);
+                    throw;
+                }
+                ReleaseDeliveryPin(ref pin, request);
                 if (appliesCatalog)
                     _catalogApplyInFlight = false;
                 request.SetSuccess(result);
@@ -365,7 +409,7 @@ namespace YLFramework.Resource
             {
                 try
                 {
-                    pin?.Dispose();
+                    ReleaseDeliveryPin(ref pin, request);
                 }
                 finally
                 {
@@ -373,6 +417,31 @@ namespace YLFramework.Resource
                         _catalogApplyInFlight = false;
                     settled?.Invoke();
                 }
+            }
+        }
+
+        private void ReleaseDeliveryPin<T, TResult>(ref AddressablesHandleOwner<T> pin, ResourceRequest<TResult> request, Exception deliveryError = null)
+        {
+            var owned = pin;
+            pin = null;
+            if (owned == null)
+                return;
+            owned.SetLate(request.IsDone);
+            try
+            {
+                owned.Dispose();
+            }
+            catch (Exception releaseError)
+            {
+                var combined = deliveryError == null ? null :
+                    new AggregateException("Delivery and final pin release failed.", deliveryError, releaseError);
+                // Provider.Release can cancel the consumer reentrantly. Its errors then belong to shutdown.
+                if (request.IsDone)
+                    RecordCleanupError(combined ?? releaseError);
+                else if (combined != null)
+                    throw combined;
+                else
+                    throw;
             }
         }
 

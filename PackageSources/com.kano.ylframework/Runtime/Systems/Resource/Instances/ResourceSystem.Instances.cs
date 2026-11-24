@@ -48,10 +48,14 @@ namespace YLFramework.Resource
             return reservation.Deliver();
         }
 
-        private ResourceRequest<InstanceLease> CreateInstanceAsync(string key, Transform parent, Scene scene,
-            CancellationToken cancellation, bool reusable)
+        internal ResourceRequest<InstanceLease> CreateInstanceAsync(string key, Transform parent, Scene scene,
+            CancellationToken cancellation, bool reusable, Action<ResourceRequest<InstanceLease>> onAdmitted = null)
         {
             CheckThread();
+            var request = new ResourceRequest<InstanceLease>(lease => lease.Discard())
+            {
+                EventTrace = BeginEvent(reusable ? ResourceEventSource.Rent : ResourceEventSource.Instantiate, key)
+            };
             try
             {
                 RequireAvailable();
@@ -59,11 +63,11 @@ namespace YLFramework.Resource
             }
             catch (Exception error)
             {
-                return Failure<InstanceLease>(error);
+                return Fail(request, error);
             }
-            var request = Track(new ResourceRequest<InstanceLease>(lease => lease.Discard()), key,
-                operation: reusable ? nameof(RentAsync) : nameof(InstantiateAsync));
+            Track(request, key, operation: reusable ? nameof(RentAsync) : nameof(InstantiateAsync));
             _pendingInstanceRequests.Add(request, 1);
+            onAdmitted?.Invoke(request);
             _businessStarted = true;
             try
             {
