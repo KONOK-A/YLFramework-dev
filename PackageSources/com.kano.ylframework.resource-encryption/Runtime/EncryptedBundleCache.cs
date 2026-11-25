@@ -5,20 +5,28 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
+using FileIdentity = System.ValueTuple<ulong, uint, ulong>;
 
 namespace YLFramework.Resource.Encryption
 {
     internal sealed class EncryptedBundleCache : IDisposable
     {
         private const string TemporaryPrefix = ".yl-transfer-";
+        internal const string TransferProofSuffix = ".owner";
+        private const uint TransferProofFormat = 0x31504c59; // YLP1
+        private const int TransferProofBytes = sizeof(uint) + sizeof(ulong) + sizeof(uint) + sizeof(ulong);
+        private static readonly TimeSpan _readInactivity = TimeSpan.FromMinutes(2);
         private readonly object _gate = new object();
         private readonly string _root;
         private readonly Dictionary<string, Entry> _entries = new Dictionary<string, Entry>(StringComparer.Ordinal);
         private readonly HashSet<EncryptedBundleRecord> _description;
         private readonly HashSet<Task> _mountWork = new HashSet<Task>();
+        private readonly Dictionary<string, FileIdentity> _activeParts = new Dictionary<string, FileIdentity>(StringComparer.OrdinalIgnoreCase);
+        private long _transferRevision;
         private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
         private readonly IDisposable _parents;
         private readonly SafeFileHandle _owner;
@@ -28,6 +36,7 @@ namespace YLFramework.Resource.Encryption
 
         // Bytes read by successful full ciphertext SHA-256 checks, not native reads or OS disk I/O.
         internal long VerifiedCipherHashBytes => Interlocked.Read(ref _verifiedCipherHashBytes);
+        internal Action<EncryptedBundleRecord, FileStream, int> CiphertextReceived { get; set; }
 
         private enum EntryState
         {
@@ -80,14 +89,8 @@ namespace YLFramework.Resource.Encryption
             _parents = PinCacheRoot(_root, excludedRoot);
             try
             {
-                _owner = OwnedWindowsFiles.LockPinned(Path.Combine(_root, ".yl-cache.lock"));
-                _http = new HttpClient(new HttpClientHandler
-                {
-                    AllowAutoRedirect = false,
-                    UseCookies = false,
-                    UseProxy = false,
-                    AutomaticDecompression = DecompressionMethods.None
-                });
+                _owner = OwnedWindowsFiles.LockPinned(Path.Combine(_root, OwnerFile));
+                _http = CreateCiphertextHttpClient(useProxy: false);
             }
             catch
             {
@@ -138,18 +141,32 @@ namespace YLFramework.Resource.Encryption
             }, token);
         }
 
+        internal const string OwnerFile = ".yl-cache.lock";
+
+        internal static bool IsTemporaryName(string name)
+        {
+            const string suffix = ".part";
+            return name.Length == TemporaryPrefix.Length + 32 + suffix.Length &&
+                name.StartsWith(TemporaryPrefix, StringComparison.Ordinal) && name.EndsWith(suffix, StringComparison.Ordinal) &&
+                Guid.TryParseExact(name.Substring(TemporaryPrefix.Length, 32), "N", out _);
+        }
+
+        internal (Dictionary<string, FileIdentity> Parts, long Revision, bool IsOpen) SnapshotActiveParts()
+        {
+            lock (_gate)
+                return (new Dictionary<string, FileIdentity>(_activeParts, _activeParts.Comparer), _transferRevision, _closing == null);
+        }
+
         private void Scan(CancellationToken token)
         {
-            foreach (string abandoned in Directory.EnumerateFiles(_root, TemporaryPrefix + "*.part", SearchOption.TopDirectoryOnly))
+            foreach (string proof in Directory.EnumerateFiles(_root, TemporaryPrefix + "*.part" + TransferProofSuffix, SearchOption.TopDirectoryOnly))
             {
                 token.ThrowIfCancellationRequested();
-                string name = Path.GetFileNameWithoutExtension(abandoned);
-                if (name.Length == TemporaryPrefix.Length + 32 && name.StartsWith(TemporaryPrefix, StringComparison.Ordinal) &&
-                    Guid.TryParseExact(name.Substring(TemporaryPrefix.Length), "N", out _))
-                {
-                    using var file = OwnedWindowsFiles.OpenRemovalPinned(abandoned);
-                    OwnedWindowsFiles.DeleteOpen(file);
-                }
+                if (!proof.EndsWith(TransferProofSuffix, StringComparison.Ordinal))
+                    continue;
+                string file = proof.Substring(0, proof.Length - TransferProofSuffix.Length);
+                if (IsTemporaryName(Path.GetFileName(file)))
+                    ReclaimTransfer(file, proof, token);
             }
             foreach (var record in _description)
             {
@@ -164,6 +181,78 @@ namespace YLFramework.Resource.Encryption
                         entry.State = EntryState.Available;
                 }
                 catch (EncryptedBundleIntegrityException) { entry.State = EntryState.Invalidated; }
+            }
+        }
+
+        private static void ReclaimTransfer(string file, string proofPath, CancellationToken token)
+        {
+            try
+            {
+                using var proof = OwnedWindowsFiles.OpenRemovalPinned(proofPath);
+                if (ReadTransferProof(proof) is not FileIdentity identity)
+                    return;
+                try
+                {
+                    using var part = OwnedWindowsFiles.OpenRemovalPinned(file);
+                    if (OwnedWindowsFiles.ReadFileIdentity(part) != identity)
+                        return;
+                    token.ThrowIfCancellationRequested();
+                    OwnedWindowsFiles.DeleteOpen(part);
+                }
+                catch (FileNotFoundException)
+                {
+                    // The payload could have been published or removed before a process exit.
+                }
+                token.ThrowIfCancellationRequested();
+                OwnedWindowsFiles.DeleteOpen(proof);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // A locked or unreadable file cannot be reclaimed. Leave its provenance for the next scan.
+            }
+        }
+
+        internal static FileIdentity? ReadTransferProof(string partPath)
+        {
+            try
+            {
+                using var proof = OwnedWindowsFiles.ReadPinned(partPath + TransferProofSuffix);
+                return ReadTransferProof(proof);
+            }
+            catch (FileNotFoundException) { return null; }
+        }
+
+        private static FileIdentity? ReadTransferProof(FileStream proof)
+        {
+            if (proof.Length != TransferProofBytes)
+                return null;
+            using var reader = new BinaryReader(proof, Encoding.UTF8, leaveOpen: true);
+            if (reader.ReadUInt32() != TransferProofFormat)
+                return null;
+            return (reader.ReadUInt64(), reader.ReadUInt32(), reader.ReadUInt64());
+        }
+
+        internal static FileStream CreateTransferProof(string partPath, FileIdentity identity)
+        {
+            var proof = OwnedWindowsFiles.CreateTemporaryPinned(partPath + TransferProofSuffix);
+            try
+            {
+                using var writer = new BinaryWriter(proof, Encoding.UTF8, leaveOpen: true);
+                var (file, volume, created) = identity;
+                writer.Write(TransferProofFormat);
+                writer.Write(file);
+                writer.Write(volume);
+                writer.Write(created);
+                writer.Flush();
+                proof.Flush(flushToDisk: true);
+                return proof;
+            }
+            catch (Exception error)
+            {
+                try { OwnedWindowsFiles.DeleteOpen(proof); }
+                catch (Exception cleanup) { throw new AggregateException("Transfer provenance write and cleanup both failed.", error, cleanup); }
+                finally { proof.Dispose(); }
+                throw;
             }
         }
 
@@ -378,21 +467,37 @@ namespace YLFramework.Resource.Encryption
         private async Task DownloadAsync(string final, EncryptedBundleRecord row, TransferProgress progress, CancellationToken token)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-            deadline.CancelAfter(TimeSpan.FromMinutes(2));
-            var transfer = deadline.Token;
+            deadline.CancelAfter(_readInactivity);
             string name = Path.Combine(_root, TemporaryPrefix + Guid.NewGuid().ToString("N") + ".part");
-            using var body = new HttpRequestMessage(HttpMethod.Get, row.Binding.Url);
+            FileStream proof = null;
+            bool registered = false;
             try
             {
-                using var response = await _http.SendAsync(body, HttpCompletionOption.ResponseHeadersRead, transfer).ConfigureAwait(false);
-                if (response.StatusCode != HttpStatusCode.OK || response.Content.Headers.ContentEncoding.Count != 0 ||
-                    response.Content.Headers.ContentRange != null || (response.Content.Headers.ContentLength is long declared && declared != row.CipherLength))
-                {
-                    throw new IOException("Encrypted Bundle server did not supply the frozen complete ciphertext (HTTP " + (int)response.StatusCode + ").");
-                }
+                using var response = await GetCompleteCiphertextAsync(_http, row.Binding.Url, row.CipherLength, deadline.Token).ConfigureAwait(false);
+                deadline.CancelAfter(Timeout.InfiniteTimeSpan);
                 using var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
                 using var part = OwnedWindowsFiles.CreateTemporaryPinned(name);
-                RecordVerifiedCipherHash(await CommitCipherAsync(input, part, final, row, transfer, progress).ConfigureAwait(false));
+                FileIdentity identity;
+                try
+                {
+                    identity = OwnedWindowsFiles.ReadFileIdentity(part);
+                    proof = CreateTransferProof(name, identity);
+                }
+                catch (Exception error)
+                {
+                    try { OwnedWindowsFiles.DeleteOpen(part); }
+                    catch (Exception cleanup) { throw new AggregateException("Transfer initialization and temporary cleanup both failed.", error, cleanup); }
+                    throw;
+                }
+                lock (_gate)
+                {
+                    _activeParts.Add(name, identity);
+                    _transferRevision++;
+                    registered = true;
+                }
+                var observer = CiphertextReceived;
+                RecordVerifiedCipherHash(await CommitCipherAsync(input, part, final, row, token, progress,
+                    observer == null ? null : (stage, count) => observer(row, stage, count), deadline).ConfigureAwait(false));
             }
             catch (OperationCanceledException error) when (!token.IsCancellationRequested)
             {
@@ -402,10 +507,70 @@ namespace YLFramework.Resource.Encryption
             {
                 throw new IOException("Encrypted Bundle network failure.", error);
             }
+            finally
+            {
+                if (registered)
+                {
+                    lock (_gate)
+                    {
+                        _activeParts.Remove(name);
+                        _transferRevision++;
+                    }
+                }
+                using (proof)
+                    if (proof != null)
+                        RemoveProofForMissingPart(name, proof);
+            }
+        }
+
+        private static void RemoveProofForMissingPart(string path, FileStream proof)
+        {
+            try
+            {
+                try { File.GetAttributes(path); }
+                catch (FileNotFoundException) { OwnedWindowsFiles.DeleteOpen(proof); }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // A later cache opening can retry removal of the provenance record.
+            }
+        }
+
+        internal static HttpClient CreateCiphertextHttpClient(bool useProxy) => new HttpClient(new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false,
+            UseProxy = useProxy,
+            AutomaticDecompression = DecompressionMethods.None
+        });
+
+        internal static async Task<HttpResponseMessage> GetCompleteCiphertextAsync(HttpClient client, string source, long length,
+            CancellationToken cancellation)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, source);
+            var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.OK && response.Content != null && response.Content.Headers.ContentEncoding.Count == 0 &&
+                !response.Content.Headers.Contains("Content-Range") &&
+                (!(response.Content.Headers.ContentLength is long declared) || declared == length))
+            {
+                return response;
+            }
+            var status = response.StatusCode;
+            response.Dispose();
+            throw new IOException("Encrypted Bundle server did not supply the frozen complete ciphertext (HTTP " + (int)status + ").");
+        }
+
+        internal static async Task<int> ReadCiphertextAsync(Stream input, byte[] buffer, int take, CancellationTokenSource deadline,
+            TimeSpan inactivity)
+        {
+            deadline.CancelAfter(inactivity);
+            try { return await input.ReadAsync(buffer, 0, take, deadline.Token).ConfigureAwait(false); }
+            finally { deadline.CancelAfter(Timeout.InfiniteTimeSpan); }
         }
 
         internal static async Task<long> CommitCipherAsync(Stream input, FileStream part, string final, EncryptedBundleRecord row,
-            CancellationToken transfer, TransferProgress progress = null)
+            CancellationToken transfer, TransferProgress progress = null, Action<FileStream, int> received = null,
+            CancellationTokenSource readDeadline = null)
         {
             try
             {
@@ -414,9 +579,12 @@ namespace YLFramework.Resource.Encryption
                 while (true)
                 {
                     int take = (int)Math.Min(buffer.Length, row.CipherLength - length + 1);
-                    int count = await input.ReadAsync(buffer, 0, take, transfer).ConfigureAwait(false);
+                    int count = readDeadline == null
+                        ? await input.ReadAsync(buffer, 0, take, transfer).ConfigureAwait(false)
+                        : await ReadCiphertextAsync(input, buffer, take, readDeadline, _readInactivity).ConfigureAwait(false);
                     if (count == 0)
                         break;
+                    received?.Invoke(part, count);
                     length += count;
                     if (length > row.CipherLength)
                         throw new EncryptedBundleIntegrityException("Download exceeded the frozen ciphertext length.");

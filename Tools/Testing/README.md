@@ -202,6 +202,14 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/ResourceUpdates/Invo
 
 回执位于 `<WorkspaceRoot>/Results/ResourceUpdates/<run-id>/summary.json`。各格保存 `input-identity.json`、A/B/C 构建回执、A 安装树的逐文件长度和 SHA-256，以及 `runs.json` 和对应 Player 日志。汇总区分前置不足、失败和通过，并标出是否覆盖全部六格。需要诊断单格时，使用原 [Player runner](Invoke-YLResourceAddressablesPlayer.ps1) 的 `-ContentUpdate`，配合 `-Profile` 和 `-Unity`。加密单格再加 `-EncryptedRemoteGroup -Backend Mono` 或 `-EncryptedRemoteGroup -Backend IL2CPP`。
 
+#### 大包下载与缓存盘点
+
+在内容事务入口加 `-CacheUsage` 可运行只读盘点、发布与 `ready` 登记之间的跨进程查询，引用变化后的清理，以及独立应用的官方缓存哨兵。加 `-LargeDownload` 记录限速、定点断流、实收区间和重复字节。改后普通补丁对照使用一个普通 `-Cell`、`-LargeDownload -ExpectTuned`，以及 `-CompareBaselineHost` 指定该格已封存的基线宿主。控制器共用发布端点和签名制品，两套 Player 分开保存应用数据。
+
+在同一入口加 `-SpaceFaults -ExpectTuned` 可运行签名安装的空间预检和写入边界注入。每条故障在原安装与原应用数据上关停端点、读取 C，再显式回滚到下载版 B 并读取已准备的可选章。普通 `-Cell` 可用 `-ResumeContracts -ExpectTuned` 验证响应变化、断点恢复及在空间预检前回收已失效的本方断点。专项结果保存在相应的 `Results` 分组。
+
+[固定密文 Player 入口](ResourceEncryption/Invoke-FrozenDelivery.ps1) 在 `-Mode Performance` 下支持 `-Experiment LargeDownload`、`-Experiment SpaceFaultOffline`、`-Experiment CacheUsage` 和 `-Experiment BufferCapacity`。两种缓存场景核对只读根、拒读子项、会话中的在途暂存和文件身份。容量实验同时运行这些场景并验证探针失败后的会话回收，传入以 `YL_PAYLOAD_TRACE` 编译的 `-DiagnosticNativeDll`。传输成对重放使用 `-BaselineReceipt` 引用已封存的固定交付基线回执，改后空闲时限用 `-ExpectProgressDeadline` 验证。
+
 ### Action 原生画面
 
 先在未打开的工具自有宿主中运行 `Special/Action`，准备正式输入、当前测试程序集与 `Assets/YLTestingProfile/Empty.unity`。随后显式打开该宿主，使用只写结果、不调用 Exit/Quit 的入口；不使用 `-batchmode`、`-quit`、`-runTests` 或 `-executeMethod YLTestEntry.Execute`：

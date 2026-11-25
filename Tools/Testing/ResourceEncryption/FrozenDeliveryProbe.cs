@@ -40,6 +40,9 @@ namespace YLFramework.Testing
         }
         private string _output;
         private Row _row;
+        private Keys _experimentKeys;
+        private string _experimentCache;
+        private Task<EncryptedDeliverySession> _experimentOpen;
 
         [Serializable]
         private sealed class Row
@@ -49,10 +52,17 @@ namespace YLFramework.Testing
             public int pid, bits, creates, unloads, streamsClosed, openKeys, issuedKeys, returnKeys, bundlesAfterStop, leasesAfterStop;
             public int[] nativeBeforeStop, nativeAfterStop;
             public PerformanceEvidence performance;
+            public LargeDownloadEvidence largeDownload;
+            public BufferEvidence buffers;
+            public CacheInspectionEvidence cacheInspection;
+            public bool experimentClosed, experimentFaultRecovered;
+            public string experimentFailure;
             public long coldBytes, mixedBytes, cacheBytes;
             public long heldTransferBytes, heldLoadBytes, completedTransferBytes, completedLoadBytes;
             public bool quit, sentinel, verifiedStartup, externalAfterStop, stableFile, exclusiveAfterUnload, remount, remountDuringUnload, noParts, predownloadOnly;
             public bool sawOwnedPart, rejectedBeforeCreate, invalidatedSize, refusedCloseWithExternalOwner;
+            public string abandonedTransferFileId, abandonedTransferCreated;
+            public long abandonedTransferReceivedBytes;
             public bool rejectedReorderedCandidates, matchedFirstCandidate, rejectedAfterDrift, leftForeignRegistration, reopenedCacheLock;
             public bool observerStartedTransfer, loadedWhileTransferHeld, observerCanceledWhileTransferHeld, downloadReleasedBeforeAsset, keyLeasesReturned;
             public bool retriedWithPrefetchHeld, singleLoadAttempt, refusedCloseWithPrefetchOwner;
@@ -80,6 +90,7 @@ namespace YLFramework.Testing
 #endif
             var stack = new Stack<IEnumerator>();
             stack.Push(Run());
+            Exception failure = null;
             while (stack.Count != 0)
             {
                 object next;
@@ -90,13 +101,85 @@ namespace YLFramework.Testing
                 }
                 catch (Exception error)
                 {
-                    foreach (var iterator in stack) (iterator as IDisposable)?.Dispose();
-                    Finish(error);
-                    yield break;
+                    failure = error;
+                    while (stack.Count != 0)
+                    {
+                        try { (stack.Pop() as IDisposable)?.Dispose(); }
+                        catch (Exception cleanup) { failure = new AggregateException(failure, cleanup); }
+                    }
+                    break;
                 }
                 if (next is IEnumerator nested) stack.Push(nested); else yield return next;
             }
-            Finish(null);
+            if (_experimentKeys != null)
+            {
+                var close = CloseExperimentAsync();
+                float deadline = Time.realtimeSinceStartup + 140f;
+                while (!close.IsCompleted && Time.realtimeSinceStartup < deadline)
+                    yield return null;
+                Exception cleanup = close.IsCompleted
+                    ? close.Exception?.GetBaseException()
+                    : new TimeoutException("The fixture session did not release its pending work.");
+                if (cleanup != null)
+                    failure = failure == null ? cleanup : new AggregateException(failure, cleanup);
+            }
+            if (_row.scenario == "buffer-capacity-prefetch-fault")
+            {
+                if (failure is ExperimentPrefetchFault && _row.experimentClosed && _row.keyLeasesReturned &&
+                    _row.openKeys == 0 && _row.creates == 0)
+                {
+                    _row.experimentFaultRecovered = true;
+                    _row.experimentFailure = failure.Message;
+                    failure = null;
+                }
+                else if (failure == null)
+                    failure = new InvalidOperationException("The held prefetch failure was not exercised.");
+            }
+            Finish(failure);
+        }
+
+        private Task<EncryptedDeliverySession> OpenExperimentSession(string cache)
+        {
+            _experimentKeys = new Keys(Argument("-ylFrozenKey"), _row.scenario, peerKeyFile: Argument("-ylFrozenPeerKey"));
+            _experimentCache = cache;
+            return _experimentOpen = EncryptedDeliverySession.StartCoreAsync(cache, _experimentKeys, true);
+        }
+
+        private async Task CloseExperimentAsync()
+        {
+            try
+            {
+                if (_experimentOpen == null)
+                    return;
+                // 启动自身的错误由探针主路径保留。仅在成功建立会话后负责收尾。
+                if (!_experimentOpen.IsCompleted)
+                {
+                    try { await _experimentOpen; }
+                    catch (Exception) when (_experimentOpen.IsFaulted || _experimentOpen.IsCanceled) { return; }
+                }
+                if (_experimentOpen.Status != TaskStatus.RanToCompletion)
+                    return;
+                var session = _experimentOpen.GetAwaiter().GetResult();
+                while (session.Provider.Pending != 0 || session.Provider.HasOwners)
+                    await Task.Yield();
+                _row.creates = session.Provider.Creates;
+                await session.CloseAsync();
+                CheckKeyReturns(_experimentKeys);
+                // 验证锁确已释放，避免仅凭 Close 的返回状态认定完成。
+                using var unlocked = new FileStream(Path.Combine(_experimentCache, EncryptedBundleCache.OwnerFile),
+                    FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                _row.experimentClosed = true;
+                if (_row.cacheInspection != null)
+                {
+                    try { _ = EncryptedDeliverySession.InspectCacheAsync(_experimentCache, session); }
+                    catch (ArgumentException) { _row.cacheInspection.closedSessionRejected = true; }
+                    Require(_row.cacheInspection.closedSessionRejected, "A closed session still supplied cache ownership evidence.");
+                }
+            }
+            finally
+            {
+                _experimentKeys.Dispose();
+            }
         }
 
         private IEnumerator Run()
@@ -106,6 +189,20 @@ namespace YLFramework.Testing
                 _row.backend == _backend && _row.architecture == "X64" && _row.bits == 64 && _row.graphics != "Null",
                 "The fixture must use a native Win64 Release graphics Player.");
             string player = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            if (scenario.StartsWith("cache-usage-", StringComparison.Ordinal))
+            {
+                CaptureInstalledIdentity();
+                yield return scenario == "cache-usage-cold" ? InspectColdCache() : InspectOpenCache();
+                yield break;
+            }
+            if (scenario.StartsWith("large-download-", StringComparison.Ordinal) ||
+                scenario == "buffer-capacity" || scenario == "buffer-capacity-prefetch-fault")
+            {
+                CaptureInstalledIdentity();
+                yield return scenario.StartsWith("large-download-", StringComparison.Ordinal) ? MeasureLargeDownload() :
+                    MeasureBufferCapacity(scenario == "buffer-capacity-prefetch-fault");
+                yield break;
+            }
             if (scenario.StartsWith("performance-", StringComparison.Ordinal))
             {
                 yield return Performance(player);
@@ -180,9 +277,15 @@ namespace YLFramework.Testing
             if (scenario == "fault-abort")
             {
                 var transfer = Addressables.DownloadDependenciesAsync(ProtectedKey, false);
-                yield return Until(() => Directory.EnumerateFiles(cache, "*.part").Any());
-                _row.sawOwnedPart = !transfer.IsDone && !File.Exists(final) && session.Provider.Creates == 0 && keys.Opens == 0 &&
-                    Directory.EnumerateFiles(cache, "*.part").Count() == 1;
+                yield return Until(() => transfer.GetDownloadStatus().DownloadedBytes > 0);
+                string part = Directory.EnumerateFiles(cache, "*.part").Single();
+                var staged = CacheEntryMetadata(part);
+                var proof = CacheEntryMetadata(part + EncryptedBundleCache.TransferProofSuffix);
+                _row.abandonedTransferReceivedBytes = transfer.GetDownloadStatus().DownloadedBytes;
+                _row.abandonedTransferFileId = staged.fileId;
+                _row.abandonedTransferCreated = staged.created;
+                _row.sawOwnedPart = !transfer.IsDone && proof.bytes > 0 && !File.Exists(final) &&
+                    session.Provider.Creates == 0 && keys.Opens == 0;
                 Require(_row.sawOwnedPart, "Crash was not during an owned ciphertext attempt.");
                 _row.status = "BeforeUnexpectedExit";
                 Write(_output);
@@ -248,7 +351,7 @@ namespace YLFramework.Testing
             }
             else if (scenario == "fault-recovery" || scenario == "repair")
             {
-                Require(!Directory.EnumerateFiles(cache, "*.part").Any(), "Owned abandoned attempt was not removed on restart.");
+                Require(!HasTransferTemporaries(cache), "Owned abandoned transfer or provenance was not removed on restart.");
                 yield return GoodOfficial(ProtectedKey);
             }
             else if (scenario == "cold")
@@ -510,13 +613,17 @@ namespace YLFramework.Testing
                 Require(released.Length == record.CipherLength && AuthenticatedBundleStream.Hash(released, default) == record.CipherSha256,
                     "Verified ciphertext was not retained unchanged.");
             }
-            _row.noParts = !Directory.EnumerateFiles(cache, "*.part").Any();
+            _row.noParts = !HasTransferTemporaries(cache);
             Require(_row.noParts, "A transfer left temporary ciphertext.");
             var stop = session.CloseAsync();
             yield return Until(() => stop.IsCompleted);
             stop.GetAwaiter().GetResult();
             CheckKeyReturns(keys);
         }
+
+        private static bool HasTransferTemporaries(string cache) =>
+            Directory.EnumerateFiles(cache, "*.part").Any() ||
+            Directory.EnumerateFiles(cache, "*.part" + EncryptedBundleCache.TransferProofSuffix).Any();
 
         private void CaptureInstalledIdentity()
         {
@@ -1015,9 +1122,9 @@ namespace YLFramework.Testing
             public override void Provide(ProvideHandle handle) => throw new InvalidOperationException("Unexpected test provider must never be invoked.");
         }
 
-        private static IEnumerator Until(Func<bool> condition)
+        private static IEnumerator Until(Func<bool> condition, float timeoutSeconds = 35)
         {
-            float deadline = Time.realtimeSinceStartup + 35;
+            float deadline = Time.realtimeSinceStartup + timeoutSeconds;
             while (!condition()) { Require(Time.realtimeSinceStartup < deadline, "Fixture operation timed out."); yield return null; }
         }
 

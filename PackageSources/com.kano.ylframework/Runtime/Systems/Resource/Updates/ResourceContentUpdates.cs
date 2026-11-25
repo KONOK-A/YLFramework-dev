@@ -255,15 +255,23 @@ namespace YLFramework.Resource
             if (comparison != ResourceContentSequenceComparison.New)
                 throw new ResourceException(ResourceError.StaleBase, "The candidate no longer advances the committed sequence.");
             manifest.RequireUnexpiredAnnouncement(DateTimeOffset.UtcNow);
-            using var objects = ResourceContentFileIO.PinDirectory(ObjectsRoot, true);
-            foreach (string route in manifest.StartupRoutes)
-                await EnsureFileAsync(manifest.Artifacts[route], _installed, cancellation).ConfigureAwait(false);
-            cancellation.ThrowIfCancellationRequested();
-            SaveAnnouncement(manifest.Digest, candidate.Announcement);
+            using var preparation = TrackCachePreparation(manifest, manifest.StartupRoutes, publishesManifest: true);
+            try
+            {
+                using var objects = ResourceContentFileIO.PinDirectory(ObjectsRoot, true);
+                await PrepareFileSetAsync(manifest, manifest.StartupRoutes,
+                    candidate.Announcement.LongLength + 2L * ResourceContentStore.MaxRecordBytes, cancellation).ConfigureAwait(false);
+                cancellation.ThrowIfCancellationRequested();
+                SaveAnnouncement(manifest.Digest, candidate.Announcement);
 
-            var version = VersionOf(manifest);
-            writer.WriteJournal(new ResourceContentStore.Journal(version,
-                new ResourceContentStore.Intent(version, state.Generation, state.Active), journal.Rollback, null), cancellation);
+                var version = VersionOf(manifest);
+                writer.WriteJournal(new ResourceContentStore.Journal(version,
+                    new ResourceContentStore.Intent(version, state.Generation, state.Active), journal.Rollback, null), cancellation);
+            }
+            catch (IOException error) when (IsDiskFull(error))
+            {
+                throw DiskFull(error);
+            }
         }
 
         /// <summary>为当前冻结版本补齐可选制品及其签名依赖。无需处理其它可选章节。</summary>
@@ -284,9 +292,16 @@ namespace YLFramework.Resource
             using var writer = AcquireWriter();
             // 另一进程可以提交新版本，当前进程仍从自己的已签清单准备并锁定制品。
             RequireState(writer);
-            using var objects = ResourceContentFileIO.PinDirectory(ObjectsRoot, true);
-            foreach (var route in routes)
-                await EnsureFileAsync(serving.Manifest.Artifacts[route], _installed, cancellation).ConfigureAwait(false);
+            using var preparation = TrackCachePreparation(serving.Manifest, routes);
+            try
+            {
+                using var objects = ResourceContentFileIO.PinDirectory(ObjectsRoot, true);
+                await PrepareFileSetAsync(serving.Manifest, routes, 0, cancellation).ConfigureAwait(false);
+            }
+            catch (IOException error) when (IsDiskFull(error))
+            {
+                throw DiskFull(error);
+            }
             foreach (var route in routes)
             {
                 var artifact = serving.Manifest.Artifacts[route];
@@ -401,58 +416,40 @@ namespace YLFramework.Resource
             path.Equals(directory, StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith(directory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
-        private async Task EnsureFileAsync(ResourceContentArtifact artifact, ResourceContentManifest baseline, CancellationToken cancellation)
+        private async Task DownloadWholeCiphertextAsync(ResourceContentArtifact artifact, string path, CancellationToken cancellation)
         {
-            string path = ResolveFile(artifact, baseline);
-            if (artifact.Source.StartsWith(InstalledPrefix, StringComparison.Ordinal))
+            if (_extension is IResourceContentCiphertextTransfer transport)
             {
-                using var directory = ResourceContentFileIO.PinDirectory(Path.GetDirectoryName(path), false);
-                using var installed = ResourceContentFileIO.OpenRead(path);
-                ResourceContentFileIO.RequireIdentity(installed, artifact.Length, artifact.Sha256, cancellation);
+                await DownloadExtensionCiphertextAsync(transport, artifact, path, cancellation).ConfigureAwait(false);
                 return;
             }
-
-            if (File.Exists(path))
-            {
-                using var current = ResourceContentFileIO.OpenRead(path);
-                if (current.Length == artifact.Length && ResourceContentFileIO.Hash(current, cancellation) == artifact.Sha256)
-                    return;
-            }
-
             var uri = new Uri(artifact.Source, UriKind.Absolute);
             using var timeout = CreateTransferDeadline(cancellation);
             using var response = await GetAsync(uri, timeout.Token).ConfigureAwait(false);
             if (response.Content.Headers.ContentLength is long length && length != artifact.Length)
                 throw new InvalidDataException("The remote artifact length differs from its signed identity.");
             using var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-            string temporary = TemporaryPath(ObjectsRoot);
-            try
+            using var stage = CreateStage(TemporaryPath(ObjectsRoot));
+            using (var output = stage.Stream)
             {
-                using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, CopyBufferBytes, true))
+                var remaining = artifact.Length;
+                var buffer = new byte[CopyBufferBytes];
+                while (remaining != 0)
                 {
-                    var remaining = artifact.Length;
-                    var buffer = new byte[CopyBufferBytes];
-                    while (remaining != 0)
-                    {
-                        int bytes = await input.ReadAsync(buffer, 0, (int)Math.Min(buffer.Length, remaining), timeout.Token).ConfigureAwait(false);
-                        if (bytes == 0)
-                            throw new InvalidDataException("The remote artifact ended before its signed length.");
-                        await output.WriteAsync(buffer, 0, bytes, timeout.Token).ConfigureAwait(false);
-                        remaining -= bytes;
-                    }
-                    if (await input.ReadAsync(buffer, 0, 1, timeout.Token).ConfigureAwait(false) != 0)
-                        throw new InvalidDataException("The remote artifact exceeds its signed length.");
-                    output.Position = 0;
-                    ResourceContentFileIO.RequireIdentity(output, artifact.Length, artifact.Sha256, timeout.Token);
-                    output.Flush(true);
+                    int bytes = await input.ReadAsync(buffer, 0, (int)Math.Min(buffer.Length, remaining), timeout.Token).ConfigureAwait(false);
+                    if (bytes == 0)
+                        throw new InvalidDataException("The remote artifact ended before its signed length.");
+                    ArtifactReceived?.Invoke(uri, bytes);
+                    BeforeArtifactWrite?.Invoke(uri, output, bytes);
+                    await output.WriteAsync(buffer, 0, bytes, timeout.Token).ConfigureAwait(false);
+                    remaining -= bytes;
                 }
-                cancellation.ThrowIfCancellationRequested();
-                Publish(temporary, path);
+                if (await input.ReadAsync(buffer, 0, 1, timeout.Token).ConfigureAwait(false) != 0)
+                    throw new InvalidDataException("The remote artifact exceeds its signed length.");
+                output.Flush(true);
             }
-            finally
-            {
-                File.Delete(temporary);
-            }
+            stage.Publish(path, artifact.Length, artifact.Sha256, timeout.Token);
+            ArtifactPublishedBoundary?.Invoke(path);
         }
 
         private static CancellationTokenSource CreateTransferDeadline(CancellationToken cancellation)
@@ -490,20 +487,14 @@ namespace YLFramework.Resource
         private void SaveAnnouncement(string digest, byte[] bytes)
         {
             using var versions = ResourceContentFileIO.PinDirectory(VersionsRoot, true);
-            string temporary = TemporaryPath(VersionsRoot);
-            try
+            using var stage = CreateStage(TemporaryPath(VersionsRoot), isAsync: false);
+            using (var file = stage.Stream)
             {
-                using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                {
-                    file.Write(bytes, 0, bytes.Length);
-                    file.Flush(true);
-                }
-                Publish(temporary, AnnouncementPath(digest));
+                file.Write(bytes, 0, bytes.Length);
+                file.Flush(true);
             }
-            finally
-            {
-                File.Delete(temporary);
-            }
+            Publish(stage.Path, AnnouncementPath(digest));
+            stage.Preserve();
         }
 
         private static string TemporaryPath(string directory) => Path.Combine(directory, ".stage-" + Guid.NewGuid().ToString("N"));
@@ -551,5 +542,9 @@ namespace YLFramework.Resource
             get => _store.StateCommitBoundary;
             set => _store.StateCommitBoundary = value;
         }
+
+        internal Action<string> ArtifactPublishedBoundary { get; set; }
+        internal Action<Uri, int> ArtifactReceived { get; set; }
+        internal Action<Uri, FileStream, int> BeforeArtifactWrite { get; set; }
     }
 }

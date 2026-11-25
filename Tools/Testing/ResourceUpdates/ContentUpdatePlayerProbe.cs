@@ -35,11 +35,18 @@ namespace YLFramework.Testing
         [Serializable]
         private sealed class Request
         {
-            public string resultPath, userDataPath, baseUrl, announcementRoute, operation, stopAt, stopMarkerPath;
+            public string resultPath, userDataPath, baseUrl, announcementRoute, operation, stopAt, stopMarkerPath, releaseMarkerPath, stopArtifactSha256;
+            public long stopArtifactLength;
             public string k1Path, k2Path, oldAddress, newAddress, preexisting, legacyCacheCatalog;
             public string optionalAddress, retainedAddress, sceneAddress, sceneRootName, sceneObjectName, atlasAddress, atlasSpriteName;
             public string[] optionalRoutes, retainedRoutes;
-            public bool encrypted;
+            public bool encrypted, observeTransfers;
+            public string spaceFaultRoute;
+            public long spaceBeforeBytes, spaceWriteLimit;
+            public string reclaimTestPart, inspectStagingRoute, inspectStagingPath, holdRejectedCheckpoint;
+            public long spaceAfterReclaimBytes;
+            public long transferCancelAfterBytes;
+            public string transferCancelRoute;
         }
 
         [Serializable]
@@ -63,6 +70,22 @@ namespace YLFramework.Testing
             public ScopeGuard scopeGuard;
             public SceneRead scene;
             public AtlasRead atlas;
+            public CacheReport cacheBefore, cacheAfter;
+            public OfficialCacheEvidence officialCacheBefore, officialCacheAfter;
+            public CacheFile inFlightStage;
+            public long heldRejectedCheckpointBytes;
+            public bool spacePreflightSawOwnedPart;
+            public long spaceFirstAvailableBytes;
+            public int spacePreflightChecks;
+            public TransferRead[] transferReads;
+            public long spaceFaultStageBytes;
+            public int spaceFaultHResult;
+        }
+
+        [Serializable]
+        private sealed class OfficialCacheEvidence
+        {
+            public string catalogPath, catalogSha256, catalogFileId, markerSha256, markerFileId;
         }
 
         [Serializable]
@@ -117,7 +140,61 @@ namespace YLFramework.Testing
         {
             public int pid;
             public string point;
+            public string path, activeDigest;
+            public long generation, offset;
         }
+
+        [Serializable]
+        private sealed class CacheCount
+        {
+            public string certainty;
+            public string bytes;
+            public bool hasBytes;
+        }
+
+        [Serializable]
+        private sealed class TransferRead
+        {
+            public string target, firstUtc, lastUtc;
+            public long bytes;
+            public int reads;
+        }
+
+        [Serializable]
+        private sealed class CacheFile
+        {
+            public string relativePath, kind, disposition, retention;
+            public string bytes;
+            public bool hasBytes, ownershipConfirmed;
+        }
+
+        [Serializable]
+        private sealed class CacheReport
+        {
+            public string owner, root, application, channel, observedAt;
+            public CacheCount owned, retained, cleanupCandidates, undetermined;
+            public CacheFile[] files;
+            public string[] issues;
+        }
+
+        private static CacheReport SnapshotCache(ResourceCacheUsageReport report) => new CacheReport
+        {
+            owner = report.Owner.ToString(), root = report.Root, application = report.Application, channel = report.Channel,
+            observedAt = report.ObservedAtUtc.ToString("o"), owned = Count(report.Owned), retained = Count(report.Retained),
+            cleanupCandidates = Count(report.CleanupCandidates), undetermined = Count(report.Undetermined),
+            issues = report.Issues.ToArray(),
+            files = report.Files.Select(file => new CacheFile
+            {
+                relativePath = file.RelativePath, kind = file.Kind.ToString(), disposition = file.Disposition.ToString(),
+                retention = file.Retention.ToString(), bytes = file.Bytes?.ToString(System.Globalization.CultureInfo.InvariantCulture), hasBytes = file.Bytes.HasValue,
+                ownershipConfirmed = file.OwnershipConfirmed
+            }).ToArray()
+        };
+
+        private static CacheCount Count(ResourceCacheByteCount count) => new CacheCount
+        {
+            certainty = count.Certainty.ToString(), bytes = count.Bytes?.ToString(System.Globalization.CultureInfo.InvariantCulture), hasBytes = count.Bytes.HasValue
+        };
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static async void Start()
@@ -189,7 +266,158 @@ namespace YLFramework.Testing
             Require(!request.encrypted, "The ordinary Player cannot accept encrypted content.");
 #endif
             var updates = new ResourceContentUpdates(trust, new Uri(publisher, request.announcementRoute), request.userDataPath, extension);
-            if (!string.IsNullOrEmpty(request.stopAt))
+            using var cancelTransfer = request.transferCancelAfterBytes > 0 ? new CancellationTokenSource() : null;
+            var transfers = new Dictionary<string, TransferRead>(StringComparer.Ordinal);
+            if (request.observeTransfers)
+            {
+                updates.ArtifactReceived = (uri, count) =>
+                {
+                    string now = DateTime.UtcNow.ToString("o");
+                    if (!transfers.TryGetValue(uri.AbsolutePath, out var row))
+                    {
+                        row = new TransferRead { target = uri.AbsolutePath, firstUtc = now };
+                        transfers.Add(row.target, row);
+                    }
+                    row.bytes += count;
+                    row.reads++;
+                    row.lastUtc = now;
+                    if (cancelTransfer != null && uri.AbsolutePath == request.transferCancelRoute &&
+                        row.bytes >= request.transferCancelAfterBytes)
+                        cancelTransfer.Cancel();
+                };
+            }
+#if !YL_CONTENT_UPDATE_REPLAY && YL_CONTENT_UPDATE_TUNED
+            if (!string.IsNullOrEmpty(request.reclaimTestPart))
+            {
+                updates.AvailableSpaceOverride = root =>
+                {
+                    Require(Path.GetDirectoryName(request.reclaimTestPart) == root, "The reclaim probe must observe its signed objects directory.");
+                    bool exists = File.Exists(request.reclaimTestPart);
+                    long available = exists ? request.spaceBeforeBytes : request.spaceAfterReclaimBytes;
+                    if (result.spacePreflightChecks++ == 0)
+                    {
+                        result.spacePreflightSawOwnedPart = exists;
+                        result.spaceFirstAvailableBytes = available;
+                    }
+                    return available;
+                };
+            }
+#endif
+            if (!string.IsNullOrEmpty(request.spaceFaultRoute))
+            {
+#if YL_CONTENT_UPDATE_REPLAY
+                throw new InvalidOperationException("Space fault instrumentation is unavailable in this baseline replay.");
+#else
+#if YL_CONTENT_UPDATE_TUNED
+                updates.AvailableSpaceOverride = _ => request.spaceBeforeBytes;
+#endif
+                updates.BeforeArtifactWrite = (uri, output, count) =>
+                {
+                    if (uri.AbsolutePath != request.spaceFaultRoute || output.Position + count <= request.spaceWriteLimit)
+                        return;
+                    // The prior writes and this stage are real. Inject disk full at the next write boundary.
+                    output.Flush(true);
+                    result.spaceFaultStageBytes = output.Length;
+                    result.spaceFaultHResult = unchecked((int)0x80070070);
+                    throw new IOException("Fixture exhausted the staging file space.", result.spaceFaultHResult);
+                };
+#endif
+            }
+#if !YL_CONTENT_UPDATE_REPLAY
+            if (!string.IsNullOrEmpty(request.inspectStagingRoute))
+            {
+                updates.BeforeArtifactWrite = (uri, output, _) =>
+                {
+                    if (uri.AbsolutePath != request.inspectStagingRoute || output.Position == 0 || result.inFlightStage != null)
+                        return;
+                    output.Flush(true);
+                    string path = string.IsNullOrEmpty(request.inspectStagingPath) ? output.Name : request.inspectStagingPath;
+#if YL_CONTENT_UPDATE_TUNED
+                    if (!string.IsNullOrEmpty(request.inspectStagingPath))
+                        Require(ResourceContentFileIO.ReadFileIdentity(output) == ResourceContentFileIO.ReadFileIdentity(path),
+                            "The inspected resume file did not match the receiving handle.");
+#endif
+                    string relative = "objects/" + Path.GetFileName(path);
+                    var report = SnapshotCache(updates.InspectCacheAsync().GetAwaiter().GetResult());
+                    var stage = report.files.SingleOrDefault(file => file.relativePath == relative);
+                    Require(stage != null && stage.ownershipConfirmed && stage.disposition == "Retained" &&
+                        stage.retention.Contains("Preparation") && stage.hasBytes && long.Parse(stage.bytes) == output.Length,
+                        "The same service did not identify its active staging file by its actual bytes.");
+                    result.inFlightStage = stage;
+                };
+            }
+#endif
+            if (request.operation == "cache-inspect")
+            {
+                Require(!string.IsNullOrEmpty(request.legacyCacheCatalog), "Inspection needs an official cache sentinel.");
+                string sentinel = SeedOfficialCatalog(request.legacyCacheCatalog, Guid.NewGuid().ToString("N"));
+                result.officialCacheBefore = SnapshotOfficialCatalog(sentinel);
+                result.cacheBefore = SnapshotCache(await updates.InspectCacheAsync());
+                result.cacheAfter = SnapshotCache(await updates.InspectCacheAsync());
+                result.officialCacheAfter = SnapshotOfficialCatalog(sentinel);
+                var state = updates.ReadState();
+                result.generation = state?.Generation ?? 0;
+                result.activeDigest = state?.ActiveDigest;
+#if YL_CONTENT_UPDATE_ENCRYPTION
+                result.prepareKeyRequests = keys.TotalRequests;
+                result.mountAttempts = encrypted.MountAttempts;
+                Require(result.prepareKeyRequests == 0 && result.mountAttempts == 0, "Inspection performed protected content work.");
+#endif
+                result.operationStatus = "Inspected";
+                return;
+            }
+            if (request.stopAt == "before-ready")
+            {
+                updates.ArtifactPublishedBoundary = path =>
+                {
+                    updates.ArtifactPublishedBoundary = null;
+                    var state = updates.ReadState();
+                    WriteAtomic(request.stopMarkerPath, JsonUtility.ToJson(new Marker
+                    {
+                        pid = result.pid, point = request.stopAt, path = path, generation = state.Generation, activeDigest = state.ActiveDigest
+                    }));
+                    var limit = DateTime.UtcNow.AddSeconds(140);
+                    while (!File.Exists(request.releaseMarkerPath))
+                    {
+                        if (DateTime.UtcNow >= limit)
+                            throw new TimeoutException("The independent cache observer did not release the writer.");
+                        Thread.Sleep(25);
+                    }
+                };
+            }
+            else if (request.stopAt == "before-verified-publish" || request.stopAt == "before-checkpoint-record")
+            {
+#if !YL_CONTENT_UPDATE_REPLAY && YL_CONTENT_UPDATE_TUNED
+                if (request.stopAt == "before-checkpoint-record")
+                {
+                    updates.BeforeCheckpointRecordWrite = (path, offset) =>
+                    {
+                        if (offset == request.stopArtifactLength)
+                            StopCheckpoint(path, offset);
+                    };
+                }
+                else
+                {
+                    updates.BeforeVerifiedArtifactPublish = path => StopCheckpoint(path, request.stopArtifactLength);
+                }
+
+                void StopCheckpoint(string path, long offset)
+                {
+                    if (Path.GetFileName(path) != ".resume-" + request.stopArtifactSha256 + ".bundle.part")
+                        return;
+                    WriteAtomic(request.stopMarkerPath, JsonUtility.ToJson(new Marker
+                    {
+                        pid = result.pid, point = request.stopAt, path = path, offset = offset
+                    }));
+                    using var held = new ManualResetEvent(false);
+                    if (!held.WaitOne(TimeSpan.FromSeconds(60)))
+                        throw new TimeoutException("The controller did not observe the forced-exit checkpoint.");
+                }
+#else
+                throw new InvalidOperationException("This Player did not compile the checkpoint test seam.");
+#endif
+            }
+            else if (!string.IsNullOrEmpty(request.stopAt))
             {
                 updates.StateCommitBoundary = after =>
                 {
@@ -206,20 +434,8 @@ namespace YLFramework.Testing
             string seededCacheDigest = null;
             if (!string.IsNullOrEmpty(request.legacyCacheCatalog))
             {
-                string extensionName = Path.GetExtension(request.legacyCacheCatalog);
-                Require(extensionName == ".json" || extensionName == ".bin", "Expected a real Packed Catalog as the cache fixture.");
-                string cacheRoot = Path.Combine(Application.persistentDataPath, "com.unity.addressables");
-                Directory.CreateDirectory(cacheRoot);
-                string cacheBase = Path.Combine(cacheRoot, "catalog_yl-content-updates-v1");
-                cacheCatalog = cacheBase + extensionName;
-                var bytes = File.ReadAllBytes(request.legacyCacheCatalog);
-                seededCacheDigest = Hash(bytes);
-                using (var cacheFile = new FileStream(cacheCatalog, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                {
-                    cacheFile.Write(bytes, 0, bytes.Length);
-                    cacheFile.Flush(true);
-                }
-                WriteAtomic(cacheBase + ".hash", seededCacheDigest.Substring(0, 32));
+                cacheCatalog = SeedOfficialCatalog(request.legacyCacheCatalog, "v1");
+                seededCacheDigest = Hash(File.ReadAllBytes(request.legacyCacheCatalog));
             }
 
             var startup = new ResourceStartup(null, false, null, updates);
@@ -313,9 +529,36 @@ namespace YLFramework.Testing
                     result.operationDetail = checkedUpdate.Rejection?.ToString() + " " + checkedUpdate.Detail;
                     if (checkedUpdate.Status == ResourceContentCheckStatus.Available)
                     {
-                        await updates.PrepareAsync(checkedUpdate);
-                        result.operationStatus = "Prepared";
+                        FileStream heldRejected = null;
+#if !YL_CONTENT_UPDATE_REPLAY && YL_CONTENT_UPDATE_TUNED
+                        if (!string.IsNullOrEmpty(request.holdRejectedCheckpoint))
+                        {
+                            updates.AfterCheckpointIntegrityFailure = path =>
+                            {
+                                if (Path.GetFileName(path) != ".resume-" + request.holdRejectedCheckpoint + ".bundle.part")
+                                    return;
+                                heldRejected = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                                result.heldRejectedCheckpointBytes = heldRejected.Length;
+                            };
+                        }
+#endif
+                        try
+                        {
+                            await updates.PrepareAsync(checkedUpdate, cancelTransfer?.Token ?? default);
+                            result.operationStatus = "Prepared";
+                        }
+                        catch (Exception error) when (request.observeTransfers &&
+                            error is OperationCanceledException or IOException or System.Net.Http.HttpRequestException or InvalidDataException or ResourceException)
+                        {
+                            result.operationStatus = error is OperationCanceledException
+                                ? (cancelTransfer?.IsCancellationRequested == true ? "TransferCanceled" : "TransferTimeout") :
+                                error is ResourceException resourceFailure ? resourceFailure.Kind.ToString() : "TransferFailed";
+                            result.operationDetail = error.ToString();
+                        }
+                        finally { heldRejected?.Dispose(); }
                     }
+                    if (request.observeTransfers)
+                        result.transferReads = transfers.Values.ToArray();
 #if YL_CONTENT_UPDATE_ENCRYPTION
                     result.prepareKeyRents = encrypted.KeyRents - keyRents;
                     result.prepareMountAttempts = encrypted.MountAttempts - mountAttempts;
@@ -408,6 +651,42 @@ namespace YLFramework.Testing
             if (result.scopeGuard != null)
                 result.scopeGuard.stopped = stopped;
             Require(stopped, "Resource startup did not finish stopping.");
+        }
+
+        private static string SeedOfficialCatalog(string source, string suffix)
+        {
+            Require(Application.companyName == "YLFramework Acceptance" &&
+                Application.productName.StartsWith("YLResourceUpdates-", StringComparison.Ordinal),
+                "The fixture must use the private Player application identity for its official cache sentinel.");
+            string extension = Path.GetExtension(source);
+            Require(extension == ".json" || extension == ".bin", "Expected a Packed Catalog as the official cache fixture.");
+            string root = Path.Combine(Application.persistentDataPath, "com.unity.addressables");
+            Directory.CreateDirectory(root);
+            string cacheBase = Path.Combine(root, "catalog_yl-content-updates-" + suffix);
+            string catalog = cacheBase + extension;
+            var bytes = File.ReadAllBytes(source);
+            using (var output = new FileStream(catalog, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                output.Write(bytes, 0, bytes.Length);
+                output.Flush(true);
+            }
+            WriteAtomic(cacheBase + ".hash", Hash(bytes).Substring(0, 32));
+            return catalog;
+        }
+
+        private static OfficialCacheEvidence SnapshotOfficialCatalog(string path)
+        {
+            string marker = Path.ChangeExtension(path, ".hash");
+            var catalogId = ResourceContentFileIO.ReadFileStamp(path);
+            var markerId = ResourceContentFileIO.ReadFileStamp(marker);
+            return new OfficialCacheEvidence
+            {
+                catalogPath = path,
+                catalogSha256 = Hash(File.ReadAllBytes(path)),
+                catalogFileId = $"{catalogId.Volume:x8}:{catalogId.File:x16}",
+                markerSha256 = Hash(File.ReadAllBytes(marker)),
+                markerFileId = $"{markerId.Volume:x8}:{markerId.File:x16}"
+            };
         }
 
         private static OptionalContent DescribeOptional(ResourceContentManifest manifest, Request request)

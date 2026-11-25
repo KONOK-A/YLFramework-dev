@@ -84,7 +84,37 @@ var content = updates.ReadState();
 
 发布端先上传签名指向的不可变制品，再将公告切换为 `{"payload":"…","signature":"…"}`。两个值分别是原始清单和分离签名的 Base64。新公告必须在有效期内。已准备的本地候选、当前版和上一版按原签名复核，可离线启动。低序号及同序号异清单会被拒绝；重发已成功提交的同一清单不产生新提交。发布更高序号可以继续更新。
 
+准备时按目标卷的可用空间估算缺失制品及提交所需的额外字节。空间已知不足或写入时用尽，应用可处理 `ResourceError.InsufficientStorage`。应用可在腾出空间后重试，已提交版本和回退记录继续可用。
+
+普通签名补丁在有正文进展时可持续接收。服务器返回强 `ETag` 时可以保存已刷盘的前缀，下次携带 `Range` 与 `If-Range` 请求剩余字节。客户端收到完整 `200` 时从头接收，制品通过整文件长度与 SHA-256 验证后才发布。
+
+强退后读取最近一份完整的断点记录。归属已确认且已收全的暂存可直接在本地校验全长和摘要，通过后无需请求该制品。摘要不符时先记录断点失效，再尝试回收。如果坏暂存仍被占用，新的下载从零写入独立暂存。重试会在写者锁内先回收归属可查的失效断点，再检查目标卷余量。旧格式的部分断点缺少文件身份，重试时从零接收。旧格式的完整候选仍可在本地核验后发布。
+
 应用须保留自有数据目录，包括按应用和渠道隔离的持久记录。记录损坏、当前版本不可读或官方初始化后的提交失败会关闭本次资源启动。保留现场并让用户退出重启，按具体启动错误诊断。普通旧安装继续使用前面的官方交付入口。签名模式的版本检查和激活统一走 `ResourceContentUpdates`。
+
+### 查询本应用的补丁缓存
+
+用当前安装的信任配置和存储目录构造 ResourceContentUpdates 后，可以在启动内容会话前查询。
+每个文件按逻辑长度计数，已下载的可选章节及依赖和启动内容使用相同的保留规则。签名引用的磁盘制品须核对长度与 SHA-256，身份无法确认时将该制品标为归属未确认。
+
+~~~csharp
+var report = await updates.InspectCacheAsync(cancellationToken);
+Debug.Log($"Owned {report.Owned.Bytes} ({report.Owned.Certainty})");
+Debug.Log($"Retained {report.Retained.Bytes} ({report.Retained.Certainty})");
+Debug.Log($"Candidates {report.CleanupCandidates.Bytes} ({report.CleanupCandidates.Certainty})");
+Debug.Log($"Undetermined {report.Undetermined.Bytes} ({report.Undetermined.Certainty})");
+foreach (var file in report.Files)
+    Debug.Log($"{file.RelativePath} {file.Kind} {file.Bytes} {file.Disposition} {file.Retention}");
+foreach (var issue in report.Issues)
+    Debug.Log(issue);
+~~~
+
+`Exact` 表示确数，`ObservedLowerBound` 表示仅观测下界，`Unknown` 时 `Bytes` 为空。
+保留原因区分活动版、回退版、已就绪候选、冻结会话、正在打开的文件、本会话在途准备与可续传暂存。
+另一进程正在准备时，尚未登记的文件可能已经发布，查询会保守判断去留。查询已有的写者锁只使用只读句柄，扫描稳定快照时其他写入可能报告忙碌。
+缺少归属凭据的 `.stage-*` 暂存计为去留未明，显式清理会保留原文件。暂存控制记录需核对类型、应用、渠道及校验和。
+报告范围是本应用和渠道的补丁仓库，包括其中的事务密文。逻辑字节、卷可用空间、物理分配和剩余下载量各有独立口径。
+需要清理时显式调用 `CleanupAsync`，由它持写者锁使用最新记录和文件句柄核对。候选字节只描述报告所示的观察时点。
 
 ## 可选的 Bundle 加密
 

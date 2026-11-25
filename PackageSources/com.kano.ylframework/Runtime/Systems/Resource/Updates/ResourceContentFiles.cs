@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
@@ -146,15 +147,18 @@ namespace YLFramework.Resource
     {
         private const int BufferBytes = 64 * 1024;
         private const uint GenericRead = 0x80000000;
+        private const uint GenericWrite = 0x40000000;
         private const uint ReadAttributes = 0x80;
         private const uint DeleteAccess = 0x00010000;
         private const uint ShareRead = 1;
         private const uint ShareWrite = 2;
+        private const uint ShareDelete = 4;
         private const uint OpenExisting = 3;
         private const uint OpenReparsePoint = 0x00200000;
         private const uint BackupSemantics = 0x02000000;
         private const uint DirectoryFlag = 0x10;
         private const uint ReparsePoint = 0x400;
+        private const int FileRenameInfo = 3;
         private const int FileDispositionInfo = 4;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -175,6 +179,10 @@ namespace YLFramework.Resource
         [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool SetFileInformationByHandle(SafeFileHandle file, int informationClass, ref byte deleteFile, uint size);
+
+        [DllImport("kernel32.dll", EntryPoint = "SetFileInformationByHandle", ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetFileRenameInformation(SafeFileHandle file, int informationClass, [In] byte[] information, uint size);
 
         internal static IDisposable PinDirectory(string path, bool create)
         {
@@ -206,12 +214,60 @@ namespace YLFramework.Resource
             }
         }
 
-        internal static FileStream OpenRead(string path)
+        internal static FileStream OpenRead(string path, bool exclusive = false)
         {
-            var file = OpenChecked(path, false);
+            return AsStream(OpenChecked(path, false, GenericRead, exclusive ? 0 : ShareRead), FileAccess.Read);
+        }
+
+        internal static FileStream OpenReadWriteStage(string path) =>
+            AsStream(OpenChecked(path, false, GenericRead | GenericWrite, 0), FileAccess.ReadWrite);
+
+        internal static FileStream OpenCheckpointRecord(string path, bool writing = false) => writing
+            ? AsStream(OpenChecked(path, false, GenericRead | GenericWrite, ShareRead), FileAccess.ReadWrite)
+            : AsStream(OpenChecked(path, false, GenericRead, ShareRead | ShareWrite | ShareDelete), FileAccess.Read);
+
+        internal static FileStream OpenReadControlRecord(string path) =>
+            AsStream(OpenChecked(path, false, GenericRead, ShareRead | ShareDelete), FileAccess.Read);
+
+        internal static void VerifyAndPublishStage(string stage, string destination, long length, string sha256,
+            CancellationToken cancellation, (ulong File, uint Volume, ulong Created)? expectedStage = null)
+        {
+            using var file = AsStream(OpenChecked(stage, false, GenericRead | DeleteAccess, 0), FileAccess.Read);
+            if (expectedStage.HasValue && ReadFileIdentity(file) != expectedStage.Value)
+                throw new InvalidDataException("The identity of the staged content changed before publication.");
+            RequireIdentity(file, length, sha256, cancellation);
+            cancellation.ThrowIfCancellationRequested();
+            RenameOpenedStage(file, destination, replace: true);
+        }
+
+        internal static (long Length, ulong File, uint Volume, ulong Created, ulong Written) PublishNewStage(
+            string stage, string destination, (ulong File, uint Volume, ulong Created) expectedStage)
+        {
+            using var file = AsStream(OpenChecked(stage, false, GenericRead | DeleteAccess, 0), FileAccess.Read);
+            if (ReadFileIdentity(file) != expectedStage)
+                throw new InvalidDataException("The identity of the staged record changed before publication.");
+            RenameOpenedStage(file, destination, replace: false);
+            return ReadFileStamp(file);
+        }
+
+        private static void RenameOpenedStage(FileStream file, string destination, bool replace)
+        {
+            // FILE_RENAME_INFO (Win64)。同一已打开的句柄完成发布。
+            byte[] name = Encoding.Unicode.GetBytes(destination);
+            var information = new byte[24 + name.Length];
+            information[0] = replace ? (byte)1 : (byte)0;
+            Buffer.BlockCopy(BitConverter.GetBytes(name.Length), 0, information, 16, sizeof(int));
+            Buffer.BlockCopy(name, 0, information, 20, name.Length);
+
+            if (!SetFileRenameInformation(file.SafeFileHandle, FileRenameInfo, information, (uint)information.Length))
+                throw new IOException("Could not publish the verified staged file.", new Win32Exception(Marshal.GetLastWin32Error()));
+        }
+
+        private static FileStream AsStream(SafeFileHandle file, FileAccess access)
+        {
             try
             {
-                return new PinnedFile(file);
+                return new PinnedFile(file, access);
             }
             catch
             {
@@ -220,30 +276,57 @@ namespace YLFramework.Resource
             }
         }
 
-        internal static bool TryRemoveTemporaryFile(string path, CancellationToken cancellation)
+        internal static (long Length, ulong File, uint Volume, ulong Created, ulong Written) ReadFileStamp(string path)
         {
-            using var file = CreateFile(path, ReadAttributes | DeleteAccess, 0, IntPtr.Zero, OpenExisting,
-                OpenReparsePoint | BackupSemantics, IntPtr.Zero);
-            if (file.IsInvalid)
-            {
-                return HandleTemporaryRemovalFailure(Marshal.GetLastWin32Error());
-            }
+            // Zero desired access permits metadata observation even while the owner has an exclusive handle.
+            using var file = OpenChecked(path, false, 0, ShareRead | ShareWrite | ShareDelete);
+            return ReadFileStamp(file);
+        }
 
-            if (!GetFileInformationByHandle(file, out var information))
-            {
-                return HandleTemporaryRemovalFailure(Marshal.GetLastWin32Error());
-            }
+        internal static (long Length, ulong File, uint Volume, ulong Created, ulong Written) ReadFileStamp(FileStream file) =>
+            ReadFileStamp(file.SafeFileHandle);
 
-            if (!HasSafeIdentity(information, directory: false))
+        internal static (ulong File, uint Volume, ulong Created) ReadFileIdentity(FileStream file)
+        {
+            var stamp = ReadFileStamp(file);
+            return (stamp.File, stamp.Volume, stamp.Created);
+        }
+
+        internal static (ulong File, uint Volume, ulong Created) ReadFileIdentity(string path)
+        {
+            var stamp = ReadFileStamp(path);
+            return (stamp.File, stamp.Volume, stamp.Created);
+        }
+
+        private static (long Length, ulong File, uint Volume, ulong Created, ulong Written) ReadFileStamp(SafeFileHandle file)
+        {
+            if (!GetFileInformationByHandle(file, out var info) || !HasSafeIdentity(info, false))
+                throw new IOException("A content file changed identity during inspection.");
+            return (checked((long)Combine(info.SizeHigh, info.SizeLow)), Combine(info.FileIndexHigh, info.FileIndexLow),
+                info.VolumeSerial, Combine(info.CreationHigh, info.CreationLow), Combine(info.WriteHigh, info.WriteLow));
+        }
+
+        private static ulong Combine(uint high, uint low) => ((ulong)high << 32) | low;
+
+        internal static bool IsSharingConflict(IOException error) => (error.HResult & 0xffff) is 32 or 33 ||
+            (error.InnerException as Win32Exception)?.NativeErrorCode is 32 or 33;
+
+        internal static bool TryRemoveOwnedFile(string path, Func<FileStream, bool> ownsFile, CancellationToken cancellation)
+        {
+            try
+            {
+                using var file = AsStream(OpenChecked(path, false, GenericRead | DeleteAccess, 0), FileAccess.Read);
+                if (!ownsFile(file))
+                    return false;
+                cancellation.ThrowIfCancellationRequested();
+                byte delete = 1;
+                return SetFileInformationByHandle(file.SafeFileHandle, FileDispositionInfo, ref delete, sizeof(byte)) ||
+                    HandleTemporaryRemovalFailure(Marshal.GetLastWin32Error());
+            }
+            catch (IOException error) when (error is FileNotFoundException or UnsafeContentPathException || IsSharingConflict(error))
             {
                 return false;
             }
-
-            // 通过原句柄删除，路径在辨识身份后无需再次解析。
-            cancellation.ThrowIfCancellationRequested();
-            byte delete = 1;
-            return SetFileInformationByHandle(file, FileDispositionInfo, ref delete, sizeof(byte)) ||
-                HandleTemporaryRemovalFailure(Marshal.GetLastWin32Error());
         }
 
         private static bool HandleTemporaryRemovalFailure(int code)
@@ -256,10 +339,12 @@ namespace YLFramework.Resource
             throw new IOException("Could not remove a temporary resource content record.", new Win32Exception(code));
         }
 
-        private static SafeFileHandle OpenChecked(string path, bool directory)
+        private static SafeFileHandle OpenChecked(string path, bool directory) =>
+            OpenChecked(path, directory, directory ? ReadAttributes : GenericRead, directory ? ShareRead | ShareWrite : ShareRead);
+
+        private static SafeFileHandle OpenChecked(string path, bool directory, uint access, uint share)
         {
-            var file = CreateFile(path, directory ? ReadAttributes : GenericRead,
-                directory ? ShareRead | ShareWrite : ShareRead, IntPtr.Zero, OpenExisting,
+            var file = CreateFile(path, access, share, IntPtr.Zero, OpenExisting,
                 OpenReparsePoint | (directory ? BackupSemantics : 0), IntPtr.Zero);
             if (file.IsInvalid)
             {
@@ -272,7 +357,7 @@ namespace YLFramework.Resource
             if (!GetFileInformationByHandle(file, out var information) || !HasSafeIdentity(information, directory))
             {
                 file.Dispose();
-                throw new IOException("A content path has an unsafe file identity.");
+                throw new UnsafeContentPathException();
             }
             return file;
         }
@@ -280,6 +365,11 @@ namespace YLFramework.Resource
         private static bool HasSafeIdentity(FileInformation information, bool directory) =>
             (information.Attributes & ReparsePoint) == 0 &&
             ((information.Attributes & DirectoryFlag) != 0) == directory && (directory || information.Links == 1);
+
+        private sealed class UnsafeContentPathException : IOException
+        {
+            internal UnsafeContentPathException() : base("A content path has an unsafe file identity.") { }
+        }
 
         internal static void RequireIdentity(FileStream stream, long length, string sha256, CancellationToken cancellation)
         {
@@ -315,7 +405,7 @@ namespace YLFramework.Resource
         {
             private readonly SafeFileHandle _owned;
 
-            internal PinnedFile(SafeFileHandle handle) : base(handle, FileAccess.Read, BufferBytes, false)
+            internal PinnedFile(SafeFileHandle handle, FileAccess access) : base(handle, access, BufferBytes, false)
             {
                 _owned = handle;
             }

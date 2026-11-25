@@ -40,6 +40,7 @@ namespace YLFramework.Testing
             var input = JObject.Parse(File.ReadAllText(requestPath));
             string mode = (string)input["mode"], token = (string)input["token"], prefix = (string)input["prefix"];
             string layout = (string)input["deliveryLayout"];
+            bool ordinaryControl = mode == "Performance" && ((string)input["experiment"] ?? "Default") == "Default";
             using var process = System.Diagnostics.Process.GetCurrentProcess();
             var report = new JObject { ["status"] = "Failed", ["token"] = token, ["mode"] = mode, ["pid"] = process.Id,
                 ["unity"] = Application.unityVersion, ["input"] = (string)input["input"], ["requestSha256"] = ProtectedAssetAudit.DigestFile(requestPath) };
@@ -252,7 +253,7 @@ namespace YLFramework.Testing
                     Directory.CreateDirectory(Addressables.BuildPath);
                     File.WriteAllText(oldBundle, "unrelated output from a previous fixture build");
                 }
-                if (mode == "Performance") BuildPlainControl(host, settings, groups, prefix);
+                if (ordinaryControl) BuildPlainControl(host, settings, groups, prefix);
                 var description = EncryptedBundleExporter.BuildCore(settings, groups, options, "yl.frozen.acceptance", privateRoot, releaseRoot, keys, allowLoopback: true);
                 if (mode is "MissingPlayerRuntime" or "ChangedPlayerOutput")
                     throw new InvalidOperationException("The exporter published after the Player callback changed " + PlayerOutputDriftFixture.Changed);
@@ -291,7 +292,8 @@ namespace YLFramework.Testing
                     report["changedCatalogSha256"] = changed["shippedCatalogSha256"];
                     report["changedDescriptionSha256"] = changed["descriptionSha256"];
                 }
-                if (mode == "Performance") StagePlainControl(host, Path.GetDirectoryName(player), catalogName, description, report);
+                if (ordinaryControl) StagePlainControl(host, Path.GetDirectoryName(player), catalogName, description, report);
+                else if (mode == "Performance") report["performanceInputs"] = new JArray(description.Bundles.OrderBy(row => row.Binding.PlainLength).Select(PerformanceInput));
                 report["deliverySha256"] = ProtectedAssetAudit.DigestFile(Path.Combine(releaseRoot, "delivery.json"));
                 report["status"] = "Built";
                 code = 0;
@@ -367,6 +369,69 @@ namespace YLFramework.Testing
             {
                 using (var output = new FileStream((string)input["output"], FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 using (var writer = new StreamWriter(output)) writer.Write(report.ToString(Formatting.Indented));
+                EditorApplication.Exit(code);
+            }
+        }
+
+        public static void RebuildForReplay()
+        {
+            string[] arguments = Environment.GetCommandLineArgs();
+            int index = Array.IndexOf(arguments, "-ylFrozenDelivery");
+            string host = Path.GetDirectoryName(Application.dataPath);
+            string request = Path.Combine(host, "fixture.json");
+            Require(Application.isBatchMode && index >= 0 && index + 1 < arguments.Length &&
+                index == Array.LastIndexOf(arguments, "-ylFrozenDelivery") && Path.GetFullPath(arguments[index + 1]) == request,
+                "Expected the owned replay fixture request.");
+            var input = JObject.Parse(File.ReadAllText(request));
+            string backend = (string)input["backend"], catalogName = (string)input["catalogName"];
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            var report = new JObject { ["status"] = "Failed", ["token"] = (string)input["token"], ["pid"] = process.Id,
+                ["unity"] = Application.unityVersion, ["input"] = (string)input["input"], ["requestSha256"] = ProtectedAssetAudit.DigestFile(request) };
+            int code = 1;
+            try
+            {
+                FrozenPlayerBuildEvidence.Configure(backend);
+                FrozenPlayerBuildEvidence.CapturePackageInputs(report, host, ProtectedAssetAudit.DigestFile);
+                var package = PackageInfo.FindForAssembly(typeof(Addressables).Assembly);
+                Require(package.version == (string)input["addressables"] && package.source == UnityEditor.PackageManager.PackageSource.Registry,
+                    "The replay Player must resolve the same Addressables package.");
+                report["addressables"] = package.version;
+                AssetDatabase.CreateFolder("Assets", "FrozenData");
+                AssetDatabase.CreateFolder("Assets", "AddressableAssetsData");
+                var settings = AddressableAssetSettings.Create("Assets/AddressableAssetsData", "AddressableAssetSettings", true, true);
+                AddressableAssetSettingsDefaultObject.Settings = settings;
+                settings.BuildRemoteCatalog = false;
+                settings.DisableCatalogUpdateOnStartup = true;
+                settings.BuildAddressablesWithPlayerBuild = AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer;
+                string scene = CreateScene((string)input["token"], backend, (string)input["input"], catalogName, null);
+                string player = Path.Combine(host, "ReplayPlayer", "P.exe");
+                string library = Path.Combine(host, "ReplayContent") + Path.DirectorySeparatorChar;
+                Addressables.LibraryPath = library;
+                string aa = Path.GetFullPath(Addressables.BuildPath);
+                Require(aa.StartsWith(library, StringComparison.OrdinalIgnoreCase) && !Directory.Exists(aa),
+                    "Expected a new stock build location inside the owned replay library.");
+                CopyFixtureTree(Path.Combine(host, "ReplayFixture"), aa);
+                Require(File.Exists(Path.Combine(aa, "AddressablesLink", "link.xml")) && File.Exists(Path.Combine(aa, catalogName)) &&
+                    File.Exists(Path.Combine(aa, EncryptedBundleDescription.FileName)), "The stock builder did not resolve the common frozen content.");
+                var result = BuildPipeline.BuildPlayer(new BuildPlayerOptions { scenes = new[] { scene }, locationPathName = player,
+                    target = BuildTarget.StandaloneWindows64, options = BuildOptions.StrictMode | BuildOptions.DetailedBuildReport });
+                Require(result.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded && result.summary.totalErrors == 0,
+                    "The comparison Player build failed.");
+                string data = Path.Combine(host, "ReplayPlayer", "P_Data");
+                FrozenPlayerBuildEvidence.Capture(report, backend, player, ProtectedAssetAudit.DigestFile,
+                    "YLFramework.Resource.Encryption", typeof(FrozenDeliveryProbe));
+                report["pluginSha256"] = ProtectedAssetAudit.DigestFile(Directory.GetFiles(data, "ylresource_tink.dll", SearchOption.AllDirectories).Single());
+                CaptureShippedContent(report, data, catalogName);
+                report["status"] = "Built";
+                code = 0;
+            }
+            catch (Exception error) { report["error"] = error.ToString(); Debug.LogException(error); }
+            finally
+            {
+                using var output = new FileStream((string)input["output"], FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                using var writer = new StreamWriter(output);
+                writer.Write(report.ToString(Formatting.Indented));
+                writer.Flush();
                 EditorApplication.Exit(code);
             }
         }
@@ -552,13 +617,16 @@ namespace YLFramework.Testing
                 string source = Directory.GetFiles(embedded ? local : Path.Combine(host, "PlainPacked"), row.Binding.RelativePath, SearchOption.AllDirectories).Single();
                 Require(new FileInfo(source).Length == row.Binding.PlainLength && ProtectedAssetAudit.DigestFile(source) == row.Binding.PlainSha256,
                     "The stock Catalog did not build byte-identical Bundle input: " + row.Binding.RelativePath);
-                return new JObject { ["path"] = row.Binding.RelativePath,
-                    ["plainPath"] = Path.GetRelativePath(host, source).Replace('\\', '/'),
-                    ["clearBytes"] = row.Binding.PlainLength, ["clearSha256"] = row.Binding.PlainSha256,
-                    ["cipherBytes"] = row.CipherLength, ["cipherSha256"] = row.CipherSha256, ["mode"] = row.Binding.Mode.ToString() };
+                var input = PerformanceInput(row);
+                input["plainPath"] = Path.GetRelativePath(host, source).Replace('\\', '/');
+                return input;
             }));
             report["plainCatalogSha256"] = ProtectedAssetAudit.DigestFile(Path.Combine(control, aa, catalogName));
         }
+
+        private static JObject PerformanceInput(EncryptedBundleRecord row) => new JObject { ["path"] = row.Binding.RelativePath,
+            ["clearBytes"] = row.Binding.PlainLength, ["clearSha256"] = row.Binding.PlainSha256,
+            ["cipherBytes"] = row.CipherLength, ["cipherSha256"] = row.CipherSha256, ["mode"] = row.Binding.Mode.ToString() };
 
         private static void CopyFixtureTree(string from, string to, string skip = null)
         {

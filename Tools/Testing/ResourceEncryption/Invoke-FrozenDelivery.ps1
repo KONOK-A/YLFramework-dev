@@ -11,17 +11,33 @@ param([Parameter(Mandatory)][ValidateSet('Unity6','Unity2022', IgnoreCase = $fal
     [switch] $KeepArtifacts,
     [switch] $ContentUpdate,
     [ValidateSet('Remote','Embedded','Mixed', IgnoreCase = $false)][string] $DeliveryLayout = 'Remote',
-    [ValidateSet('IL2CPP','Mono', IgnoreCase = $false)][string] $Backend = 'IL2CPP')
+    [ValidateSet('IL2CPP','Mono', IgnoreCase = $false)][string] $Backend = 'IL2CPP',
+    [ValidateSet('Default','LargeDownload','BufferCapacity','CacheUsage','SpaceFaultOffline', IgnoreCase = $false)][string] $Experiment = 'Default',
+    [string] $DiagnosticNativeDll,
+    [string] $BaselineReceipt,
+    [switch] $ExpectProgressDeadline)
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 if ($ContentUpdate) {
-    if ($PackReceipt -or $ReleaseManifest -or $SourceCommit -or $PSBoundParameters.ContainsKey('Mode') -or
+    if ($PackReceipt -or $ReleaseManifest -or $SourceCommit -or $BaselineReceipt -or $ExpectProgressDeadline -or
+        $Experiment -cne 'Default' -or $PSBoundParameters.ContainsKey('Mode') -or
         $PSBoundParameters.ContainsKey('DeliveryLayout')) {
         throw '-ContentUpdate is a separate frozen Player workload using the current source packages.'
     }
     $arguments = @{ $Profile = $Unity; WorkspaceRoot = $WorkspaceRoot; Cell = "$Profile-Encrypted-$Backend" }
     & (Join-Path $PSScriptRoot '../ResourceUpdates/Invoke-ContentUpdates.ps1') @arguments
     return
+}
+if ($Experiment -cne 'Default' -and ($Mode -cne 'Performance' -or $DeliveryLayout -cne 'Remote')) {
+    throw 'These experiments require the remote two-Bundle performance fixture.'
+}
+if (($Experiment -ceq 'BufferCapacity') -ne [bool]$DiagnosticNativeDll -or
+    ($DiagnosticNativeDll -and ($PackReceipt -or $ReleaseManifest -or $SourceCommit))) {
+    throw 'BufferCapacity requires a diagnostics DLL in a local source projection.'
+}
+if (($BaselineReceipt -or $ExpectProgressDeadline) -and
+    ($Experiment -cne 'LargeDownload' -or $PackReceipt -or $ReleaseManifest -or $SourceCommit)) {
+    throw 'A paired or progress-deadline transfer workload requires local source inputs.'
 }
 if ($Mode -cin @('RemoteClosure','OrdinaryDependency','BadDependency','MultiGroup') -and $DeliveryLayout -cne 'Mixed') { throw "$Mode requires -DeliveryLayout Mixed." }
 if ($Mode -cin @('SyncWait','GuardReview') -and $DeliveryLayout -cne 'Remote') { throw "$Mode requires -DeliveryLayout Remote." }
@@ -59,9 +75,11 @@ $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repositor
 $run = New-YLTestDirectory -Workspace $workspace -Kind Result -Key 'FrozenEncryption'
 $hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key ('RFD' + [guid]::NewGuid().ToString('N').Substring(0,8)) -NewOnly
 $hostLease = $null
+$replayLease = $null
 $runLease = Lock-YLTestDirectory -Workspace $workspace -Path $run.path
 $summary = [ordered]@{ purpose = $(if ($fixedRelease) { 'YLResource.FrozenDelivery.LocalTarball' } else { 'YLResource.FrozenDelivery.LocalFixture' });
     status = 'Failed'; profile = $Profile; mode = $Mode; backend = $Backend; deliveryLayout = $DeliveryLayout; metricsVersion = 3;
+    experiment = $Experiment;
     addressables = $aa; formalCandidate = $fixedRelease;
     host = $hostRecord.path; hostId = $hostRecord.id; results = $run.path; resultId = $run.id; build = $null; runs = @(); packageArtifacts = [ordered]@{} }
 $keyFile = Join-Path $hostRecord.path 'fixture.key'
@@ -74,7 +92,8 @@ function Execute-Process($exe, $working, $arguments, $log, [int]$timeout, [strin
     $info.UseShellExecute = $false; $info.WorkingDirectory = $working
     foreach ($argument in $arguments) { $info.ArgumentList.Add($argument) }
     if ($CacheRoot) { Set-YLFrozenUpmEnvironment -StartInfo $info -CacheRoot $CacheRoot -Cold }
-    Invoke-YLTestProcess -StartInfo $info -Log (Join-Path $run.path ($log + '-process.log')) -TimeoutMilliseconds $timeout
+    $grace = if ($log -clike '*editor') { 45000 } else { 15000 }
+    Invoke-YLTestProcess -StartInfo $info -Log (Join-Path $run.path ($log + '-process.log')) -TimeoutMilliseconds $timeout -DescendantGraceMilliseconds $grace
 }
 
 function Copy-VerifiedPlayer([string] $From, [string] $To) {
@@ -87,6 +106,145 @@ function Copy-VerifiedPlayer([string] $From, [string] $To) {
     }
 }
 
+function Get-EncryptedExperimentRoute($Build, $Cipher) {
+    $published = @($Build.remoteProtectedPaths | Where-Object { [IO.Path]::GetFileName($_) -ceq $Cipher.path })
+    if ($published.Count -ne 1) { throw 'The experiment ciphertext does not have one published route.' }
+    '/r/Delivery/' + $published[0]
+}
+
+function Invoke-FixedColdCacheInspection([string] $Root, [string] $OwnedHost, [scriptblock] $RunPlayer) {
+    $rootPath = Get-YLTestPath $Root
+    if ([IO.Path]::GetDirectoryName($rootPath) -ine (Get-YLTestPath $OwnedHost) -or
+        [IO.Path]::GetFileName($rootPath) -cne 'cache-cache-usage-cold' -or [IO.Path]::Exists($rootPath)) {
+        throw 'Cache access restrictions require a fresh, owned fixture directory.'
+    }
+    $null = [IO.Directory]::CreateDirectory($rootPath)
+    $owner = Join-Path $rootPath '.yl-cache.lock'
+    $legacy = Join-Path $rootPath ('.yl-transfer-' + ('a' * 32) + '.part')
+    $unattributed = Join-Path $rootPath (('f' * 64) + '.bin')
+    $denied = Join-Path $rootPath (('d' * 64) + '.bin')
+    [IO.File]::WriteAllBytes($owner, [byte[]]::new(0))
+    [IO.File]::WriteAllText($legacy, 'Fixture legacy temporary bytes')
+    [IO.File]::WriteAllText($unattributed, 'Unattributed ciphertext-shaped file')
+    [IO.File]::WriteAllText($denied, 'Protected by fixture ACL')
+
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try { $sid = $identity.User } finally { $identity.Dispose() }
+    $baseRights = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor
+        [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
+    $section = [Security.AccessControl.AccessControlSections]::Access
+    $sealed = [Collections.Generic.List[object]]::new()
+    try {
+        foreach ($path in @($rootPath, $owner, $legacy, $unattributed, $denied)) {
+            $item = Get-Item -LiteralPath $path -Force
+            $permissions = if ($path -ceq $denied) { $baseRights -bor [Security.AccessControl.FileSystemRights]::ReadData } else { $baseRights }
+            $acl = [IO.FileSystemAclExtensions]::GetAccessControl($item, $section)
+            $record = @{ item = $item; acl = $acl; original = $acl.GetSecurityDescriptorSddlForm($section) }
+            $sealed.Add($record)
+            $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, $permissions, 'Deny'))
+            [IO.FileSystemAclExtensions]::SetAccessControl($item, $acl)
+            $record.applied = ([IO.FileSystemAclExtensions]::GetAccessControl($item, $section)).GetSecurityDescriptorSddlForm($section)
+        }
+        $process = & $RunPlayer
+        foreach ($record in $sealed) {
+            if (([IO.FileSystemAclExtensions]::GetAccessControl($record.item, $section)).GetSecurityDescriptorSddlForm($section) -cne $record.applied) {
+                throw "Cache inspection changed the fixture permissions at $($record.item.FullName)."
+            }
+        }
+        $process
+    } finally {
+        $restoreErrors = [Collections.Generic.List[string]]::new()
+        foreach ($record in $sealed) {
+            try {
+                $null = Get-YLTestPath $record.item.FullName
+                $record.acl.SetSecurityDescriptorSddlForm($record.original, $section)
+                [IO.FileSystemAclExtensions]::SetAccessControl($record.item, $record.acl)
+            } catch { $restoreErrors.Add($_.Exception.Message) }
+        }
+        if ($restoreErrors.Count) { throw ('Could not restore fixed cache fixture access: ' + ($restoreErrors -join '; ')) }
+    }
+}
+
+function New-TransferReplayPlayer($Previous, $ReplayHost, $CurrentInputs, $CurrentBuild, [string] $ContentRoot) {
+    $previousHostPath = Get-YLTestPath $Previous.host
+    $previousRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($previousHostPath))
+    $previousWorkspace = [pscustomobject](Read-YLPackageEvidenceJson (Join-Path $previousRoot '.yl-workspace.json'))
+    if ($previousWorkspace.repository -ine $repo) { throw 'The baseline was projected from a different repository.' }
+    $oldHost = Get-YLTestDirectory $previousWorkspace $previousHostPath
+    if ($oldHost.kind -cne 'Host' -or $oldHost.id -cne $Previous.hostId -or
+        -not [IO.File]::Exists((Join-Path $oldHost.path '.pinned'))) { throw 'Replay needs a retained baseline source host.' }
+    $oldInputs = Read-YLPackageEvidenceJson (Get-YLTestPath (Join-Path $oldHost.path '.yl-inputs.json') -ReadOnly)
+    if ($oldInputs.hostId -cne $oldHost.id -or $oldInputs.inputHash -cne $Previous.inputHash) {
+        throw 'Replay baseline source ownership differs from its input receipt.'
+    }
+    $projectionInputs = [ordered]@{}
+    $recoveredMeta = [Collections.Generic.List[string]]::new()
+    foreach ($file in $oldInputs.files) {
+        if (-not $file.path.StartsWith($base, [StringComparison]::Ordinal)) { continue }
+        $source = Get-YLTestPath (Join-Path $oldHost.path $file.path) -ReadOnly
+        if (-not $source.StartsWith($oldHost.path + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Baseline source escaped its host.' }
+        $bytes = [IO.File]::ReadAllBytes($source)
+        if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -cne $file.sha256) {
+            # Unity 2022 can rewrite the projected importer metadata, so recover only the exact recorded bytes.
+            $original = Get-YLTestPath (Join-Path $repo $file.path) -ReadOnly
+            if (-not $file.path.EndsWith('.meta', [StringComparison]::Ordinal) -or -not [IO.File]::Exists($original)) {
+                throw 'The retained baseline source hash differs: ' + $file.path
+            }
+            $bytes = [IO.File]::ReadAllBytes($original)
+            if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -cne $file.sha256) {
+                throw 'Cannot recover the recorded baseline importer metadata: ' + $file.path
+            }
+            $recoveredMeta.Add($file.path)
+        }
+        $projectionInputs[$file.path] = $bytes
+    }
+    if (-not $projectionInputs.Contains($dllPath) -or -not $projectionInputs.Contains("$base$main/Runtime/YLFramework.Runtime.asmdef")) {
+        throw 'The retained source projection is incomplete.'
+    }
+    foreach ($name in $CurrentInputs.Keys) {
+        if (-not $name.StartsWith($base, [StringComparison]::Ordinal)) { $projectionInputs[$name] = $CurrentInputs[$name] }
+    }
+    $projection = @($projectionInputs.Keys | Sort-Object -CaseSensitive | ForEach-Object {
+        @{ path = $_; sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$projectionInputs[$_])).ToLowerInvariant() }
+    })
+    $evidence = [ordered]@{ profile = $Profile; addressables = $aa; backend = $Backend; sourceReceipt = $Previous.inputHash
+        priorHostId = $oldHost.id; files = $projection; toolchain = $identity.toolchain; recoveredMeta = $recoveredMeta.ToArray() }
+    $encoded = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $evidence -Depth 12 -Compress))
+    $evidence['sha256'] = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($encoded)).ToLowerInvariant()
+    Write-YLTestJson -Path (Join-Path $run.path 'replay-input-identity.json') -Value $evidence
+    Sync-YLUnityHost -HostRecord $ReplayHost -Files $projectionInputs -Identity $evidence -EditorVersion $editor.version
+    Copy-VerifiedPlayer $ContentRoot (Join-Path $ReplayHost.path 'ReplayFixture')
+    $request = Join-Path $ReplayHost.path 'fixture.json'
+    $receipt = Join-Path $run.path 'replay-build.json'
+    Write-YLTestJson -Path $request -Value @{ token = $token; output = $receipt; addressables = $aa
+        input = $evidence.sha256; backend = $Backend; catalogName = $catalogName }
+    $requestedHash = Get-YLFrozenFileSha256 $request
+    $process = Execute-Process $Unity $ReplayHost.path @('-batchmode','-nographics','-projectPath',$ReplayHost.path,
+        '-buildTarget','StandaloneWindows64','-executeMethod','YLFramework.Testing.FrozenDeliveryEntry.RebuildForReplay',
+        '-ylFrozenDelivery',$request,'-logFile',(Join-Path $run.path 'replay-editor.log')) 'replay-editor' 1800000
+    $built = if ([IO.File]::Exists($receipt)) { Read-YLPackageEvidenceJson $receipt } else { $null }
+    try { Assert-YLTestProcessSucceeded $process } catch {
+        $message = if ($built) { $built['error'] } else { 'No replay Editor report' }
+        throw "Baseline replay Editor process $($process.status) (exit $($process.exitCode)). $message"
+    }
+    if ($built.status -cne 'Built' -or $built.pid -ne $process.pid -or $built.requestSha256 -cne $requestedHash -or
+        $built.token -cne $token -or $built.input -cne $evidence.sha256 -or $built.unity -cne $editor.version -or $built.addressables -cne $aa -or
+        $built.shippedCatalogSha256 -cne $CurrentBuild.shippedCatalogSha256 -or $built.descriptionSha256 -cne $CurrentBuild.descriptionSha256 -or
+        $built.pluginSha256 -cne $summary.pluginSha256) { throw 'The baseline replay did not bind to the exact published inputs.' }
+    $install = Join-Path $ReplayHost.path 'ReplayPlayer'
+    $shipped = Join-Path $install 'P_Data/StreamingAssets/aa'
+    $files = @(Get-YLTestTreeFiles $ContentRoot)
+    if (@(Get-YLTestTreeFiles $shipped).Count -ne $files.Count) { throw 'The paired Player content inventory differs.' }
+    foreach ($file in $files) {
+        $relative = [IO.Path]::GetRelativePath($ContentRoot, $file)
+        if ((Get-YLFrozenFileSha256 $file) -cne (Get-YLFrozenFileSha256 (Join-Path $shipped $relative))) {
+            throw "The paired Player content differs: $relative"
+        }
+    }
+    $summary['replay'] = @{ host = $ReplayHost.path; hostId = $ReplayHost.id; input = $evidence.sha256; build = $built; process = $process }
+    @{ side = 'baseline'; install = $install; host = $ReplayHost.path; build = $built; input = $evidence.sha256; progressDeadline = $false }
+}
+
 try {
     $hostLease = Lock-YLTestDirectory -Workspace $workspace -Path $hostRecord.path
     Assert-YLUnityHostIdle $hostRecord
@@ -96,6 +254,7 @@ try {
         'FrozenPlayerBuildEvidence.cs' = 'Assets/Fixture/Editor/FrozenPlayerBuildEvidence.cs'
         'FrozenDeliveryProbe.cs' = 'Assets/Fixture/Runtime/FrozenDeliveryProbe.cs'
         'FrozenDeliveryPerformance.cs' = 'Assets/Fixture/Runtime/FrozenDeliveryPerformance.cs'
+        'FrozenDeliveryCacheEvidence.cs' = 'Assets/Fixture/Runtime/FrozenDeliveryCacheEvidence.cs'
         'FrozenDependencyFixture.cs' = 'Assets/Fixture/Runtime/FrozenDependencyFixture.cs'
         'FrozenFixture.asmdef' = 'Assets/Fixture/Runtime/FrozenFixture.asmdef'
         'FrozenFixture.Editor.asmdef' = 'Assets/Fixture/Editor/FrozenFixture.Editor.asmdef'
@@ -106,6 +265,7 @@ try {
     $sources = @(); $binaries = @($Unity) + $module; $packageSource = 'Local'; $packages = @(); $cacheRoot = ''
     $dllPath = "$base$extension/Runtime/Plugins/Win64/ylresource_tink.dll"
     $dll = Get-YLTestPath (Join-Path $repo $dllPath)
+    if ($DiagnosticNativeDll) { $dll = Get-YLTestPath $DiagnosticNativeDll -ReadOnly }
     if ($fixedRelease -or $PackReceipt) {
         $packageSource = 'LocalTarball'
         if ($fixedRelease) {
@@ -149,7 +309,7 @@ try {
         'Tools/Testing/Common/Packages.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Workspace.ps1', 'Tools/Testing/Common/Results.ps1',
         'Tools/Testing/UnityHost.ps1', 'Tools/Testing/TestSuites.json', 'Tools/Testing/PackageCatalogContract.cs', 'Tools/Testing/Invoke-YLResourceAddressablesPlayer.ps1',
         'Tools/Testing/Common/ResourceAddressablesPlayer.ps1', 'Tools/Packaging/PackageCatalog.json', 'Tools/Packaging/Build-YLRegistryPackages.ps1') + $pins
-    $identity = Get-YLTestInputIdentity -Repository $repo -Paths $files -Toolchain $binaries -Profile "Frozen-$Profile-$Backend-$Mode-$DeliveryLayout-$packageSource"
+    $identity = Get-YLTestInputIdentity -Repository $repo -Paths $files -Toolchain $binaries -Profile "Frozen-$Profile-$Backend-$Mode-$DeliveryLayout-$packageSource-$Experiment"
     $identityPath = Join-Path $run.path 'input-identity.json'
     Write-YLTestJson -Path $identityPath -Value $identity
     $summary['inputIdentity'] = $identityPath
@@ -161,6 +321,12 @@ try {
         $dest = if ($item.path.StartsWith($base, [StringComparison]::Ordinal)) { $item.path } elseif ($projection.Contains($leaf)) { $projection[$leaf] } else { continue }
         $inputs[$dest] = [IO.File]::ReadAllBytes((Join-Path $repo $item.path))
         if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($inputs[$dest])) -ine $item.sha256) { throw 'Frozen source drift.' }
+    }
+    if ($DiagnosticNativeDll) {
+        $inputs[$dllPath] = [IO.File]::ReadAllBytes($dll)
+        if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($inputs[$dllPath])) -ine $summary.pluginSha256) {
+            throw 'The diagnostics DLL changed before projection.'
+        }
     }
     $inputs['Packages/manifest.json'] = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Json @{ dependencies = $deps }))
     Sync-YLUnityHost -HostRecord $hostRecord -Files $inputs -Identity $identity -EditorVersion $editor.version
@@ -186,15 +352,17 @@ try {
         $reply = Join-Path $run.path 'build.json'
         Write-YLTestJson -Path $request -Value @{ mode = $Mode; token = $token; prefix = $server.Prefix; output = $reply; addressables = $aa;
             input = $identity.sha256; packageSource = $packageSource; pluginSha256 = $summary.pluginSha256; backend = $Backend;
-            catalogName = $catalogName; deliveryLayout = $DeliveryLayout }
+            catalogName = $catalogName; deliveryLayout = $DeliveryLayout; experiment = $Experiment }
         $expectedRequestHash = Get-YLFrozenFileSha256 $request
         $execution = Execute-Process $Unity $hostRecord.path @('-batchmode','-nographics','-projectPath',$hostRecord.path,
             '-buildTarget','StandaloneWindows64','-executeMethod','YLFramework.Testing.FrozenDeliveryEntry.Build',
             '-ylFrozenDelivery',$request,'-logFile',(Join-Path $run.path 'editor.log')) 'editor' 1800000 $cacheRoot
         if ([IO.File]::Exists($reply)) { $summary.build = Read-YLPackageEvidenceJson $reply }
         try { Assert-YLTestProcessSucceeded $execution } catch {
-            $message = if ($summary.build) { ($summary.build.error -split '\r?\n', 2)[0] } else { 'No Editor report' }
-            throw "Editor build failed: $message. See $($run.path)."
+            $message = if ($summary.build -and $summary.build['error']) { ($summary.build['error'] -split '\r?\n', 2)[0] }
+                elseif ($summary.build) { "Editor report status: $($summary.build['status'])" }
+                else { 'No Editor report' }
+            throw "Editor process $($execution.status) (exit $($execution.exitCode)). $message. See $($run.path)."
         }
         $built = $summary.build
         if ($null -eq $built -or $built.pid -ne $execution.pid -or $built.token -cne $token -or $built.mode -cne $Mode -or $built.input -cne $identity.sha256 -or
@@ -269,7 +437,7 @@ try {
                 $server.SetRoutes((Join-Path $deliveryRoot 'Upload/protected'), (Join-Path $deliveryRoot 'Upload/ordinary'),
                     [string[]]$built.remoteProtectedPaths, [string[]]$built.ordinaryPaths)
             }
-            if ($Mode -ceq 'Performance') {
+            if ($Mode -ceq 'Performance' -and $Experiment -ceq 'Default') {
                 $plainRoot = Join-Path $hostRecord.path 'PPlain'
                 $plainCatalog = Join-Path $plainRoot "P_Data/StreamingAssets/aa/$catalogName"
                 $plainPacked = Join-Path $hostRecord.path 'PlainPacked'
@@ -301,7 +469,20 @@ try {
                 BadDependency { @('bad-dependency') }
                 MultiGroup { @('multi-group') }
                 LocalNoHash { @('layout-nohash') }
-                Performance { Get-YLFrozenPerformanceScenarios }
+                Performance {
+                    if ($Experiment -ceq 'LargeDownload') {
+                        foreach ($case in @('slow','slow-retry','slow-restore','normal','cut','cut-retry','warm','changed','changed-retry')) {
+                            'large-download-' + $case
+                        }
+                    } elseif ($Experiment -ceq 'BufferCapacity') {
+                        @('cache-usage-cold','cache-usage-open','buffer-capacity','buffer-capacity-prefetch-fault')
+                    }
+                    elseif ($Experiment -ceq 'CacheUsage') { @('cache-usage-cold','cache-usage-open') }
+                    elseif ($Experiment -ceq 'SpaceFaultOffline') {
+                        @('large-download-space-prime','large-download-space-fault','large-download-space-offline')
+                    }
+                    else { Get-YLFrozenPerformanceScenarios }
+                }
                 Positive {
                     if ($DeliveryLayout -cne 'Remote') { @('layout-online','layout-offline','layout-bad-embedded') }
                     else { @('cold','online-warm','head-injection','offline-warm','no-cache-offline','shadow','missing-key','wrong-key','external-owner',
@@ -309,9 +490,53 @@ try {
                 }
             })
             if ($scenarios.Count -eq 0) { throw 'A Player workload requires at least one actual Player round.' }
+            if ($Experiment -cin @('BufferCapacity','CacheUsage')) {
+                $smallCipher = $built.performanceInputs | Sort-Object cipherBytes | Select-Object -First 1
+                $smallCipherRoute = Get-EncryptedExperimentRoute $built $smallCipher
+                $cacheSentinel = Join-Path $hostRecord.path 'fixed-cache-sentinel'
+                [IO.File]::WriteAllText($cacheSentinel, 'External fixture file beside the owned fixed cache')
+            }
+            if ($Experiment -cin @('LargeDownload','SpaceFaultOffline')) {
+                $largeCipher = $built.performanceInputs | Sort-Object cipherBytes -Descending | Select-Object -First 1
+                $largeRoute = Get-EncryptedExperimentRoute $built $largeCipher
+                $largeRate = 8MB
+                $slowRate = [int64][Math]::Floor($largeCipher.cipherBytes / 144)
+                $largeCut = [int64][Math]::Floor($largeCipher.cipherBytes * 0.42)
+                $summary['transferParameters'] = @{ route = $largeRoute; artifact = $largeCipher; deadlineSeconds = 120
+                    normalBytesPerSecond = $largeRate; slowBytesPerSecond = $slowRate; endpointCutAfterBytes = $largeCut }
+                if ($Experiment -ceq 'SpaceFaultOffline') {
+                    $oldCipher = $built.performanceInputs | Sort-Object cipherBytes | Select-Object -First 1
+                    $oldRoute = Get-EncryptedExperimentRoute $built $oldCipher
+                    $spaceCache = Join-Path $hostRecord.path 'cache-space-fault'
+                    $oldFile = Join-Path $spaceCache ($oldCipher.cipherSha256 + '.bin')
+                    $summary['spaceFault'] = @{ oldArtifact = $oldCipher; oldRoute = $oldRoute; cache = $spaceCache }
+                }
+            }
+            $variants = @()
+            if ($BaselineReceipt) {
+                $previous = Read-YLPackageEvidenceJson (Get-YLTestPath $BaselineReceipt -ReadOnly)
+                if ($previous.experiment -cne 'LargeDownload' -or $previous.profile -cne $Profile -or
+                    $previous.addressables -cne $aa -or $previous.backend -cne $Backend -or $previous.build.status -cne 'Built' -or
+                    $previous.pluginSha256 -cne $summary.pluginSha256) { throw 'The retained baseline profile or native DLL differs.' }
+                $replayHost = New-YLTestDirectory -Workspace $workspace -Kind Host -Key ('RFD' + [guid]::NewGuid().ToString('N').Substring(0,8)) -NewOnly
+                $replayLease = Lock-YLTestDirectory -Workspace $workspace -Path $replayHost.path
+                Write-YLTestJson -Path (Join-Path $replayHost.path '.pinned') -Value @{ host = $replayHost.path; hostId = $replayHost.id; resultId = $run.id }
+                $variants += New-TransferReplayPlayer $previous $replayHost $inputs $built $playerData
+            }
+            $variants += @{ side = 'current'; install = $playerRoot; host = $hostRecord.path; build = $built; input = $identity.sha256
+                progressDeadline = ($ExpectProgressDeadline -or [bool]$BaselineReceipt) }
+            $work = @(foreach ($variant in $variants) {
+                foreach ($name in $scenarios) {
+                    if ($variant.progressDeadline -and $name -cin @('large-download-slow-retry','large-download-slow-restore')) { continue }
+                    @{ scenario = $name; variant = $variant }
+                }
+            })
             $processed = 0
-            foreach ($scenario in $scenarios) {
-                if ($scenario -cin @('offline-warm','layout-offline')) {
+            foreach ($item in $work) {
+                $scenario = $item.scenario
+                $variant = $item.variant
+                $logStem = if ($BaselineReceipt) { $variant.side + '-' + $scenario } else { $scenario }
+                if ($scenario -cin @('offline-warm','layout-offline','large-download-space-offline')) {
                     $server.Pause()
                     $probe = [Net.Sockets.TcpClient]::new()
                     try {
@@ -329,9 +554,15 @@ try {
                     $null = [IO.Directory]::CreateDirectory($held)
                     $server.HoldNextProtectedTransfer($held)
                 }
-                $runtime = Join-Path $run.path ($scenario + '.json')
+                if ($scenario -cin @('cache-usage-open','buffer-capacity-prefetch-fault')) {
+                    $cacheGate = Get-YLTestPath (Join-Path $variant.host ($logStem + '-gate'))
+                    if ([IO.Path]::Exists($cacheGate)) { throw 'The cache inspection requires a fresh endpoint gate.' }
+                    $null = [IO.Directory]::CreateDirectory($cacheGate)
+                    $server.HoldNextProtectedTransfer($cacheGate)
+                }
+                $runtime = Join-Path $run.path ($logStem + '.json')
                 $plainSample = $scenario -clike 'performance-plain-*'
-                $actualRoot = if ($plainSample) { $plainRoot } elseif ($Mode -ceq 'WrongRoute') { Join-Path $hostRecord.path 'PWrong' } else { $playerRoot }
+                $actualRoot = if ($plainSample) { $plainRoot } elseif ($Mode -ceq 'WrongRoute') { Join-Path $hostRecord.path 'PWrong' } else { $variant.install }
                 if ($scenario -clike 'layout-*') {
                     $actualRoot = Join-Path $hostRecord.path $scenario
                     Copy-VerifiedPlayer $builtPlayer $actualRoot
@@ -347,7 +578,7 @@ try {
                 $actualExe = Join-Path $actualRoot 'P.exe'
                 $expectedCatalog = if ($plainSample) { $built.plainCatalogSha256 } elseif ($Mode -ceq 'WrongRoute') { $built.changedCatalogSha256 } else { $built.shippedCatalogSha256 }
                 $expectedDescription = if ($plainSample) { '' } elseif ($Mode -ceq 'WrongRoute') { $built.changedDescriptionSha256 } else { [string]$built.descriptionSha256 }
-                if ($Mode -ceq 'Performance') {
+                if ($Mode -ceq 'Performance' -and $scenario -cne 'large-download-space-offline') {
                     # Prove the TCP listener is up without warming either content route.
                     $endpoint = [uri]$server.Prefix
                     $connection = [Net.Sockets.TcpClient]::new($endpoint.Host, $endpoint.Port)
@@ -355,16 +586,37 @@ try {
                 }
                 $prior = @($server.CaptureRoundAsync().GetAwaiter().GetResult())
                 if ($prior.Count -ne $processed) { throw 'A loopback request arrived outside a Player round.' }
-                Assert-YLFrozenPlayerBinaries -Player $actualExe -Build $built -Backend $Backend -ExtensionAssembly 'YLFramework.Resource.Encryption' `
+                Assert-YLFrozenPlayerBinaries -Player $actualExe -Build $variant.build -Backend $Backend -ExtensionAssembly 'YLFramework.Resource.Encryption' `
                     -NativePluginSha256 $summary.pluginSha256
-                $arguments = @('-batchmode','-logFile',(Join-Path $run.path ($scenario + '-game.log')),
+                $arguments = @('-batchmode','-logFile',(Join-Path $run.path ($logStem + '-game.log')),
                     '-ylFrozenScenario',$scenario,'-ylFrozenResult',$runtime)
                 if ($plainSample) {
                     $plainDownload = if ($scenario -ceq 'performance-plain-cold') { $plainColdDownload } else { 0L }
                     $arguments += '-ylFrozenLayout', $DeliveryLayout, '-ylFrozenPlainDownloadBytes', $plainDownload.ToString([Globalization.CultureInfo]::InvariantCulture)
                 } else {
-                    $arguments += '-ylFrozenKey', $keyFile, '-ylFrozenCache', (Join-Path $hostRecord.path "cache-$scenario")
+                    $cacheName = $scenario
+                    if ($Experiment -ceq 'LargeDownload') {
+                        if ($scenario -clike 'large-download-slow*') { $cacheName = 'slow' }
+                        elseif ($scenario -clike 'large-download-cut*' -or $scenario -ceq 'large-download-warm') { $cacheName = 'cut' }
+                        elseif ($scenario -clike 'large-download-changed*') { $cacheName = 'changed' }
+                        $clientRate = if ($scenario -cin @('large-download-slow','large-download-slow-retry')) { $slowRate } else { $largeRate }
+                        $stopAfter = if ($scenario -ceq 'large-download-cut') { $largeCut } else { 0 }
+                        $changed = $scenario -ceq 'large-download-changed'
+                        $responseTag = if ($changed) { 'f' * 64 } else { $largeCipher.cipherSha256 }
+                        $responseMode = if ($changed) { 'changed' } else { 'honor' }
+                        $server.ShapeTransfer($largeRoute, $clientRate, $stopAfter, $responseTag, $responseMode)
+                    }
+                    if ($Experiment -ceq 'SpaceFaultOffline') {
+                        $cacheName = 'space-fault'
+                        if ($scenario -ceq 'large-download-space-fault') {
+                            $server.ShapeTransfer($largeRoute, $largeRate, 0, $largeCipher.cipherSha256)
+                        }
+                    }
+                    $experimentCache = Join-Path $variant.host "cache-$cacheName"
+                    $arguments += '-ylFrozenKey', $keyFile, '-ylFrozenCache', $experimentCache
                     if ($scenario -cne 'layout-offline') { $arguments += '-ylFrozenPeerKey', $peerKeyFile }
+                    if ($scenario -clike 'cache-usage-*') { $arguments += '-ylFrozenCacheSentinel', $cacheSentinel }
+                    if ($scenario -cin @('cache-usage-open','buffer-capacity-prefetch-fault')) { $arguments += '-ylFrozenCacheGate', $cacheGate }
                 }
                 $installProof = $null
                 if ($scenario -ceq 'layout-offline') {
@@ -373,37 +625,177 @@ try {
                     }
                     $process = $protectedInstall.process
                     $installProof = $protectedInstall.proof
-                } else { $process = Execute-Process $actualExe $actualRoot $arguments $scenario 150000 }
+                } elseif ($scenario -ceq 'cache-usage-cold') {
+                    $process = Invoke-FixedColdCacheInspection $experimentCache $variant.host {
+                        Execute-Process $actualExe $actualRoot $arguments $logStem 260000
+                    }
+                } else {
+                    $timeout = if ($Experiment -cne 'Default') { 260000 } else { 150000 }
+                    $process = Execute-Process $actualExe $actualRoot $arguments $logStem $timeout
+                }
                 $after = @($server.CaptureRoundAsync().GetAwaiter().GetResult())
                 $observed = if ([IO.File]::Exists($runtime)) { Read-YLPackageEvidenceJson $runtime } else { $null }
                 $quit = if ([IO.File]::Exists($runtime + '.quit')) { Read-YLPackageEvidenceJson ($runtime + '.quit') } else { $null }
                 $requests = @($after | Select-Object -Skip $processed)
                 $processed = $after.Count
-                $list.Add(@{ scenario = $scenario; process = $process; observed = $observed; quit = $quit; requests = $requests; readOnlyInstall = $installProof })
+                $list.Add(@{ scenario = $scenario; variant = $variant.side; process = $process; observed = $observed; quit = $quit; requests = $requests; readOnlyInstall = $installProof })
                 $summary.runs = $list.ToArray(); $summary.http = $after
                 Assert-YLFrozenPlayerBackend -Row $observed -Expected $Backend
                 if ($observed.pid -ne $process.pid -or $observed.token -cne $token -or $observed.scenario -cne $scenario -or
-                    $observed.unity -cne $editor.version -or $observed.inputHash -cne $identity.sha256 -or
+                    $observed.unity -cne $editor.version -or $observed.inputHash -cne $variant.input -or
                     $observed.catalogSha256 -cne $expectedCatalog -or [string]$observed.descriptionSha256 -cne [string]$expectedDescription) {
                     throw "Player evidence does not bind to its build inputs and shipped Catalog: $scenario. $($observed.error)"
                 }
                 if ($scenario -ceq 'fault-abort') {
-                    $parts = @(Get-YLTestTreeFiles (Join-Path $playerRoot 'Cache-abort') | Where-Object { $_ -clike '*.part' })
+                    $abortedFiles = @(Get-YLTestTreeFiles (Join-Path $playerRoot 'Cache-abort'))
+                    $parts = @($abortedFiles | Where-Object { $_ -clike '*.part' })
+                    $proofs = @($abortedFiles | Where-Object { $_ -clike '*.part.owner' })
                     if ($process.status -cne 'NonZeroExit' -or $process.exitCode -ne 73 -or -not $process.observedExit -or $process.activeProcesses -ne 0 -or
                         -not $process.streamsDrained -or $process.forcedCleanup -or $process.timedOut -or $process.cancelled -or $null -ne $quit -or
                         $observed.status -cne 'BeforeUnexpectedExit' -or
-                        -not $observed.sawOwnedPart -or $parts.Count -ne 1 -or $requests.Count -ne 1 -or $requests[0].method -cne 'GET' -or
+                        -not $observed.sawOwnedPart -or $parts.Count -ne 1 -or $proofs.Count -ne 1 -or $proofs[0] -cne ($parts[0] + '.owner') -or
+                        $requests.Count -ne 1 -or $requests[0].method -cne 'GET' -or
                         $requests[0].status -ne 200 -or $requests[0].bytes -le 0 -or $requests[0].bytes -ge $built.protectedBytes -or $requests[0].completed) {
                         throw 'Unexpected-exit control did not leave exactly one incomplete owned request and no ordinary quit.'
                     }
+                    $record = [IO.File]::ReadAllBytes($proofs[0])
+                    if ($record.Length -ne 24 -or [BitConverter]::ToUInt32($record, 0) -ne 0x31504c59 -or
+                        ('{0:X8}-{1:X16}' -f [BitConverter]::ToUInt32($record, 12), [BitConverter]::ToUInt64($record, 4)) -cne $observed.abandonedTransferFileId -or
+                        ('{0:X16}' -f [BitConverter]::ToUInt64($record, 16)) -cne $observed.abandonedTransferCreated -or
+                        $observed.abandonedTransferReceivedBytes -le 0 -or $observed.abandonedTransferReceivedBytes -gt $requests[0].bytes) {
+                        throw 'The abandoned part did not retain the physical identity recorded by the running Player.'
+                    }
+                    $list[$list.Count - 1]['transferProvenance'] = @{
+                        part = $parts[0]; proof = $proofs[0]; sha256 = Get-YLFrozenFileSha256 $proofs[0]
+                        fileId = $observed.abandonedTransferFileId; created = $observed.abandonedTransferCreated
+                    }
                     continue
                 }
-                try { Assert-YLTestProcessSucceeded $process } catch { throw "Player process failed: $scenario. $($observed.error)" }
+                try { Assert-YLTestProcessSucceeded $process } catch {
+                    $message = if ($observed) { $observed['error'] } else { 'No Player report' }
+                    throw "Player process $($process.status) (exit $($process.exitCode)): $scenario. $message"
+                }
                 Assert-YLFrozenPlayerBackend -Row $quit -Expected $Backend
                 if ($observed.status -cne 'Passed' -or $quit.status -cne 'Passed' -or $quit.pid -ne $process.pid -or -not $quit.quit -or $quit.token -cne $token -or
-                    $quit.scenario -cne $scenario -or $quit.unity -cne $editor.version -or $quit.inputHash -cne $identity.sha256 -or
+                    $quit.scenario -cne $scenario -or $quit.unity -cne $editor.version -or $quit.inputHash -cne $variant.input -or
                     $quit.catalogSha256 -cne $expectedCatalog -or [string]$quit.descriptionSha256 -cne [string]$expectedDescription) {
                     throw "Missing Player/quit evidence for $scenario."
+                }
+                if ($Experiment -ceq 'LargeDownload') {
+                    $transfer = $observed.largeDownload
+                    $expected = switch ($scenario) {
+                        'large-download-cut' { 'TransferFailed' }
+                        'large-download-changed' { 'TransferFailed' }
+                        'large-download-slow' { if ($variant.progressDeadline) { 'Complete' } else { 'TransferTimeout' } }
+                        'large-download-slow-retry' { 'TransferTimeout' }
+                        default { 'Complete' }
+                    }
+                    if ($transfer.termination -cne $expected -or $transfer.cipherSha256 -cne $largeCipher.cipherSha256 -or
+                        $transfer.expectedBytes -ne $largeCipher.cipherBytes -or $transfer.keysOpened -ne 0 -or $transfer.mounts -ne 0) {
+                        throw "$scenario did not use the expected ciphertext and outcome."
+                    }
+                    if ($scenario -ceq 'large-download-warm') {
+                        if ($transfer.receivedBytes -ne 0 -or $requests.Count -ne 0) { throw 'Warm ciphertext reached the endpoint.' }
+                    } else {
+                        if ($requests.Count -ne 1 -or $requests[0].target -cne $largeRoute -or $requests[0].method -cne 'GET' -or
+                            $requests[0].status -ne 200 -or $requests[0].range -or $requests[0].entity -cne ('"' + $responseTag + '"') -or
+                            $transfer.receivedBytes -le 0 -or $transfer.receivedBytes -gt $requests[0].bytes) {
+                            throw 'Missing attributable client bytes for the complete-representation request.'
+                        }
+                        if ($expected -ceq 'Complete' -and $transfer.receivedBytes -ne $largeCipher.cipherBytes) {
+                            throw 'The complete ciphertext was not received in full.'
+                        }
+                        if ($scenario -ceq 'large-download-slow' -and $variant.progressDeadline -and $transfer.elapsedSeconds -le 120) {
+                            throw 'The replay did not cross the original total deadline.'
+                        }
+                        if ($expected -ceq 'TransferTimeout' -and ($transfer.elapsedSeconds -lt 118 -or
+                            ([DateTimeOffset]::Parse($transfer.lastUtc) - [DateTimeOffset]::Parse($transfer.firstUtc)).TotalSeconds -lt 115)) {
+                            throw 'The product timeout did not occur during continuous input.'
+                        }
+                        if ($scenario -ceq 'large-download-cut' -and ($requests[0].termination -cne 'EndpointTruncated' -or $transfer.receivedBytes -ne $largeCut)) {
+                            throw 'The endpoint cutoff and actual received offset differ.'
+                        }
+                        if ($scenario -ceq 'large-download-changed' -and (-not $requests[0].completed -or
+                            $transfer.receivedBytes -ne $largeCipher.cipherBytes -or $transfer.error -cnotmatch 'EncryptedBundleIntegrityException')) {
+                            throw 'The same-length replacement did not reach and fail final ciphertext integrity.'
+                        }
+                    }
+                    Write-YLTestJson -Path (Join-Path $run.path ($logStem + '-transfer.json')) -Value $list[$list.Count - 1]
+                    continue
+                }
+                if ($scenario -clike 'cache-usage-*') {
+                    $coldCache = $scenario -ceq 'cache-usage-cold'
+                    $inspection = $observed.cacheInspection
+                    $queries = @($inspection.rounds)
+                    if ($queries.Count -ne 4 -or @($queries | Where-Object {
+                        $_.keyDelta -ne 0 -or $_.mountDelta -ne 0 -or
+                        ((ConvertTo-Json -InputObject $_.before -Depth 8 -Compress) -cne (ConvertTo-Json -InputObject $_.after -Depth 8 -Compress)) -or
+                        @($_.before | Where-Object { [string]::IsNullOrEmpty($_.fileId) }).Count -ne 0
+                    }).Count -ne 0) {
+                        throw 'Cache inspection lacks repeatable file-identity, content or runtime-use evidence.'
+                    }
+                    if ($coldCache) {
+                        if (-not $inspection.writeDenied -or -not $inspection.readDenied -or $requests.Count -ne 0 -or
+                            ($queries.phase -join ',') -cne 'missing,missing,read-only-denied-and-unattributed,read-only-denied-and-unattributed') {
+                            throw 'Cold cache inspection did not exercise the restricted fixture without HTTP.'
+                        }
+                    } elseif (-not $inspection.closedSessionRejected -or -not $observed.experimentClosed -or
+                        -not $observed.keyLeasesReturned -or $observed.openKeys -ne 0 -or $observed.creates -ne 0 -or
+                        ($queries.phase -join ',') -cne 'in-flight,in-flight,warm,warm' -or $requests.Count -ne 1 -or
+                        $requests[0].target -cne $smallCipherRoute -or $requests[0].method -cne 'GET' -or
+                        -not $requests[0].held -or -not $requests[0].completed -or $requests[0].bytes -ne $smallCipher.cipherBytes -or
+                        [DateTimeOffset]$requests[0].at -ge [DateTimeOffset]$queries[0].startedUtc) {
+                        throw 'Warm cache inspection made unintended requests or missed the controlled prefetch.'
+                    }
+                    continue
+                }
+                if ($scenario -ceq 'buffer-capacity-prefetch-fault') {
+                    if (-not $observed.experimentFaultRecovered -or -not $observed.experimentClosed -or
+                        -not $observed.keyLeasesReturned -or $observed.openKeys -ne 0 -or $observed.creates -ne 0 -or
+                        $requests.Count -ne 1 -or $requests[0].target -cne $smallCipherRoute -or $requests[0].method -cne 'GET' -or
+                        -not $requests[0].held) {
+                        throw 'The failed prefetch did not preserve the original error and release the session.'
+                    }
+                    continue
+                }
+                if ($scenario -ceq 'buffer-capacity') {
+                    if ($observed.buffers.nativeSha256 -cne $summary.pluginSha256 -or $observed.buffers.calibrations.Count -ne 2 -or
+                        $observed.buffers.cases.Count -ne 3 -or $requests.Count -ne 2 -or -not $observed.experimentClosed -or
+                        -not $observed.keyLeasesReturned) {
+                        throw 'The capacity case did not bind to the diagnostics DLL and both real protected inputs.'
+                    }
+                    continue
+                }
+                if ($Experiment -ceq 'SpaceFaultOffline') {
+                    $download = $observed.largeDownload
+                    if (-not [IO.File]::Exists($oldFile) -or (Get-YLFrozenFileSha256 $oldFile) -cne $oldCipher.cipherSha256 -or
+                        @(Get-YLTestTreeFiles $spaceCache | Where-Object { $_ -clike '*.part' }).Count -ne 0 -or
+                        [IO.File]::Exists((Join-Path $spaceCache ($largeCipher.cipherSha256 + '.bin')))) {
+                        throw 'The injected failure changed the old cipher or left an incomplete entry.'
+                    }
+                    switch ($scenario) {
+                        'large-download-space-prime' {
+                            if ($requests.Count -ne 1 -or $requests[0].target -cne $oldRoute -or $requests[0].method -cne 'GET' -or
+                                -not $requests[0].completed -or $download.termination -cne 'Complete' -or
+                                $download.receivedBytes -ne $oldCipher.cipherBytes -or $download.keysOpened -ne 0 -or $download.mounts -ne 0) {
+                                throw 'The old ciphertext did not prepare through its actual remote route.'
+                            }
+                        }
+                        'large-download-space-fault' {
+                            if ($requests.Count -ne 1 -or $requests[0].target -cne $largeRoute -or $requests[0].method -cne 'GET' -or
+                                $download.termination -cne 'TransferFailed' -or $download.writeHResult -ne -2147024784 -or
+                                $download.stagedBytes -lt 1MB -or $download.receivedBytes -le $download.stagedBytes -or
+                                $download.receivedBytes -gt $requests[0].bytes -or $download.keysOpened -ne 0 -or $download.mounts -ne 0) {
+                                throw 'The actual transfer did not hit the injected staged write condition.'
+                            }
+                        }
+                        'large-download-space-offline' {
+                            if (-not $summary.endpointWasClosed -or $requests.Count -ne 0 -or $download.receivedBytes -ne 0 -or
+                                $download.termination -cne 'OldAssetReadOffline' -or $download.keysOpened -ne 1 -or $download.mounts -ne 1 -or
+                                -not $observed.keyLeasesReturned) { throw 'The unchanged old ciphertext did not load at the closed endpoint.' }
+                        }
+                    }
+                    continue
                 }
                 if ($scenario -cne 'disabled' -and ($observed.keyLeasesReturned -isnot [bool] -or -not $observed.keyLeasesReturned -or
                     $observed.issuedKeys -ne $observed.returnKeys)) { throw "Key lease return evidence is incomplete for $scenario." }
@@ -507,6 +899,13 @@ try {
                         $ordinary.Count -ne [int]($scenario -ceq 'cold') -or $requests.Count -ne ($protected.Count + $ordinary.Count)) {
                         throw "$scenario did not receive the declared protected and ordinary GETs."
                     }
+                    if ($scenario -ceq 'fault-recovery') {
+                        $aborted = @($list | Where-Object { $_.scenario -ceq 'fault-abort' -and $_.variant -ceq $variant.side })
+                        if ($aborted.Count -ne 1 -or -not $observed.noParts -or
+                            [IO.Path]::Exists($aborted[0].transferProvenance.part) -or [IO.Path]::Exists($aborted[0].transferProvenance.proof)) {
+                            throw 'The restarted Player did not remove the abandoned payload and its provenance.'
+                        }
+                    }
                     if ($scenario -ceq 'held-download' -and (-not $protected[0].held -or -not $observed.observerStartedTransfer -or -not $observed.loadedWhileTransferHeld -or
                         -not $observed.observerCanceledWhileTransferHeld -or $observed.downloadReleasedBeforeAsset -isnot [bool] -or
                         -not $observed.downloadReleasedBeforeAsset -or -not $observed.sentinel -or $observed.creates -ne 1 -or $observed.unloads -ne 1 -or
@@ -521,9 +920,20 @@ try {
             }
             $server.Pause()
             if ($server.Snapshot().Length -ne $processed) { throw 'A loopback request arrived after the final Player round.' }
-            if ($Mode -ceq 'Performance') {
+            if ($Mode -ceq 'Performance' -and $Experiment -ceq 'Default') {
                 $summary['performance'] = Get-YLFrozenPerformanceSummary -Runs $list.ToArray() -Build $built -DeliveryLayout $DeliveryLayout
                 if (-not $summary.performance.passed) { throw ('Performance budget failed: ' + ($summary.performance.budgetFailures -join '; ')) }
+            }
+            if ($Experiment -ceq 'LargeDownload') {
+                $summary['repeatedBodyBytes'] = [ordered]@{}
+                foreach ($variant in $variants) {
+                    $rows = @($list | Where-Object variant -CEQ $variant.side)
+                    $slow = @($rows | Where-Object scenario -CIn @('large-download-slow','large-download-slow-retry','large-download-slow-restore'))
+                    $cut = @($rows | Where-Object scenario -CIn @('large-download-cut','large-download-cut-retry'))
+                    $summary.repeatedBodyBytes[$variant.side] = @{ withinDeadline = 0L
+                        continuousSlow = [long](($slow.observed.largeDownload.receivedBytes | Measure-Object -Sum).Sum) - $largeCipher.cipherBytes
+                        truncated = [long](($cut.observed.largeDownload.receivedBytes | Measure-Object -Sum).Sum) - $largeCipher.cipherBytes }
+                }
             }
         }
     } finally { $server.Dispose() }
@@ -552,7 +962,10 @@ try {
     } catch {
         $failures.Add($_)
     } finally {
-        try { if ($null -ne $hostLease) { $hostLease.Dispose() } }
+        try {
+            if ($null -ne $replayLease) { $replayLease.Dispose() }
+            if ($null -ne $hostLease) { $hostLease.Dispose() }
+        }
         finally { $runLease.Dispose() }
     }
 }

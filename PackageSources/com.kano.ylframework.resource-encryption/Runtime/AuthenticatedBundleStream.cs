@@ -47,6 +47,9 @@ namespace YLFramework.Resource.Encryption
         [DllImport(Library, EntryPoint = "yl_read_statistics", CallingConvention = CallingConvention.Cdecl)]
         private static extern void ReadStatisticsNative(IntPtr reader, out long served, out long source, out long pages, out long nativePayloadBound);
 
+        internal static Action<int, bool> HashBufferBoundary { get; set; }
+        internal static Action<int> DiagnosticPhase { get; set; }
+
         private AuthenticatedBundleStream(FileStream cipher, EncryptedBundleKeyLease key, EncryptedBundleBinding binding)
         {
             _cipher = cipher;
@@ -67,8 +70,10 @@ namespace YLFramework.Resource.Encryption
         {
             EncryptedBundleKeyLease key = null;
             AuthenticatedBundleStream result = null;
+            var phase = DiagnosticPhase;
             try
             {
+                phase?.Invoke(1);
                 long started = Stopwatch.GetTimestamp();
                 long checkedBytes = ValidateCipher(cipher, record, sharedCipherValidation ?? cancellationToken);
                 double cipherShaMs = ElapsedMs(started);
@@ -114,6 +119,7 @@ namespace YLFramework.Resource.Encryption
                 }
                 throw;
             }
+            finally { phase?.Invoke(0); }
         }
 
         internal static long ValidateCipher(FileStream cipher, EncryptedBundleRecord record, CancellationToken token)
@@ -149,10 +155,13 @@ namespace YLFramework.Resource.Encryption
             bytesRead = 0;
             token.ThrowIfCancellationRequested();
             var buffer = new byte[ReadLimit];
+            var observeBuffer = HashBufferBoundary;
             // Let the Windows primitive provider dispatch SHA-256, independent of Mono's managed implementation.
-            CheckSha(BCryptOpenAlgorithmProvider(out IntPtr algorithm, "SHA256", "Microsoft Primitive Provider", 0));
+            IntPtr algorithm = IntPtr.Zero;
             try
             {
+                observeBuffer?.Invoke(buffer.Length, true);
+                CheckSha(BCryptOpenAlgorithmProvider(out algorithm, "SHA256", "Microsoft Primitive Provider", 0));
                 CheckSha(BCryptCreateHash(algorithm, out IntPtr hash, IntPtr.Zero, 0, IntPtr.Zero, 0, 0));
                 try
                 {
@@ -179,11 +188,13 @@ namespace YLFramework.Resource.Encryption
             }
             finally
             {
-                BCryptCloseAlgorithmProvider(algorithm, 0);
+                if (algorithm != IntPtr.Zero)
+                    BCryptCloseAlgorithmProvider(algorithm, 0);
                 if (clearBuffer)
                 {
                     Array.Clear(buffer, 0, buffer.Length);
                 }
+                observeBuffer?.Invoke(buffer.Length, false);
             }
         }
 
@@ -276,8 +287,10 @@ namespace YLFramework.Resource.Encryption
                     return 0;
                 }
                 var pin = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+                var phase = PreAuthenticationCipherBytes > 0 ? DiagnosticPhase : null;
                 try
                 {
+                    phase?.Invoke(2);
                     int done = 0;
                     while (done < size)
                     {
@@ -293,7 +306,11 @@ namespace YLFramework.Resource.Encryption
                     _position += done;
                     return done;
                 }
-                finally { pin.Free(); }
+                finally
+                {
+                    pin.Free();
+                    phase?.Invoke(0);
+                }
             }
         }
 

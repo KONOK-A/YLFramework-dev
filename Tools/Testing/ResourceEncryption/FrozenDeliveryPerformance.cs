@@ -4,6 +4,9 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.Profiling;
@@ -70,6 +73,353 @@ namespace YLFramework.Testing
         [DllImport("psapi.dll", ExactSpelling = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetProcessMemoryInfo(IntPtr process, ref ProcessCounters counters, uint size);
+
+        [Serializable]
+        private sealed class LargeDownloadEvidence
+        {
+            public string termination, error, cipherSha256, firstUtc, lastUtc;
+            public long expectedBytes, receivedBytes, stagedBytes = -1;
+            public int readCalls, keysOpened, mounts;
+            public int writeHResult;
+            public double elapsedSeconds;
+        }
+
+        private IEnumerator MeasureLargeDownload()
+        {
+            string cache = Argument("-ylFrozenCache");
+            var description = EncryptedDeliverySession.ReadShippedDescription(Addressables.RuntimePath, true, default);
+            string scenario = _row.scenario;
+            bool offline = scenario == "large-download-space-offline";
+            bool spaceFault = scenario == "large-download-space-fault";
+            bool small = offline || scenario == "large-download-space-prime";
+            var byLength = description.Bundles.OrderBy(record => record.CipherLength);
+            var target = small ? byLength.First() : byLength.Last();
+            var evidence = _row.largeDownload = new LargeDownloadEvidence
+            {
+                expectedBytes = target.CipherLength, cipherSha256 = target.CipherSha256
+            };
+            using var keys = new Keys(Argument("-ylFrozenKey"), _row.scenario, peerKeyFile: OptionalArgument("-ylFrozenPeerKey"));
+            var open = EncryptedDeliverySession.StartCoreAsync(cache, keys, true);
+            yield return Until(() => open.IsCompleted);
+            var session = open.GetAwaiter().GetResult();
+            bool warm = scenario == "large-download-warm" || offline;
+            string path = Path.Combine(cache, target.CipherSha256 + ".bin");
+            Require(File.Exists(path) == warm, "Unexpected starting cache state.");
+            if (offline)
+            {
+                var asset = Addressables.LoadAssetAsync<TextAsset>(SmallKey);
+                try
+                {
+                    yield return Until(() => asset.IsDone);
+                    double readyTime = 0;
+                    ReadReady(asset, 8 * MiB, 97, ref readyTime);
+                    evidence.termination = "OldAssetReadOffline";
+                    evidence.keysOpened = keys.Opens;
+                    evidence.mounts = session.Provider.Creates;
+                    Require(evidence.keysOpened == 1 && evidence.mounts == 1, "The old offline asset did not authenticate and mount once.");
+                }
+                finally { if (asset.IsValid()) Addressables.Release(asset); }
+                yield return Until(() => session.Provider.Mounted == 0 && session.Provider.Unloading == 0);
+            }
+            else
+            {
+                yield return ObserveColdDownload(session, evidence, target, path, small ? SmallKey : LargeKey, keys, spaceFault);
+            }
+            var close = session.CloseAsync();
+            yield return Until(() => close.IsCompleted);
+            close.GetAwaiter().GetResult();
+            CheckKeyReturns(keys);
+        }
+
+        private IEnumerator ObserveColdDownload(EncryptedDeliverySession session, LargeDownloadEvidence evidence, EncryptedBundleRecord target,
+            string path, string assetKey, Keys keys, bool spaceFault)
+        {
+            const int diskFull = unchecked((int)0x80070070);
+            session.Cache.CiphertextReceived = (record, stage, bytes) =>
+            {
+                Require(record.CipherSha256 == target.CipherSha256, "The experiment received bytes from a different ciphertext.");
+                string now = DateTime.UtcNow.ToString("o");
+                evidence.firstUtc ??= now;
+                evidence.lastUtc = now;
+                evidence.receivedBytes += bytes;
+                evidence.readCalls++;
+                if (spaceFault && stage.Position >= MiB)
+                {
+                    stage.Flush(true);
+                    evidence.stagedBytes = stage.Length;
+                    evidence.writeHResult = diskFull;
+                    throw new IOException("Fixture disk full at the next ciphertext write.", diskFull);
+                }
+            };
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var download = Addressables.DownloadDependenciesAsync(assetKey, false);
+            try
+            {
+                yield return Until(() => download.IsDone, 205);
+                evidence.elapsedSeconds = watch.Elapsed.TotalSeconds;
+                evidence.error = download.OperationException?.ToString();
+                evidence.termination = download.Status == AsyncOperationStatus.Succeeded ? "Complete" :
+                    (evidence.error?.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0 ? "TransferTimeout" : "TransferFailed");
+                if (spaceFault)
+                {
+                    Require(evidence.termination == "TransferFailed" && evidence.writeHResult == diskFull &&
+                        evidence.stagedBytes >= MiB && evidence.receivedBytes > evidence.stagedBytes &&
+                        evidence.error.Contains("Fixture disk full at the next ciphertext write"),
+                        "The ciphertext write did not fail after a flushed real prefix.");
+                }
+                bool found = File.Exists(path);
+                Require(found == (evidence.termination == "Complete"), "Cache publication differs from transfer completion.");
+                if (found)
+                {
+                    using var published = OwnedWindowsFiles.ReadPinned(path);
+                    AuthenticatedBundleStream.ValidateCipher(published, target, default);
+                }
+                evidence.keysOpened = keys.Opens;
+                evidence.mounts = session.Provider.Creates;
+                Require(evidence.keysOpened == 0 && evidence.mounts == 0, "Protected prefetch initialized key or mount work.");
+            }
+            finally
+            {
+                session.Cache.CiphertextReceived = null;
+                if (download.IsValid()) Addressables.Release(download);
+            }
+        }
+
+        [DllImport("ylresource_tink", EntryPoint = "yl_diagnostic_buffer_delta", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void BufferDelta(int kind, long bytes);
+        [DllImport("ylresource_tink", EntryPoint = "yl_diagnostic_buffer_phase", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void BufferPhase(int phase);
+        [DllImport("ylresource_tink", EntryPoint = "yl_diagnostic_buffer_reset", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void BufferReset();
+        [DllImport("ylresource_tink", EntryPoint = "yl_diagnostic_buffer_read", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void BufferRead([Out] long[] values, int count);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern int GetModuleFileNameW(IntPtr module, StringBuilder path, int capacity);
+
+        [Serializable]
+        private sealed class BufferEvidence
+        {
+            public string nativeSha256, scope = "Managed hash payload, native bridge pages, upstream header and header-copy buffers, and segment payload vectors.";
+            public string exclusions = "Unity read buffers, engine assets, CNG/crypto state, runtime bookkeeping.";
+            public Calibration[] calibrations;
+            public BufferWorkload[] cases;
+            public long describedCipherBytes, preparationKeys, preparationMounts;
+        }
+
+        [Serializable]
+        private sealed class Capacity
+        {
+            public long current, managed, bridge, upstream, currentReaders;
+            public long peak, peakManaged, peakBridge, peakUpstream, peakReaders, phase, events;
+        }
+
+        [Serializable]
+        private sealed class Calibration
+        {
+            public long x, y;
+            public bool overlapping;
+            public Capacity start, first, beforeSecond, second, afterFirst, end;
+        }
+
+        [Serializable]
+        private sealed class BufferWorkload
+        {
+            public string name;
+            public int readerCreations, mountedWhenHeld;
+            public long singleReaderBound;
+            public Capacity whenHeld, afterUnload;
+        }
+
+        private static Capacity ReadCapacity()
+        {
+            var values = new long[11];
+            BufferRead(values, values.Length);
+            return new Capacity
+            {
+                current = checked(values[0] + values[1] + values[2]), managed = values[0], bridge = values[1],
+                upstream = values[2], peakManaged = values[3], peakBridge = values[4], peakUpstream = values[5],
+                currentReaders = values[6], peakReaders = values[7], peak = values[8], phase = values[9], events = values[10]
+            };
+        }
+
+        private static Calibration CalibrateBuffers(string small, string large, bool overlap)
+        {
+            using var firstAllocated = new ManualResetEventSlim();
+            using var secondAllocated = new ManualResetEventSlim();
+            using var releaseFirst = new ManualResetEventSlim();
+            using var releaseSecond = new ManualResetEventSlim();
+            using var sample = new ThreadLocal<int>();
+            var evidence = new Calibration { overlapping = overlap };
+            BufferReset();
+            evidence.start = ReadCapacity();
+            AuthenticatedBundleStream.HashBufferBoundary = (length, allocated) =>
+            {
+                BufferDelta(0, allocated ? length : -length);
+                if (!allocated) return;
+                if (sample.Value == 1)
+                {
+                    evidence.x = length;
+                    firstAllocated.Set();
+                    Require(releaseFirst.Wait(TimeSpan.FromSeconds(8)), "First calibration buffer was not released.");
+                }
+                else
+                {
+                    evidence.y = length;
+                    secondAllocated.Set();
+                    Require(releaseSecond.Wait(TimeSpan.FromSeconds(8)), "Second calibration buffer was not released.");
+                }
+            };
+            Task first = null, second = null;
+            try
+            {
+                first = Begin(small, 1);
+                Require(firstAllocated.Wait(TimeSpan.FromSeconds(8)), "First real buffer was not allocated.");
+                evidence.first = ReadCapacity();
+                if (!overlap)
+                {
+                    releaseFirst.Set();
+                    first.GetAwaiter().GetResult();
+                }
+                evidence.beforeSecond = ReadCapacity();
+                second = Begin(large, 2);
+                Require(secondAllocated.Wait(TimeSpan.FromSeconds(8)), "Second real buffer was not allocated.");
+                evidence.second = ReadCapacity();
+                releaseFirst.Set();
+                first.GetAwaiter().GetResult();
+                evidence.afterFirst = ReadCapacity();
+                releaseSecond.Set();
+                second.GetAwaiter().GetResult();
+                evidence.end = ReadCapacity();
+                long b = evidence.start.current;
+                Require(evidence.x > 0 && evidence.y > 0 &&
+                    evidence.first.current - b == evidence.x &&
+                    evidence.second.current - b == (overlap ? evidence.x + evidence.y : evidence.y) &&
+                    evidence.afterFirst.current - b == evidence.y && evidence.end.current == b &&
+                    evidence.end.peak - b == (overlap ? evidence.x + evidence.y : Math.Max(evidence.x, evidence.y)) &&
+                    evidence.end.events == 4, "Real buffer overlap did not calibrate.");
+                return evidence;
+            }
+            finally
+            {
+                releaseFirst.Set();
+                releaseSecond.Set();
+                try { Task.WhenAll(first ?? Task.CompletedTask, second ?? Task.CompletedTask).GetAwaiter().GetResult(); }
+                finally { AuthenticatedBundleStream.HashBufferBoundary = null; }
+            }
+
+            Task Begin(string path, int id) => Task.Run(() =>
+            {
+                sample.Value = id;
+                using var contents = OwnedWindowsFiles.ReadPinned(path);
+                AuthenticatedBundleStream.Hash(contents, default, clearBuffer: true);
+            });
+        }
+
+        private IEnumerator MeasureBufferCapacity(bool injectPrefetchFault)
+        {
+            var evidence = _row.buffers = new BufferEvidence();
+            BufferReset();
+            var module = new StringBuilder(32768);
+            int chars = GetModuleFileNameW(GetModuleHandleW("ylresource_tink.dll"), module, module.Capacity);
+            Require(chars > 0 && chars < module.Capacity, "Cannot resolve the loaded diagnostics DLL.");
+            using (var file = File.OpenRead(module.ToString()))
+                evidence.nativeSha256 = AuthenticatedBundleStream.Hash(file, default);
+
+            string cache = Argument("-ylFrozenCache");
+            string gate = injectPrefetchFault ? Argument("-ylFrozenCacheGate") : null;
+            var open = OpenExperimentSession(cache);
+            yield return Until(() => open.IsCompleted);
+            var session = open.GetAwaiter().GetResult();
+            var preload = injectPrefetchFault ? Addressables.DownloadDependenciesAsync(SmallKey, false) :
+                Addressables.DownloadDependenciesAsync(new[] { SmallKey, LargeKey }, Addressables.MergeMode.Union, false);
+            try
+            {
+                if (injectPrefetchFault)
+                {
+                    yield return AwaitHeldCiphertextPrefix(cache, gate, preload, null);
+                    Require(!preload.IsDone, "The fault requires a pending Addressables prefetch.");
+                    throw new ExperimentPrefetchFault();
+                }
+                yield return Until(() => preload.IsDone);
+                Require(preload.Status == AsyncOperationStatus.Succeeded, "Prefetch failed: " + preload.OperationException);
+                Require(_experimentKeys.Opens == 0 && session.Provider.Creates == 0, "Prefetch invoked keys or mounts.");
+            }
+            finally
+            {
+                try { if (gate != null) ReleaseCacheGate(gate); }
+                finally { if (preload.IsValid()) Addressables.Release(preload); }
+            }
+
+            var files = EncryptedDeliverySession.ReadShippedDescription(Addressables.RuntimePath, true, default).Bundles
+                .OrderBy(record => record.CipherLength).ToArray();
+            evidence.describedCipherBytes = files.Sum(record => record.CipherLength);
+            evidence.preparationKeys = _experimentKeys.Opens;
+            evidence.preparationMounts = session.Provider.Creates;
+
+            string small = Path.Combine(cache, files[0].CipherSha256 + ".bin");
+            string large = Path.Combine(cache, files[1].CipherSha256 + ".bin");
+            var calibrate = Task.Run(() => new[] { CalibrateBuffers(small, large, false), CalibrateBuffers(small, large, true) });
+            yield return Until(() => calibrate.IsCompleted);
+            evidence.calibrations = calibrate.GetAwaiter().GetResult();
+            AuthenticatedBundleStream.HashBufferBoundary = (length, added) => BufferDelta(0, added ? length : -length);
+            AuthenticatedBundleStream.DiagnosticPhase = BufferPhase;
+            evidence.cases = new[] { new BufferWorkload { name = "single" }, new BufferWorkload { name = "shared" },
+                new BufferWorkload { name = "parallel" } };
+            try
+            {
+                yield return MeasureCapacityCase(session, evidence.cases[0], null, 1);
+                yield return MeasureCapacityCase(session, evidence.cases[1], SmallKey, 1);
+                yield return MeasureCapacityCase(session, evidence.cases[2], LargeKey, 2);
+            }
+            finally
+            {
+                AuthenticatedBundleStream.HashBufferBoundary = null;
+                AuthenticatedBundleStream.DiagnosticPhase = null;
+            }
+        }
+
+        private static IEnumerator MeasureCapacityCase(EncryptedDeliverySession session, BufferWorkload sample,
+            string secondKey, int expectedReaders)
+        {
+            BufferReset();
+            Require(ReadCapacity().current == 0, "Previous payloads did not drain.");
+            int creates = session.Provider.Creates;
+            var first = Addressables.LoadAssetAsync<TextAsset>(SmallKey);
+            AsyncOperationHandle<TextAsset> second = default;
+            try
+            {
+                if (secondKey != null)
+                    second = Addressables.LoadAssetAsync<TextAsset>(secondKey);
+                yield return Until(() => first.IsDone && (secondKey == null || second.IsDone));
+                double time = 0;
+                ReadReady(first, 8 * MiB, 97, ref time);
+                if (secondKey != null)
+                {
+                    time = 0;
+                    ReadReady(second, secondKey == LargeKey ? 128 * MiB : 8 * MiB,
+                        (byte)(secondKey == LargeKey ? 173 : 97), ref time);
+                }
+                if (secondKey == SmallKey) Require(first.Result == second.Result, "The second request did not share its Bundle.");
+                sample.readerCreations = session.Provider.Creates - creates;
+                sample.mountedWhenHeld = session.Provider.Mounted;
+                sample.whenHeld = ReadCapacity();
+                Require(sample.readerCreations == expectedReaders && sample.mountedWhenHeld == expectedReaders &&
+                    sample.whenHeld.currentReaders == expectedReaders, "The held Bundle readers did not match the workload.");
+                var bounds = new BundleMeasure { clearBytes = 8L * MiB };
+                yield return InspectReader(SmallKey, bounds);
+                sample.singleReaderBound = bounds.payloadBufferBound;
+            }
+            finally
+            {
+                if (second.IsValid()) Addressables.Release(second);
+                Addressables.Release(first);
+            }
+            yield return Until(() => session.Provider.Mounted == 0 && session.Provider.Unloading == 0 && ReadCapacity().current == 0);
+            sample.afterUnload = ReadCapacity();
+            Require(sample.afterUnload.peak > 0 && sample.afterUnload.peakReaders == expectedReaders &&
+                sample.afterUnload.peak == sample.afterUnload.peakManaged + sample.afterUnload.peakBridge + sample.afterUnload.peakUpstream,
+                "The capacity trace missed a live reader or component of the peak.");
+        }
 
         private IEnumerator Disabled()
         {
@@ -253,12 +603,13 @@ namespace YLFramework.Testing
         private static IEnumerator InspectReader(string key, BundleMeasure row)
         {
             var assets = Addressables.LoadResourceLocationsAsync(key, typeof(TextAsset));
-            yield return Until(() => assets.IsDone);
-            var mount = assets.Result.Single().Dependencies.Single(dep => dep.ResourceType == typeof(EncryptedMountedBundle));
-            var bundle = Addressables.ResourceManager.ProvideResource<IAssetBundleResource>(mount);
-            yield return Until(() => bundle.IsDone);
+            AsyncOperationHandle<IAssetBundleResource> bundle = default;
             try
             {
+                yield return Until(() => assets.IsDone);
+                var mount = assets.Result.Single().Dependencies.Single(dep => dep.ResourceType == typeof(EncryptedMountedBundle));
+                bundle = Addressables.ResourceManager.ProvideResource<IAssetBundleResource>(mount);
+                yield return Until(() => bundle.IsDone);
                 var reader = ((EncryptedMountedBundle)bundle.Result).Reader;
                 var stats = reader.ReadStatistics();
                 row.readPlain = stats.Logical; row.readCipher = stats.Physical; row.pages = stats.Pages; row.payloadBufferBound = stats.PayloadBound;
@@ -271,7 +622,11 @@ namespace YLFramework.Testing
                 row.unityReadBufferBytes = EncryptedAssetBundleProvider.UnityReadBufferBytes;
                 Require(row.payloadBufferBound <= 4L * MiB && row.engineReadPlain > 0 && row.engineReadCipher > 0, "No separable native authentication/read counters.");
             }
-            finally { Addressables.Release(bundle); Addressables.Release(assets); }
+            finally
+            {
+                if (bundle.IsValid()) Addressables.Release(bundle);
+                Addressables.Release(assets);
+            }
         }
 
         private static void ReadReady(AsyncOperationHandle<TextAsset> request, int length, byte sentinel, ref double readyAtMs)

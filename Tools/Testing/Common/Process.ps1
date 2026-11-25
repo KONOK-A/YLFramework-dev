@@ -118,6 +118,7 @@ function Invoke-YLTestProcess {
         [Parameter(Mandatory)][Diagnostics.ProcessStartInfo] $StartInfo,
         [Parameter(Mandatory)][string] $Log,
         [Parameter(Mandatory)][ValidateRange(1, 2147483647)][int] $TimeoutMilliseconds,
+        [ValidateRange(0, 60000)][int] $DescendantGraceMilliseconds = 2000,
         [Threading.CancellationToken] $CancellationToken = [Threading.CancellationToken]::None,
         [scriptblock] $KillWhen
     )
@@ -193,8 +194,16 @@ function Invoke-YLTestProcess {
                     $document = [Text.Json.JsonDocument]::Parse((ConvertTo-Json -InputObject $observation -Depth 8 -Compress))
                     try { $record['killObservation'] = $document.RootElement.Clone() }
                     finally { $document.Dispose() }
+                    # The killed process can take longer to exit under build load. Keep the original handle and the observation deadline.
+                    $killDeadline = [Math]::Min([long]$TimeoutMilliseconds,
+                        $clock.ElapsedMilliseconds + [Math]::Max(5000, $DescendantGraceMilliseconds))
                     $process.Kill()
-                    if (-not $process.WaitForExit(5000)) { throw 'Observed test kill did not terminate the direct child.' }
+                    while (-not $process.HasExited) {
+                        $CancellationToken.ThrowIfCancellationRequested()
+                        $killRemaining = $killDeadline - $clock.ElapsedMilliseconds
+                        if ($killRemaining -le 0) { throw 'Observed test kill did not terminate the direct child.' }
+                        $null = $process.WaitForExit([int][Math]::Min(100, $killRemaining))
+                    }
                     $record['status'] = 'ObservationKill'
                     break
                 }
@@ -235,7 +244,9 @@ function Invoke-YLTestProcess {
             try {
                 if ($process.HasExited -and $record['jobAssigned'] -and $record['status'] -cin @('Exited', 'NonZeroExit', 'ObservationKill')) {
                     $grace = [Diagnostics.Stopwatch]::StartNew()
-                    while ($job.ActiveProcesses -ne 0 -and $grace.ElapsedMilliseconds -lt 2000) { [Threading.Thread]::Sleep(25) }
+                    while ($job.ActiveProcesses -ne 0 -and $grace.ElapsedMilliseconds -lt $DescendantGraceMilliseconds) {
+                        [Threading.Thread]::Sleep(25)
+                    }
                     if ($job.ActiveProcesses -ne 0) { $record['status'] = 'DescendantsAlive' }
                 }
                 if (-not $process.HasExited -or ($record['jobAssigned'] -and $job.ActiveProcesses -ne 0)) {

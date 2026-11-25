@@ -48,10 +48,46 @@ string(REPLACE "  std::vector<uint8_t> pt_segment;" [=[  std::vector<uint8_t> pt
 
 if(YL_PAYLOAD_TRACE)
   string(REPLACE "#include <vector>" [=[#include <vector>
+#include <cstdint>
 
-void YLObserveSegmentCapacity(std::size_t cipher, std::size_t plain) noexcept;]=] reader "${reader}")
+extern "C" void yl_diagnostic_buffer_delta(int kind, int64_t bytes) noexcept;
+void YLObserveSegmentCapacity(std::size_t cipher, std::size_t plain) noexcept;
+namespace {
+class PayloadReservation {
+ public:
+  PayloadReservation() = default;
+  PayloadReservation(const PayloadReservation&) = delete;
+  ~PayloadReservation() { Resize(0); }
+  void Resize(std::size_t capacity) {
+    int64_t delta = static_cast<int64_t>(capacity) - capacity_;
+    if (delta != 0) yl_diagnostic_buffer_delta(2, delta);
+    capacity_ = static_cast<int64_t>(capacity);
+  }
+ private:
+  int64_t capacity_ = 0;
+};
+}]=] reader "${reader}")
+  string(REPLACE "  std::vector<uint8_t> ciphertext(ct_segment_size_);"
+    "  PayloadReservation tracked_ciphertext;\n  std::vector<uint8_t> ciphertext(ct_segment_size_);\n  tracked_ciphertext.Resize(ciphertext.capacity());"
+    reader "${reader}")
+  string(REPLACE "  std::vector<uint8_t> pt_segment;\n  pt_segment.reserve(pt_segment_size_);"
+    "  PayloadReservation tracked_plaintext;\n  std::vector<uint8_t> pt_segment;\n  pt_segment.reserve(pt_segment_size_);\n  tracked_plaintext.Resize(pt_segment.capacity());"
+    reader "${reader}")
+  string(REPLACE "  auto buf_result = Buffer::New(header_size_);"
+    "  PayloadReservation tracked_header;\n  auto buf_result = Buffer::New(header_size_);\n  if (buf_result.ok()) tracked_header.Resize((*buf_result)->allocated_size());"
+    reader "${reader}")
+  string(REPLACE [=[  status_ = segment_decrypter_->Init(std::vector<uint8_t>(
+      buf->get_mem_block(), buf->get_mem_block() + header_size_));]=] [=[  {
+    PayloadReservation tracked_header_copy;
+    std::vector<uint8_t> header_copy(buf->get_mem_block(), buf->get_mem_block() + header_size_);
+    tracked_header_copy.Resize(header_copy.capacity());
+    status_ = segment_decrypter_->Init(header_copy);
+  }]=] reader "${reader}")
+  if(NOT reader MATCHES "tracked_header_copy")
+    message(FATAL_ERROR "Failed to trace the pinned Tink header copy")
+  endif()
   string(REPLACE "    if (status.ok() || status.code() == absl::StatusCode::kOutOfRange) {"
-    "    YLObserveSegmentCapacity(ciphertext.capacity(), pt_segment.capacity());\n    if (status.ok() || status.code() == absl::StatusCode::kOutOfRange) {"
+    "    tracked_ciphertext.Resize(ciphertext.capacity());\n    tracked_plaintext.Resize(pt_segment.capacity());\n    YLObserveSegmentCapacity(ciphertext.capacity(), pt_segment.capacity());\n    if (status.ok() || status.code() == absl::StatusCode::kOutOfRange) {"
     reader "${reader}")
 endif()
 

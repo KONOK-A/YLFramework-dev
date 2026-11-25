@@ -15,7 +15,7 @@ using UnityEngine.ResourceManagement.ResourceProviders;
 namespace YLFramework.Resource.Encryption
 {
     /// <summary>Explicit application startup gate for one immutable content version and its Addressables catalog.</summary>
-    public sealed class EncryptedDeliverySession : IEncryptedBundleSession
+    public sealed partial class EncryptedDeliverySession : IEncryptedBundleSession
     {
         private static bool _attempted;
         private readonly Dictionary<string, EncryptedBundleRecord> _transfers;

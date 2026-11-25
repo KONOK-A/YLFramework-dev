@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <new>
 
 #include "tink/subtle/aes_gcm_hkdf_streaming.h"
 
@@ -19,9 +20,80 @@ extern "C" uint8_t BORINGSSL_function_hit[8];
 #ifdef YL_PAYLOAD_TRACE
 namespace {
 thread_local size_t observed_tink_capacity = 0;
+thread_local int buffer_phase = 0;
+SRWLOCK buffer_lock = SRWLOCK_INIT;
+std::array<int64_t, 3> live_capacity{};
+std::array<int64_t, 3> peak_capacity{};
+int64_t live_readers, peak_readers, peak_total, events;
+int peak_phase;
+
+class BufferTraceLock {
+ public:
+  BufferTraceLock() { AcquireSRWLockExclusive(&buffer_lock); }
+  ~BufferTraceLock() { ReleaseSRWLockExclusive(&buffer_lock); }
+  BufferTraceLock(const BufferTraceLock&) = delete;
+  BufferTraceLock& operator=(const BufferTraceLock&) = delete;
+};
+
+int64_t TotalCapacity() {
+  return live_capacity[0] + live_capacity[1] + live_capacity[2];
+}
+
+void UpdatePeak() {
+  if (TotalCapacity() <= peak_total) return;
+  peak_total = TotalCapacity();
+  peak_capacity = live_capacity;
+  peak_readers = live_readers;
+  peak_phase = buffer_phase;
+}
+
+void ObserveBridge(int64_t bytes, int readers) {
+  live_capacity[1] += bytes;
+  live_readers += readers;
+  ++events;
+  UpdatePeak();
+}
 }
 void YLObserveSegmentCapacity(size_t cipher, size_t plain) noexcept {
   observed_tink_capacity = std::max(observed_tink_capacity, cipher + plain);
+}
+
+extern "C" __declspec(dllexport) void yl_diagnostic_buffer_delta(int kind, int64_t bytes) noexcept {
+  if (kind != 0 && kind != 2) return;
+  AcquireSRWLockExclusive(&buffer_lock);
+  live_capacity[kind] += bytes;
+  ++events;
+  UpdatePeak();
+  ReleaseSRWLockExclusive(&buffer_lock);
+}
+
+extern "C" __declspec(dllexport) void yl_diagnostic_buffer_phase(int phase) noexcept {
+  buffer_phase = phase;
+}
+
+extern "C" __declspec(dllexport) void yl_diagnostic_buffer_reset() noexcept {
+  AcquireSRWLockExclusive(&buffer_lock);
+  peak_total = TotalCapacity();
+  peak_capacity = live_capacity;
+  peak_readers = live_readers;
+  peak_phase = buffer_phase;
+  events = 0;
+  ReleaseSRWLockExclusive(&buffer_lock);
+}
+
+extern "C" __declspec(dllexport) void yl_diagnostic_buffer_read(int64_t* result, int count) noexcept {
+  if (!result || count != 11) return;
+  AcquireSRWLockShared(&buffer_lock);
+  for (int i = 0; i < 3; ++i) {
+    result[i] = live_capacity[i];
+    result[i + 3] = peak_capacity[i];
+  }
+  result[6] = live_readers;
+  result[7] = peak_readers;
+  result[8] = peak_total;
+  result[9] = peak_phase;
+  result[10] = events;
+  ReleaseSRWLockShared(&buffer_lock);
 }
 #endif
 
@@ -160,6 +232,21 @@ struct Reader {
 #endif
 #ifdef YL_PAYLOAD_TRACE
   size_t observed_capacity = 0;
+
+  // The page is part of the Reader allocation. Keep storage counted through destructor clearing.
+  static void* operator new(std::size_t size) {
+    const BufferTraceLock trace_lock;
+    void* memory = ::operator new(size);
+    ObserveBridge(kWindow, 1);
+    return memory;
+  }
+
+  static void operator delete(void* memory) noexcept {
+    if (memory == nullptr) return;
+    const BufferTraceLock trace_lock;
+    ::operator delete(memory);
+    ObserveBridge(-kWindow, -1);
+  }
 #endif
 
   ~Reader() {

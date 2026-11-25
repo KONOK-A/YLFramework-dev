@@ -117,7 +117,7 @@ function New-UpdateHostInputs([object] $Context, [object] $Editor) {
     })
     $identityArguments = @{
         Repository = $repository; Paths = $sources + @($projection.Keys) + $tools; Toolchain = $Context.toolchain
-        Profile = "ContentUpdate-$($Editor.productVersion)-AA$($Context.addressables)-$($Context.id)-Win64-Release"
+        Profile = "ContentUpdate-$($Editor.productVersion)-AA$($Context.addressables)-$($Context.id)-Win64-Release-Tuned$($Context.tuned)"
     }
     $identity = Get-YLTestInputIdentity @identityArguments
     Write-YLTestJson -Path (Join-Path $Context.results 'input-identity.json') -Value $identity
@@ -130,6 +130,10 @@ function New-UpdateHostInputs([object] $Context, [object] $Editor) {
         $bytes = [IO.File]::ReadAllBytes((Join-Path $repository $item.path))
         if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ine $item.sha256) {
             throw "Fixture source changed while being frozen: $($item.path)"
+        }
+        if ($Context.tuned -and $target -ceq 'Assets/F/Runtime/ContentUpdatePlayerProbe.cs') {
+            $bytes = [byte[]]([Text.Encoding]::UTF8.GetBytes("#define YL_CONTENT_UPDATE_TUNED`n") + $bytes)
+            $Context.report['runtimeProbeSha256'] = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
         }
         $inputs[$target] = $bytes
     }
@@ -153,7 +157,7 @@ function New-UpdateHostInputs([object] $Context, [object] $Editor) {
     return $dependencies
 }
 
-function Invoke-UpdateEditorBuild([object] $Context, [ValidateSet('A', 'B', 'C')][string] $Phase) {
+function Invoke-UpdateEditorBuild([object] $Context, [ValidateSet('A', 'B', 'C', 'Replay')][string] $Phase) {
     Assert-YLUnityHostIdle $Context.host
     $output = Join-Path $Context.host.path $Phase
     $null = [IO.Directory]::CreateDirectory($output)
@@ -172,7 +176,14 @@ function Invoke-UpdateEditorBuild([object] $Context, [ValidateSet('A', 'B', 'C')
         k2Path = $(if ($Phase -cne 'A') { $Context.keys.k2Path } else { '' })
         inputHash = $Context.report.inputHash
     }
-    if ($Phase -cne 'A') {
+    if ($Phase -ceq 'Replay') {
+        foreach ($field in @('signingPrivateKeyPath', 'signingPublicKeyPath', 'unknownPrivateKeyPath', 'k1Path', 'k2Path')) {
+            $request.Remove($field)
+        }
+        $request['trustSha256'] = $Context.report.trustSha256
+        $request['catalogFile'] = $Context.report.catalogFile
+        $request['catalogSha256'] = $Context.report.catalogSha256
+    } elseif ($Phase -cne 'A') {
         $replacement = if ($Phase -ceq 'B') { $Context.materialReplacement } else { $Context.materialReplacementC }
         $new = if ($Phase -ceq 'B') { $Context.materialNew } else { $Context.materialNewC }
         $optional = if ($Phase -ceq 'B') { $Context.materialOptional } else { $Context.materialOptionalC }
@@ -190,7 +201,8 @@ function Invoke-UpdateEditorBuild([object] $Context, [ValidateSet('A', 'B', 'C')
     $start = New-UpdateProcess $Context.unity $Context.host.path @('-batchmode', '-nographics', '-projectPath', $Context.host.path,
         '-buildTarget', 'StandaloneWindows64', '-executeMethod', 'YLFramework.Testing.ContentUpdateFixture.Build',
         '-ylContentUpdateRequest', $requestPath, '-logFile', (Join-Path $Context.results "$Phase-editor.log"))
-    $process = Invoke-YLTestProcess -StartInfo $start -Log (Join-Path $Context.results "$Phase-process.log") -TimeoutMilliseconds 5400000
+    $limits = @{ TimeoutMilliseconds = 5400000; DescendantGraceMilliseconds = 45000 }
+    $process = Invoke-YLTestProcess -StartInfo $start -Log (Join-Path $Context.results "$Phase-process.log") @limits
     $Context.report["build$($Phase)Process"] = $process
     if ([IO.File]::Exists($replyPath)) { $Context.report["build$Phase"] = Read-YLPackageEvidenceJson $replyPath }
     $build = $Context.report["build$Phase"]
@@ -202,11 +214,140 @@ function Invoke-UpdateEditorBuild([object] $Context, [ValidateSet('A', 'B', 'C')
         $build.unity -cne $Context.editorVersion -or $build.addressables -cne $Context.addressables -or $build.backend -cne $Context.backend -or
         $build.inputHash -cne $Context.report.inputHash -or $build.manifestSha256 -cne $manifestHash -or
         $build.requestSha256 -cne $requestHash -or (Get-YLFrozenFileSha256 $requestPath) -cne $requestHash -or
-        $build.playerBuildCalls -ne $(if ($Phase -ceq 'A') { 1 } else { 0 }) -or $build.contentBuildCalls -ne 1) {
+        $build.playerBuildCalls -ne [int]($Phase -cin @('A', 'Replay')) -or
+        $build.contentBuildCalls -ne [int]($Phase -cne 'Replay')) {
         throw "Wrong phase $Phase Editor build receipt."
     }
     $Context.report["build$($Phase)ReceiptSha256"] = Get-YLFrozenFileSha256 $replyPath
     return $build
+}
+
+function New-UpdateReplayContext([object] $Context, [string] $FrozenPackageHost) {
+    $frozenPath = Get-YLTestPath -Path $FrozenPackageHost -ReadOnly
+    $hosts = [IO.Path]::GetDirectoryName($frozenPath)
+    if ([IO.Path]::GetFileName($hosts) -cne 'Hosts') { throw 'The frozen source must be a direct child of an owned Hosts directory.' }
+    $sourcePaths = Get-YLTestWorkspacePaths -WorkspaceRoot ([IO.Path]::GetDirectoryName($hosts)) -Repository $repository
+    $sourceWorkspace = [pscustomobject](Read-YLPackageEvidenceJson (Join-Path $sourcePaths.root '.yl-workspace.json'))
+    if ($sourceWorkspace.root -ine $sourcePaths.root -or $sourceWorkspace.repository -ine $sourcePaths.repository) {
+        throw 'The source workspace does not belong to the same checkout.'
+    }
+    $archived = Get-YLTestDirectory -Workspace $sourceWorkspace -Path $frozenPath
+    if ($archived.kind -cne 'Host') { throw 'Replay requires an owned, previously frozen source host.' }
+    $sourceReceipt = Join-Path $archived.path '.yl-inputs.json'
+    $source = Read-YLPackageEvidenceJson $sourceReceipt
+    if ($source.purpose -cne 'YLTesting.HostInputs' -or $source.hostId -cne $archived.id -or
+        $source.inputHash -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid frozen runtime projection receipt.' }
+    $packages = @('com.kano.ylframework')
+    if ($Context.encrypted) { $packages += 'com.kano.ylframework.resource-encryption' }
+    $packageEntries = @(foreach ($package in $packages) {
+        $entries = @($source.files | Where-Object { $_.path.StartsWith("PackageSources/$package/", [StringComparison]::Ordinal) })
+        if (-not @($entries | Where-Object path -CEQ "PackageSources/$package/package.json").Count) {
+            throw "The frozen source does not include $package."
+        }
+        foreach ($entry in $entries) {
+            $path = Get-UpdateOwnedPath $archived.path (Join-Path $archived.path $entry.path) -File
+            if ((Get-YLFrozenFileSha256 $path) -ine $entry.sha256) { throw "Frozen input changed: $($entry.path)." }
+            [pscustomobject]@{ relative = $entry.path; path = $path; sha256 = $entry.sha256 }
+        }
+    })
+    $catalog = @($Context.report.baselineAnnouncement.manifest.artifacts |
+        Where-Object route -CEQ $Context.report.baselineAnnouncement.manifest.catalogRoute)
+    if ($catalog.Count -ne 1 -or -not (Test-UpdateInstalledArtifact $catalog[0])) { throw 'Expected the one installed A Catalog.' }
+    $catalogFile = $catalog[0].source.Substring('install:'.Length)
+    $trust = 'Assets/ContentUpdate/Resources/YLContentUpdateTrust.json'
+    $installedAa = 'P/P_Data/StreamingAssets/aa'
+    $inputs = [ordered]@{}
+    $authorPaths = @(foreach ($root in @('Assets', 'ProjectSettings', $installedAa)) {
+        Get-YLTestTreeFiles (Join-Path $Context.host.path $root) |
+            ForEach-Object { [IO.Path]::GetRelativePath($Context.host.path, $_).Replace('\', '/') }
+    }) + @('Packages/manifest.json', 'Packages/packages-lock.json')
+    $identityArgs = @{ Repository = $Context.host.path; Paths = $authorPaths; Profile = "ContentUpdate-Replay-$($Context.id)"
+        Toolchain = @($Context.toolchain) + @($packageEntries.path) + @($sourceReceipt) }
+    $identified = Get-YLTestInputIdentity @identityArgs
+    foreach ($file in $identified.files) {
+        $target = if ($file.path.StartsWith($installedAa + '/', [StringComparison]::Ordinal)) {
+            'Assets/StreamingAssets/aa/' + $file.path.Substring($installedAa.Length + 1)
+        } else { $file.path }
+        $bytes = [IO.File]::ReadAllBytes((Get-UpdateOwnedPath $Context.host.path (Join-Path $Context.host.path $file.path) -File))
+        if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ine $file.sha256) {
+            throw "Sealed A input changed: $($file.path)."
+        }
+        if ($target -ceq 'Assets/F/Runtime/ContentUpdatePlayerProbe.cs') {
+            $probe = [Text.Encoding]::UTF8.GetString($bytes)
+            $prefix = "#define YL_CONTENT_UPDATE_TUNED`n"
+            if ($Context.tuned) {
+                if (-not $probe.StartsWith($prefix, [StringComparison]::Ordinal)) { throw 'The candidate probe lacks its tuned instrumentation define.' }
+                $probe = $probe.Substring($prefix.Length)
+            }
+            $bytes = [Text.Encoding]::UTF8.GetBytes("#define YL_CONTENT_UPDATE_REPLAY`n" + $probe)
+        }
+        $inputs[$target] = $bytes
+    }
+    foreach ($entry in $packageEntries) {
+        $bytes = [IO.File]::ReadAllBytes($entry.path)
+        if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ine $entry.sha256) {
+            throw "Archived source was changed during the replay snapshot: $($entry.relative)."
+        }
+        $inputs[$entry.relative] = $bytes
+    }
+    $record = New-YLTestDirectory -Workspace $workspace -Kind Host -Key ('RP' + [Guid]::NewGuid().ToString('N').Substring(0, 8)) -NewOnly
+    $replayResults = Join-Path $Context.results 'baseline-replay'
+    $null = [IO.Directory]::CreateDirectory($replayResults)
+    $values = [ordered]@{}
+    foreach ($property in $Context.PSObject.Properties) { $values[$property.Name] = $property.Value }
+    $values.host = $record
+    $values.install = Join-Path $record.path 'P'
+    $values.results = $replayResults
+    $values.userData = Join-Path $record.path 'D'
+    $values.perRun = 0
+    $values.generation = $null
+    $values.tuned = $false
+    $values.report = [ordered]@{
+        runs = [Collections.Generic.List[object]]::new(); inputHash = $identified.sha256; sourceInputHash = $source.inputHash
+        trustSha256 = Get-YLFrozenFileSha256 (Join-Path $Context.host.path $trust)
+        catalogFile = $catalogFile; catalogSha256 = $catalog[0].sha256
+        host = $record.path; userData = $values.userData
+    }
+    $replay = [pscustomobject]$values
+    $Context.report['baselineReplay'] = $replay.report
+    $replay.lease = Lock-YLTestDirectory -Workspace $workspace -Path $record.path
+    try {
+        Sync-YLUnityHost -HostRecord $record -Files $inputs -Identity $identified -EditorVersion $Context.editorVersion
+        Write-YLTestJson -Path (Join-Path $replayResults 'input-identity.json') -Value $identified
+        $null = [IO.Directory]::CreateDirectory($replay.userData)
+        $build = Invoke-UpdateEditorBuild $replay 'Replay'
+        $replay.exe = Get-UpdateOwnedPath $replay.install $build.playerExe -File
+        $argsForBinaries = @{
+            Player = $replay.exe; Build = $build; Backend = $replay.backend; ProbeAssembly = 'YLFramework.ResourceUpdates.Fixture'
+        }
+        if ($replay.encrypted) {
+            $native = 'PackageSources/com.kano.ylframework.resource-encryption/Runtime/Plugins/Win64/ylresource_tink.dll'
+            $argsForBinaries['ExtensionAssembly'] = 'YLFramework.Resource.Encryption'
+            $argsForBinaries['NativePluginSha256'] = Get-YLFrozenFileSha256 (Join-Path $record.path $native)
+        }
+        Assert-YLFrozenPlayerBinaries @argsForBinaries
+        $original = @(Get-UpdateInventory (Join-Path $Context.host.path $installedAa))
+        $other = @(Get-UpdateInventory (Join-Path $replay.install 'P_Data/StreamingAssets/aa'))
+        if ((ConvertTo-Json -Compress -InputObject $original) -cne (ConvertTo-Json -Compress -InputObject $other) -or
+            $build.catalogSha256 -cne $replay.report.catalogSha256 -or $build.trustSha256 -cne $replay.report.trustSha256) {
+            throw 'The replay does not contain the same actual A content and public trust.'
+        }
+        $replay.inventory = @(Get-UpdateInventory $replay.install)
+        if ($replay.encrypted) {
+            $baselineNative = @($replay.inventory | Where-Object { [IO.Path]::GetFileName($_.path) -ceq 'ylresource_tink.dll' })
+            $tunedNative = @($Context.inventory | Where-Object { [IO.Path]::GetFileName($_.path) -ceq 'ylresource_tink.dll' })
+            if ($baselineNative.Count -ne 1 -or $tunedNative.Count -ne 1 -or $baselineNative[0].sha256 -cne $tunedNative[0].sha256) {
+                throw 'Signed transport comparison requires the same actually installed native DLL.'
+            }
+            $replay.report['nativePluginSha256'] = $baselineNative[0].sha256
+        }
+        Write-YLTestJson -Path (Join-Path $replayResults 'installation.json') -Value $replay.inventory
+        $replay.report['installationSha256'] = Get-YLFrozenFileSha256 (Join-Path $replayResults 'installation.json')
+        return $replay
+    } catch {
+        $replay.lease.Dispose()
+        throw
+    }
 }
 
 function Assert-UpdateBaseline([object] $Context, [Collections.IDictionary] $Build) {

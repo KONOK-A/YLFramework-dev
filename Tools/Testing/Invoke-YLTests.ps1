@@ -48,7 +48,9 @@ function Invoke-TestingProcess([string] $Exe, [string[]] $Arguments) {
         foreach ($name in $definition.outputEnvironment) { $start.Environment[$name] = $run.path }
     }
     foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
-    $fact = Invoke-YLTestProcess -StartInfo $start -Log (Join-Path $run.path "process-$script:processStep.log") -TimeoutMilliseconds ($TimeoutSeconds * 1000)
+    # ResourceUpdates opens native Editor asset workers that may drain after the Editor exits.
+    $grace = if ($Suite -ceq 'Special' -and $Module -ceq 'ResourceUpdates' -and '-batchmode' -cin $Arguments) { 45000 } else { 2000 }
+    $fact = Invoke-YLTestProcess -StartInfo $start -Log (Join-Path $run.path "process-$script:processStep.log") -TimeoutMilliseconds ($TimeoutSeconds * 1000) -DescendantGraceMilliseconds $grace
     $summary.processes += $fact
     Assert-YLTestProcessSucceeded $fact
     return $fact

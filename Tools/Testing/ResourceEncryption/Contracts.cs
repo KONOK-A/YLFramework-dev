@@ -262,7 +262,9 @@ public static class YLResourceEncryptionContracts
             await channel.WriteAsync(cipher.AsMemory(PrefixBytes));
         }
         await request2;
-        Check(!listener.Pending() && cache.GetRemainingBytes(a) == 0 && HashFile(file) == a.CipherSha256 && !Directory.EnumerateFiles(cacheRoot, "*.part").Any(), "one complete transfer is published atomically");
+        Check(!listener.Pending() && cache.GetRemainingBytes(a) == 0 && HashFile(file) == a.CipherSha256 &&
+            !Directory.EnumerateFiles(cacheRoot, "*.part").Any() &&
+            !Directory.EnumerateFiles(cacheRoot, "*.part" + EncryptedBundleCache.TransferProofSuffix).Any(), "one complete transfer is published atomically");
         Check(liveProgress.DownloadedBytes == a.CipherLength && liveProgress.TotalBytes == a.CipherLength,
             "a verified physical transfer preserves its final byte counts");
         Check(cache.VerifiedCipherHashBytes == a.CipherLength,
@@ -296,10 +298,9 @@ public static class YLResourceEncryptionContracts
         await retry;
         cache.Dispose();
         Flip(file, 7);
-        string abandoned = Path.Combine(cacheRoot, ".yl-transfer-" + Guid.NewGuid().ToString("N") + ".part");
-        File.WriteAllText(abandoned, "abandoned");
         using var restarted = await EncryptedBundleCache.OpenAsync(cacheRoot, description);
-        Check(restarted.GetRemainingBytes(a) == a.CipherLength && restarted.GetRemainingBytes(b) == 0 && !File.Exists(abandoned), "restart re-hashes files and recovers owned abandoned parts");
+        Check(restarted.GetRemainingBytes(a) == a.CipherLength && restarted.GetRemainingBytes(b) == 0, "restart re-hashes committed ciphertext");
+        await VerifyTransferProvenance(root, description);
         Check(restarted.VerifiedCipherHashBytes == b.CipherLength, "track separately the successful full hashes during warm cache scan");
         await ThrowsAsync<EncryptedBundleIntegrityException>(() => restarted.EnsureAsync(a), "warm corruption fails this attempt");
         EncryptedBundleCache.TransferProgress truncatedProgress = null;
@@ -345,6 +346,66 @@ public static class YLResourceEncryptionContracts
         }
         Check(!File.Exists(faultPath) && !File.Exists(faultFinal) && HashFile(file) == a.CipherSha256,
             "disk-full cleanup did not publish a truncated record or modify an existing cache hit");
+    }
+
+    private static async Task VerifyTransferProvenance(string root, EncryptedBundleDescription description)
+    {
+        string cache = Path.Combine(root, "transfer-provenance");
+        Directory.CreateDirectory(cache);
+        string foreign = NewName();
+        File.WriteAllText(foreign, "unregistered");
+        string foreignHash = HashFile(foreign);
+        var foreignIdentity = ReadIdentity(foreign);
+        string abandoned = CreateInterruptedPart("abandoned");
+        string swapped = CreateInterruptedPart("replacement");
+        string swappedProof = HashFile(swapped + EncryptedBundleCache.TransferProofSuffix);
+        var originalIdentity = ReadIdentity(swapped);
+        File.Move(swapped, swapped + ".original");
+        File.WriteAllText(swapped, "replacement");
+        var replacement = ReadIdentity(swapped);
+        Check(replacement != originalIdentity, "the replacement fixture has identical contents and a different file identity");
+        string torn = NewName();
+        File.WriteAllText(torn, "torn record");
+        File.WriteAllBytes(torn + EncryptedBundleCache.TransferProofSuffix, new byte[] { 0x59, 0x4c, 0x50 });
+        string locked = CreateInterruptedPart("busy but owned");
+
+        using (var hold = File.OpenRead(locked))
+        using (var first = await EncryptedBundleCache.OpenAsync(cache, description))
+        {
+            Check(!File.Exists(abandoned) && !File.Exists(abandoned + EncryptedBundleCache.TransferProofSuffix),
+                "restart removes a proved abandoned part and its provenance");
+            Check(ReadIdentity(foreign) == foreignIdentity && HashFile(foreign) == foreignHash,
+                "restart preserves a staging-shaped file without provenance");
+            Check(ReadIdentity(swapped) == replacement && File.ReadAllText(swapped) == "replacement" &&
+                HashFile(swapped + EncryptedBundleCache.TransferProofSuffix) == swappedProof,
+                "restart refuses to delete an equal-length replacement identified by an obsolete record");
+            Check(File.ReadAllText(torn) == "torn record" && File.Exists(torn + EncryptedBundleCache.TransferProofSuffix),
+                "restart preserves files when the provenance record is incomplete");
+            Check(File.Exists(locked) && File.Exists(locked + EncryptedBundleCache.TransferProofSuffix),
+                "restart preserves an occupied temporary and its provenance");
+        }
+        using var next = await EncryptedBundleCache.OpenAsync(cache, description);
+        Check(!File.Exists(locked) && !File.Exists(locked + EncryptedBundleCache.TransferProofSuffix),
+            "a later restart reclaims the same proved temporary after the external reader closes");
+
+        string NewName() => Path.Combine(cache, ".yl-transfer-" + Guid.NewGuid().ToString("N") + ".part");
+
+        string CreateInterruptedPart(string payload)
+        {
+            string path = NewName();
+            using var part = OwnedWindowsFiles.CreateTemporaryPinned(path);
+            using var proof = EncryptedBundleCache.CreateTransferProof(path, OwnedWindowsFiles.ReadFileIdentity(part));
+            byte[] bytes = Encoding.UTF8.GetBytes(payload);
+            part.Write(bytes, 0, bytes.Length);
+            part.Flush(flushToDisk: true);
+            return path;
+        }
+
+        static (ulong File, uint Volume, ulong Created) ReadIdentity(string path)
+        {
+            using var file = OwnedWindowsFiles.ReadPinned(path);
+            return OwnedWindowsFiles.ReadFileIdentity(file);
+        }
     }
 
     private sealed class SpaceLimitedFile : FileStream

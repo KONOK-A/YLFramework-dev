@@ -69,7 +69,7 @@ namespace YLFramework.Testing
             string resultPath = Path.GetFullPath(Required(request, "resultPath"));
             string phase = Required(request, "phase");
             var host = Path.GetDirectoryName(Application.dataPath);
-            Require(phase is "A" or "B" or "C" && Path.GetDirectoryName(requestPath) == Path.GetDirectoryName(resultPath) &&
+            Require(phase is "A" or "B" or "C" or "Replay" && Path.GetDirectoryName(requestPath) == Path.GetDirectoryName(resultPath) &&
                 !File.Exists(resultPath) && !Directory.Exists(resultPath), "Invalid owned fixture receipt path.");
             string artifacts = Path.GetFullPath(Required(request, "artifactRoot"));
             string install = Path.GetFullPath(Required(request, "installRoot"));
@@ -109,29 +109,37 @@ namespace YLFramework.Testing
                     "Fixture requires the requested registry Addressables and Win64 target.");
                 receipt["addressables"] = package.version;
                 FrozenPlayerBuildEvidence.CapturePackageInputs(receipt, host, HashFile);
-                var publicKey = ReadRsaParameters(OwnedKey(request, host, "signingPublicKeyPath"));
-                using var signer = OpenRsa(OwnedKey(request, host, "signingPrivateKeyPath"));
-                if (phase == "A")
+                if (phase == "Replay")
                 {
                     FrozenPlayerBuildEvidence.Configure(backend);
-                    BuildBaseline(request, receipt, artifacts, install, baseUri, publicKey, signer);
+                    BuildReplay(request, receipt, artifacts, install, backend);
                 }
                 else
                 {
-                    string baselinePath = Path.GetFullPath(Required(request, "baselineReceiptPath"));
-                    Require(baselinePath == Path.Combine(Path.GetDirectoryName(resultPath), "A-build.json"),
-                        "Expected the controller's sealed A receipt.");
-                    if (phase == "B")
+                    var publicKey = ReadRsaParameters(OwnedKey(request, host, "signingPublicKeyPath"));
+                    using var signer = OpenRsa(OwnedKey(request, host, "signingPrivateKeyPath"));
+                    if (phase == "A")
                     {
-                        using var unknown = OpenRsa(OwnedKey(request, host, "unknownPrivateKeyPath"));
-                        BuildUpdate(request, receipt, ReadJson(baselinePath), null, artifacts, install, baseUri,
-                            publicKey, signer, unknown);
+                        FrozenPlayerBuildEvidence.Configure(backend);
+                        BuildBaseline(request, receipt, artifacts, install, baseUri, publicKey, signer);
                     }
                     else
                     {
-                        var prior = ReadJson(Path.Combine(Path.GetDirectoryName(resultPath), "B-build.json"));
-                        BuildUpdate(request, receipt, ReadJson(baselinePath), prior, artifacts, install, baseUri,
-                            publicKey, signer, null);
+                        string baselinePath = Path.GetFullPath(Required(request, "baselineReceiptPath"));
+                        Require(baselinePath == Path.Combine(Path.GetDirectoryName(resultPath), "A-build.json"),
+                            "Expected the controller's sealed A receipt.");
+                        if (phase == "B")
+                        {
+                            using var unknown = OpenRsa(OwnedKey(request, host, "unknownPrivateKeyPath"));
+                            BuildUpdate(request, receipt, ReadJson(baselinePath), null, artifacts, install, baseUri,
+                                publicKey, signer, unknown);
+                        }
+                        else
+                        {
+                            var prior = ReadJson(Path.Combine(Path.GetDirectoryName(resultPath), "B-build.json"));
+                            BuildUpdate(request, receipt, ReadJson(baselinePath), prior, artifacts, install, baseUri,
+                                publicKey, signer, null);
+                        }
                     }
                 }
 
@@ -146,6 +154,37 @@ namespace YLFramework.Testing
                 Debug.LogException(error);
                 EditorApplication.Exit(1);
             }
+        }
+
+        private static void BuildReplay(JObject request, JObject receipt, string artifacts, string install, string backend)
+        {
+            Require(!Directory.Exists(install), "The comparison Player requires a fresh install.");
+            Require(HashFile(TrustPath) == Required(request, "trustSha256"), "The embedded public trust input differs.");
+            string aa = "Assets/StreamingAssets/aa";
+            string catalog = Required(request, "catalogFile");
+            Require(Path.GetFileName(catalog) == catalog, "The replay Catalog must be a file under aa.");
+            Require(HashFile(Path.Combine(aa, catalog)) == Required(request, "catalogSha256"),
+                "The pinned A Catalog input differs.");
+            var settings = AddressableAssetSettingsDefaultObject.GetSettings(false);
+            Require(settings && settings.BuildAddressablesWithPlayerBuild == AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer,
+                "The replay install must consume the sealed A content.");
+            PlayerSettings.productName = "YLResourceUpdates-" + Path.GetFileName(Path.GetDirectoryName(Application.dataPath));
+            string player = Path.Combine(install, "P.exe");
+            receipt["playerBuildCalls"] = 1;
+            var report = BuildPipeline.BuildPlayer(PlayerOptions(player));
+            Require(report != null && report.summary.result == BuildResult.Succeeded && report.summary.totalErrors == 0,
+                "The replay Win64 Release Player build failed.");
+            receipt["playerExe"] = player;
+            receipt["trustSha256"] = HashFile(TrustPath);
+            receipt["catalogSha256"] = HashFile(Path.Combine(install, "P_Data", "StreamingAssets", "aa", catalog));
+            receipt["playerBuildGuid"] = report.summary.guid.ToString();
+            receipt["buildReportPath"] = ArchivePlayerReport(artifacts);
+#if YL_CONTENT_UPDATE_ENCRYPTION
+            const string extension = "YLFramework.Resource.Encryption";
+#else
+            const string extension = null;
+#endif
+            FrozenPlayerBuildEvidence.Capture(receipt, backend, player, HashFile, extension, typeof(ContentUpdateMaterial));
         }
 
         private static void BuildBaseline(JObject request, JObject receipt, string root, string install, Uri baseUri,

@@ -12,12 +12,12 @@ namespace YLFramework.Resource
     {
         private const int FormatVersion = 1;
         private const int DigestLength = 32;
-        private const int MaxRecordBytes = 4096;
+        internal const int MaxRecordBytes = 4096;
         private const uint MoveReplaceExisting = 0x1;
         private const uint MoveWriteThrough = 0x8;
-        private const string StateFile = "state";
-        private const string JournalFile = "journal";
-        private const string WriterFile = "writer.lock";
+        internal const string StateFile = "state";
+        internal const string JournalFile = "journal";
+        internal const string WriterFile = "writer.lock";
         private static readonly UTF8Encoding Utf8 = new(false, true);
         private static readonly bool IsWindows = Path.DirectorySeparatorChar == '\\';
         private readonly string _ownerRoot;
@@ -122,7 +122,7 @@ namespace YLFramework.Resource
             }
         }
 
-        private Journal ReadJournal() =>
+        internal Journal ReadJournal() =>
             ReadRecord(JournalFile, ReadJournalPayload) ?? new Journal(null, null, null, null);
 
         private bool TryCommit(long expectedGeneration, State next, CancellationToken cancellationToken)
@@ -162,12 +162,12 @@ namespace YLFramework.Resource
             EnsureOwnedDirectory(_ownerRoot, create: false);
             EnsureOwnedDirectory(Root, create: false);
             string path = Path.Combine(Root, record);
-            if (!IsRegularFile(path))
-            {
-                return null;
-            }
+            using var file = OpenRecord(path);
+            return file == null ? null : ReadRecord(file, record, readPayload);
+        }
 
-            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+        private T ReadRecord<T>(FileStream file, string record, Func<BinaryReader, T> readPayload) where T : class
+        {
             using var input = new BinaryReader(file, Utf8, leaveOpen: true);
             long length = file.Length;
             if (length <= DigestLength || length > MaxRecordBytes)
@@ -204,6 +204,25 @@ namespace YLFramework.Resource
                 error is FormatException)
             {
                 throw new InvalidDataException($"Invalid resource content {record} payload.", error);
+            }
+        }
+
+        private static FileStream OpenRecord(string path)
+        {
+            try
+            {
+                if (IsWindows)
+                    return ResourceContentFileIO.OpenReadControlRecord(path);
+
+                return IsRegularFile(path) ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete) : null;
+            }
+            catch (FileNotFoundException)
+            {
+                return null;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return null;
             }
         }
 
@@ -249,7 +268,7 @@ namespace YLFramework.Resource
             }
         }
 
-        private static void ReplaceRecord(string temporary, string destination, bool replace)
+        internal static void ReplaceRecord(string temporary, string destination, bool replace)
         {
             if (IsWindows)
             {
@@ -310,8 +329,8 @@ namespace YLFramework.Resource
             {
                 cancellation.ThrowIfCancellationRequested();
                 string name = Path.GetFileName(path);
-                if ((IsTemporaryRecordName(name, StateFile) || IsTemporaryRecordName(name, JournalFile)) &&
-                    ResourceContentFileIO.TryRemoveTemporaryFile(path, cancellation))
+                if (IsTemporaryRecordName(name) &&
+                    ResourceContentFileIO.TryRemoveOwnedFile(path, file => IsOwnedTemporaryRecord(file, name), cancellation))
                 {
                     removed++;
                 }
@@ -333,6 +352,24 @@ namespace YLFramework.Resource
 
             string identifier = name.Substring(prefix.Length, guidLength);
             return Guid.TryParseExact(identifier, "N", out var guid) && guid.ToString("N") == identifier;
+        }
+
+        internal static bool IsTemporaryRecordName(string name) =>
+            IsTemporaryRecordName(name, StateFile) || IsTemporaryRecordName(name, JournalFile);
+
+        internal bool IsOwnedTemporaryRecord(FileStream file, string name)
+        {
+            try
+            {
+                // 暂存控制记录的校验和、类型、应用与渠道和提交记录使用同一格式。
+                if (IsTemporaryRecordName(name, StateFile))
+                    return ReadRecord(file, StateFile, ReadStatePayload) != null;
+                return IsTemporaryRecordName(name, JournalFile) && ReadRecord(file, JournalFile, ReadJournalPayload) != null;
+            }
+            catch (InvalidDataException)
+            {
+                return false;
+            }
         }
 
         private static bool IsAllowedTransition(State current, State next)

@@ -85,6 +85,28 @@ await startup.StartAsync();
 
 [主包签名内容更新与重启回滚](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework/Documentation~/Modules/Resource/Delivery.md#签名内容更新与重启回滚)
 
+## 查询固定交付的密文缓存
+
+显式传入固定交付使用的专用缓存目录。可在会话启动前查询，传入已打开且匹配的会话时，
+查询可用其受信描述和在途操作核对磁盘文件。
+
+~~~csharp
+var report = await EncryptedDeliverySession.InspectCacheAsync(cipherCacheRoot, session, cancellationToken);
+Debug.Log($"Owned {report.Owned.Bytes} ({report.Owned.Certainty})");
+Debug.Log($"Retained {report.Retained.Bytes} ({report.Retained.Certainty})");
+Debug.Log($"Candidates {report.CleanupCandidates.Bytes} ({report.CleanupCandidates.Certainty})");
+Debug.Log($"Undetermined {report.Undetermined.Bytes} ({report.Undetermined.Certainty})");
+foreach (var file in report.Files)
+    Debug.Log($"{file.RelativePath} {file.Bytes} {file.Disposition} {file.Retention}");
+foreach (var issue in report.Issues)
+    Debug.Log(issue);
+~~~
+
+冷查询省略 `session`，无需密钥。缺少受信描述的密文和无法核对文件身份的暂存会报告为归属未确认，汇总按可核对的范围给出。
+固定交付接收正文前把本次暂存的文件身份刷入独立记录。重新打开缓存时只清理身份仍与记录吻合的遗留暂存。旧版遗留的无记录文件、损坏记录和换入的同名文件会保留原位。记录不计入密文用量。
+打开会话可以核对受信描述、已打开的文件和正在写入的暂存。如果传输跨过扫描边界，报告会降低相关字节数的可信程度。
+此处的逻辑字节只来自固定交付专用根。事务通过主包仓库保存的密文由主包报告。
+
 ## 停用或移除
 
 在扩展仍安装时，先移除加密 Schema，恢复官方 Bundle Provider、普通 BuildPath / LoadPath 以及标准构建和启动入口。移除应用和 Editor 上对扩展的程序集引用后再卸包。在新路径构建匹配的普通 Player、Catalog 和内容；不得在原加密 URL 改发明文，也不让旧 Player 回退到明文。

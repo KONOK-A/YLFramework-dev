@@ -77,7 +77,7 @@ namespace YLFramework.Resource
                 var journal = boot.Writer.ReadJournal();
 
                 boot.SettingsPin = ResourceContentFileIO.OpenRead(boot.SettingsPath);
-                _installed = await Task.Run(() => ReadInstalled(boot, cancellation), cancellation);
+                _installed = await Task.Run(() => ReadInstalled(boot.SettingsPin, cancellation), cancellation);
                 cancellation.ThrowIfCancellationRequested();
                 ResourceContentCatalog.RequireStartupSettings(boot.SettingsPin, _installed.CatalogRoute, _trust.Platform);
 
@@ -147,12 +147,12 @@ namespace YLFramework.Resource
             }
         }
 
-        private ResourceContentManifest ReadInstalled(Boot boot, CancellationToken cancellation)
+        private ResourceContentManifest ReadInstalled(FileStream settings, CancellationToken cancellation)
         {
-            if (boot.SettingsPin.Length > 1024 * 1024 ||
-                ResourceContentFileIO.Hash(boot.SettingsPin, cancellation) != _trust.SettingsSha256)
+            if (settings.Length > 1024 * 1024 ||
+                ResourceContentFileIO.Hash(settings, cancellation) != _trust.SettingsSha256)
                 throw new InvalidDataException("The installed Addressables settings differ from the Player trust configuration.");
-            boot.SettingsPin.Position = 0;
+            settings.Position = 0;
             using var payload = ResourceContentFileIO.OpenRead(Path.Combine(_installRoot, BaselineManifest));
             using var signature = ResourceContentFileIO.OpenRead(Path.Combine(_installRoot, BaselineSignature));
             var manifest = ResourceContentManifest.Verify(ReadBounded(payload, ResourceContentManifest.MaximumPayloadBytes),
@@ -168,6 +168,11 @@ namespace YLFramework.Resource
             if (VersionOf(_installed).Equals(target))
                 return _installed;
 
+            return ReadDownloadedVersion(target);
+        }
+
+        private ResourceContentManifest ReadDownloadedVersion(Version target)
+        {
             using var directory = ResourceContentFileIO.PinDirectory(VersionsRoot, false);
             using var file = ResourceContentFileIO.OpenRead(AnnouncementPath(target.Digest));
             var manifest = ReadAnnouncement(ReadBounded(file, MaximumAnnouncementBytes));
@@ -226,29 +231,19 @@ namespace YLFramework.Resource
                     if (referenced.Contains(path))
                         continue;
                     string name = Path.GetFileName(path);
-                    string suffix = Path.GetExtension(name);
-                    string digest = Path.GetFileNameWithoutExtension(name);
-                    bool stage = name.StartsWith(".stage-", StringComparison.Ordinal) &&
-                        Guid.TryParseExact(name.Substring(".stage-".Length), "N", out _);
-                    bool validKind = versions ? suffix == ".json" :
-                        suffix == ".json" || suffix == ".bin" || suffix == ".bundle" || suffix == ".cipher";
-                    if (!stage && (!validKind || !ResourceContentStore.IsDigest(digest)))
+                    if (!TryClassifyPatchFile(name, versions, out var kind))
                         continue;
-                    try
+                    if (kind == ResourceCacheFileKind.Temporary)
                     {
-                        using (var input = ResourceContentFileIO.OpenRead(path))
-                        {
-                            if (!stage && !IsOwned(input, digest, versions, cancellation))
-                                continue;
-                        }
-                        File.Delete(path);
+                        // 只回收有记录绑定文件身份的断点。普通 .stage-* 名称无法证明归属。
+                        if (!versions && IsResumeFileName(name) && Path.GetExtension(path) == MarkSuffix)
+                            removed += CleanupAbandonedCheckpoint(ResumeObjectPath(path), cancellation);
+                        continue;
+                    }
+                    string digest = Path.GetFileNameWithoutExtension(path);
+                    if (ResourceContentFileIO.TryRemoveOwnedFile(path,
+                            input => IsOwned(input, digest, versions, cancellation), cancellation))
                         removed++;
-                    }
-                    catch (IOException error) when (error is FileNotFoundException || (error.HResult & 0xffff) == 32 ||
-                        (error.InnerException as System.ComponentModel.Win32Exception)?.NativeErrorCode == 32)
-                    {
-                        // 另一个会话在使用的文件保持原位。
-                    }
                 }
                 return removed;
             }

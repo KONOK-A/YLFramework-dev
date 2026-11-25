@@ -7,12 +7,24 @@ param(
     [string] $Unity6,
     [ValidateSet('Unity2022-Plain-IL2CPP', 'Unity6-Plain-IL2CPP', 'Unity2022-Encrypted-Mono', 'Unity2022-Encrypted-IL2CPP',
         'Unity6-Encrypted-Mono', 'Unity6-Encrypted-IL2CPP', IgnoreCase = $false)]
-    [string[]] $Cell
+    [string[]] $Cell,
+    [switch] $CacheUsage,
+    [switch] $LargeDownload,
+    [switch] $SpaceFaults,
+    [switch] $ResumeContracts,
+    [switch] $ExpectTuned,
+    [string] $CompareBaselineHost
 )
 
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'The content update matrix requires Windows.' }
+if ($CompareBaselineHost -and (-not $LargeDownload -or -not $ExpectTuned -or -not $Cell -or $Cell.Count -ne 1)) {
+    throw 'A paired transfer replay requires -LargeDownload -ExpectTuned and one cell.'
+}
+if ($ResumeContracts -and (-not $ExpectTuned -or -not $Cell -or @($Cell | Where-Object { $_ -notlike '*-Plain-*' }).Count -ne 0)) {
+    throw 'Resume contract testing requires -ExpectTuned and explicit ordinary cells.'
+}
 
 . (Join-Path $PSScriptRoot '../UnityHost.ps1')
 . (Join-Path $PSScriptRoot '../Common/Process.ps1')
@@ -29,7 +41,9 @@ function Save-UpdateSummary {
 $repository = Get-YLTestPath ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..')))
 $configuration = Read-YLPackageEvidenceJson (Join-Path $repository 'Tools/Testing/TestSuites.json')
 $workspace = Initialize-YLTestWorkspace -WorkspaceRoot $WorkspaceRoot -Repository $repository
-$result = New-YLTestDirectory -Workspace $workspace -Kind Result -Key 'ResourceUpdates'
+$resultKey = if ($SpaceFaults) { 'ResourceSpaceFaults' } elseif ($LargeDownload) { 'ResourceLargeDownload' }
+    elseif ($ResumeContracts) { 'ResourceResumeContracts' } elseif ($CacheUsage) { 'ResourceCacheUsage' } else { 'ResourceUpdates' }
+$result = New-YLTestDirectory -Workspace $workspace -Kind Result -Key $resultKey
 $resultLease = Lock-YLTestDirectory -Workspace $workspace -Path $result.path
 $contexts = [Collections.Generic.List[object]]::new()
 $matrix = @('Unity2022-Plain-IL2CPP', 'Unity6-Plain-IL2CPP', 'Unity2022-Encrypted-Mono', 'Unity2022-Encrypted-IL2CPP',
@@ -69,12 +83,12 @@ try {
             $null = [IO.Directory]::CreateDirectory($cellResults)
             $context = [pscustomobject]@{
                 id = $id; unity = $unity; editorVersion = $editor.version; addressables = $row.addressables; backend = $backend
-                encrypted = $row.encrypted; toolchain = $toolchain; install = Join-Path $hostRecord.path 'P'; host = $hostRecord
+                encrypted = $row.encrypted; tuned = [bool]$ExpectTuned; toolchain = $toolchain; install = Join-Path $hostRecord.path 'P'; host = $hostRecord
                 results = $cellResults; report = $row; userData = Join-Path $hostRecord.path 'D'; lease = $null; server = $null
                 oldAddress = 'baseline-' + [Guid]::NewGuid().ToString('N'); newAddress = ''; optionalAddress = ''; exe = $null
                 keys = $null; materialA = New-UpdateMaterial; materialReplacement = $null; materialNew = $null; generation = $null
                 materialOptional = $null; materialReplacementC = $null; materialNewC = $null; materialOptionalC = $null
-                inventory = $null; baseline = $null; update = $null; updateC = $null; perRun = 0; online = $true; versions = $null
+                inventory = $null; baseline = $null; update = $null; updateC = $null; perRun = 0; online = $true; versions = $null; replay = $null
             }
             $contexts.Add($context)
             $context.lease = Lock-YLTestDirectory -Workspace $workspace -Path $hostRecord.path
@@ -124,15 +138,30 @@ try {
                 $context.newAddress = 'chapter-' + [Guid]::NewGuid().ToString('N')
                 $context.optionalAddress = 'optional-' + [Guid]::NewGuid().ToString('N')
                 $context.materialReplacement = New-UpdateMaterial $context.materialA.ordinary -TransferProof
-                $context.materialNew = New-UpdateMaterial $context.materialA.ordinary -TransferProof
+                $context.materialNew = New-UpdateMaterial $context.materialA.ordinary -TransferProof -BulkTransfer:($LargeDownload -or $ResumeContracts)
                 $context.materialOptional = New-UpdateMaterial $context.materialA.ordinary
                 $context.report['bFixtureCreatedUtc'] = [DateTime]::UtcNow.ToString('o')
                 $context.report['chapterAddress'] = $context.newAddress
                 $context.report['optionalAddress'] = $context.optionalAddress
+                if ($CompareBaselineHost) {
+                    $context.report.phase = 'PairedBaselineBuild'
+                    Save-UpdateSummary
+                    $context.replay = New-UpdateReplayContext $context $CompareBaselineHost
+                }
                 $sealed = Invoke-YLFrozenReadOnlyInstallation -OwnedHostRoot $context.host.path -InstallRoot $context.install -InstallDirectoryName P -RunPlayer {
                     $context.update = Invoke-UpdateEditorBuild $context B
                     Assert-UpdateInstallation $context
-                    Invoke-UpdateScenarios $context
+                    if ($CacheUsage) { Invoke-UpdateCacheScenarios $context }
+                    if ($context.encrypted -and $context.tuned -and ($CacheUsage -or $LargeDownload)) {
+                        Invoke-UpdateSignedCipherIdentityScenario $context
+                    }
+                    if ($ResumeContracts) { Invoke-UpdateResumeContracts $context }
+                    if ($SpaceFaults) { Invoke-UpdateSpaceFaultScenarios $context }
+                    if ($LargeDownload) {
+                        if ($null -ne $context.replay) { Invoke-UpdatePairedTransferScenarios $context }
+                        else { Invoke-UpdateLargeDownloadScenarios $context }
+                    }
+                    if (-not ($CacheUsage -or $LargeDownload -or $SpaceFaults -or $ResumeContracts)) { Invoke-UpdateScenarios $context }
                 }
                 Assert-UpdateInstallation $context
                 $context.report['updateReadOnly'] = $sealed.proof
@@ -171,6 +200,7 @@ try {
                 $context.report['cleanupError'] = $_.Exception.Message
                 $summary.status = 'Failed'
             } finally {
+                if ($null -ne $context.replay) { $context.replay.lease.Dispose() }
                 if ($null -ne $context.lease) { $context.lease.Dispose() }
             }
         }

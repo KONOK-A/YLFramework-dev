@@ -269,6 +269,13 @@ namespace YLFramework.Resource.Encryption
 
         internal static void CheckPublicationFile(FileStream file) => CheckIdentity(file.SafeFileHandle, directory: false);
 
+        internal static (ulong File, uint Volume, ulong Created) ReadFileIdentity(FileStream file)
+        {
+            var info = CheckIdentity(file.SafeFileHandle, directory: false);
+            return (((ulong)info.FileIndexHigh << 32) | info.FileIndexLow, info.VolumeSerial,
+                ((ulong)info.CreationHigh << 32) | info.CreationLow);
+        }
+
         private static FileStream AsStream(SafeFileHandle handle, FileAccess access)
         {
             try
@@ -313,12 +320,13 @@ namespace YLFramework.Resource.Encryption
             catch { handle.Dispose(); throw; }
         }
 
-        private static void CheckIdentity(SafeFileHandle handle, bool directory)
+        private static FileInfoByHandle CheckIdentity(SafeFileHandle handle, bool directory)
         {
             if (!GetFileInformationByHandle(handle, out var info))
                 throw Failure("Encrypted Bundle storage identity");
             if ((info.Attributes & ReparsePoint) != 0 || ((info.Attributes & DirectoryBit) != 0) != directory || (!directory && info.Links != 1))
                 throw new EncryptedBundleIntegrityException("Encrypted Bundle storage refused a directory mismatch or link.");
+            return info;
         }
 
         private static IOException Failure(string operation)

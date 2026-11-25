@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,8 +15,10 @@ using UnityEngine.ResourceManagement.ResourceProviders;
 namespace YLFramework.Resource.Encryption
 {
     /// <summary>Authenticates protected Bundles for the version selected by Resource startup.</summary>
-    public sealed class EncryptedResourceContentExtension : IResourceContentExtension
+    public sealed class EncryptedResourceContentExtension : IResourceContentExtension, IResourceContentCiphertextTransfer
     {
+        private static readonly Lazy<HttpClient> SignedTransfers = new Lazy<HttpClient>(() => EncryptedBundleCache.CreateCiphertextHttpClient(useProxy: true));
+        private static readonly TimeSpan SignedInactivity = TimeSpan.FromMinutes(5);
         private readonly IEncryptedBundleKeySource _keys;
         private readonly bool _allowLoopback;
         private long _keyRents;
@@ -45,6 +48,50 @@ namespace YLFramework.Resource.Encryption
 
         /// <summary>Native Bundle creation attempts by the attached Provider.</summary>
         public long MountAttempts => Interlocked.Read(ref _mountAttempts);
+
+        async Task IResourceContentCiphertextTransfer.ReceiveCiphertextAsync(ResourceContentArtifact artifact,
+            Func<ReadOnlyMemory<byte>, CancellationToken, Task> accept, CancellationToken cancellation)
+        {
+            if (artifact == null || artifact.Kind != ResourceContentArtifactKind.Ciphertext || artifact.Length <= 0 ||
+                !Uri.TryCreate(artifact.Source, UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttps && !(_allowLoopback && uri.Scheme == Uri.UriSchemeHttp && uri.Host == "127.0.0.1")) ||
+                uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.AbsoluteUri != artifact.Source)
+                throw new ArgumentException("Expected a signed remote ciphertext artifact.", nameof(artifact));
+            if (accept == null)
+                throw new ArgumentNullException(nameof(accept));
+
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            deadline.CancelAfter(SignedInactivity);
+            try
+            {
+                using var response = await EncryptedBundleCache.GetCompleteCiphertextAsync(SignedTransfers.Value, artifact.Source,
+                    artifact.Length, deadline.Token).ConfigureAwait(false);
+                deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+                using var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                var buffer = new byte[128 * 1024];
+                long remaining = artifact.Length;
+                while (true)
+                {
+                    int take = remaining >= buffer.Length ? buffer.Length : checked((int)remaining + 1);
+                    int count = await EncryptedBundleCache.ReadCiphertextAsync(input, buffer, take, deadline, SignedInactivity).ConfigureAwait(false);
+                    if (count == 0 && remaining == 0)
+                        return;
+                    if (count == 0 || count > remaining)
+                        throw new InvalidDataException("Encrypted Bundle response differs from the signed ciphertext length.");
+                    cancellation.ThrowIfCancellationRequested();
+                    await accept(buffer.AsMemory(0, count), cancellation).ConfigureAwait(false);
+                    remaining -= count;
+                }
+            }
+            catch (OperationCanceledException error) when (!cancellation.IsCancellationRequested)
+            {
+                throw new IOException("Signed ciphertext download timed out.", error);
+            }
+            catch (HttpRequestException error)
+            {
+                throw new IOException("Signed ciphertext network failure.", error);
+            }
+        }
 
         /// <inheritdoc />
         public async Task<IResourceContentExtensionSession> VerifyStartupAsync(ResourceContentManifest manifest,

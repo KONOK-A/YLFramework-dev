@@ -298,13 +298,15 @@ namespace YLFramework.Tests.Resource
             var abandonedState = Path.Combine(store.Root, $".state-{Guid.NewGuid():N}.tmp");
             var abandonedJournal = Path.Combine(store.Root, $".journal-{Guid.NewGuid():N}.tmp");
             var busy = Path.Combine(store.Root, $".state-{Guid.NewGuid():N}.tmp");
+            var malformed = Path.Combine(store.Root, $".state-{Guid.NewGuid():N}.tmp");
             var foreign = Path.Combine(store.Root, ".journal-not-a-guid.tmp");
             var directory = Path.Combine(store.Root, $".state-{Guid.NewGuid():N}.tmp");
             var external = Path.Combine(_storageRoot, "external.txt");
             var link = Path.Combine(store.Root, $".journal-{Guid.NewGuid():N}.tmp");
-            File.WriteAllText(abandonedState, "partial payload");
-            File.WriteAllBytes(abandonedJournal, Array.Empty<byte>());
-            File.WriteAllText(busy, "in use");
+            File.Copy(Path.Combine(store.Root, "state"), abandonedState);
+            File.Copy(Path.Combine(store.Root, "journal"), abandonedJournal);
+            File.Copy(Path.Combine(store.Root, "state"), busy);
+            File.WriteAllText(malformed, "partial payload");
             File.WriteAllText(foreign, "keep");
             Directory.CreateDirectory(directory);
             File.WriteAllText(external, "external");
@@ -318,6 +320,7 @@ namespace YLFramework.Tests.Resource
 
             Assert.That(File.Exists(abandonedState), Is.False);
             Assert.That(File.Exists(abandonedJournal), Is.False);
+            Assert.That(File.ReadAllText(malformed), Is.EqualTo("partial payload"));
             Assert.That(File.Exists(foreign), Is.True);
             Assert.That(Directory.Exists(directory), Is.True);
             Assert.That(File.Exists(link), Is.True);
@@ -334,8 +337,9 @@ namespace YLFramework.Tests.Resource
             RequireWindowsCleanup();
             var store = Open();
             using var writer = Acquire(store);
+            Assert.That(writer.TryCommit(0, new State(1, Baseline, null, Baseline)), Is.True);
             var temporary = Path.Combine(store.Root, $".state-{Guid.NewGuid():N}.tmp");
-            File.WriteAllText(temporary, "partial payload");
+            File.Copy(Path.Combine(store.Root, "state"), temporary);
             using var cancellation = new CancellationTokenSource();
             cancellation.Cancel();
 
