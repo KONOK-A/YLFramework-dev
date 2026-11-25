@@ -112,7 +112,7 @@ namespace YLFramework.Resource
             return Addressables.ResolveInternalId(path);
         }
 
-        /// <summary>官方依赖下载大小；精确 keys 在调用时快照，不构成业务资产首载。</summary>
+        /// <summary>查询指定键的下载大小。签名会话按冻结清单估算缺少的远端制品。</summary>
         public ResourceRequest<long> GetDownloadSizeAsync(IEnumerable<string> keys, CancellationToken cancellation = default)
         {
             CheckThread();
@@ -124,13 +124,29 @@ namespace YLFramework.Resource
                     return request;
                 BindCancellation(request, cancellation);
                 if (!request.IsDone)
-                    Run(ObserveDelivery(request, () => Addressables.GetDownloadSizeAsync(frozen), handle => handle.Result, true), error => Fail(request, error));
+                {
+                    var content = _startup.ContentUpdates;
+                    var size = content == null
+                        ? ObserveDelivery(request, () => Addressables.GetDownloadSizeAsync(frozen), handle => handle.Result, true)
+                        : ObserveSignedDownloadSize(request, content, frozen);
+                    Run(size, error => Fail(request, error));
+                }
             }
             catch (Exception error)
             {
                 Fail(request, error);
             }
             return request;
+        }
+
+        private IEnumerator ObserveSignedDownloadSize(ResourceRequest<long> request, ResourceContentUpdates content,
+            string[] keys)
+        {
+            if (request.IsDone)
+                yield break;
+            RequireAvailable();
+            request.SetSuccess(content.GetDownloadSize(keys));
+            request.NotifyCompletion();
         }
 
         /// <summary>按官方 Union 下载依赖，显式归还本方 Handle，不取得业务资产 Lease。</summary>
@@ -146,8 +162,12 @@ namespace YLFramework.Resource
                     return request;
                 BindCancellation(request, cancellation);
                 if (!request.IsDone)
-                    Run(ObserveDelivery(request, () => Addressables.DownloadDependenciesAsync(frozen, Addressables.MergeMode.Union, false)
-                        .Convert<IList<IAssetBundleResource>>(), _ => true, true), error => Fail(request, error));
+                    Run(ObserveDelivery(request, () =>
+                    {
+                        _startup.ContentUpdates?.RequirePreparedDependencies(frozen);
+                        return Addressables.DownloadDependenciesAsync(frozen, Addressables.MergeMode.Union, false)
+                            .Convert<IList<IAssetBundleResource>>();
+                    }, _ => true, true), error => Fail(request, error));
             }
             catch (Exception error)
             {
@@ -165,6 +185,8 @@ namespace YLFramework.Resource
             try
             {
                 RequireAvailable();
+                if (_startup.ContentUpdates != null)
+                    throw new ResourceException(ResourceError.Unsupported, "Use the signed session's CheckAsync to check for releases.");
                 Track(request);
                 BindCancellation(request, cancellation);
                 QueueCatalogControl(request, () => Addressables.CheckForCatalogUpdates(true), SnapshotCatalogCheck);

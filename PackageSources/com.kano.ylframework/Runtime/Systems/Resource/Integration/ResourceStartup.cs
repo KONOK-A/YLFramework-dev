@@ -42,6 +42,21 @@ namespace YLFramework.Resource
             _audioProjects = (audioProjects ?? Array.Empty<string>()).Distinct(StringComparer.Ordinal).ToArray();
         }
 
+        /// <summary>应用组合根明确选择签名内容事务。须先于所有业务 Addressables 使用者启动。</summary>
+        public ResourceStartup(ResourceConfiguration configuration, bool bindCoreResourceProvider, IEnumerable<string> audioProjects,
+            ResourceContentUpdates contentUpdates) : this(configuration, bindCoreResourceProvider, audioProjects)
+        {
+            ContentUpdates = contentUpdates ?? throw new ArgumentNullException(nameof(contentUpdates));
+            if (_configuration.EnableStartupCatalogUpdates)
+                throw new ArgumentException("The signed startup owns the Catalog. Disable the legacy Catalog Apply option.", nameof(configuration));
+        }
+
+        /// <summary>应用显式启用的签名内容事务。</summary>
+        public ResourceContentUpdates ContentUpdates
+        {
+            get;
+        }
+
         /// <summary>同一入口共享一次启动工作，但每个等待者独立取消和领取观察值。</summary>
         public ResourceRequest<ResourceStartup> StartAsync()
         {

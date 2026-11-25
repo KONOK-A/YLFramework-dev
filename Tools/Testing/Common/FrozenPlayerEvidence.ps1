@@ -82,9 +82,10 @@ function Assert-YLFrozenPlayerBackend {
 }
 
 function Invoke-YLFrozenReadOnlyInstallation {
-    param([string] $OwnedHostRoot, [string] $InstallRoot, [scriptblock] $RunPlayer)
+    param([string] $OwnedHostRoot, [string] $InstallRoot, [scriptblock] $RunPlayer,
+        [ValidateSet('layout-offline', 'P', IgnoreCase = $false)][string] $InstallDirectoryName = 'layout-offline')
     $root = Get-YLTestPath $InstallRoot
-    if ([IO.Path]::GetDirectoryName($root) -ine (Get-YLTestPath $OwnedHostRoot) -or [IO.Path]::GetFileName($root) -cne 'layout-offline') {
+    if ([IO.Path]::GetDirectoryName($root) -ine (Get-YLTestPath $OwnedHostRoot) -or [IO.Path]::GetFileName($root) -cne $InstallDirectoryName) {
         throw 'Read-only testing may only seal the separate offline installation under its owned host.'
     }
     $snapshot = {

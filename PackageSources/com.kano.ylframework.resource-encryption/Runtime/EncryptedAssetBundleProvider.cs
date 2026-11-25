@@ -10,6 +10,15 @@ using UnityEngine.Scripting;
 
 namespace YLFramework.Resource.Encryption
 {
+    internal interface IEncryptedBundleSession
+    {
+        void CheckUnchanged();
+        EncryptedBundleRecord ResolveTransfer(IResourceLocation location);
+        EncryptedBundleRecord ResolveMount(IResourceLocation location);
+        Task EnsureCiphertextAsync(EncryptedBundleRecord record, Action<EncryptedBundleCache.TransferProgress> progress);
+        Task<AuthenticatedBundleStream> OpenBundleAsync(EncryptedBundleRecord record, Action<EncryptedBundleCache.TransferProgress> progress);
+    }
+
     [Preserve]
     internal sealed class EncryptedMountedBundle : IAssetBundleResource
     {
@@ -34,7 +43,8 @@ namespace YLFramework.Resource.Encryption
         internal const int UnityReadBufferBytes = 32 * 1024;
         private readonly Dictionary<string, Task> _unloading = new Dictionary<string, Task>(StringComparer.Ordinal);
         private readonly List<EncryptedMountedBundle> _unconfirmed = new List<EncryptedMountedBundle>();
-        private EncryptedDeliverySession _session;
+        private IEncryptedBundleSession _session;
+        private Action _onMountAttempt;
         private int _ownedMounts;
         private int _ownedTransfers;
 
@@ -73,14 +83,19 @@ namespace YLFramework.Resource.Encryption
             get; private set;
         }
 
-        internal void Attach(EncryptedDeliverySession session)
+        internal void Attach(IEncryptedBundleSession session, Action onMountAttempt = null)
         {
             if (_session != null)
                 throw new InvalidOperationException("The protected Addressables provider already has an owner.");
+            _onMountAttempt = onMountAttempt;
             _session = session;
         }
 
-        internal void Detach() => _session = null;
+        internal void Detach()
+        {
+            _session = null;
+            _onMountAttempt = null;
+        }
 
         /// <inheritdoc />
         public override Type GetDefaultType(IResourceLocation location) => location.ResourceType == typeof(IAssetBundleResource)
@@ -114,7 +129,7 @@ namespace YLFramework.Resource.Encryption
 
         private static bool RejectSynchronousWait() => throw new NotSupportedException("Protected Bundle transfers and mounts are asynchronous; do not call WaitForCompletion.");
 
-        private async Task ProvideAsync(EncryptedDeliverySession owner, ProvideHandle handle)
+        private async Task ProvideAsync(IEncryptedBundleSession owner, ProvideHandle handle)
         {
             Pending++;
             IAssetBundleResource result = null;
@@ -167,6 +182,7 @@ namespace YLFramework.Resource.Encryption
                         owner.CheckUnchanged();
                         CheckUnloadSucceeded();
                         Creates++;
+                        _onMountAttempt?.Invoke();
                         var request = AssetBundle.LoadFromStreamAsync(reader, 0, UnityReadBufferBytes);
                         createUnconfirmed = request != null;
                         await NativeCompletion(request);

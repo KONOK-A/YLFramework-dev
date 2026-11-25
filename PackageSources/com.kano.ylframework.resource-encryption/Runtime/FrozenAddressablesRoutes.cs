@@ -139,15 +139,12 @@ namespace YLFramework.Resource.Encryption
 
         internal static void CheckResolved(IResourceLocator catalog, EncryptedBundleDescription description)
         {
-            var scenes = Enumerable.Range(0, SceneManager.sceneCountInBuildSettings).Select(SceneUtility.GetScenePathByBuildIndex)
-                .Select(BuiltInSceneId).ToArray();
             var manager = Addressables.ResourceManager;
             if (manager.ResourceProviders.Count(provider => provider.GetType() == typeof(ContentCatalogProvider)) != 1 ||
                 manager.ResourceProviders.Count(provider => provider.GetType() == typeof(JsonAssetProvider)) != 1)
                 throw new InvalidDataException("The official metadata providers were not registered by default startup.");
 
-            CheckCatalog(catalog, description.Bundles.Select(item => item.Binding), description.RoutesSha256,
-                scenes, Addressables.RuntimePath, (location, expected) =>
+            CheckCatalog(catalog, description, (location, expected) =>
             {
                 var actual = manager.GetResourceProvider(IsBundle(location.ResourceType) ? typeof(IAssetBundleResource) : location.ResourceType,
                     location)?.GetType();
@@ -155,6 +152,15 @@ namespace YLFramework.Resource.Encryption
                     actual.Assembly != typeof(BundledAssetProvider).Assembly)
                     throw new InvalidDataException("Catalog route did not select its expected provider: " + location.PrimaryKey);
             });
+        }
+
+        internal static void CheckCatalog(IResourceLocator catalog, EncryptedBundleDescription description,
+            Action<IResourceLocation, Type> checkProvider = null)
+        {
+            var scenes = Enumerable.Range(0, SceneManager.sceneCountInBuildSettings).Select(SceneUtility.GetScenePathByBuildIndex)
+                .Select(BuiltInSceneId).ToArray();
+            CheckCatalog(catalog, description.Bundles.Select(item => item.Binding), description.RoutesSha256,
+                scenes, Addressables.RuntimePath, checkProvider);
         }
 
         // Audit the official serialized Catalog at build time and again after runtime resolves it.

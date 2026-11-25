@@ -10,10 +10,12 @@ using UnityEditor.AddressableAssets.Settings;
 using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.Initialization;
 using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.Build.Pipeline;
 using UnityEngine.ResourceManagement.ResourceLocations;
 using UnityEngine.ResourceManagement.ResourceProviders;
+using YLFramework.Editor.Resource;
 
 namespace YLFramework.Resource.Encryption.Editor
 {
@@ -25,6 +27,10 @@ namespace YLFramework.Resource.Encryption.Editor
         internal string ReleaseId;
         internal string ReleasePrefix;
         internal bool Loopback;
+        internal bool Versioned;
+        internal EncryptedBundleDescription PreviousDelivery;
+        internal string PreviousCatalogPath;
+        internal string DeliveryCatalogPath;
 
         internal string RoutesSha256
         {
@@ -45,6 +51,7 @@ namespace YLFramework.Resource.Encryption.Editor
         private Dictionary<string, AssetRoute[]> _assets;
         private Dictionary<ContentCatalogDataEntry, ContentCatalogDataEntry[]> _dependencies;
         private Dictionary<ContentCatalogDataEntry, object[]> _keys;
+        private IResourceLocator _previousCatalog;
 
         protected override string ProcessAllGroups(AddressableAssetsBuildContext context)
         {
@@ -81,18 +88,24 @@ namespace YLFramework.Resource.Encryption.Editor
 
         protected override TResult DoBuild<TResult>(AddressablesDataBuilderInput input, AddressableAssetsBuildContext context)
         {
-            if (input.PreviousContentState != null || ProtectedGroups == null || ProtectedGroups.Count == 0 || _original != null)
-                throw new InvalidDataException("Expected one fresh Packed Builder invocation for fixed delivery.");
+            if ((input.PreviousContentState != null) != (PreviousDelivery != null) ||
+                (PreviousDelivery != null && (string.IsNullOrEmpty(PreviousCatalogPath) || string.IsNullOrEmpty(DeliveryCatalogPath))) ||
+                ProtectedGroups == null || ProtectedGroups.Count == 0 || _original != null)
+                throw new InvalidDataException("Expected one Packed Builder invocation for the selected delivery mode.");
             _context = context;
             CatalogName = input.RuntimeCatalogFilename;
             try
             {
+                if (PreviousDelivery != null)
+                    _previousCatalog = CreateLocator(ReadCatalog(PreviousCatalogPath));
                 TResult result = base.DoBuild<TResult>(input, context);
                 if (result is AddressablesPlayerBuildResult built && string.IsNullOrEmpty(built.Error))
                 {
                     if (_original == null || _bundles.Count != _original.Count ||
                         ProtectedGroups.Any(group => !_bundles.Values.Any(bundle => bundle.Binding?.GroupGuid == group.Guid)))
                         throw new InvalidDataException("Official Packed Builder did not produce the attributed protected and ordinary Bundle inventory.");
+                    if (PreviousDelivery != null)
+                        FinalizeUpdateCatalog();
                     RoutesSha256 = FreezeRoutes();
                 }
                 return result;
@@ -110,6 +123,15 @@ namespace YLFramework.Resource.Encryption.Editor
                 CaptureSbpRoutes();
 
             string filename = base.ConstructAssetBundleName(group, schema, info, name);
+            if (Versioned && (filename.Length > 64 || filename.Any(character =>
+                character is not (>= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '-'))))
+            {
+                // PackSeparately can include the authored address, including separators in 1.25.
+                // Use a short deterministic leaf for the Windows publication tree.
+                string suffix = schema.BundleNaming == BundledAssetGroupSchema.BundleNamingStyle.NoHash ? "_" + info.Hash : "";
+                string logicalName = filename.Substring(0, filename.Length - ".bundle".Length - suffix.Length);
+                filename = "yl-" + Hash128.Compute(logicalName) + suffix + ".bundle";
+            }
             string internalName = Path.GetFileNameWithoutExtension(info.FileName);
             if (!_originalKeys.TryGetValue(internalName, out string originalKey) || !_original.TryGetValue(originalKey, out var source) ||
                 (group != null && source.Group != group) || source.Group.GetSchema<BundledAssetGroupSchema>() != schema ||
@@ -156,7 +178,8 @@ namespace YLFramework.Resource.Encryption.Editor
                 // Insert the GUID in the logical path only; official filenames/source paths remain unchanged.
                 location.InternalId = loadPrefix + group.Guid + "/" + originalKey;
                 options.BundleSize = checked((uint)EncryptedBundleBinding.GetCipherLength(binding.PlainLength));
-                SplitTransferAndMount(location, binding);
+                if (PreviousDelivery == null)
+                    SplitTransferAndMount(location, binding);
             }
             else
             {
@@ -169,11 +192,126 @@ namespace YLFramework.Resource.Encryption.Editor
                     throw new InvalidDataException("A stock Bundle has no attributable official options: " + filename);
             }
 
-            if (!_bundles.TryAdd(internalName, new PackedBundle(source.Group.Guid, group == null, originalKey, installedName, filename, hash,
+            var packed = new PackedBundle(source.Group.Guid, group == null, originalKey, installedName, filename, hash,
                 expectedId, location.Provider, binding, ReadGraph(_context.bundleToImmediateBundleDependencies, originalKey),
-                ReadGraph(_context.bundleToExpandedBundleDependencies, originalKey))))
+                ReadGraph(_context.bundleToExpandedBundleDependencies, originalKey));
+            if (binding == null && !FrozenAddressablesRoutes.IsStockLocalBundle(expectedId, location.Provider) &&
+                _previousCatalog != null && _previousCatalog.Locate(filename, typeof(IAssetBundleResource), out var locations) &&
+                locations.Count == 1 && locations[0].PrimaryKey == filename &&
+                FrozenAddressablesRoutes.IsStockBundleProvider(locations[0].ProviderId) &&
+                !FrozenAddressablesRoutes.IsStockLocalBundle(
+                    FrozenAddressablesRoutes.CanonicalId(locations[0].InternalId, Addressables.RuntimePath), locations[0].ProviderId))
+            {
+                // Both official updaters can delete the new loose file when they restore A's route.
+                string sbpPath = Path.GetFullPath(Path.Combine(source.Group.Settings.buildSettings.bundleBuildPath, originalKey));
+                using var bytes = OwnedWindowsFiles.OpenRead(sbpPath);
+                packed.PreviousOrdinary = locations[0];
+                packed.SbpSha256 = AuthenticatedBundleStream.Hash(bytes, default);
+            }
+            if (!_bundles.TryAdd(internalName, packed))
                 throw new InvalidDataException("Duplicate official internal Bundle name: " + internalName);
             return filename;
+        }
+
+        private void FinalizeUpdateCatalog()
+        {
+            // The official updater can retain A's exact route and request options after PostProcessBundles.
+            // Take that decision before deriving B's encrypted transport and mount locations.
+            string officialPath = Path.Combine(Addressables.BuildPath, CatalogName);
+            ContentCatalogData official = ResourceContentUpdateAuthoring.ReadCatalogData(officialPath);
+            CheckOfficialUpdateGraph(CreateLocator(official));
+            var prior = PreviousDelivery.Bundles.ToDictionary(row => row.Binding.SourceId, StringComparer.Ordinal);
+            var priorByGroupPath = PreviousDelivery.Bundles.ToDictionary(row => row.Binding.GroupPath, StringComparer.Ordinal);
+            foreach (var asset in _keys.Keys)
+            {
+                // The legacy serializer replaces a multi-Bundle dependency list with one synthetic bucket key.
+                // Expand the previously verified graph before serializing the protected mount routes.
+                asset.Dependencies.Clear();
+                asset.Dependencies.AddRange(_dependencies[asset].Select(dependency => dependency.Keys[0]));
+            }
+            foreach (var packed in _bundles.Values)
+            {
+                var location = _original[packed.OriginalKey].Entry;
+                string id = FrozenAddressablesRoutes.CanonicalId(location.InternalId, Addressables.RuntimePath);
+                if (!(location.Data is AssetBundleRequestOptions options) || options.BundleName != packed.InternalName ||
+                    location.Provider != packed.ProviderId || !Equals(location.Keys[0], packed.CatalogKey))
+                    throw new InvalidDataException("Official update retained Bundle metadata that differs from the audited SBP inventory: " + id);
+                location.Keys.RemoveRange(1, location.Keys.Count - 1);
+                if (packed.Binding == null)
+                {
+                    var previous = packed.PreviousOrdinary;
+                    bool retained = previous != null &&
+                        FrozenAddressablesRoutes.CanonicalId(previous.InternalId, Addressables.RuntimePath) == id;
+                    if (retained)
+                    {
+                        string previousNode = FrozenAddressablesRoutes.Node(previous.InternalId, previous.ProviderId,
+                            previous.ResourceType, previous.Data, Addressables.RuntimePath);
+                        if (previousNode != Node(location))
+                            throw new InvalidDataException("Official update changed ordinary Bundle metadata at an immutable A route: " + id);
+                        packed.RetainedOrdinaryRoute = id;
+                        packed.ReportSourceId = id;
+                    }
+                    else if (id != packed.SourceId)
+                        throw new InvalidDataException("Official update retained a different ordinary Bundle than the audited SBP result: " + id);
+                    continue;
+                }
+                var binding = packed.Binding;
+                if (options.BundleSize != EncryptedBundleBinding.GetCipherLength(binding.PlainLength))
+                    throw new InvalidDataException("Official update changed the protected Bundle length: " + id);
+                if (priorByGroupPath.TryGetValue(binding.GroupPath, out var original) && original.Binding.BundleHash == binding.BundleHash)
+                    packed.Retained = original;
+                if (id != packed.SourceId)
+                {
+                    if (!prior.TryGetValue(id, out var retained) || retained.Binding.GroupGuid != binding.GroupGuid ||
+                        retained.Binding.BundleName != binding.BundleName || retained.Binding.BundleHash != binding.BundleHash ||
+                        retained.Binding.RelativePath != binding.RelativePath || retained.Binding.Mode != binding.Mode ||
+                        retained.Binding.PlainLength != binding.PlainLength)
+                        throw new InvalidDataException("Official update retained protected content that differs from the audited SBP result: " + id);
+                    packed.Retained = retained;
+                }
+                packed.ReportSourceId = id;
+                location.InternalId = binding.SourceId;
+                SplitTransferAndMount(location, binding);
+            }
+            var delivery = new ContentCatalogData(_context.locations.OrderBy(entry => entry.InternalId).ToList(),
+                ResourceManagerRuntimeData.kCatalogAddress)
+            {
+                InstanceProviderData = official.InstanceProviderData,
+                SceneProviderData = official.SceneProviderData,
+                ResourceProviderData = official.ResourceProviderData,
+                BuildResultHash = official.BuildResultHash
+            };
+            using var output = OwnedWindowsFiles.CreateTemporaryPinned(DeliveryCatalogPath);
+#if UNITY_6000_3_OR_NEWER
+            byte[] bytes = delivery.SerializeToByteArray();
+#else
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(JsonUtility.ToJson(delivery));
+#endif
+            output.Write(bytes, 0, bytes.Length);
+            output.Flush(true);
+        }
+
+        private void CheckOfficialUpdateGraph(IResourceLocator locator)
+        {
+            var rows = new List<string>();
+            foreach (object key in locator.Keys)
+            {
+                if (!locator.Locate(key, typeof(object), out var locations) || locations.Count == 0)
+                    throw new InvalidDataException("An official update Catalog alias has no location.");
+                if (locations.All(location => FrozenAddressablesRoutes.IsBundle(location.ResourceType)))
+                    continue;
+                for (int index = 0; index < locations.Count; index++)
+                {
+                    var asset = locations[index];
+                    var dependencies = asset.Dependencies ?? Array.Empty<IResourceLocation>();
+                    rows.Add(FrozenAddressablesRoutes.Row(key, index, LocationNode(asset), dependencies.Select(LocationNode)));
+                }
+            }
+            if (FrozenAddressablesRoutes.Digest(rows) != FreezeRoutes())
+                throw new InvalidDataException("Official update changed the audited SBP asset routes or dependency graph.");
+
+            string LocationNode(IResourceLocation location) => FrozenAddressablesRoutes.Node(location.InternalId, location.ProviderId,
+                location.ResourceType, location.Data, Addressables.RuntimePath);
         }
 
         private void CaptureSbpRoutes()
@@ -277,37 +415,52 @@ namespace YLFramework.Resource.Encryption.Editor
             return FrozenAddressablesRoutes.Digest(rows);
         }
 
-        internal Dictionary<string, IResourceLocation> VerifySerializedCatalog(string path, string[] scenes)
+        private ContentCatalogData ReadCatalog(string path)
         {
             using var input = OwnedWindowsFiles.OpenRead(path);
-            IResourceLocator locator;
 #if UNITY_6000_3_OR_NEWER
             // The pinned binary reader is internal. Use it rather than reimplementing the serializer or registering a project Locator.
             var type = typeof(ContentCatalogData);
             var read = type.GetMethod("LoadFromFile", BindingFlags.Static | BindingFlags.NonPublic, null,
                 new[] { typeof(string), typeof(bool) }, null);
-            var create = type.GetMethod("CreateCustomLocator", BindingFlags.Instance | BindingFlags.NonPublic, null,
-                new[] { typeof(string), typeof(string) }, null);
-            if (CatalogName != "catalog.bin" || read == null || create == null)
+            if (CatalogName != "catalog.bin" || read == null)
                 throw new InvalidDataException("Encrypted delivery requires the pinned Addressables binary Catalog reader.");
-            locator = (IResourceLocator)create.Invoke(read.Invoke(null, new object[] { path, false }), new object[] { "", null });
+            return (ContentCatalogData)read.Invoke(null, new object[] { path, false });
 #else
             if (CatalogName != "catalog.json")
                 throw new InvalidDataException("Encrypted delivery requires the pinned Addressables JSON Catalog reader.");
-            locator = JsonUtility.FromJson<ContentCatalogData>(EncryptedDeliverySession.ReadText(input)).CreateLocator();
+            return JsonUtility.FromJson<ContentCatalogData>(EncryptedDeliverySession.ReadText(input));
 #endif
+        }
+
+        internal Dictionary<string, IResourceLocation> VerifySerializedCatalog(string path, string[] scenes)
+        {
+            var locator = CreateLocator(ReadCatalog(path));
             var actual = FrozenAddressablesRoutes.CheckCatalog(locator, _bundles.Values.Where(bundle => bundle.Binding != null)
                 .Select(bundle => bundle.Binding), RoutesSha256, scenes.Select(FrozenAddressablesRoutes.BuiltInSceneId).ToArray(), Addressables.RuntimePath);
             if (actual.Count != _bundles.Count + _bundles.Values.Count(bundle => bundle.Binding != null))
                 throw new InvalidDataException("The serialized Catalog and official Bundle inventory do not agree.");
             foreach (var bundle in _bundles.Values)
             {
-                if (!actual.TryGetValue(bundle.SourceId, out var location) || location.PrimaryKey != bundle.CatalogKey ||
+                if (!actual.TryGetValue(bundle.DeliverySourceId, out var location) || location.PrimaryKey != bundle.CatalogKey ||
                     location.ProviderId != bundle.ProviderId || !(location.Data is AssetBundleRequestOptions options) ||
                     options.BundleName != bundle.InternalName)
-                    throw new InvalidDataException("A serialized Bundle route differs from its official result: " + bundle.SourceId);
+                    throw new InvalidDataException("A serialized Bundle route differs from its official result: " + bundle.DeliverySourceId);
             }
             return actual;
+        }
+
+        private static IResourceLocator CreateLocator(ContentCatalogData catalog)
+        {
+#if UNITY_6000_3_OR_NEWER
+            var create = typeof(ContentCatalogData).GetMethod("CreateCustomLocator", BindingFlags.Instance | BindingFlags.NonPublic, null,
+                new[] { typeof(string), typeof(string) }, null);
+            if (create == null)
+                throw new InvalidDataException("Encrypted delivery requires the pinned Addressables binary Catalog reader.");
+            return (IResourceLocator)create.Invoke(catalog, new object[] { "", null });
+#else
+            return catalog.CreateLocator();
+#endif
         }
 
         internal static string NormalizeLoadPrefix(string value) => (value ?? "").Replace('\\', '/').TrimEnd('/') + "/";
@@ -336,8 +489,14 @@ namespace YLFramework.Resource.Encryption.Editor
             internal readonly EncryptedBundleBinding Binding;
             internal readonly string[] Immediate;
             internal readonly string[] Expanded;
+            internal string ReportSourceId;
+            internal EncryptedBundleRecord Retained;
+            internal IResourceLocation PreviousOrdinary;
+            internal string SbpSha256;
+            internal string RetainedOrdinaryRoute;
 
             internal string InternalName => Path.GetFileNameWithoutExtension(OriginalKey);
+            internal string DeliverySourceId => RetainedOrdinaryRoute ?? SourceId;
 
             internal PackedBundle(string groupGuid, bool isShared, string originalKey, string fileName, string catalogKey, string hash,
                 string sourceId, string providerId, EncryptedBundleBinding binding, string[] immediate, string[] expanded)
@@ -349,6 +508,7 @@ namespace YLFramework.Resource.Encryption.Editor
                 CatalogKey = catalogKey;
                 Hash = hash;
                 SourceId = sourceId;
+                ReportSourceId = sourceId;
                 ProviderId = providerId;
                 Binding = binding;
                 Immediate = immediate;

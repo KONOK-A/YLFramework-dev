@@ -32,6 +32,8 @@ namespace YLFramework.Testing
         private Task _accepting;
         private Task _parseGate;
         private int _interrupt;
+        private string _interruptRoute;
+        private string _updateAnnouncementRoute;
         private string _heldDirectory;
         private volatile bool _disposed;
 
@@ -56,6 +58,61 @@ namespace YLFramework.Testing
             {
                 foreach (var file in paths) Add("/p/", root, file);
             }
+        }
+
+        public void AddUpdateArtifact(string root, string route, string relative)
+        {
+            ValidateUpdateRoute(route);
+            lock (_routes) _routes.Add(route, (ResolveUpdateFile(root, relative), relative));
+        }
+
+        public void PublishUpdateAnnouncement(string root, string route, string relative)
+        {
+            ValidateUpdateRoute(route);
+            string path = ResolveUpdateFile(root, relative);
+            lock (_routes)
+            {
+                if (_updateAnnouncementRoute == null && _routes.ContainsKey(route) ||
+                    _updateAnnouncementRoute != null && _updateAnnouncementRoute != route)
+                    throw new InvalidOperationException("Use one dedicated announcement route without replacing immutable files.");
+                _updateAnnouncementRoute = route;
+                _routes[route] = (path, relative);
+            }
+        }
+
+        public void InterruptNextUpdateTransfer(string route)
+        {
+            ValidateUpdateRoute(route);
+            if (Interlocked.CompareExchange(ref _interruptRoute, route, null) != null)
+                throw new InvalidOperationException("An update transfer interruption is already armed.");
+        }
+
+        private static void ValidateUpdateRoute(string route)
+        {
+            if (string.IsNullOrEmpty(route) || !route.StartsWith("/", StringComparison.Ordinal))
+                throw new InvalidDataException("An update route must start with /.");
+            ValidateUpdatePath(route.Substring(1));
+        }
+
+        private static void ValidateUpdatePath(string relative)
+        {
+            if (string.IsNullOrEmpty(relative) || Array.Exists(relative.Split('/'), part =>
+                part.Length == 0 || part == "." || part == ".." ||
+                part.IndexOfAny(new[] { '\\', ':', '%', '?', '#' }) >= 0))
+                throw new InvalidDataException("An update path must identify an owned file.");
+        }
+
+        private static string ResolveUpdateFile(string root, string relative)
+        {
+            ValidateUpdatePath(relative);
+            var path = root;
+            foreach (string part in relative.Split('/'))
+            {
+                path = Path.Combine(path, part);
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Unexpected update source link.");
+            }
+            return path;
         }
 
         public void InterruptNextProtectedTransfer() => Interlocked.Exchange(ref _interrupt, 1);
@@ -172,11 +229,24 @@ namespace YLFramework.Testing
                                 await Task.Delay(10, shutdown).ConfigureAwait(false);
                             }
                         }
-                        if (protectedBundle && Interlocked.Exchange(ref _interrupt, 0) == 1)
+                        string updateInterrupt = Volatile.Read(ref _interruptRoute);
+                        bool interruptUpdate = updateInterrupt == row.target &&
+                            Interlocked.CompareExchange(ref _interruptRoute, null, updateInterrupt) == updateInterrupt;
+                        if (interruptUpdate || (protectedBundle && Interlocked.Exchange(ref _interrupt, 0) == 1))
                         {
-                            int prefix = await file.ReadAsync(buffer.AsMemory(0, (int)Math.Min(file.Length / 2, buffer.Length))).ConfigureAwait(false);
+                            int prefix;
+                            if (interruptUpdate)
+                            {
+                                prefix = (int)Math.Min(file.Length / 2, 384 * 1024);
+                                if (prefix == 0) throw new IOException("The update transfer must have a nonempty partial body.");
+                                buffer = new byte[prefix];
+                                await file.ReadExactlyAsync(buffer, shutdown).ConfigureAwait(false);
+                            }
+                            else
+                                prefix = await file.ReadAsync(buffer.AsMemory(0, (int)Math.Min(file.Length / 2, buffer.Length))).ConfigureAwait(false);
                             await stream.WriteAsync(buffer.AsMemory(0, prefix), shutdown).ConfigureAwait(false);
                             row.bytes += prefix;
+                            if (interruptUpdate) row.held = true;
                             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
                             deadline.CancelAfter(TimeSpan.FromSeconds(40));
                             try { await stream.ReadAsync(buffer.AsMemory(0, 1), deadline.Token).ConfigureAwait(false); }

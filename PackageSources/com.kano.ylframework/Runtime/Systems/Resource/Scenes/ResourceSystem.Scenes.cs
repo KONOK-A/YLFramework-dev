@@ -16,6 +16,8 @@ namespace YLFramework.Resource
         private readonly HashSet<SceneLease> _sceneLeases = new();
         private long _nextSceneSequence;
 
+        internal bool UsesSignedContent => _startup.ContentUpdates != null;
+
         // Only the native submission is replaceable by lifecycle regression tests.
         internal Func<SceneInstance, AsyncOperation> SceneActivator;
         internal Func<Scene, UnloadSceneOptions, AsyncOperation> SceneUnloader;

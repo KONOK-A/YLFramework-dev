@@ -1,0 +1,9 @@
+<linker>
+  <assembly fullname="Unity.Addressables">
+    <type fullname="UnityEngine.AddressableAssets.ResourceLocators.ContentCatalogData" preserve="nothing">
+      <field name="m_Reader" />
+      <method name="LoadFromFile" />
+      <method name="CreateCustomLocator" />
+    </type>
+  </assembly>
+</linker>

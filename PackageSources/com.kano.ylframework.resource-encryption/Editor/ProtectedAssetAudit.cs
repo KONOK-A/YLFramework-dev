@@ -103,7 +103,7 @@ namespace YLFramework.Resource.Encryption.Editor
                     (packed.Binding != null && bundle.Compression != "Lz4HC" && bundle.Compression != "Lz4"))
                     throw new InvalidDataException("The official report contains an ambiguous Bundle placement: " + bundle.Name);
                 // Layout looks up catalog entries by BundleName and reports the post-rename route.
-                if (bundle.Provider != packed.ProviderId || FrozenAddressablesRoutes.CanonicalId(bundle.LoadPath ?? "", Addressables.RuntimePath) != packed.SourceId)
+                if (bundle.Provider != packed.ProviderId || FrozenAddressablesRoutes.CanonicalId(bundle.LoadPath ?? "", Addressables.RuntimePath) != packed.ReportSourceId)
                     throw new InvalidDataException("Build Layout Bundle route differs from official packing: " + bundle.Name);
                 CheckLayoutEdges(bundle.Name, bundle.Dependencies, packed.Immediate, byKey);
                 CheckLayoutEdges(bundle.Name, bundle.ExpandedDependencies, packed.Expanded, byKey);
@@ -233,8 +233,7 @@ namespace YLFramework.Resource.Encryption.Editor
             }
             if (identified == 0)
                 throw new InvalidDataException("The detailed Player report does not identify project assets.");
-            foreach (var (path, placement) in _builtInDependencies)
-                Record(AssetDatabase.AssetPathToGUID(path), path, placement, false);
+            AuditInstalledDependencies();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (string path in EnumerateOwnedFiles(streamingRoot))
             {
@@ -244,6 +243,12 @@ namespace YLFramework.Resource.Encryption.Editor
             }
             if (allowed.Count != seen.Count)
                 throw new InvalidDataException("Actual StreamingAssets missed expected official outputs.");
+        }
+
+        internal void AuditInstalledDependencies()
+        {
+            foreach (var (path, placement) in _builtInDependencies)
+                Record(AssetDatabase.AssetPathToGUID(path), path, placement, false);
             Check();
         }
 

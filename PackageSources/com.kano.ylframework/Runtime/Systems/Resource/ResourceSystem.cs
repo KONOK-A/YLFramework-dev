@@ -76,6 +76,7 @@ namespace YLFramework.Resource
         private bool _closingScopes;
         private bool _checkingStop;
         private bool _freezingRequests;
+        private CancellationTokenSource _contentStartupCancellation;
         private int _synchronousClosesThisTick;
         private long _synchronousCloseTicks;
 
@@ -148,6 +149,9 @@ namespace YLFramework.Resource
                 return Failure<ResourceSystem>(new ResourceException(ResourceError.SessionUnavailable, "Resource startup requires an active Play/Player session."));
             if (_authority != null && !ReferenceEquals(_authority._startup, startup))
                 return Failure<ResourceSystem>(new ResourceException(ResourceError.ConfigurationConflict, "Another ResourceStartup owns this execution session."));
+            if (_authority == null && ResourceContentUpdates.IsOfficialStartupClaimed)
+                return Failure<ResourceSystem>(new ResourceException(ResourceError.ConfigurationConflict,
+                    "The signed Catalog selection belongs to this process until it exits."));
             if (_authority == null)
                 _authority = new ResourceSystem(configuration, startup);
             var system = _authority;
@@ -176,11 +180,24 @@ namespace YLFramework.Resource
             }
 #endif
             AddressablesHandleOwner<IResourceLocator> pin = null;
+            ResourceContentUpdates.Boot contentBoot = null;
             try
             {
-                yield return PrepareCatalogUpdatePolicy(manager);
+                if (_startup.ContentUpdates == null)
+                {
+                    yield return PrepareCatalogUpdatePolicy(manager);
+                }
+                else
+                {
+                    _contentStartupCancellation = new CancellationTokenSource();
+                    var preflight = _startup.ContentUpdates.BeginStartupAsync(_contentStartupCancellation.Token);
+                    while (!preflight.IsCompleted)
+                        yield return null;
+                    contentBoot = preflight.GetAwaiter().GetResult();
+                }
                 if (State != ResourceSystemState.Initializing || !IsSessionActive)
                     throw new ResourceException(ResourceError.Canceled, "Startup was stopped before official initialization began.");
+                contentBoot?.InstallRouting();
                 var handle = Addressables.InitializeAsync(true);
                 pin = AddressablesHandleOwner<IResourceLocator>.AcquireReference(manager, handle);
                 while (!handle.IsDone)
@@ -189,7 +206,9 @@ namespace YLFramework.Resource
                     throw handle.OperationException ?? new InvalidOperationException("Addressables initialization failed.");
                 if (State != ResourceSystemState.Initializing || _ended)
                     throw new ResourceException(ResourceError.Canceled, "Startup was stopped during initialization.");
+                contentBoot?.ValidateOfficial(handle.Result);
                 InitializeImageProvider();
+                contentBoot?.Commit(_contentStartupCancellation.Token);
                 State = ResourceSystemState.Ready;
             }
             finally
@@ -197,7 +216,24 @@ namespace YLFramework.Resource
 #if UNITY_EDITOR
                 ClearStartupCallbackStep();
 #endif
-                DisposeOwner(pin);
+                try
+                {
+                    DisposeOwner(pin);
+                }
+                finally
+                {
+                    try
+                    {
+                        if (contentBoot != null && !contentBoot.IsCommitted && _imageContext != null)
+                            RetireImages();
+                    }
+                    finally
+                    {
+                        contentBoot?.Dispose();
+                        _contentStartupCancellation?.Dispose();
+                        _contentStartupCancellation = null;
+                    }
+                }
             }
             var waiters = _starting.ToArray();
             _starting.Clear();
@@ -276,6 +312,7 @@ namespace YLFramework.Resource
             {
                 if (request.IsDone)
                     yield break;
+                _startup.ContentUpdates?.RequireFrozenRouting();
                 var work = request.EventTrace.StartWork(ResourceEventPhase.Locate);
                 var handle = Addressables.LoadResourceLocationsAsync(key, typeof(T));
                 owner = AddressablesHandleOwner<IList<IResourceLocation>>.TakeOwnership(Addressables.ResourceManager, handle);
@@ -725,6 +762,7 @@ namespace YLFramework.Resource
             if (State != ResourceSystemState.ShuttingDown)
             {
                 State = ResourceSystemState.ShuttingDown;
+                _contentStartupCancellation?.Cancel();
                 FreezeRequests();
             }
             CheckStop();
@@ -837,6 +875,7 @@ namespace YLFramework.Resource
                 return;
             _ended = true;
             State = ResourceSystemState.Invalidated;
+            _contentStartupCancellation?.Cancel();
             var stopping = SetStopResults(new ResourceException(ResourceError.SessionUnavailable, "The resource session ended."),
                 ResourceRequestStatus.Invalidated);
             FreezeRequests();
@@ -962,6 +1001,7 @@ namespace YLFramework.Resource
             CheckThread();
             if (!IsAvailable)
                 throw AdmissionError();
+            _startup.ContentUpdates?.RequireFrozenRouting();
         }
 
         private ResourceException AdmissionError() => _catalogApplyInFlight && IsSessionActive && State == ResourceSystemState.Ready

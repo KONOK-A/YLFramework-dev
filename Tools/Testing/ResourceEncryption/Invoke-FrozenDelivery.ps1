@@ -9,10 +9,20 @@ param([Parameter(Mandatory)][ValidateSet('Unity6','Unity2022', IgnoreCase = $fal
     [string] $ReleaseManifest,
     [string] $SourceCommit,
     [switch] $KeepArtifacts,
+    [switch] $ContentUpdate,
     [ValidateSet('Remote','Embedded','Mixed', IgnoreCase = $false)][string] $DeliveryLayout = 'Remote',
     [ValidateSet('IL2CPP','Mono', IgnoreCase = $false)][string] $Backend = 'IL2CPP')
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
+if ($ContentUpdate) {
+    if ($PackReceipt -or $ReleaseManifest -or $SourceCommit -or $PSBoundParameters.ContainsKey('Mode') -or
+        $PSBoundParameters.ContainsKey('DeliveryLayout')) {
+        throw '-ContentUpdate is a separate frozen Player workload using the current source packages.'
+    }
+    $arguments = @{ $Profile = $Unity; WorkspaceRoot = $WorkspaceRoot; Cell = "$Profile-Encrypted-$Backend" }
+    & (Join-Path $PSScriptRoot '../ResourceUpdates/Invoke-ContentUpdates.ps1') @arguments
+    return
+}
 if ($Mode -cin @('RemoteClosure','OrdinaryDependency','BadDependency','MultiGroup') -and $DeliveryLayout -cne 'Mixed') { throw "$Mode requires -DeliveryLayout Mixed." }
 if ($Mode -cin @('SyncWait','GuardReview') -and $DeliveryLayout -cne 'Remote') { throw "$Mode requires -DeliveryLayout Remote." }
 if ($Mode -cin @('LocalNoHash','LocalNoHashCollision') -and $DeliveryLayout -cne 'Embedded') { throw "$Mode requires -DeliveryLayout Embedded." }

@@ -1,7 +1,7 @@
 {
     "name": "YLFramework.Resource.Encryption.Editor",
     "rootNamespace": "YLFramework.Resource.Encryption.Editor",
-    "references": ["YLFramework.Resource.Encryption", "YLFramework.Editor", "Unity.Addressables", "Unity.Addressables.Editor", "Unity.ResourceManager", "Unity.ScriptableBuildPipeline", "Unity.ScriptableBuildPipeline.Editor"],
+    "references": ["YLFramework.Resource.Encryption", "YLFramework.Runtime", "YLFramework.Editor", "Unity.Addressables", "Unity.Addressables.Editor", "Unity.ResourceManager", "Unity.ScriptableBuildPipeline", "Unity.ScriptableBuildPipeline.Editor"],
     "includePlatforms": ["Editor"],
     "overrideReferences": true,
     "precompiledReferences": ["Newtonsoft.Json.dll"],

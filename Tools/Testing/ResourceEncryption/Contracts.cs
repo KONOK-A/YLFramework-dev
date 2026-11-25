@@ -165,6 +165,7 @@ public static class YLResourceEncryptionContracts
             Check(keys.Opens == 1 && keys.Returns == 1, "dispose returns exactly one retained key lease");
             Throws<EncryptedBundleAuthenticationException>(() => Open(first.Path, first.Record, new Keys(("K1", key2))), "wrong K1 material");
             Throws<EncryptedBundleKeyUnavailableException>(() => Open(first.Path, first.Record, new Keys(("K2", key2))), "no alternative key is tried");
+            CheckStartupKeySnapshot(first.Path, first.Record, key1, key2, plain[0]);
             var wrongContext = Bind(release, "K1", "different-bundle", "a.bundle", plain);
             Throws<EncryptedBundleAuthenticationException>(() => Open(first.Path, Freeze(wrongContext, first.Path), keys), "different AAD despite correct ciphertext digest");
             EncryptedBundleBinding Rebind(string prefix, string id, EncryptedBundleDeliveryMode mode, string group, string key) =>
@@ -205,6 +206,26 @@ public static class YLResourceEncryptionContracts
             Array.Clear(key2, 0, key2.Length);
             File.Delete(testKey);
         }
+    }
+
+    private static void CheckStartupKeySnapshot(string path, EncryptedBundleRecord record, byte[] original, byte[] replacement, byte sentinel)
+    {
+        byte[] mutableKey = (byte[])original.Clone();
+        try
+        {
+            var applicationKeys = new Keys(("K1", mutableKey));
+            using var snapshot = new EncryptedBundleKeySnapshot();
+            Check(snapshot.Capture(applicationKeys, "K1"), "startup captured the requested key");
+            using (var validation = Open(path, record, snapshot))
+                Check(validation.ReadByte() == sentinel, "startup authenticates with the captured key");
+            Check(applicationKeys.Opens == 1 && applicationKeys.Returns == 1, "startup has already returned the application lease");
+            Buffer.BlockCopy(replacement, 0, mutableKey, 0, mutableKey.Length);
+            using var provider = Open(path, record, snapshot);
+            snapshot.Dispose();
+            Check(provider.ReadByte() == sentinel && applicationKeys.Opens == 1, "provider reads the authenticated startup key even after the application changes it");
+            Throws<ObjectDisposedException>(() => snapshot.OpenReadKey("K1"), "closing the session destroys its key snapshot");
+        }
+        finally { Array.Clear(mutableKey, 0, mutableKey.Length); }
     }
 
     private static async Task Cache(string root, EncryptedBundleDescription description, (string Path, EncryptedBundleRecord Record) first,
@@ -417,7 +438,7 @@ public static class YLResourceEncryptionContracts
             AuthenticatedBundleStream.Seal(source, destination, binding, lease);
         return (cipher, Freeze(binding, cipher));
     }
-    private static AuthenticatedBundleStream Open(string file, EncryptedBundleRecord record, Keys keys) =>
+    private static AuthenticatedBundleStream Open(string file, EncryptedBundleRecord record, IEncryptedBundleKeySource keys) =>
         AuthenticatedBundleStream.OpenVerified(OwnedWindowsFiles.OpenRead(file), record, keys, CancellationToken.None);
     private static void RejectJson(string json, Action<JObject> change, string name)
     {

@@ -22,7 +22,7 @@ using Object = UnityEngine.Object;
 namespace YLFramework.Resource.Encryption.Editor
 {
     /// <summary>Audits and publishes one immutable Windows x64 encrypted delivery.</summary>
-    public static class EncryptedBundleExporter
+    public static partial class EncryptedBundleExporter
     {
         private const string ReceiptName = "delivery.json";
         private const string StateName = "addressables_content_state.bin";
@@ -49,25 +49,15 @@ namespace YLFramework.Resource.Encryption.Editor
             BuildPlayerOptions player, string applicationNamespace, string privateRoot, string releaseRoot, IEncryptedBundleKeySource keys,
             bool allowLoopback)
         {
-            if (!settings || groups == null || groups.Count == 0 || groups.Count > 4096 || keys == null)
-                throw new ArgumentException("Select the settings, protected groups and authoring key source.");
-            if (_isBuilding)
-                throw new InvalidOperationException("Encrypted delivery does not allow nested Player builds.");
-            _isBuilding = true;
-            try
-            {
-                return BuildRelease(settings, groups.ToArray(), player, applicationNamespace, privateRoot, releaseRoot, keys, allowLoopback);
-            }
-            finally
-            {
-                _isBuilding = false;
-            }
+            return RunBuild(settings, groups, keys,
+                () => BuildRelease(settings, groups.ToArray(), player, applicationNamespace, privateRoot, releaseRoot, keys, allowLoopback));
         }
 
         private static EncryptedBundleDescription BuildRelease(AddressableAssetSettings settings, AddressableAssetGroup[] groups,
-            BuildPlayerOptions player, string application, string privateRoot, string releaseRoot, IEncryptedBundleKeySource keys, bool allowLoopback)
+            BuildPlayerOptions player, string application, string privateRoot, string releaseRoot, IEncryptedBundleKeySource keys,
+            bool allowLoopback, VersionedRelease versioned = null)
         {
-            var backend = ValidatePlayer(settings, player);
+            var backend = ValidatePlayer(settings, player, versioned != null);
             var nativePlugin = FreezeInstalledPlugin();
             player.scenes = (string[])player.scenes.Clone();
             privateRoot = LocalPath(privateRoot);
@@ -111,6 +101,7 @@ namespace YLFramework.Resource.Encryption.Editor
                 throw new InvalidDataException("Official content state must physically belong to the private root.");
             var plans = PlanGroups(settings, groups, paths, privateRoot, releaseRoot, stateFolder, buildPath, reserved,
                 application, releaseId, allowLoopback, out string prefix);
+            string officialCatalogRoot = versioned == null ? null : CheckOfficialCatalogRoot(settings, paths, privateRoot, stateFolder, plans, allowLoopback);
             string[] groupOrder = groups.Select(group => group.Guid).ToArray();
             var audit = new ProtectedAssetAudit(groups, player.scenes);
             foreach (string root in new[] { library, scratch })
@@ -129,6 +120,8 @@ namespace YLFramework.Resource.Encryption.Editor
                 paths.CreateFresh(root);
             foreach (string root in officialRoots.Append(stateFolder).Concat(plans.Values.Select(plan => plan.Root)))
                 paths.Prepare(root);
+            if (officialCatalogRoot != null)
+                paths.Prepare(officialCatalogRoot);
             string state = Path.GetFullPath(ContentUpdateScript.GetContentStateDataPath(false, settings));
             if (!SamePath(state, Path.Combine(stateFolder, StateName)))
                 throw new InvalidDataException("Official content state resolved to an unsupported path.");
@@ -148,6 +141,7 @@ namespace YLFramework.Resource.Encryption.Editor
                 builder.ReleaseId = releaseId;
                 builder.ReleasePrefix = prefix;
                 builder.Loopback = allowLoopback;
+                builder.Versioned = versioned != null;
                 builder.PlayerScenes = player.scenes;
                 var output = BuildPacked(settings, builder);
                 if (output == null || !string.IsNullOrEmpty(output.Error) || output.IsUpdateContentBuild ||
@@ -158,6 +152,21 @@ namespace YLFramework.Resource.Encryption.Editor
                 routesHash = builder.RoutesSha256;
                 string catalogPath = Path.Combine(buildPath, catalogName);
                 string settingsPath = Path.Combine(buildPath, SettingsName);
+                if (versioned != null)
+                {
+                    var official = ContentUpdateScript.LoadContentState(state);
+                    VerifyOfficialCatalog(settings, official, officialCatalogRoot, catalogPath, catalogName);
+                    string archiveRoot = Path.Combine(privateRoot, ".yl-state-archive");
+                    paths.CreateFresh(archiveRoot);
+                    string archivePath = Path.Combine(archiveRoot, StateName);
+                    using (var archive = OwnedWindowsFiles.CreateTemporaryPinned(archivePath))
+                        CopyVerified(ReadFile(state), archive);
+                    versioned.Baseline = YLFramework.Editor.Resource.ResourceContentUpdateAuthoring.PrepareBaseline(
+                        settings, settingsPath, catalogPath, archivePath);
+                    versioned.Metadata = new JObject { ["playerBuilds"] = 1, ["scenes"] = new JArray(player.scenes) };
+                    foreach (string archive in new[] { versioned.Baseline.ReceiptPath, versioned.Baseline.StartupSettingsPath, versioned.Baseline.CatalogPath })
+                        sources.Add(archive, ReadFile(archive));
+                }
                 using (var input = OwnedWindowsFiles.OpenRead(settingsPath))
                 {
                     sources.Add(settingsPath, new FrozenFile(settingsPath, input.Length, AuthenticatedBundleStream.Hash(input, default)));
@@ -166,7 +175,8 @@ namespace YLFramework.Resource.Encryption.Editor
                 }
                 foreach (string path in new[] { state, catalogPath, Path.Combine(buildPath, LocalLink) })
                     sources.Add(path, ReadFile(path));
-                foreach (string relative in new[] { SettingsName, catalogName, LocalLink })
+                streaming.Add("aa/" + SettingsName, sources[settingsPath]);
+                foreach (string relative in new[] { catalogName, LocalLink })
                     streaming.Add("aa/" + relative, sources[Path.Combine(buildPath, relative)]);
 
                 using (var input = OwnedWindowsFiles.OpenRead(layoutPath))
@@ -194,35 +204,62 @@ namespace YLFramework.Resource.Encryption.Editor
             paths.CreateFresh(rawPlayer);
             paths.CreateFresh(shippingLibrary);
             player.locationPathName = Path.Combine(rawPlayer, exe);
-            var report = BuildPlayer(player, shippingLibrary, streaming);
             string data = Path.GetFileNameWithoutExtension(exe) + "_Data";
-            string streamingRoot = Path.Combine(rawPlayer, data, "StreamingAssets");
-            audit.AuditPlayer(report, streamingRoot, streaming.ToDictionary(row => row.Key, row => row.Value.Sha256, StringComparer.Ordinal));
-            var playerFiles = FreezePlayer(report, rawPlayer, exe, data, backend, streaming, nativePlugin);
-
             string stage = Path.Combine(privateRoot, ".yl-release-" + Guid.NewGuid().ToString("N"));
             using var ownedStage = OwnedWindowsFiles.CreatePublicationDirectory(stage);
             using var candidate = new CandidateFiles(stage);
             string aa = "Player/" + data + "/StreamingAssets/aa/";
             var expected = new Dictionary<string, FrozenFile>(StringComparer.Ordinal);
-            foreach (var file in playerFiles)
-                expected.Add("Player/" + file.Key, candidate.Copy("Player/" + file.Key, file.Value));
-            expected.Add("ContentState/" + LayoutName, candidate.Copy("ContentState/" + LayoutName, sources[layoutPath]));
-            expected.Add("ContentState/" + StateName, candidate.Copy("ContentState/" + StateName, sources[state]));
-
             var uploads = new List<Upload>();
-            foreach (var bundle in bundles.Where(bundle => bundle.Plan.IsOrdinaryRemote))
-            {
-                expected.Add(bundle.Relative, candidate.Copy(bundle.Relative, bundle.File));
-                uploads.Add(new Upload(bundle.Relative, bundle.Url, OrdinaryCategory));
-            }
-            // Reserve every cipher and descriptor pathname before running application key callbacks.
             string descriptionPath = aa + EncryptedBundleDescription.FileName;
-            var descriptionOutput = candidate.Create(descriptionPath);
-            var rows = SealGroups(groupOrder, bundles, keys, candidate, aa, expected, uploads);
-            var description = new EncryptedBundleDescription(catalogName, streaming["aa/" + catalogName].Sha256,
-                streaming["aa/" + SettingsName].Sha256, routesHash, rows);
-            expected.Add(descriptionPath, WriteFile(descriptionOutput, description.Encode()));
+            EncryptedBundleDescription description = null;
+            if (versioned != null)
+            {
+                foreach (var file in streaming)
+                {
+                    string relative = aa + file.Key.Substring("aa/".Length);
+                    expected.Add(relative, candidate.Copy(relative, file.Value));
+                }
+                StageContent();
+                versioned.Result = DescribeContent(releaseRoot, description, aa + catalogName, descriptionPath,
+                    aa + SettingsName, "ContentState/" + StateName, "ContentState/" + LayoutName, bundles, aa, expected,
+                    Path.Combine(buildPath, catalogName), allowLoopback);
+                if (versioned.ConfigurePlayer != null)
+                {
+                    versioned.Result.VerifyStaged = () => candidate.Verify(expected);
+                    try
+                    {
+                        var (payload, signature) = versioned.ConfigurePlayer(versioned.Result);
+                        AddPlayerManifestFile("yl-content-manifest.json", payload, YLFramework.Resource.ResourceContentManifest.MaximumPayloadBytes);
+                        AddPlayerManifestFile("yl-content-manifest.sig", signature, YLFramework.Resource.ResourceContentManifest.MaximumSignatureEnvelopeBytes);
+                    }
+                    finally
+                    {
+                        versioned.Result.VerifyStaged = null;
+                    }
+                }
+            }
+            var report = BuildPlayer(player, shippingLibrary, streaming);
+            string streamingRoot = Path.Combine(rawPlayer, data, "StreamingAssets");
+            audit.AuditPlayer(report, streamingRoot, streaming.ToDictionary(row => row.Key, row => row.Value.Sha256, StringComparer.Ordinal));
+            var playerFiles = FreezePlayer(report, rawPlayer, exe, data, backend, streaming, nativePlugin);
+            foreach (var file in playerFiles)
+            {
+                string relative = "Player/" + file.Key;
+                if (expected.TryGetValue(relative, out var staged))
+                {
+                    if (staged.Bytes != file.Value.Bytes || staged.Sha256 != file.Value.Sha256)
+                        throw new InvalidDataException("The built Player asset differs from the sealed content: " + relative);
+                }
+                else
+                {
+                    expected.Add(relative, candidate.Copy(relative, file.Value));
+                }
+            }
+            if (versioned == null)
+                StageContent();
+            else
+                versioned.Result.PlayerReport = report;
 
             // No application callback may run after this point. Already-frozen hashes, not a new baseline, validate each input and output.
             foreach (var bundle in bundles)
@@ -232,7 +269,8 @@ namespace YLFramework.Resource.Encryption.Editor
             CheckLooseRoots(plans.Values, bundles);
             CheckUploadUrls(uploads);
 
-            string receipt = EncodeReceipt(application, releaseId, prefix, description, expected[descriptionPath].Sha256, expected, uploads);
+            string receipt = EncodeReceipt(application, releaseId, prefix, description, expected[descriptionPath].Sha256, expected, uploads,
+                versioned == null ? null : versioned.Metadata);
             expected.Add(ReceiptName, WriteFile(candidate.Create(ReceiptName), receipt));
             using (var auditFile = OwnedWindowsFiles.CreateTemporaryPinned(Path.Combine(privateRoot, "audit.json")))
             {
@@ -255,11 +293,50 @@ namespace YLFramework.Resource.Encryption.Editor
             candidate.Dispose();
             OwnedWindowsFiles.Publish(ownedStage, physicalRelease);
             return description;
+
+            void StageContent()
+            {
+                expected.Add("ContentState/" + LayoutName, candidate.Copy("ContentState/" + LayoutName, sources[layoutPath]));
+                expected.Add("ContentState/" + StateName, candidate.Copy("ContentState/" + StateName, sources[state]));
+                if (versioned != null)
+                {
+                    foreach (string archive in new[] { versioned.Baseline.ReceiptPath, versioned.Baseline.StartupSettingsPath, versioned.Baseline.CatalogPath })
+                    {
+                        string relative = "ContentState/" + Path.GetFileName(archive);
+                        expected.Add(relative, candidate.Copy(relative, sources[archive]));
+                    }
+                }
+                foreach (var bundle in bundles.Where(bundle => bundle.Plan.IsOrdinaryRemote))
+                {
+                    expected.Add(bundle.Relative, candidate.Copy(bundle.Relative, bundle.File));
+                    uploads.Add(new Upload(bundle.Relative, bundle.Url, OrdinaryCategory));
+                }
+                var descriptionOutput = candidate.Create(descriptionPath);
+                var rows = SealGroups(groupOrder, bundles, keys, candidate, aa, expected, uploads);
+                description = new EncryptedBundleDescription(catalogName, streaming["aa/" + catalogName].Sha256,
+                    streaming["aa/" + SettingsName].Sha256, routesHash, rows);
+                expected.Add(descriptionPath, WriteFile(descriptionOutput, description.Encode()));
+            }
+
+            void AddPlayerManifestFile(string name, byte[] bytes, int maximum)
+            {
+                if (bytes == null || bytes.Length == 0 || bytes.Length > maximum)
+                    throw new InvalidDataException("The signed installation manifest file has an unsupported length: " + name);
+                string path = Path.Combine(privateRoot, name);
+                using (var output = OwnedWindowsFiles.CreateTemporaryPinned(path))
+                {
+                    output.Write(bytes, 0, bytes.Length);
+                    output.Flush(true);
+                    var file = new FrozenFile(path, bytes.Length, AuthenticatedBundleStream.Hash(output, default));
+                    streaming.Add("aa/" + name, file);
+                    sources.Add(path, file);
+                }
+            }
         }
 
         private static Dictionary<string, GroupPlan> PlanGroups(AddressableAssetSettings settings, AddressableAssetGroup[] groups,
             BuildOutputPaths paths, string privateRoot, string releaseRoot, string stateFolder, string buildPath, string[] reserved,
-            string application, string releaseId, bool allowLoopback, out string releasePrefix)
+            string application, string releaseId, bool allowLoopback, out string releasePrefix, bool privateLocal = false)
         {
             if (groups.Any(group => !group || group.Settings != settings || !settings.groups.Contains(group) || !group.HasSchema<EncryptedBundleGroupSchema>()) ||
                 groups.Distinct().Count() != groups.Length || groups.Contains(settings.DefaultGroup))
@@ -321,7 +398,7 @@ namespace YLFramework.Resource.Encryption.Editor
                     if (schema.AssetBundleProviderType.Value != typeof(AssetBundleProvider))
                         throw new InvalidDataException("An ordinary group must use the stock Bundle provider: " + group.Name);
                     local = BelowOrEqual(root, buildPath) && BelowOrEqual(paths.Identity(root), paths.Identity(buildPath));
-                    if (paths.Overlap(root, privateRoot) || paths.Overlap(root, releaseRoot) ||
+                    if (((!local || !privateLocal) && paths.Overlap(root, privateRoot)) || paths.Overlap(root, releaseRoot) ||
                         (!local && reserved.Any(forbidden => paths.Overlap(root, forbidden))))
                         throw new InvalidDataException("Ordinary Bundle build path overlaps protected, Player or non-owned output: " + group.Name);
                     if (local)
@@ -360,7 +437,7 @@ namespace YLFramework.Resource.Encryption.Editor
             return plans;
         }
 
-        private static ScriptingImplementation ValidatePlayer(AddressableAssetSettings settings, BuildPlayerOptions player)
+        private static ScriptingImplementation ValidatePlayer(AddressableAssetSettings settings, BuildPlayerOptions player, bool versioned)
         {
             var serialized = new SerializedObject(settings);
             var backend = PlayerSettings.GetScriptingBackend(NamedBuildTarget.Standalone);
@@ -370,7 +447,7 @@ namespace YLFramework.Resource.Encryption.Editor
 #endif
             const BuildOptions Forbidden = BuildOptions.Development | BuildOptions.AutoRunPlayer | BuildOptions.BuildScriptsOnly |
                 BuildOptions.AcceptExternalModificationsToPlayer | BuildOptions.AllowDebugging;
-            if (AddressableAssetSettingsDefaultObject.Settings != settings || settings.BuildRemoteCatalog || !settings.DisableCatalogUpdateOnStartup ||
+            if (AddressableAssetSettingsDefaultObject.Settings != settings || settings.BuildRemoteCatalog != versioned || !settings.DisableCatalogUpdateOnStartup ||
                 settings.InitializationObjects.Count != 0 || serialized.FindProperty("m_ExtractTypeTreeData")?.boolValue == true ||
                 serialized.FindProperty("m_BundleLocalCatalog")?.boolValue == true ||
                 settings.BuildAddressablesWithPlayerBuild != AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer ||
@@ -378,14 +455,14 @@ namespace YLFramework.Resource.Encryption.Editor
                 (backend != ScriptingImplementation.IL2CPP && backend != ScriptingImplementation.Mono2x) || (player.options & Forbidden) != 0 ||
                 player.scenes == null || player.scenes.Length == 0 || player.scenes.Distinct(StringComparer.OrdinalIgnoreCase).Count() != player.scenes.Length ||
                 player.scenes.Any(scene => string.IsNullOrEmpty(scene) || AssetDatabase.GetMainAssetTypeAtPath(scene) != typeof(SceneAsset)))
-                throw new InvalidDataException("Encrypted release requires a fixed local Catalog and a Windows x64 Release Player without startup hooks or Player content rebuild.");
+                throw new InvalidDataException("Encrypted release requires the selected Catalog build mode and a Windows x64 Release Player without startup hooks or Player content rebuild.");
             if (Enumerable.Range(0, UnityEngine.SceneManagement.SceneManager.sceneCount)
                 .Any(index => UnityEngine.SceneManagement.SceneManager.GetSceneAt(index).isDirty))
                 throw new InvalidOperationException("Save the selected build scenes before the encrypted build.");
             return backend;
         }
 
-        private static AddressablesPlayerBuildResult BuildPacked(AddressableAssetSettings settings, EncryptedPackedBuilder builder)
+        private static AddressablesPlayerBuildResult BuildPacked(AddressableAssetSettings settings, EncryptedPackedBuilder builder, string previousState = null)
         {
             bool oldLayout = ProjectConfigData.GenerateBuildLayout;
             var oldFormat = ProjectConfigData.BuildLayoutReportFileFormat;
@@ -393,7 +470,9 @@ namespace YLFramework.Resource.Encryption.Editor
             {
                 ProjectConfigData.GenerateBuildLayout = true;
                 ProjectConfigData.BuildLayoutReportFileFormat = ProjectConfigData.ReportFileFormat.JSON;
-                return builder.BuildData<AddressablesPlayerBuildResult>(new AddressablesDataBuilderInput(settings));
+                return previousState == null
+                    ? builder.BuildData<AddressablesPlayerBuildResult>(new AddressablesDataBuilderInput(settings))
+                    : BuildOfficialUpdate(settings, builder, previousState);
             }
             finally
             {
@@ -404,7 +483,8 @@ namespace YLFramework.Resource.Encryption.Editor
 
         private static List<BundleSource> FreezeBundles(AddressablesPlayerBuildResult output, EncryptedPackedBuilder builder,
             Dictionary<string, GroupPlan> plans, string[] scenes, string buildPath, string catalogPath,
-            Dictionary<string, FrozenFile> streaming, Dictionary<string, FrozenFile> sources, bool loopback)
+            Dictionary<string, FrozenFile> streaming, Dictionary<string, FrozenFile> sources, bool loopback,
+            IReadOnlyDictionary<string, (ResourceContentArtifact Artifact, FrozenFile File)> retainedOrdinary = null)
         {
             var actual = builder.VerifySerializedCatalog(catalogPath, scenes);
             var bundles = new List<BundleSource>(output.AssetBundleBuildResults.Count);
@@ -419,9 +499,29 @@ namespace YLFramework.Resource.Encryption.Editor
                 if (ProtectedAssetAudit.Relative(plan.Root, path) != packed.FileName || packed.SourceId != plan.LoadPrefix +
                     (plan.Mode.HasValue ? plan.Guid + "/" : "") + packed.FileName)
                     throw new InvalidDataException("Actual BuildResult path or serialized route differs from the frozen group: " + packed.FileName);
+                if (packed.RetainedOrdinaryRoute != null)
+                {
+                    if (!plan.IsOrdinaryRemote || retainedOrdinary == null ||
+                        !retainedOrdinary.TryGetValue(packed.RetainedOrdinaryRoute, out var retained))
+                        throw new InvalidDataException("The retained ordinary Bundle is missing its audited A artifact: " + packed.RetainedOrdinaryRoute);
+                    string stagedPath = null;
+                    if (File.Exists(path))
+                    {
+                        var staged = ReadFile(path);
+                        if (staged.Bytes != retained.File.Bytes || staged.Sha256 != retained.File.Sha256)
+                            throw new InvalidDataException("Ordinary Bundle build output differs at an immutable A route: " + packed.RetainedOrdinaryRoute);
+                        sources.Add(path, staged);
+                        stagedPath = path;
+                    }
+                    sources.Add(retained.File.Path, retained.File);
+                    bundles.Add(new BundleSource(plan, retained.File, null, null, null, packed, retained.Artifact, stagedPath));
+                    continue;
+                }
                 var file = ReadFile(path);
                 sources.Add(path, file);
-                var options = (AssetBundleRequestOptions)actual[packed.SourceId].Data;
+                if (packed.Retained != null && (file.Bytes != packed.Retained.Binding.PlainLength || file.Sha256 != packed.Retained.Binding.PlainSha256))
+                    throw new InvalidDataException("Official update retained a protected route whose original plaintext digest differs from the audited SBP bytes: " + packed.SourceId);
+                var options = (AssetBundleRequestOptions)actual[packed.DeliverySourceId].Data;
                 EncryptedBundleBinding binding = null;
                 string relative = null;
                 string url = null;
@@ -451,7 +551,7 @@ namespace YLFramework.Resource.Encryption.Editor
                     if (options.BundleSize != file.Bytes)
                         throw new InvalidDataException("Ordinary remote Catalog Bundle byte count differs from its physical source: " + url);
                 }
-                bundles.Add(new BundleSource(plan, file, binding, relative, url));
+                bundles.Add(new BundleSource(plan, file, binding, relative, url, packed));
             }
             if (seen.Count != builder.Bundles.Count)
                 throw new InvalidDataException("Official physical and serialized Bundle inventories differ.");
@@ -641,7 +741,8 @@ namespace YLFramework.Resource.Encryption.Editor
         {
             foreach (var group in plans.Where(plan => !plan.IsOrdinaryLocal).GroupBy(plan => plan.Root, StringComparer.OrdinalIgnoreCase))
             {
-                var expected = new HashSet<string>(bundles.Where(bundle => SamePath(bundle.Plan.Root, group.Key)).Select(bundle => bundle.File.Path),
+                var expected = new HashSet<string>(bundles.Where(bundle => bundle.StagedPath != null && SamePath(bundle.Plan.Root, group.Key))
+                    .Select(bundle => bundle.StagedPath),
                     StringComparer.Ordinal);
                 if (ProtectedAssetAudit.EnumerateOwnedFiles(group.Key).Any(file => !expected.Remove(file)) || expected.Count != 0)
                     throw new InvalidDataException("Loose Bundle roots contain missing or unowned output: " + group.Key);
@@ -667,7 +768,9 @@ namespace YLFramework.Resource.Encryption.Editor
         }
 
         private static string EncodeReceipt(string application, string releaseId, string releasePrefix, EncryptedBundleDescription description,
-            string descriptionHash, Dictionary<string, FrozenFile> files, List<Upload> uploads) => new JObject
+            string descriptionHash, Dictionary<string, FrozenFile> files, List<Upload> uploads, JObject versioned = null)
+        {
+            var receipt = new JObject
             {
                 ["version"] = EncryptedBundleBinding.Version,
                 ["application"] = application,
@@ -687,7 +790,11 @@ namespace YLFramework.Resource.Encryption.Editor
                     json.Add("category", row.Category);
                     return json;
                 }))
-            }.ToString(Formatting.Indented);
+            };
+            if (versioned != null)
+                receipt.Add("contentUpdate", versioned);
+            return receipt.ToString(Formatting.Indented);
+        }
 
         private static JObject FileRow(string relative, FrozenFile file) => new JObject
         {
@@ -700,11 +807,13 @@ namespace YLFramework.Resource.Encryption.Editor
         {
             private readonly string _root;
             private readonly Dictionary<string, FileStream> _files = new Dictionary<string, FileStream>(StringComparer.Ordinal);
-            private readonly HashSet<string> _dirs = new HashSet<string>(new[] { "Player", "Upload", "ContentState" }, StringComparer.Ordinal);
+            private readonly HashSet<string> _dirs = new HashSet<string>(new[] { "Upload", "ContentState" }, StringComparer.Ordinal);
 
-            internal CandidateFiles(string root)
+            internal CandidateFiles(string root, bool includePlayer = true)
             {
                 _root = root;
+                if (includePlayer)
+                    _dirs.Add("Player");
                 foreach (string dir in _dirs)
                     Directory.CreateDirectory(Path.Combine(_root, dir));
             }
@@ -904,14 +1013,22 @@ namespace YLFramework.Resource.Encryption.Editor
             internal readonly EncryptedBundleBinding Binding;
             internal readonly string Relative;
             internal readonly string Url;
+            internal readonly ResourceContentArtifact RetainedOrdinary;
+            internal readonly string StagedPath;
 
-            internal BundleSource(GroupPlan plan, FrozenFile file, EncryptedBundleBinding binding, string relative, string url)
+            internal readonly EncryptedPackedBuilder.PackedBundle Packed;
+
+            internal BundleSource(GroupPlan plan, FrozenFile file, EncryptedBundleBinding binding, string relative, string url,
+                EncryptedPackedBuilder.PackedBundle packed, ResourceContentArtifact retainedOrdinary = null, string stagedPath = null)
             {
                 Plan = plan;
                 File = file;
                 Binding = binding;
                 Relative = relative;
                 Url = url;
+                Packed = packed;
+                RetainedOrdinary = retainedOrdinary;
+                StagedPath = retainedOrdinary == null ? file.Path : stagedPath;
             }
         }
 

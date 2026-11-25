@@ -19,12 +19,29 @@ param(
     [string] $ReleaseManifest,
     [string] $SourceCommit,
     [switch] $KeepArtifacts,
+    [switch] $ContentUpdate,
     [ValidateSet('IL2CPP','Mono', IgnoreCase = $false)][string] $Backend = 'IL2CPP'
 )
 
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'Resource Addressables Player acceptance requires Windows.' }
+if ($ContentUpdate) {
+    if ($BuildFlavor -cne 'Release' -or $ScopeCloseBenchmark -or $HeldDownload -or $StockSizeControl -or
+        $VerifiedSizeSnapshot -or $EncryptionPackReceipt -or $ReleaseManifest -or $SourceCommit -or
+        $PSBoundParameters.ContainsKey('EncryptionCase') -or $PSBoundParameters.ContainsKey('DeliveryLayout')) {
+        throw '-ContentUpdate is a separate Win64 Release workload using the current source packages.'
+    }
+    if ($EncryptedRemoteGroup) {
+        $arguments = @{ Profile = $Profile; Unity = $Unity; WorkspaceRoot = $WorkspaceRoot; Backend = $Backend; ContentUpdate = $true }
+        & (Join-Path $PSScriptRoot 'ResourceEncryption/Invoke-FrozenDelivery.ps1') @arguments
+    } else {
+        if ($Backend -cne 'IL2CPP') { throw 'The plain content update cell uses IL2CPP.' }
+        $arguments = @{ $Profile = $Unity; WorkspaceRoot = $WorkspaceRoot; Cell = "$Profile-Plain-$Backend" }
+        & (Join-Path $PSScriptRoot 'ResourceUpdates/Invoke-ContentUpdates.ps1') @arguments
+    }
+    return
+}
 if ($ScopeCloseBenchmark -and ($BuildFlavor -cne 'Release' -or -not $Graphics)) {
     throw 'Scope close measurement requires -BuildFlavor Release -Graphics.'
 }

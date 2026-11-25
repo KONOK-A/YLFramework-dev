@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace YLFramework.Resource.Encryption
@@ -70,6 +71,72 @@ namespace YLFramework.Resource.Encryption
             }
             catch (Exception) { throw new EncryptedBundleKeySourceException("Encrypted Bundle key return callback failed after clearing the lease."); }
         }
+    }
+
+    // 冷启动时留存应用的钥快照。每个认证流持有独立副本。
+    internal sealed class EncryptedBundleKeySnapshot : IEncryptedBundleKeySource, IDisposable
+    {
+        private readonly object _gate = new object();
+        private Dictionary<string, EncryptedBundleKeyLease> _keys = new Dictionary<string, EncryptedBundleKeyLease>(StringComparer.Ordinal);
+
+        internal bool Capture(IEncryptedBundleKeySource source, string keyId, Action onRent = null, Action onReturn = null)
+        {
+            lock (_gate)
+            {
+                CheckOpen();
+                if (_keys.ContainsKey(keyId))
+                    return true;
+                var lease = EncryptedBundleKeyLease.Rent(source, keyId);
+                if (lease == null)
+                    return false;
+                try
+                {
+                    onRent?.Invoke();
+                    _keys.Add(keyId, Copy(lease));
+                    return true;
+                }
+                finally
+                {
+                    try
+                    {
+                        lease.Dispose();
+                    }
+                    finally
+                    {
+                        onReturn?.Invoke();
+                    }
+                }
+            }
+        }
+
+        public EncryptedBundleKeyLease OpenReadKey(string keyId)
+        {
+            lock (_gate)
+            {
+                CheckOpen();
+                return _keys.TryGetValue(keyId, out var lease) ? Copy(lease) : null;
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                if (_keys == null)
+                    return;
+                foreach (var lease in _keys.Values)
+                    lease.Dispose();
+                _keys = null;
+            }
+        }
+
+        private void CheckOpen()
+        {
+            if (_keys == null)
+                throw new ObjectDisposedException(nameof(EncryptedBundleKeySnapshot));
+        }
+
+        private static EncryptedBundleKeyLease Copy(EncryptedBundleKeyLease lease) => lease.Use(key => new EncryptedBundleKeyLease(key));
     }
 
     internal sealed class EncryptedBundleKeySourceException : IOException

@@ -1813,7 +1813,7 @@
       "graphics": true,
       "sortingLayer": "",
       "excludedCategories": [],
-      "description": "Official Addressables download, catalog checking and startup-only update guard; private transactions and encryption are retired.",
+      "description": "Official Addressables startup policy and signed resource manifest, Catalog graph and atomic content transaction contracts.",
       "suites": ["Special"],
       "sourceEnvironment": [],
       "outputEnvironment": ["YL_TEST_OUTPUT_ROOT"],
@@ -1824,7 +1824,10 @@
       ],
       "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared"],
       "editTests": [
-        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesUpdateTests.cs"
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesUpdateTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceContentCatalogTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceContentManifestTests.cs",
+        "Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceContentStoreTests.cs"
       ],
       "playTests": [],
       "assemblyMetadata": [

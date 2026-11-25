@@ -204,7 +204,8 @@ foreach ($field in $fields.Values) {
 }
 
 Check ($null -ne (Get-Command Assert-YLFrozenCommittedFiles -ErrorAction SilentlyContinue)) 'Fixed input admission does not verify actual committed Git objects.'
-$tracked = 'Tools/Testing/TestSuites.json'
+# A fixed-commit positive case needs actual committed bytes even during local testing-tool changes.
+$tracked = 'Tools/Testing/Common/FrozenEncryptionInputs.ps1'
 $lfsPath = 'PackageSources/com.kano.ylframework.excel/Editor/Plugins/MiniExcel.dll'
 $gitFiles = @($tracked,$lfsPath) | ForEach-Object { @{ path = $_; sha256 = Get-YLFrozenFileSha256 (Join-Path $repo $_) } }
 Assert-YLFrozenCommittedFiles -Repository $repo -SourceCommit $head -Files $gitFiles -RequireLfs $lfsPath

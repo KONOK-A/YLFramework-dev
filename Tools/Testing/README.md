@@ -188,6 +188,20 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/ResourceEncryption/M
 
 本轮摘要为 `<WorkspaceRoot>/Results/ResourceAAIL2CPP/<run-id>/execution.json`，关联 `input-identity.json`、`build.json`、`player-summary.json`、各轮退出回执与日志。通过要求输入和工具指纹、实际内容与二进制、所有报告及普通进程退出均匹配，不能仅据构建完成或 NoUnity 自检判断。需要事后重跑同一个 Player 或按原路径核对 Bundle 时，在上述命令加 `-KeepArtifacts`；只比较存入结果目录的测量值时不需要。
 
+### Resource 签名内容更新与离线回滚
+
+运行 [内容事务验收](ResourceUpdates/Invoke-ContentUpdates.ps1)，依次传入实际安装的 Unity 2022 与 Unity 6。完整矩阵包含两格普通 IL2CPP 和四格加密 Mono／IL2CPP，均为 Win64 Release。IL2CPP 使用 Medium 裁剪。首次启动和每次重启实际读取新旧地址及其跨 Bundle 依赖。
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/ResourceUpdates/Invoke-ContentUpdates.ps1 -WorkspaceRoot 'G:/Unity/Tests' -Unity2022 $unity2022 -Unity6 $unity6
+```
+
+完整运行先封存六格 A，再生成和构建 B、C 的章节与替换素材。每格只构建一次 Release Player。B 和 C 均使用 A 封存的官方内容状态。同格复用只读的 A 安装、受信公钥和应用数据，从 A 10 激活 B 11，离线回滚 A 并验证旧公告重放，再用 B 的相同制品签发 13。随后激活独立构建的 C 14，确认清理移除了实际下载的孤儿文件，同时保留 B 的文件，最后断网回滚 B 并读取必需与可选章节及其依赖，最高序号仍为 14。
+
+控制器直接停用本地发布端点。每格分别验证可选章节冷读失败和准确的下载大小、联网按需准备时获取完整签名闭包、离线重启后读取真实素材。加密格还核对准备期间没有取钥或挂载 Bundle、A 源站的普通 Bundle 复用，以及两把内容钥的切换。进程强退检查覆盖部分接收的制品、原子提交前残留的临时记录及其显式清理、提交后恢复。独立测试数据目录验证已提交记录丢失时拒绝启动。普通格还从 A 读取 Scene 和 SpriteAtlas，Unity 6 普通格核对实际经过 Addressables 裁剪的 Bundle。
+
+回执位于 `<WorkspaceRoot>/Results/ResourceUpdates/<run-id>/summary.json`。各格保存 `input-identity.json`、A/B/C 构建回执、A 安装树的逐文件长度和 SHA-256，以及 `runs.json` 和对应 Player 日志。汇总区分前置不足、失败和通过，并标出是否覆盖全部六格。需要诊断单格时，使用原 [Player runner](Invoke-YLResourceAddressablesPlayer.ps1) 的 `-ContentUpdate`，配合 `-Profile` 和 `-Unity`。加密单格再加 `-EncryptedRemoteGroup -Backend Mono` 或 `-EncryptedRemoteGroup -Backend IL2CPP`。
+
 ### Action 原生画面
 
 先在未打开的工具自有宿主中运行 `Special/Action`，准备正式输入、当前测试程序集与 `Assets/YLTestingProfile/Empty.unity`。随后显式打开该宿主，使用只写结果、不调用 Exit/Quit 的入口；不使用 `-batchmode`、`-quit`、`-runTests` 或 `-executeMethod YLTestEntry.Execute`：

@@ -15,7 +15,7 @@ using UnityEngine.ResourceManagement.ResourceProviders;
 namespace YLFramework.Resource.Encryption
 {
     /// <summary>Explicit application startup gate for one immutable content version and its Addressables catalog.</summary>
-    public sealed class EncryptedDeliverySession
+    public sealed class EncryptedDeliverySession : IEncryptedBundleSession
     {
         private static bool _attempted;
         private readonly Dictionary<string, EncryptedBundleRecord> _transfers;
@@ -272,6 +272,8 @@ namespace YLFramework.Resource.Encryption
             return text.ReadToEnd();
         }
 
+        void IEncryptedBundleSession.CheckUnchanged() => CheckUnchanged();
+
         internal void CheckUnchanged()
         {
             if (Environment.CurrentManagedThreadId != _thread || _closing != null || Addressables.InternalIdTransformFunc != _transform ||
@@ -283,6 +285,8 @@ namespace YLFramework.Resource.Encryption
         private string ResolveSourceId(string source) => source.StartsWith(EncryptedBundleBinding.EmbeddedPrefix, StringComparison.Ordinal)
             ? _versionContentRoot.Replace('\\', '/') + source.Substring(FrozenAddressablesRoutes.RuntimeToken.Length) : source;
 
+        EncryptedBundleRecord IEncryptedBundleSession.ResolveTransfer(IResourceLocation location) => ResolveTransfer(location);
+
         internal EncryptedBundleRecord ResolveTransfer(IResourceLocation location)
         {
             if (location.ProviderId != _providerId || !_transfers.TryGetValue(ResolveSourceId(location.InternalId.Replace('\\', '/')), out var record) ||
@@ -291,6 +295,8 @@ namespace YLFramework.Resource.Encryption
                 throw new InvalidDataException("Unverified protected transfer route.");
             return record;
         }
+
+        EncryptedBundleRecord IEncryptedBundleSession.ResolveMount(IResourceLocation location) => ResolveMount(location);
 
         internal EncryptedBundleRecord ResolveMount(IResourceLocation location) => location.ProviderId == _providerId &&
             _mounts.TryGetValue(location.InternalId, out var record) ? record : throw new InvalidDataException("Unverified protected mount route.");
@@ -309,6 +315,9 @@ namespace YLFramework.Resource.Encryption
         private string EmbeddedPath(EncryptedBundleRecord record) => Path.Combine(_versionContentRoot,
             EncryptedBundleBinding.EmbeddedFolder, record.Binding.GroupGuid, record.Binding.RelativePath);
 
+        Task IEncryptedBundleSession.EnsureCiphertextAsync(EncryptedBundleRecord record, Action<EncryptedBundleCache.TransferProgress> progress)
+            => EnsureCiphertextAsync(record, progress);
+
         internal Task EnsureCiphertextAsync(EncryptedBundleRecord record, Action<EncryptedBundleCache.TransferProgress> progress)
         {
             if (record.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps)
@@ -321,7 +330,11 @@ namespace YLFramework.Resource.Encryption
             });
         }
 
-        internal Task<AuthenticatedBundleStream> OpenBundleAsync(EncryptedBundleRecord record, Action<EncryptedBundleCache.TransferProgress> progress)
+        Task<AuthenticatedBundleStream> IEncryptedBundleSession.OpenBundleAsync(EncryptedBundleRecord record,
+            Action<EncryptedBundleCache.TransferProgress> progress) => OpenBundleAsync(record, progress);
+
+        internal Task<AuthenticatedBundleStream> OpenBundleAsync(EncryptedBundleRecord record,
+            Action<EncryptedBundleCache.TransferProgress> progress)
         {
             if (record.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps)
                 return RequireRemote().OpenAuthenticatedAsync(record, Keys, reportProgress: progress);

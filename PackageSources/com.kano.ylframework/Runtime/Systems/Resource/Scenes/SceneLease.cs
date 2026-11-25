@@ -383,11 +383,12 @@ namespace YLFramework.Resource
                 var location = locations.Result[0];
                 // Packed catalogs identify the bundled asset provider, not ISceneProvider. The latter is
                 // selected separately by ProvideScene; Editor asset-database locations use SceneProvider.
-                bool builtInLocation = location != null &&
+                bool officialLocation = location != null &&
                     (location.ProviderId == typeof(SceneProvider).FullName ||
+                     System.UsesSignedContent && ResourceContentCatalog.IsBuiltInScene(location) ||
                      Addressables.ResourceManager.ResourceProviders.Any(provider =>
                          provider.ProviderId == location.ProviderId && provider.GetType() == typeof(BundledAssetProvider)));
-                if (!builtInLocation)
+                if (!officialLocation)
                 {
                     throw Error(ResourceError.Unsupported, "The scene requires official default scene/bundled asset data providers.");
                 }
