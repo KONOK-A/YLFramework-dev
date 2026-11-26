@@ -15,6 +15,7 @@ using YLFramework.Integrations.Excel.Editor;
 
 namespace YLFramework.Domain.Excel.Tests
 {
+    [Category("YL.Module.ExcelGameplay")]
     public class EquipmentExcelTests
     {
         public sealed class ScriptForExcel : IEquipment

@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'PackageCatalogFixtures.ps1')
 $sandbox = Join-Path (Get-YLTestPath $TemporaryRoot) ('yl-integration-entry-' + [Guid]::NewGuid().ToString('N'))
 $repository = Join-Path $sandbox 'Repository'; $null = [IO.Directory]::CreateDirectory($repository)
-$workspace = Initialize-YLTestWorkspace -WorkspaceRoot (Join-Path $sandbox 'Workspace') -Repository $repository
+$workspace = Initialize-YLTestWorkspace -WorkspaceRoot (Join-Path $sandbox 'Tests') -Repository $repository
 $hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key Entry
 $result = New-YLTestDirectory -Workspace $workspace -Kind Result -Key Entry
 $cache = New-YLTestDirectory -Workspace $workspace -Kind Cache -Key Entry
@@ -310,6 +310,16 @@ namespace YLFramework.Testing
     foreach ($entrySource in @($entryPath, $entryPath.Replace('\', '/'))) {
         $entryAssembly.sourceFiles = @($entrySource)
         $null = Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly)), [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)); $checks++
+    }
+    $packageTest = Join-Path $fileRegistered[0].resolvedPath 'Tests/GraphFixture.cs'
+    $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($packageTest))
+    [IO.File]::WriteAllText($packageTest, '// This source must never enter the consumer graph.')
+    try {
+        $entryAssembly.sourceFiles = @($packageTest)
+        Reject { Boundary ValidateGraph @((Request), [UnityEditor.Compilation.Assembly[]]@(@(FixtureGraph Editor) + @($entryAssembly)), [UnityEditor.Compilation.Assembly[]]@(FixtureGraph Player)) } 'Absolute product test source inside its registered package'
+    } finally {
+        [IO.File]::Delete($packageTest)
+        [IO.Directory]::Delete([IO.Path]::GetDirectoryName($packageTest))
     }
     $entryAssembly.sourceFiles = @($entryRelative)
     $officialRoot = Join-Path $hostRecord.path 'Library/PackageCache/com.unity.localization@fixture'

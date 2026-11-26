@@ -33,11 +33,12 @@ if ($ContentUpdate) {
         throw '-ContentUpdate is a separate Win64 Release workload using the current source packages.'
     }
     if ($EncryptedRemoteGroup) {
-        $arguments = @{ Profile = $Profile; Unity = $Unity; WorkspaceRoot = $WorkspaceRoot; Backend = $Backend; ContentUpdate = $true }
+        $arguments = @{ Profile = $Profile; Unity = $Unity; WorkspaceRoot = $WorkspaceRoot; Backend = $Backend
+            ContentUpdate = $true; KeepArtifacts = $KeepArtifacts }
         & (Join-Path $PSScriptRoot 'ResourceEncryption/Invoke-FrozenDelivery.ps1') @arguments
     } else {
         if ($Backend -cne 'IL2CPP') { throw 'The plain content update cell uses IL2CPP.' }
-        $arguments = @{ $Profile = $Unity; WorkspaceRoot = $WorkspaceRoot; Cell = "$Profile-Plain-$Backend" }
+        $arguments = @{ $Profile = $Unity; WorkspaceRoot = $WorkspaceRoot; Cell = "$Profile-Plain-$Backend"; KeepArtifacts = $KeepArtifacts }
         & (Join-Path $PSScriptRoot 'ResourceUpdates/Invoke-ContentUpdates.ps1') @arguments
     }
     return

@@ -24,7 +24,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistr
 
 入口要求 Windows PowerShell Core `7.6+`，将当前 `PackageSources` 复制到自有临时夹具，检查白名单、必需文档、依赖、元数据、GUID 与负载。它会创建工具自己的临时目录，不覆盖给定父目录的其他内容。
 
-显式提供 `-NodeRoot` 时才额外执行固定版本的真实 npm pack；未提供时该分支不会运行，不能把脚本完成称作真实 npm 打包或 UPM 安装通过。较小的 [Test-YLUpmPackages.ps1](../Testing/Tests/Test-YLUpmPackages.ps1) 只检查基础文档/GUID，不替代完整打包合同，也不在当前 CI 中。
+本地可用 `-NodeRoot` 为工作区夹具额外运行固定版本的真实 npm pack。CI 的包与资源迁移组运行夹具合同，也运行 [Test-YLUpmPackages.ps1](../Testing/Tests/Test-YLUpmPackages.ps1)，检查来源包的文档、元数据、资产 GUID 和样例布局。CI 在固定提交候选任务中执行真实 npm pack。
 
 ## 构建固定提交候选
 
@@ -39,7 +39,7 @@ $packageWorkspace = $env:YL_PACKAGE_WORKSPACE
 pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Packaging/Build-YLRegistryPackages.ps1 -Repository $repository -SourceCommit $commit -OutputRoot $packageWorkspace
 ```
 
-源提交须为真实完整 SHA，已有未知目录不会被领养。工具在独立 checkout 中取得该提交并物化 LFS，以隔离 npm 配置/cache 执行两次 `npm pack --ignore-scripts --offline`；README 和 `files` 的未提交修改不会进入候选。
+源提交须为真实完整 SHA，已有未知目录不会被领养。工具在独立 checkout 中取得该提交并物化 LFS，以隔离的 npm 配置和缓存各打包两次。两次均使用 `npm pack --ignore-scripts --offline`，核对来源包的内容摘要及 npm 报告的 SHA-512 integrity，并验证打包前后来源文件的原始字节保持一致。
 
 输出 `artifacts/` 包含各包 `<包ID>-<manifest版本>.tgz` 和 `release-manifest.json`。同批版本和自有依赖精确一致，回执记录：
 

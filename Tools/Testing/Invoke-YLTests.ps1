@@ -166,8 +166,8 @@ function Get-OfflineSelection([string] $Executable, [object] $InputIdentity) {
 }
 
 try {
-    if ($PSBoundParameters.ContainsKey('DOTweenArchive') -and ($Module -cne 'DOTween' -or $Suite -cne 'Daily' -or $Action -cnotin @('Run', 'Discover'))) {
-        throw 'DOTweenArchive is accepted only by the explicit Daily DOTween native module.'
+    if ($PSBoundParameters.ContainsKey('DOTweenArchive') -and ($Module -cne 'DOTween' -or $Suite -cne 'Special' -or $Action -cnotin @('Run', 'Discover'))) {
+        throw 'DOTweenArchive is accepted only by the explicit Special DOTween native module.'
     }
     $configuration = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'TestSuites.json')) | ConvertFrom-Json -DateKind String
     if ($configuration.schemaVersion -ne 1) { throw 'Unsupported suite definition schema.' }
@@ -212,10 +212,18 @@ try {
                 $definition.assemblies = @($definition.nativeAssemblies)
             }
             if ($Suite -ceq 'Special' -and -not $dotnetProfile) {
-                if ([string]::IsNullOrWhiteSpace($definition.specialCategory)) { throw 'No explicit native special category is defined.' }
-                $definition.category = $definition.specialCategory
-                $definition.assemblies = @()
-                $definition.excludedCategories = @()
+                if ('specialCategory' -cin $definition.PSObject.Properties.Name -and -not [string]::IsNullOrWhiteSpace($definition.specialCategory)) {
+                    $definition.category = $definition.specialCategory
+                    $definition.assemblies = @()
+                    $definition.excludedCategories = @()
+                } else {
+                    $assemblies = @($definition.assemblies)
+                    $emptyCategory = [string]::IsNullOrWhiteSpace($definition.category)
+                    if (@($definition.suites).Count -ne 1 -or $emptyCategory -eq ($assemblies.Count -eq 0) -or
+                        @($assemblies | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count) {
+                        throw 'A native Special module requires exactly one selector: a category or a dedicated assembly list.'
+                    }
+                }
             }
             if ($Suite -ceq 'Daily' -or ($Suite -ceq 'Special' -and -not $dotnetProfile)) {
                 . (Join-Path $PSScriptRoot 'UnityHost.ps1')

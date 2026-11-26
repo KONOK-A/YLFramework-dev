@@ -238,7 +238,7 @@ private readonly HashSet<LoadViewArgs> borrowed = new();
 
 以下命令仅适用于包含 `Tools/YLFramework.Analyzers/` 的**完整源码仓库**，从仓库根执行。默认分发包只有 Analyzer DLL 与导入配置，缺少 Tools 时不能在包内运行重建命令，应取得对应版本源码。
 
-要求已安装 PowerShell 与 .NET SDK `9.0.312`；工具内 `global.json` 设置 `rollForward: disable`，脚本也核对精确 SDK 版本。Roslyn 固定 `3.8.0`，Analyzer 目标为 `netstandard2.0`，独立测试目标为 `net9.0`。脚本还要求仓库已有 `Temp/` 父目录。
+要求已安装 PowerShell 与 .NET SDK `10.0.404`；工具内 `global.json` 设置 `rollForward: disable`，脚本也核对精确 SDK 版本。Roslyn 固定 `3.8.0`，Analyzer 目标为 `netstandard2.0`，独立测试目标为 `net10.0`。脚本还要求仓库已有 `Temp/` 父目录。
 
 ```powershell
 pwsh -NoLogo -NoProfile -NonInteractive -File "Tools/YLFramework.Analyzers/build.ps1"

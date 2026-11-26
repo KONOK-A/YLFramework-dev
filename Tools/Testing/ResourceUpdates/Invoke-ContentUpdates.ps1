@@ -13,7 +13,8 @@ param(
     [switch] $SpaceFaults,
     [switch] $ResumeContracts,
     [switch] $ExpectTuned,
-    [string] $CompareBaselineHost
+    [string] $CompareBaselineHost,
+    [switch] $KeepArtifacts
 )
 
 Set-StrictMode -Version 3.0
@@ -33,6 +34,7 @@ if ($ResumeContracts -and (-not $ExpectTuned -or -not $Cell -or @($Cell | Where-
 . (Join-Path $PSScriptRoot '../Common/FrozenPlayerEvidence.ps1')
 . (Join-Path $PSScriptRoot 'ContentUpdateBuilds.ps1')
 . (Join-Path $PSScriptRoot 'ContentUpdateScenarios.ps1')
+. (Join-Path $PSScriptRoot 'ContentUpdateRetention.ps1')
 
 function Save-UpdateSummary {
     Write-UpdateProgress (Join-Path $result.path 'summary.json') $summary
@@ -80,28 +82,29 @@ try {
             $row['addressables'] = Get-YLUnityAddressablesVersion $editor
             $hostRecord = New-YLTestDirectory -Workspace $workspace -Kind Host -Key ('RU' + [Guid]::NewGuid().ToString('N').Substring(0, 8)) -NewOnly
             $cellResults = Join-Path $result.path $id
-            $null = [IO.Directory]::CreateDirectory($cellResults)
             $context = [pscustomobject]@{
                 id = $id; unity = $unity; editorVersion = $editor.version; addressables = $row.addressables; backend = $backend
                 encrypted = $row.encrypted; tuned = [bool]$ExpectTuned; toolchain = $toolchain; install = Join-Path $hostRecord.path 'P'; host = $hostRecord
                 results = $cellResults; report = $row; userData = Join-Path $hostRecord.path 'D'; lease = $null; server = $null
                 oldAddress = 'baseline-' + [Guid]::NewGuid().ToString('N'); newAddress = ''; optionalAddress = ''; exe = $null
-                keys = $null; materialA = New-UpdateMaterial; materialReplacement = $null; materialNew = $null; generation = $null
+                keys = $null; materialA = $null; materialReplacement = $null; materialNew = $null; generation = $null
                 materialOptional = $null; materialReplacementC = $null; materialNewC = $null; materialOptionalC = $null
                 inventory = $null; baseline = $null; update = $null; updateC = $null; perRun = 0; online = $true; versions = $null; replay = $null
             }
             $contexts.Add($context)
-            $context.lease = Lock-YLTestDirectory -Workspace $workspace -Path $hostRecord.path
-            $context.server = [YLFramework.Testing.FrozenLoopback]::new()
-            $context.server.Pause()
-            $context.online = $false
             $row.host = $hostRecord.path
             $row.userData = $context.userData
             $row.results = $cellResults
             $row['hostId'] = $hostRecord.id
+            $context.lease = Lock-YLTestDirectory -Workspace $workspace -Path $hostRecord.path
+            Start-UpdateHostRetention $context $result ([bool]$KeepArtifacts)
             $row.phase = 'BaselineBuild'
             Write-Host "Building sealed content A for $id in $($row.host)"
             Save-UpdateSummary
+            $context.server = [YLFramework.Testing.FrozenLoopback]::new()
+            $context.server.Pause()
+            $context.online = $false
+            $context.materialA = New-UpdateMaterial
             $null = [IO.Directory]::CreateDirectory($context.userData)
             $context.keys = New-UpdateKeyMaterial $context
             $null = New-UpdateHostInputs $context $editor
@@ -146,7 +149,7 @@ try {
                 if ($CompareBaselineHost) {
                     $context.report.phase = 'PairedBaselineBuild'
                     Save-UpdateSummary
-                    $context.replay = New-UpdateReplayContext $context $CompareBaselineHost
+                    Initialize-UpdateReplayContext $context $CompareBaselineHost $result ([bool]$KeepArtifacts)
                 }
                 $sealed = Invoke-YLFrozenReadOnlyInstallation -OwnedHostRoot $context.host.path -InstallRoot $context.install -InstallDirectoryName P -RunPlayer {
                     $context.update = Invoke-UpdateEditorBuild $context B
@@ -185,6 +188,9 @@ try {
     if (@($summary.cells.Values | Where-Object { $_.status -cne 'Passed' }).Count -eq 0) { $summary.status = 'Passed' }
 } finally {
     try {
+        $summary['runStatus'] = $summary.status
+        $summary.status = 'Failed'
+        $cleanupSucceeded = $true
         foreach ($context in $contexts) {
             try {
                 try {
@@ -198,15 +204,34 @@ try {
                 }
             } catch {
                 $context.report['cleanupError'] = $_.Exception.Message
-                $summary.status = 'Failed'
-            } finally {
-                if ($null -ne $context.replay) { $context.replay.lease.Dispose() }
-                if ($null -ne $context.lease) { $context.lease.Dispose() }
+                $cleanupSucceeded = $false
             }
         }
+        # Keep the observed test outcome durable before removing any of its artifacts.
+        Save-UpdateSummary
+        $canRetire = $cleanupSucceeded -and $summary.runStatus -ceq 'Passed'
+        foreach ($context in $contexts) {
+            foreach ($ownedContext in $context, $context.replay) {
+                if ($null -eq $ownedContext) { continue }
+                try { Complete-UpdateHostRetention $workspace $result $ownedContext $canRetire }
+                catch {
+                    $ownedContext.report['retentionError'] = $_.Exception.Message
+                    Write-Warning "Retention failed for $($ownedContext.host.path): $($_.Exception.Message)"
+                    $cleanupSucceeded = $false
+                }
+            }
+        }
+        if ($cleanupSucceeded) { $summary.status = $summary.runStatus }
         $summary.endedUtc = [DateTime]::UtcNow.ToString('o')
         Save-UpdateSummary
-    } finally { $resultLease.Dispose() }
+    } finally {
+        try {
+            foreach ($context in $contexts) {
+                if ($null -ne $context.replay -and $null -ne $context.replay.lease) { $context.replay.lease.Dispose() }
+                if ($null -ne $context.lease) { $context.lease.Dispose() }
+            }
+        } finally { $resultLease.Dispose() }
+    }
 }
 
 if ($summary.status -cne 'Passed') { throw "Content update acceptance failed. See $($result.path)\summary.json." }

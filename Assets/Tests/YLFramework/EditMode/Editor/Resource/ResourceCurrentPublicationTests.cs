@@ -30,6 +30,7 @@ namespace YLFramework.Tests.ResourceBuild
 
         [Test]
         [Category("YL.UPM")]
+        [Category("YL.UPM.Generators")]
         public void ExplicitAcceptanceProbeIsAbsentFromOrdinaryPlayerCompilation()
         {
             const string probeAssembly = "YLFramework.Tests.ResourceCurrent.Player";
@@ -42,6 +43,7 @@ namespace YLFramework.Tests.ResourceBuild
 
         [Test]
         [Category("YL.UPM")]
+        [Category("YL.UPM.Generators")]
         public void FrameworkPrefabsAndScenesDoNotContainResourceBootstrapComponents()
         {
             var paths = new[]

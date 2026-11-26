@@ -1,14 +1,16 @@
 #requires -Version 7.6
 #requires -PSEdition Core
 [CmdletBinding()]
-param([string] $TemporaryRoot = [IO.Path]::GetTempPath())
+param([string] $TemporaryRoot = [IO.Path]::GetTempPath(), [switch] $KeepArtifacts)
 
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
-$parent = (Resolve-Path -LiteralPath $TemporaryRoot).Path
+. (Join-Path $PSScriptRoot '../Common/Workspace.ps1')
+$parent = Get-YLTestPath ((Resolve-Path -LiteralPath $TemporaryRoot).Path)
 if (-not [IO.Directory]::Exists($parent)) { throw 'TemporaryRoot must be a directory.' }
-$root = Join-Path $parent ('yl-stream-contract-' + [guid]::NewGuid().ToString('N'))
+$root = Get-YLTestPath (Join-Path $parent ('yl-stream-contract-' + [guid]::NewGuid().ToString('N')))
+if ([IO.Path]::GetDirectoryName($root) -ine $parent -or [IO.Path]::Exists($root)) { throw 'The temporary stream fixture must have a new owned path.' }
 $null = [IO.Directory]::CreateDirectory($root)
 $runner = Join-Path $PSScriptRoot '../ResourceEncryption/Measure-EncryptionStreams.ps1'
 $package = Join-Path $PSScriptRoot '../../../PackageSources/com.kano.ylframework.resource-encryption'
@@ -124,4 +126,10 @@ foreach ($failed in $badHistory, $missingPacked, $badPacked) {
 $halfLegacy = Invoke-StreamRun 'partial-legacy' @('-FreshSeed', '-LegacyContentSource', $pack, '-Smoke') 'Specify both legacy source'
 Check (-not [IO.Directory]::Exists($halfLegacy.Root)) 'A partially supplied legacy comparator was silently omitted.'
 
-"Encryption stream NoUnity contract passed: $checks checks at $root"
+if ($KeepArtifacts) {
+    "Artifacts retained: $root"
+} else {
+    $null = @(Get-YLTestTreeFiles -Path $root -ForCleanup -ProtectNested)
+    [IO.Directory]::Delete($root, $true)
+}
+"Encryption stream NoUnity contract passed: $checks checks."

@@ -64,6 +64,14 @@ Desktop.ini
 /[Aa]ssets/AssetStoreTools*
 /[Aa]ssets/Plugins/Editor/JetBrains*
 
+# ---------- Unity 编辑器缓存与个人界面偏好 ----------
+/Assets/Unity.VisualScripting.Generated.meta
+/Assets/Unity.VisualScripting.Generated/VisualScripting.Flow.meta
+/Assets/Unity.VisualScripting.Generated/VisualScripting.Flow/UnitOptions.db
+/Assets/Unity.VisualScripting.Generated/VisualScripting.Flow/UnitOptions.db.meta
+/Assets/AddressableAssetsData/AddressableAssetGroupSortSettings.asset
+/Assets/AddressableAssetsData/AddressableAssetGroupSortSettings.asset.meta
+
 # ---------- MCP 自动恢复的 NuGet 依赖 ----------
 /Assets/Plugins/NuGet/
 /Assets/Plugins/NuGet.meta
@@ -86,6 +94,7 @@ Desktop.ini
 .codex/
 .kilocode/
 .opencode/
+/.serena/
 /.kilo/
 /.mcp.json
 /.vscode/mcp.json
