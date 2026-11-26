@@ -113,7 +113,10 @@ namespace YLFramework.Resource.Encryption
         private static FileStream ObserveOwner(ResourceCacheUsageScan scan, string path, out bool busy)
         {
             busy = false;
-            try { return ResourceContentFileIO.OpenRead(path); }
+            try
+            {
+                return ResourceContentFileIO.OpenRead(path);
+            }
             catch (FileNotFoundException) { return null; }
             catch (IOException error) when (ResourceContentFileIO.IsSharingConflict(error))
             {

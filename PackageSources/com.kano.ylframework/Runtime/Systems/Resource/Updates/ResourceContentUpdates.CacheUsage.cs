@@ -265,7 +265,10 @@ namespace YLFramework.Resource
 
             FileStamp? Stamp(string name)
             {
-                try { return ResourceContentFileIO.ReadFileStamp(Path.Combine(_store.Root, name)); }
+                try
+                {
+                    return ResourceContentFileIO.ReadFileStamp(Path.Combine(_store.Root, name));
+                }
                 catch (FileNotFoundException) { return null; }
             }
         }

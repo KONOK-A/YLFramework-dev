@@ -543,8 +543,17 @@ namespace YLFramework.Resource
             set => _store.StateCommitBoundary = value;
         }
 
-        internal Action<string> ArtifactPublishedBoundary { get; set; }
-        internal Action<Uri, int> ArtifactReceived { get; set; }
-        internal Action<Uri, FileStream, int> BeforeArtifactWrite { get; set; }
+        internal Action<string> ArtifactPublishedBoundary
+        {
+            get; set;
+        }
+        internal Action<Uri, int> ArtifactReceived
+        {
+            get; set;
+        }
+        internal Action<Uri, FileStream, int> BeforeArtifactWrite
+        {
+            get; set;
+        }
     }
 }

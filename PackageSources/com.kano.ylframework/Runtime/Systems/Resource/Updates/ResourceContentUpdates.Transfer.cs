@@ -38,10 +38,22 @@ namespace YLFramework.Resource
         private const long RetiredCheckpointOffset = -1;
         private static readonly TimeSpan _artifactInactivityLimit = TimeSpan.FromMinutes(5);
 
-        internal Func<string, long?> AvailableSpaceOverride { get; set; }
-        internal Action<string> BeforeVerifiedArtifactPublish { get; set; }
-        internal Action<string, long> BeforeCheckpointRecordWrite { get; set; }
-        internal Action<string> AfterCheckpointIntegrityFailure { get; set; }
+        internal Func<string, long?> AvailableSpaceOverride
+        {
+            get; set;
+        }
+        internal Action<string> BeforeVerifiedArtifactPublish
+        {
+            get; set;
+        }
+        internal Action<string, long> BeforeCheckpointRecordWrite
+        {
+            get; set;
+        }
+        internal Action<string> AfterCheckpointIntegrityFailure
+        {
+            get; set;
+        }
 
         private sealed class ResumeCheckpoint
         {
@@ -54,17 +66,50 @@ namespace YLFramework.Resource
                 Tag = tag;
             }
 
-            internal string Source { get; }
-            internal string Sha256 { get; }
-            internal long Length { get; }
-            internal long Offset { get; set; }
-            internal EntityTagHeaderValue Tag { get; }
-            internal FileIdentity? MarkerIdentity { get; set; }
-            internal int HeaderLength { get; set; }
-            internal long Revision { get; set; }
-            internal FileIdentity? PartIdentity { get; set; }
-            internal FileIdentity ObservedPart { get; set; }
-            internal long ObservedOffset { get; set; }
+            internal string Source
+            {
+                get;
+            }
+            internal string Sha256
+            {
+                get;
+            }
+            internal long Length
+            {
+                get;
+            }
+            internal long Offset
+            {
+                get; set;
+            }
+            internal EntityTagHeaderValue Tag
+            {
+                get;
+            }
+            internal FileIdentity? MarkerIdentity
+            {
+                get; set;
+            }
+            internal int HeaderLength
+            {
+                get; set;
+            }
+            internal long Revision
+            {
+                get; set;
+            }
+            internal FileIdentity? PartIdentity
+            {
+                get; set;
+            }
+            internal FileIdentity ObservedPart
+            {
+                get; set;
+            }
+            internal long ObservedOffset
+            {
+                get; set;
+            }
         }
 
         private async Task PrepareFileSetAsync(ResourceContentManifest manifest, IEnumerable<string> routes,
@@ -130,7 +175,10 @@ namespace YLFramework.Resource
             CancellationToken cancellation)
         {
             FileStream file;
-            try { file = ResourceContentFileIO.OpenRead(path); }
+            try
+            {
+                file = ResourceContentFileIO.OpenRead(path);
+            }
             catch (FileNotFoundException) { return false; }
             try
             {
@@ -361,7 +409,10 @@ namespace YLFramework.Resource
         private static async Task<int> ReadProgressAsync(Stream stream, byte[] buffer, int count, CancellationTokenSource deadline)
         {
             deadline.CancelAfter(_artifactInactivityLimit);
-            try { return await stream.ReadAsync(buffer, 0, count, deadline.Token).ConfigureAwait(false); }
+            try
+            {
+                return await stream.ReadAsync(buffer, 0, count, deadline.Token).ConfigureAwait(false);
+            }
             finally { deadline.CancelAfter(Timeout.InfiniteTimeSpan); }
         }
 
@@ -571,7 +622,10 @@ namespace YLFramework.Resource
 
         private static FileStamp? ReadResumeStamp(string path)
         {
-            try { return ResourceContentFileIO.ReadFileStamp(path); }
+            try
+            {
+                return ResourceContentFileIO.ReadFileStamp(path);
+            }
             catch (FileNotFoundException) { return null; }
         }
 
@@ -725,9 +779,18 @@ namespace YLFramework.Resource
                 }
             }
 
-            internal string Path { get; }
-            internal FileStream Stream { get; }
-            internal FileIdentity Identity { get; }
+            internal string Path
+            {
+                get;
+            }
+            internal FileStream Stream
+            {
+                get;
+            }
+            internal FileIdentity Identity
+            {
+                get;
+            }
 
             internal void Preserve() => _preserve = true;
 

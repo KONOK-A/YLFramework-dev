@@ -36,7 +36,10 @@ namespace YLFramework.Resource.Encryption
 
         // Bytes read by successful full ciphertext SHA-256 checks, not native reads or OS disk I/O.
         internal long VerifiedCipherHashBytes => Interlocked.Read(ref _verifiedCipherHashBytes);
-        internal Action<EncryptedBundleRecord, FileStream, int> CiphertextReceived { get; set; }
+        internal Action<EncryptedBundleRecord, FileStream, int> CiphertextReceived
+        {
+            get; set;
+        }
 
         private enum EntryState
         {
@@ -249,7 +252,10 @@ namespace YLFramework.Resource.Encryption
             }
             catch (Exception error)
             {
-                try { OwnedWindowsFiles.DeleteOpen(proof); }
+                try
+                {
+                    OwnedWindowsFiles.DeleteOpen(proof);
+                }
                 catch (Exception cleanup) { throw new AggregateException("Transfer provenance write and cleanup both failed.", error, cleanup); }
                 finally { proof.Dispose(); }
                 throw;
@@ -485,7 +491,10 @@ namespace YLFramework.Resource.Encryption
                 }
                 catch (Exception error)
                 {
-                    try { OwnedWindowsFiles.DeleteOpen(part); }
+                    try
+                    {
+                        OwnedWindowsFiles.DeleteOpen(part);
+                    }
                     catch (Exception cleanup) { throw new AggregateException("Transfer initialization and temporary cleanup both failed.", error, cleanup); }
                     throw;
                 }
@@ -527,7 +536,10 @@ namespace YLFramework.Resource.Encryption
         {
             try
             {
-                try { File.GetAttributes(path); }
+                try
+                {
+                    File.GetAttributes(path);
+                }
                 catch (FileNotFoundException) { OwnedWindowsFiles.DeleteOpen(proof); }
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -564,7 +576,10 @@ namespace YLFramework.Resource.Encryption
             TimeSpan inactivity)
         {
             deadline.CancelAfter(inactivity);
-            try { return await input.ReadAsync(buffer, 0, take, deadline.Token).ConfigureAwait(false); }
+            try
+            {
+                return await input.ReadAsync(buffer, 0, take, deadline.Token).ConfigureAwait(false);
+            }
             finally { deadline.CancelAfter(Timeout.InfiniteTimeSpan); }
         }
 

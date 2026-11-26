@@ -6,10 +6,22 @@ using System.Threading;
 
 namespace YLFramework.Resource
 {
-    public enum ResourceCacheOwner { SignedContent, FixedEncryptedDelivery }
-    public enum ResourceCacheFileKind { Artifact, VersionManifest, ControlRecord, Temporary }
-    public enum ResourceCacheDisposition { Retained, CleanupCandidate, Undetermined }
-    public enum ResourceCacheCertainty { Unknown, ObservedLowerBound, Exact }
+    public enum ResourceCacheOwner
+    {
+        SignedContent, FixedEncryptedDelivery
+    }
+    public enum ResourceCacheFileKind
+    {
+        Artifact, VersionManifest, ControlRecord, Temporary
+    }
+    public enum ResourceCacheDisposition
+    {
+        Retained, CleanupCandidate, Undetermined
+    }
+    public enum ResourceCacheCertainty
+    {
+        Unknown, ObservedLowerBound, Exact
+    }
 
     [Flags]
     public enum ResourceCacheRetention
@@ -36,8 +48,14 @@ namespace YLFramework.Resource
             Bytes = Certainty == ResourceCacheCertainty.Unknown ? null : bytes;
         }
 
-        public long? Bytes { get; }
-        public ResourceCacheCertainty Certainty { get; }
+        public long? Bytes
+        {
+            get;
+        }
+        public ResourceCacheCertainty Certainty
+        {
+            get;
+        }
     }
 
     /// <summary>缓存根内的单个文件。仅归属已确认的文件进入汇总。</summary>
@@ -54,12 +72,30 @@ namespace YLFramework.Resource
             Retention = retention;
         }
 
-        public string RelativePath { get; }
-        public ResourceCacheFileKind Kind { get; }
-        public long? Bytes { get; }
-        public bool OwnershipConfirmed { get; }
-        public ResourceCacheDisposition Disposition { get; }
-        public ResourceCacheRetention Retention { get; }
+        public string RelativePath
+        {
+            get;
+        }
+        public ResourceCacheFileKind Kind
+        {
+            get;
+        }
+        public long? Bytes
+        {
+            get;
+        }
+        public bool OwnershipConfirmed
+        {
+            get;
+        }
+        public ResourceCacheDisposition Disposition
+        {
+            get;
+        }
+        public ResourceCacheRetention Retention
+        {
+            get;
+        }
     }
 
     /// <summary>对应用自有缓存的只读观察。候选仅说明观察时的去留。</summary>
@@ -83,18 +119,51 @@ namespace YLFramework.Resource
             Undetermined = undetermined;
         }
 
-        public ResourceCacheOwner Owner { get; }
-        public string Root { get; }
-        public string Application { get; }
-        public string Channel { get; }
-        public DateTimeOffset ObservedAtUtc { get; }
-        public IReadOnlyList<ResourceCacheFileUsage> Files { get; }
+        public ResourceCacheOwner Owner
+        {
+            get;
+        }
+        public string Root
+        {
+            get;
+        }
+        public string Application
+        {
+            get;
+        }
+        public string Channel
+        {
+            get;
+        }
+        public DateTimeOffset ObservedAtUtc
+        {
+            get;
+        }
+        public IReadOnlyList<ResourceCacheFileUsage> Files
+        {
+            get;
+        }
         /// <summary>影响读取、归属或去留判断的路径及原因。</summary>
-        public IReadOnlyList<string> Issues { get; }
-        public ResourceCacheByteCount Owned { get; }
-        public ResourceCacheByteCount Retained { get; }
-        public ResourceCacheByteCount CleanupCandidates { get; }
-        public ResourceCacheByteCount Undetermined { get; }
+        public IReadOnlyList<string> Issues
+        {
+            get;
+        }
+        public ResourceCacheByteCount Owned
+        {
+            get;
+        }
+        public ResourceCacheByteCount Retained
+        {
+            get;
+        }
+        public ResourceCacheByteCount CleanupCandidates
+        {
+            get;
+        }
+        public ResourceCacheByteCount Undetermined
+        {
+            get;
+        }
 
         /// <summary>两种缓存报告均只统计其根内负责的文件逻辑长度。</summary>
         public string Exclusions => Owner == ResourceCacheOwner.SignedContent
@@ -115,9 +184,18 @@ namespace YLFramework.Resource
                     canRemove ? ResourceCacheDisposition.CleanupCandidate : ResourceCacheDisposition.Undetermined;
             }
 
-            internal bool Owned { get; }
-            internal ResourceCacheRetention Retention { get; }
-            internal ResourceCacheDisposition Disposition { get; }
+            internal bool Owned
+            {
+                get;
+            }
+            internal ResourceCacheRetention Retention
+            {
+                get;
+            }
+            internal ResourceCacheDisposition Disposition
+            {
+                get;
+            }
         }
 
         private readonly string _root;
@@ -227,8 +305,12 @@ namespace YLFramework.Resource
                 owned = checked(owned + bytes);
                 switch (usage.Disposition)
                 {
-                    case ResourceCacheDisposition.Retained: retained = checked(retained + bytes); break;
-                    case ResourceCacheDisposition.CleanupCandidate: candidates = checked(candidates + bytes); break;
+                    case ResourceCacheDisposition.Retained:
+                        retained = checked(retained + bytes);
+                        break;
+                    case ResourceCacheDisposition.CleanupCandidate:
+                        candidates = checked(candidates + bytes);
+                        break;
                     default:
                         undetermined = checked(undetermined + bytes);
                         candidatesComplete = retainedComplete = false;

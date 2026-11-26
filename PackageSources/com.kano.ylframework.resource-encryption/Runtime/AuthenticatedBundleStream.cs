@@ -47,8 +47,14 @@ namespace YLFramework.Resource.Encryption
         [DllImport(Library, EntryPoint = "yl_read_statistics", CallingConvention = CallingConvention.Cdecl)]
         private static extern void ReadStatisticsNative(IntPtr reader, out long served, out long source, out long pages, out long nativePayloadBound);
 
-        internal static Action<int, bool> HashBufferBoundary { get; set; }
-        internal static Action<int> DiagnosticPhase { get; set; }
+        internal static Action<int, bool> HashBufferBoundary
+        {
+            get; set;
+        }
+        internal static Action<int> DiagnosticPhase
+        {
+            get; set;
+        }
 
         private AuthenticatedBundleStream(FileStream cipher, EncryptedBundleKeyLease key, EncryptedBundleBinding binding)
         {
