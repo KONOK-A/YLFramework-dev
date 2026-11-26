@@ -61,6 +61,7 @@ try {
     $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName((Join-Path $root $catalog)))
     [IO.File]::Copy((Join-Path $PSScriptRoot "../../../$catalog"), (Join-Path $root $catalog))
     [IO.File]::WriteAllText($deployed + '.meta', $meta)
+    $expectedSdk = ([IO.File]::ReadAllText((Join-Path $tools 'global.json')) | ConvertFrom-Json).sdk.version
     $fixtureDirectory = Join-Path $output 'TestResults'
     $fixtureTrx = Join-Path $fixtureDirectory 'analyzers.trx'
     $receipt = Join-Path $output 'build-info.json'
@@ -95,7 +96,7 @@ try {
     function dotnet {
         $global:LASTEXITCODE = 0
         switch -CaseSensitive ($args[0]) {
-            '--version' { '9.0.312' }
+            '--version' { $expectedSdk }
             'restore' { }
             'build' { }
             'test' {

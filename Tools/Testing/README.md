@@ -44,7 +44,7 @@ pwsh -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLDocumentationNo
 - Windows 与 PowerShell Core `7.6+`，使用 `pwsh -NoLogo -NoProfile -NonInteractive -File`。这是运行下限，不按小版本阻止自动更新；报告和发行回执仍记录实际完整 patch 版本，未实测的未来版本不因此自动视为已验收。
 - 原生测试显式提供实际 Editor `-Unity` 和独立工作根 `-WorkspaceRoot`；后者也可从当前进程的 `YL_TEST_WORKSPACE` 读取。
 - Editor 完整 ProductVersion 必须匹配 `TestSuites.json` 的 profile。当前标准定点为 `2022.3.62f3` 与 `6000.3.27f1`；地区版 profile 仅在明确选择时使用，不自动增加验证范围。
-- 普通离线编译使用锁定的 .NET SDK `9.0.312` 与 NUnit `3.14.0`；Save BCL 专项使用 SDK `10.0.102` / Runtime `10.0.2`，不自动下载、升级或替换工具链。
+- 普通离线编译使用锁定的 .NET SDK `10.0.404` 与 NUnit `3.14.0`；Save BCL 专项使用 SDK `10.0.404` / Runtime `10.0.15`，不自动下载、升级或替换工具链。
 - 离线引用来自来源工程真实导入的 UGUI、Json.NET 等 DLL，按 manifest/lock/UPM resolution 校验。应先完成该 Editor 上下文的 Unity 导入，不能用另一工程缓存或替身 DLL 满足前置。
 - 图形、DSP、OS、SDK、IL2CPP/C++ 工具链等专项必须具有对应实际环境；无图形结果不能代替原生输入或音频测量。
 

@@ -112,8 +112,9 @@ $before = if (Test-Path -LiteralPath $destination) { (Get-FileHash -LiteralPath 
 Push-Location -LiteralPath $PSScriptRoot
 try {
     if ($Deploy -or $VerifyDeployment) { Assert-AnalyzerMeta -Path ($destination + '.meta') }
+    $expectedSdk = ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'global.json')) | ConvertFrom-Json).sdk.version
     $sdk = & dotnet --version
-    if ($LASTEXITCODE -ne 0 -or $sdk -ne '9.0.312') { throw "Expected SDK 9.0.312; actual: $sdk" }
+    if ($LASTEXITCODE -ne 0 -or $sdk -ne $expectedSdk) { throw "Expected SDK $expectedSdk; actual: $sdk" }
     "PowerShell=$($PSVersionTable.PSVersion) SDK=$sdk"
     Invoke-DotNet -Arguments @('restore', $tests, '--locked-mode')
     Invoke-DotNet -Arguments @('build', $tests, '-c', 'Release', '--no-restore')

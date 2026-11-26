@@ -86,7 +86,7 @@ namespace YLFramework.Editor.Core
                         "接入结构检查、保存成功和零诊断都不是规则实际执行的证明，未知状态明确显示未核实。"),
                     HelpBlock.Paragraph("新增使用契约", "YL0008 允许 private setter，不推测注册或容器扫描模式。YL0009 包含旧泛型重载与确定的 Panel 约束，不把 parent 机械替换为 root。" +
                         "YL0010 仅检查非泛型 IEnumerator 协程；等待开始使用 WaitUntil(() => request.HasStarted || request.IsDone)，等待结束使用 WaitUntil(() => request.IsDone)，循环播放可能不结束。"),
-                    HelpBlock.Paragraph("从源码重建", "源码仓库 Tools/YLFramework.Analyzers 使用固定 SDK 9.0.312、Roslyn API 3.8.0、netstandard2.0 产物和 NuGet lock。" +
+                    HelpBlock.Paragraph("从源码重建", "源码仓库 Tools/YLFramework.Analyzers 使用固定 SDK 10.0.404、Roslyn API 3.8.0、netstandard2.0 产物和 NuGet lock。" +
                         "在仓库根执行 pwsh -NoLogo -NoProfile -NonInteractive -File \"Tools/YLFramework.Analyzers/build.ps1\"，默认 locked restore、Release build/test，不部署；" +
                         "显式追加 -Deploy 才替换唯一 DLL 并保留 meta，随后核对 Unity 导入与实际编译。UnityPackage 携带 DLL/meta/说明，不含 SDK 源码项目、测试、NuGet 或中间产物，重建需取得源码仓库。"),
                     Document("规则示例、配置与重建细节", "Modules/Attributes.md"))

@@ -140,12 +140,13 @@ if ($files.Count -eq 0) {
     throw 'No allowed CSharp files were selected.'
 }
 
+$expectedSdk = ([IO.File]::ReadAllText((Join-Path $sdkDirectory 'global.json')) | ConvertFrom-Json).sdk.version
 $sdk = Invoke-DotNet @('--version')
-if ($sdk.Code -ne 0 -or $sdk.Output.Trim() -ne '9.0.312') {
-    throw "Expected SDK 9.0.312; actual: $($sdk.Output.Trim()) $($sdk.Error.Trim())"
+if ($sdk.Code -ne 0 -or $sdk.Output.Trim() -ne $expectedSdk) {
+    throw "Expected SDK $expectedSdk; actual: $($sdk.Output.Trim()) $($sdk.Error.Trim())"
 }
 
-"Mode=$Mode Files=$($files.Count) SDK=9.0.312"
+"Mode=$Mode Files=$($files.Count) SDK=$expectedSdk"
 $exitCode = 0
 $groups = $files | Sort-Object | Group-Object {
     $relative = [IO.Path]::GetRelativePath($root, $_).Replace('\', '/')

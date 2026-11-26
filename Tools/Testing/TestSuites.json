@@ -1195,8 +1195,8 @@
       "nativeFixtureInputs": ["Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs", "Assets/Tests/YLFramework/Fixtures/Shared/YLFramework.Tests.Fixtures.asmdef"],
       "offlineRuntime": {
         "kind": "DotNet",
-        "sdk": "10.0.102",
-        "version": "10.0.2"
+        "sdk": "10.0.404",
+        "version": "10.0.15"
       },
       "outputEnvironment": [
         "YL_SAVE_TEST_OUTPUT"
