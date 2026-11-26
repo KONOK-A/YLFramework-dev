@@ -157,9 +157,13 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-YLResourceAdd
 
 常规验收的两种 `-BuildFlavor` 都构建 Windows x64 IL2CPP（`Medium` 裁剪）。默认 `Release`；`Development` 用于采集支持的分配指标，不作为发行耗时依据。默认 Player 无图形，`-Graphics` 要求实际图形设备。常规验收在独立进程中验证首次 HTTP 下载、二次官方缓存，以及 Bare Addressables 与 YL 的本地负载。`-ScopeCloseBenchmark` 仅允许 `Release -Graphics`，并追加三轮独立 Scope 关闭测量。Editor 构建限时 30 分钟，每个常规 Player 进程限时 180 秒。
 
-`-EncryptedRemoteGroup` 仅用于 `Release -Graphics`，两版 Editor 串行运行，支持 `-Backend IL2CPP`（默认，`Medium`）或 `-Backend Mono`（`Disabled`）。默认用例检查冷启动、在线零请求热启动、离线可用、错钥/缺钥、坏缓存、共享下载取消和恢复，并验证仍由官方句柄拥有的 Bundle。`-EncryptionCase Performance` 比较相同物理明文 Bundle 的 8 MiB 和 128 MiB 以上双包并发。每个后端独立构建，明文和密文各跑一次冷载及三次独立进程在线热载，热载必须零请求（含 HEAD）。报告分列启动校验、素材可用时间、原生读取、加密层缓冲核算及进程内存采样；Release 引擎内存峰值不可得时不记为零。其余用例可单独验证明文副本、路由错误、同步等待和输出目录重叠。P0 的旧行为对照用 `-StockSizeControl`、`-VerifiedSizeSnapshot` 或 `-HeldDownload Stock|Separated` 显式选择，仍使用 IL2CPP。
+`-EncryptedRemoteGroup` 仅用于 `Release -Graphics`，两版 Editor 串行运行，支持 `-Backend IL2CPP`（默认，`Medium`）或 `-Backend Mono`（`Disabled`）。`-DeliveryLayout Remote|Embedded|Mixed` 默认 `Remote`；正式验收在两版和两个后端上各跑三个布局。纯远端用例覆盖冷/热、断网、错钥/缺钥、坏缓存和共享操作。随包和混合布局从独立安装目录启动；断网轮只提供第一章密钥，以 NTFS ACL 禁止实际 Player 身份写入，并复核运行前后文件、目录及权限；混合轮另持有远端缓存锁。测试 HTTP 端点停用不等于验证公网 TLS。P0 的旧行为对照用 `-StockSizeControl`、`-VerifiedSizeSnapshot` 或 `-HeldDownload Stock|Separated`，与布局选项互斥。
 
-性能回执的原生读量分为预认证和 Unity 读取，另列启动扫描、加载阶段成功完成 SHA-256 的托管密文读取量；它们是应用读取字节，不是物理磁盘 I/O。目录用量在计时结束后测量：密文夹具的单份原子写入峰值等于完成量，普通 Unity 缓存的瞬时峰值和内部读取不可得，记 `-1`。进程内存在加载期间抽样，不代表引擎的精确峰值。
+`-EncryptionCase Performance` 两边使用独立构建的官方 Catalog 和同一 `Addressables.LoadAssetAsync<TextAsset>`，比较相同 Bundle 原始字节。各跑一次冷载，然后交错运行五个独立进程，暖载时端点在线，且必须零请求（含 HEAD）。`elapsedMs` 从发出双请求计到两份素材长度和哨兵都正确；另列从 `SubsystemRegistration` 到首份、两份均可用的端到端时间，以及 Catalog 门禁和混合远端准备耗时。v3 明文计时不读取旁路密文元数据或密钥，Harness 在进程外核对原始 Bundle，Player 停表后记录自己的 Catalog 摘要。8 MiB + 128 MiB 双包暖载中位数目标 ≤1000 ms；加密层每活动流的容量上界 ≤4 MiB。密文预认证读量、Unity 回读与成功的托管密文 SHA 读取分别计，不等同物理磁盘 I/O。进程内存是采样，Unity 引擎峰值、普通缓存内部读量及未测到的目录峰值不记为零。
+
+远端端到端门禁用 `ResourceEncryption/Compare-FrozenRemotePerformance.ps1`，分别传 `-CandidateReceipt` / `-CandidateSha256`（v3）和 `-BaselineReceipt` / `-BaselineSha256`（`8a848d4e` 以新计时口径实测的 Remote 对照），另传新的 `-Output` 路径。同一受控串行测试窗口用 `-ControlledStartUtc` / `-ControlledEndUtc` 声明，不把互不受控的历史批次圈入一个窗口。只有版本、后端、裁剪、主机、文件缓存口径和两包明文 SHA 一致，且进程确实在该窗口内串行执行，才比较首份与两份素材可用的暖载中位数。退步或不可比均返回非零，并保留 `Regression` / `NotComparable` 回执；Player 自身的双包加载通过不代表历史对照通过。
+
+`MissingPlayerRuntime`、`ChangedPlayerOutput` 用真实 Player 构建回调验证提前拒绝。`LocalNoHash` 和 `LocalNoHashCollision` 都用 `-DeliveryLayout Embedded`，分别验证官方 `NoHash` 本地组可共存与实际名称冲突仍被拦截。
 
 固定提交验收从干净 worktree 运行，`-ReleaseManifest` 和完整 `-SourceCommit` 必须同时给出；直接核对提交 blob、已物化的本地 Git LFS 对象、实际安装的 `LocalTarball`、包内文件与随包 Catalog。安装未启用和移除重建使用 `Invoke-P0NativeDelivery.ps1`。示例（两版、两后端分别运行）：
 
@@ -172,9 +176,39 @@ pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Invoke-P0NativeDeliv
 
 `ResourceEncryption/Invoke-Contracts.ps1 -Root <新建的自有测试输出路径> -OracleJar <tink-1.18.0.jar>` 使用当前仓库的 Win64 插件做互读和缓存合同测试，可用 `-NativeDll` 指定另一个待测构建。Java 对照 JAR 必须匹配脚本固定的 SHA-256。
 
+原生读流基准可独立复跑。先物化包内 LFS DLL，再用新的自有输出子目录运行：
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/ResourceEncryption/Measure-EncryptionStreams.ps1 -Root $freshOwnedChild -FreshSeed
+```
+
+`-FreshSeed` 生成共用的确定性夹具，不冒充历史 Bundle；不传旧 DLL 或 CNG 输入时，相应对照列明确标为不可用。历史同字节回放需显式给出 `-HistoricalResult`、`-PackedRoot`、`-BaselineDll` 和 `-CandidateDll`，核对原始清单及文件。`-Smoke` 验输入和小夹具，不产出完整时间矩阵。v2 原生顺读样本包含第二遍完整明文 SHA，不能直接和 v1 哨兵计时做时间对比。
+
 每轮分别预载 1、100、1000 个不同的 `TextAsset`，只测 `CloseAsync()`。`slices` 在实际清理步之后记录归还数和释放调用的累计时间。还有租约待还时，一步最多归还 32 份，少于 32 份必须已用到约 1 ms 的同步释放预算。`maxSliceReleaseTicks` 是各步累计释放时间的最大值，`closeWallTicks` 是调用者观察到的关闭总延迟；二者都不是完整 Unity 帧的峰值。一次不可抢占的释放可以越过时间阈值。
 
 本轮摘要为 `<WorkspaceRoot>/Results/ResourceAAIL2CPP/<run-id>/execution.json`，关联 `input-identity.json`、`build.json`、`player-summary.json`、各轮退出回执与日志。通过要求输入和工具指纹、实际内容与二进制、所有报告及普通进程退出均匹配，不能仅据构建完成或 NoUnity 自检判断。需要事后重跑同一个 Player 或按原路径核对 Bundle 时，在上述命令加 `-KeepArtifacts`；只比较存入结果目录的测量值时不需要。
+
+### Resource 签名内容更新与离线回滚
+
+运行 [内容事务验收](ResourceUpdates/Invoke-ContentUpdates.ps1)，依次传入实际安装的 Unity 2022 与 Unity 6。完整矩阵包含两格普通 IL2CPP 和四格加密 Mono／IL2CPP，均为 Win64 Release。IL2CPP 使用 Medium 裁剪。首次启动和每次重启实际读取新旧地址及其跨 Bundle 依赖。
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/ResourceUpdates/Invoke-ContentUpdates.ps1 -WorkspaceRoot 'G:/Unity/Tests' -Unity2022 $unity2022 -Unity6 $unity6
+```
+
+完整运行先封存六格 A，再生成和构建 B、C 的章节与替换素材。每格只构建一次 Release Player。B 和 C 均使用 A 封存的官方内容状态。同格复用只读的 A 安装、受信公钥和应用数据，从 A 10 激活 B 11，离线回滚 A 并验证旧公告重放，再用 B 的相同制品签发 13。随后激活独立构建的 C 14，确认清理移除了实际下载的孤儿文件，同时保留 B 的文件，最后断网回滚 B 并读取必需与可选章节及其依赖，最高序号仍为 14。
+
+控制器直接停用本地发布端点。每格分别验证可选章节冷读失败和准确的下载大小、联网按需准备时获取完整签名闭包、离线重启后读取真实素材。加密格还核对准备期间没有取钥或挂载 Bundle、A 源站的普通 Bundle 复用，以及两把内容钥的切换。进程强退检查覆盖部分接收的制品、原子提交前残留的临时记录及其显式清理、提交后恢复。独立测试数据目录验证已提交记录丢失时拒绝启动。普通格还从 A 读取 Scene 和 SpriteAtlas，Unity 6 普通格核对实际经过 Addressables 裁剪的 Bundle。
+
+回执位于 `<WorkspaceRoot>/Results/ResourceUpdates/<run-id>/summary.json`。各格保存 `input-identity.json`、A/B/C 构建回执、A 安装树的逐文件长度和 SHA-256，以及 `runs.json` 和对应 Player 日志。汇总区分前置不足、失败和通过，并标出是否覆盖全部六格。需要诊断单格时，使用原 [Player runner](Invoke-YLResourceAddressablesPlayer.ps1) 的 `-ContentUpdate`，配合 `-Profile` 和 `-Unity`。加密单格再加 `-EncryptedRemoteGroup -Backend Mono` 或 `-EncryptedRemoteGroup -Backend IL2CPP`。
+
+#### 大包下载与缓存盘点
+
+在内容事务入口加 `-CacheUsage` 可运行只读盘点、发布与 `ready` 登记之间的跨进程查询，引用变化后的清理，以及独立应用的官方缓存哨兵。加 `-LargeDownload` 记录限速、定点断流、实收区间和重复字节。改后普通补丁对照使用一个普通 `-Cell`、`-LargeDownload -ExpectTuned`，以及 `-CompareBaselineHost` 指定该格已封存的基线宿主。控制器共用发布端点和签名制品，两套 Player 分开保存应用数据。
+
+在同一入口加 `-SpaceFaults -ExpectTuned` 可运行签名安装的空间预检和写入边界注入。每条故障在原安装与原应用数据上关停端点、读取 C，再显式回滚到下载版 B 并读取已准备的可选章。普通 `-Cell` 可用 `-ResumeContracts -ExpectTuned` 验证响应变化、断点恢复及在空间预检前回收已失效的本方断点。专项结果保存在相应的 `Results` 分组。
+
+[固定密文 Player 入口](ResourceEncryption/Invoke-FrozenDelivery.ps1) 在 `-Mode Performance` 下支持 `-Experiment LargeDownload`、`-Experiment SpaceFaultOffline`、`-Experiment CacheUsage` 和 `-Experiment BufferCapacity`。两种缓存场景核对只读根、拒读子项、会话中的在途暂存和文件身份。容量实验同时运行这些场景并验证探针失败后的会话回收，传入以 `YL_PAYLOAD_TRACE` 编译的 `-DiagnosticNativeDll`。传输成对重放使用 `-BaselineReceipt` 引用已封存的固定交付基线回执，改后空闲时限用 `-ExpectProgressDeadline` 验证。
 
 ### Action 原生画面
 

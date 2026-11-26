@@ -98,6 +98,10 @@ namespace YLFramework.Editor.Resource
             var archive = RequireNewStatePath(contentStateArchivePath);
             cancellation.ThrowIfCancellationRequested();
             ValidateBuild(settings);
+            if (IsLiveContentStatePath(settings, archive))
+            {
+                throw new ArgumentException("Archive the content state outside the live official build output.", nameof(contentStateArchivePath));
+            }
             _isBuilding = true;
             try
             {
@@ -136,9 +140,7 @@ namespace YLFramework.Editor.Resource
         {
             cancellation.ThrowIfCancellationRequested();
             ValidateBuild(settings);
-            if (!string.IsNullOrWhiteSpace(previousContentStatePath) && Path.GetFullPath(previousContentStatePath).Equals(
-                Path.GetFullPath(Path.Combine(ContentUpdateScript.GetContentStateDataPath(false, settings), "addressables_content_state.bin")),
-                StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(previousContentStatePath) && IsLiveContentStatePath(settings, previousContentStatePath))
             {
                 throw new ArgumentException("Archive the Player content state outside the live official build output before building an update.", nameof(previousContentStatePath));
             }
@@ -174,12 +176,25 @@ namespace YLFramework.Editor.Resource
                 {
                     throw new IOException("The frozen Player content state changed during the update build.");
                 }
+                if (settings.activeProfileId != profile || EditorUserBuildSettings.activeBuildTarget != target)
+                {
+                    throw new InvalidOperationException("The official build Profile or target changed during the content update.");
+                }
+                cancellation.ThrowIfCancellationRequested();
                 return Report(settings, result, target, profile, path, true);
             }
             finally
             {
                 _isBuilding = false;
             }
+        }
+
+        private static bool IsLiveContentStatePath(AddressableAssetSettings settings, string path)
+        {
+            var livePath = ContentUpdateScript.GetContentStateDataPath(false, settings);
+            return !string.IsNullOrWhiteSpace(livePath) &&
+                (!Uri.TryCreate(livePath, UriKind.Absolute, out var uri) || uri.IsFile) &&
+                Path.GetFullPath(path).Equals(Path.GetFullPath(livePath), StringComparison.OrdinalIgnoreCase);
         }
 
         private static string RequireNewStatePath(string path)

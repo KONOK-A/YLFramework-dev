@@ -46,7 +46,9 @@ namespace YLFramework.Resource
         /// <summary>内容编码或封装不受支持，不回退为明文输入。</summary>
         ContentFormatUnsupported,
         /// <summary>显式数据预算不足，须归还自有责任后显式重试。</summary>
-        ContentBufferUnavailable
+        ContentBufferUnavailable,
+        /// <summary>签名补丁仓库所在卷缺少完成准备所需的可用空间。</summary>
+        InsufficientStorage
     }
 
     /// <summary>资源域失败，保留原始 cause 与调用地址/来源，不使用 null 伪装取得成功。</summary>

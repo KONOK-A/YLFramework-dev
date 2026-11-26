@@ -362,6 +362,7 @@ namespace YLFramework.Tests.Resource
             using var startup = new ResourceStartup();
             yield return Start(startup);
             var system = startup.Resources;
+            ResourceEventHistory.SetRecording(true);
             using var provider = new GatedTextProvider();
             using var load = system.AcquireAsync<TextAsset>(provider.Address);
             ResourceRequest<bool> stop = null;
@@ -400,6 +401,11 @@ namespace YLFramework.Tests.Resource
                 Assert.That(() => load.TakeResult(), Throws.InstanceOf<InvalidOperationException>());
                 Assert.That(awaiting.Result, Is.TypeOf<ResourceException>());
                 Assert.That(((ResourceException)awaiting.Result).Kind, Is.EqualTo(ResourceError.SessionUnavailable));
+                var events = ResourceEventHistory.Read().Where(row => row.RequestId == load.EventTrace.Id &&
+                    (row.Kind == ResourceEventKind.Terminal || row.Kind == ResourceEventKind.ClaimInvalidated)).ToArray();
+                Assert.That(events.Select(row => row.Kind), Is.EqualTo(new[] { ResourceEventKind.Terminal, ResourceEventKind.ClaimInvalidated }));
+                Assert.That(events[0].Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
+                Assert.That(events[1].Error, Is.EqualTo(ResourceError.SessionUnavailable));
             }
             finally
             {

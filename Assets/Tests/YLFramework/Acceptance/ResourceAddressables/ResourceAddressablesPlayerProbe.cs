@@ -12,6 +12,7 @@ using Unity.Profiling.LowLevel;
 using Unity.Profiling.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceLocations;
 using UnityEngine.ResourceManagement.ResourceProviders;
@@ -350,6 +351,10 @@ namespace YLFramework.Acceptance
                 using var retained = independent.Retain("player independent retained lease");
                 independent.Dispose();
                 Require(retained.IsValid && retained.Asset.text == first.text, "Retain must own a separate live reference.");
+                yield return VerifyScopedFinalRelease(b, retained);
+                _checks.Add("ScopedFinalReleaseFailure");
+                yield return VerifyProviderProgressReentrantCancel();
+                _checks.Add("ProviderProgressReentrantCancel");
 
                 using (var prefabRequest = _system.AcquireAsync<GameObject>(PrefabKey))
                 {
@@ -482,6 +487,129 @@ namespace YLFramework.Acceptance
                 _checks.Add("FinalOwnershipZero");
             }
             finally { Addressables.InternalIdTransformFunc = previousTransform; }
+        }
+
+        private sealed class ProgressCancelProvider : ResourceProviderBase
+        {
+            internal readonly TextAsset Asset = new TextAsset("Player progress cancellation");
+            internal ProvideHandle? Pending;
+            internal Action Cancel;
+            internal int Reads, Releases;
+
+            public override void Provide(ProvideHandle handle)
+            {
+                Pending = handle;
+                handle.SetProgressCallback(() =>
+                {
+                    if (++Reads == 1)
+                        Cancel();
+                    return 0.4f;
+                });
+            }
+
+            internal void Complete()
+            {
+                var handle = Pending.Value;
+                Pending = null;
+                handle.Complete(Asset, true, null);
+            }
+
+            public override void Release(IResourceLocation location, object asset)
+            {
+                Require(ReferenceEquals(asset, Asset), "Progress provider received a different final asset.");
+                Releases++;
+            }
+        }
+
+        private IEnumerator VerifyProviderProgressReentrantCancel()
+        {
+            const string key = "acceptance/player-progress-cancel";
+            var provider = new ProgressCancelProvider();
+            var locator = new ResourceLocationMap(key);
+            locator.Add(key, new ResourceLocationBase(key, key, provider.ProviderId, typeof(TextAsset)));
+            Addressables.ResourceManager.ResourceProviders.Add(provider);
+            Addressables.AddResourceLocator(locator);
+            try
+            {
+                using var request = _system.AcquireAsync<TextAsset>(key);
+                provider.Cancel = request.Cancel;
+                int notifications = 0;
+                request.Completed += _ => notifications++;
+                yield return Until(() => provider.Pending.HasValue);
+                Require(provider.Reads == 0 && !request.IsDone, "The pending provide was sampled before cancellation.");
+                request.Cancel();
+                Require(provider.Reads == 1 && notifications == 1 && request.Status == ResourceRequestStatus.Canceled &&
+                    provider.Releases == 0, "Reentrant provider progress repeated cancellation or released the pending handle.");
+                provider.Complete();
+                yield return Until(() => provider.Releases == 1);
+                using var next = _system.AcquireAsync<TextAsset>(TextKey);
+                yield return Wait(next);
+                using var lease = next.TakeResult();
+                Require(_system.IsAvailable && lease.IsValid && lease.Asset.text == "local:" + _build.buildToken &&
+                    request.Status == ResourceRequestStatus.Canceled && notifications == 1 && provider.Reads == 1 &&
+                    provider.Releases == 1, "Late completion changed the canceled request or impaired the next acquisition.");
+            }
+            finally
+            {
+                if (provider.Pending.HasValue)
+                    provider.Complete();
+                Addressables.RemoveResourceLocator(locator);
+                Addressables.ResourceManager.ResourceProviders.Remove(provider);
+                Destroy(provider.Asset);
+            }
+        }
+
+        private sealed class PreviewReleaseProvider : ResourceProviderBase
+        {
+            public readonly TextAsset Asset = new TextAsset("Non-texture Player preview");
+            public readonly InvalidOperationException Failure = new InvalidOperationException("Player preview final release failed.");
+            public int Releases;
+
+            public override void Provide(ProvideHandle handle) => handle.Complete(Asset, true, null);
+
+            public override void Release(IResourceLocation location, object asset)
+            {
+                Require(ReferenceEquals(asset, Asset), "The Player provider received a different final asset.");
+                Releases++;
+                throw Failure;
+            }
+        }
+
+        private IEnumerator VerifyScopedFinalRelease(ResourceScope sibling, AssetLease<TextAsset> retained)
+        {
+            const string key = "acceptance/player-preview-final-release";
+            var provider = new PreviewReleaseProvider();
+            var locator = new ResourceLocationMap(key);
+            locator.Add(key, new ResourceLocationBase(key, key, provider.ProviderId, typeof(TextAsset)));
+            Addressables.ResourceManager.ResourceProviders.Add(provider);
+            Addressables.AddResourceLocator(locator);
+            try
+            {
+                using var preview = _system.CreateScope("player preview");
+                using var load = preview.LoadAsync<UnityEngine.Object>(key);
+                yield return Wait(load);
+                var asset = load.TakeResult();
+                Require(asset && !(asset is Texture) && ReferenceEquals(asset, provider.Asset) && provider.Releases == 0,
+                    "The Player preview must own the real provider asset before closing.");
+                using var close = preview.CloseAsync();
+                yield return Wait(close);
+                Require(close.Status == ResourceRequestStatus.Failed && close.Error?.Kind == ResourceError.LoadFailed &&
+                    ReferenceEquals(close.Error.GetBaseException(), provider.Failure) && provider.Releases == 1,
+                    "The preview Scope did not report its actual final release exception exactly once.");
+                Require(retained.IsValid && sibling.TryGetLoaded<TextAsset>(TextKey, out var borrowed) && borrowed &&
+                    ReferenceEquals(borrowed, retained.Asset), "Preview cleanup disturbed the independent owners.");
+                using var retry = preview.CloseAsync();
+                yield return Wait(retry);
+                Require(retry.TakeResult() && provider.Releases == 1 &&
+                    !_system.GetDiagnostics().Scopes.Any(scope => scope.Owner == preview.OwnerLabel),
+                    "Retry did not settle the original preview Scope without releasing the consumed handle again.");
+            }
+            finally
+            {
+                Addressables.RemoveResourceLocator(locator);
+                Addressables.ResourceManager.ResourceProviders.Remove(provider);
+                Destroy(provider.Asset);
+            }
         }
 
         private IEnumerator VerifyPublishedKeys()

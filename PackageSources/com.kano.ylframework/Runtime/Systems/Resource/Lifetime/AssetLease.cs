@@ -68,7 +68,7 @@ namespace YLFramework.Resource
             {
                 _owner = null;
                 system.UnregisterLease(this);
-                owner.Dispose();
+                // 创建失败时，调用方仍负责归还传入的独立引用。
                 throw;
             }
         }
@@ -80,7 +80,16 @@ namespace YLFramework.Resource
         {
             System.RequireAvailable();
             _ = Asset;
-            return new AssetLease<T>(System, Key, _owner.Retain(), _location, ownerLabel);
+            var retained = _owner.Retain();
+            try
+            {
+                return new AssetLease<T>(System, Key, retained, _location, ownerLabel);
+            }
+            catch
+            {
+                retained.Dispose();
+                throw;
+            }
         }
 
         /// <summary>幂等归还本份引用，不销毁共享 Unity 对象。</summary>

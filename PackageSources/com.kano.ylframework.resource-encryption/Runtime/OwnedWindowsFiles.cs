@@ -24,6 +24,15 @@ namespace YLFramework.Resource.Encryption
         private const uint ReparsePoint = 0x400;
         private const uint DirectoryBit = 0x10;
         private const uint NormalizedVolumeGuid = 1;
+        private const uint PersistentAcls = 8;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SecurityAttributes
+        {
+            public uint Length;
+            public IntPtr Descriptor;
+            public uint InheritHandle;
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct FileInfoByHandle
@@ -45,7 +54,32 @@ namespace YLFramework.Resource.Encryption
 
         [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool CreateDirectory(string path, IntPtr security);
+        private static extern bool CreateDirectory(string path, ref SecurityAttributes security);
+
+        [DllImport("kernel32.dll", EntryPoint = "GetVolumeInformationByHandleW", ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetVolumeInformation(SafeFileHandle handle, IntPtr label, uint labelLength, IntPtr serial,
+            IntPtr maxComponentLength, out uint flags, IntPtr filesystem, uint filesystemLength);
+
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool OpenProcessToken(IntPtr process, uint access, out SafeFileHandle token);
+
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetTokenInformation(SafeFileHandle token, int kind, IntPtr data, uint capacity, out uint length);
+
+        [DllImport("advapi32.dll", EntryPoint = "ConvertSidToStringSidW", ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ConvertSidToString(IntPtr sid, out IntPtr text);
+
+        [DllImport("advapi32.dll", EntryPoint = "ConvertStringSecurityDescriptorToSecurityDescriptorW", CharSet = CharSet.Unicode,
+            ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ConvertSecurityDescriptor(string text, uint revision, out IntPtr descriptor, IntPtr length);
+
+        [DllImport("kernel32.dll", ExactSpelling = true)]
+        private static extern IntPtr LocalFree(IntPtr memory);
 
         [DllImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
         private static extern uint GetFinalPath(SafeFileHandle handle, StringBuilder name, uint size, uint flags);
@@ -78,7 +112,7 @@ namespace YLFramework.Resource.Encryption
         internal static IDisposable InspectDirectory(string path, out string physicalPath)
             => WalkDirectory(path, false, true, out physicalPath);
 
-        private static IDisposable WalkDirectory(string path, bool create, bool inspect, out string physicalPath)
+        private static Pins WalkDirectory(string path, bool create, bool inspect, out string physicalPath)
         {
             path = LocalAbsolute(path);
             string volume = Path.GetPathRoot(path);
@@ -148,13 +182,65 @@ namespace YLFramework.Resource.Encryption
 
         internal static SafeFileHandle CreatePublicationDirectory(string path)
         {
-            if (!CreateDirectory(path, IntPtr.Zero))
-                throw Failure("Create fresh encrypted delivery directory");
-            return OpenPublicationDirectory(path);
+            path = LocalAbsolute(path);
+            using var pins = WalkDirectory(Path.GetDirectoryName(path), false, false, out _);
+            var parent = pins.Handles[pins.Handles.Count - 1];
+            if (!GetVolumeInformation(parent, IntPtr.Zero, 0, IntPtr.Zero, IntPtr.Zero, out uint flags, IntPtr.Zero, 0))
+                throw Failure("Read encrypted delivery volume capabilities");
+            if ((flags & PersistentAcls) == 0)
+                throw new IOException("Encrypted delivery requires a local volume with persistent access control lists.");
+
+            // Install the protected, inheritable DACL at creation, not after a window with the parent's permissions.
+            string physical = Path.Combine(VolumePath(parent), Path.GetFileName(path));
+            string sid = PublisherSid();
+            if (!ConvertSecurityDescriptor("O:" + sid + "D:P(A;OICI;FA;;;" + sid + ")", 1, out IntPtr descriptor, IntPtr.Zero))
+                throw Failure("Create publisher-only directory security descriptor");
+            try
+            {
+                var security = new SecurityAttributes { Length = (uint)Marshal.SizeOf<SecurityAttributes>(), Descriptor = descriptor, InheritHandle = 0 };
+                if (!CreateDirectory(physical, ref security))
+                    throw Failure("Create fresh encrypted delivery directory");
+                return OpenChecked(physical, ListDirectory | DeleteAccess, DirectoryShare, OpenExisting, directory: true);
+            }
+            finally
+            {
+                LocalFree(descriptor);
+            }
         }
 
-        internal static SafeFileHandle OpenPublicationDirectory(string path) =>
-            OpenChecked(LocalAbsolute(path), ListDirectory | DeleteAccess, DirectoryShare, OpenExisting, directory: true);
+        private static string PublisherSid()
+        {
+            // Use the process token directly: Unity's Mono profiles do not all implement WindowsIdentity.User.
+            const uint TokenQuery = 8;
+            const int TokenUser = 1;
+            if (!OpenProcessToken(new IntPtr(-1), TokenQuery, out var token)) // GetCurrentProcess pseudo-handle.
+                throw Failure("Open the encrypted delivery publisher token");
+            using (token)
+            {
+                GetTokenInformation(token, TokenUser, IntPtr.Zero, 0, out uint length);
+                if (length == 0)
+                    throw Failure("Size the encrypted delivery publisher SID");
+                IntPtr user = Marshal.AllocHGlobal(checked((int)length));
+                try
+                {
+                    if (!GetTokenInformation(token, TokenUser, user, length, out _) ||
+                        !ConvertSidToString(Marshal.ReadIntPtr(user), out IntPtr text))
+                        throw Failure("Read the encrypted delivery publisher SID");
+                    try
+                    {
+                        return Marshal.PtrToStringUni(text);
+                    }
+                    finally
+                    {
+                        LocalFree(text);
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(user);
+                }
+            }
+        }
 
         internal static void Publish(FileStream temporary, string destination) => Publish(temporary.SafeFileHandle, destination);
 
@@ -180,6 +266,15 @@ namespace YLFramework.Resource.Encryption
         }
 
         internal static FileStream OpenRemovalPinned(string path) => AsStream(OpenChecked(path, ReadAccess | DeleteAccess, 0, OpenExisting), FileAccess.Read);
+
+        internal static void CheckPublicationFile(FileStream file) => CheckIdentity(file.SafeFileHandle, directory: false);
+
+        internal static (ulong File, uint Volume, ulong Created) ReadFileIdentity(FileStream file)
+        {
+            var info = CheckIdentity(file.SafeFileHandle, directory: false);
+            return (((ulong)info.FileIndexHigh << 32) | info.FileIndexLow, info.VolumeSerial,
+                ((ulong)info.CreationHigh << 32) | info.CreationLow);
+        }
 
         private static FileStream AsStream(SafeFileHandle handle, FileAccess access)
         {
@@ -219,15 +314,19 @@ namespace YLFramework.Resource.Encryption
             }
             try
             {
-                if (!GetFileInformationByHandle(handle, out var info))
-                    throw Failure("Encrypted Bundle storage identity");
-                if ((info.Attributes & ReparsePoint) != 0 || ((info.Attributes & DirectoryBit) != 0) != directory || (!directory && info.Links != 1))
-                {
-                    throw new EncryptedBundleIntegrityException("Encrypted Bundle storage refused a directory mismatch or link.");
-                }
+                CheckIdentity(handle, directory);
                 return handle;
             }
             catch { handle.Dispose(); throw; }
+        }
+
+        private static FileInfoByHandle CheckIdentity(SafeFileHandle handle, bool directory)
+        {
+            if (!GetFileInformationByHandle(handle, out var info))
+                throw Failure("Encrypted Bundle storage identity");
+            if ((info.Attributes & ReparsePoint) != 0 || ((info.Attributes & DirectoryBit) != 0) != directory || (!directory && info.Links != 1))
+                throw new EncryptedBundleIntegrityException("Encrypted Bundle storage refused a directory mismatch or link.");
+            return info;
         }
 
         private static IOException Failure(string operation)

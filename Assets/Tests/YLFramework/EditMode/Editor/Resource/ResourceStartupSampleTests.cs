@@ -33,6 +33,21 @@ namespace YLFramework.Tests.Resource
         }
 
         [Test]
+        public void ResourceStartupGuideNamesThePreviewComponentUsedByTheSample()
+        {
+            var guide = FrameworkPackagePaths.FullPath(typeof(ResourceEditorOperations).Assembly, "Documentation~/Modules/Resource.md");
+            var overview = string.Join("\n", File.ReadLines(guide).Where(line => line.Contains("](../../Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs)")));
+            var componentNames = Regex.Matches(overview, @"`(RawImage|ResourceImage)`").Cast<Match>()
+                .Select(match => match.Groups[1].Value).Distinct().ToArray();
+            Assert.That(componentNames, Is.Not.Empty, "The sample overview should identify its preview component.");
+            var source = File.ReadAllText(Path.Combine(SampleRoot, "Runtime/ResourceStartupExample.cs"));
+            foreach (var component in componentNames)
+            {
+                Assert.That(source, Does.Match(@"\b" + component + @"\b"), "The guide names a preview component absent from the sample.");
+            }
+        }
+
+        [Test]
         public void EditorSampleCommandsNeverInitializeNativeResources()
         {
             foreach (var path in Directory.GetFiles(Path.Combine(SampleRoot, "Editor"), "*.cs", SearchOption.AllDirectories))

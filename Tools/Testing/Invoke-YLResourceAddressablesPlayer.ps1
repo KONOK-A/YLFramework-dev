@@ -12,18 +12,36 @@ param(
     [switch] $StockSizeControl,
     [switch] $VerifiedSizeSnapshot,
     [ValidateSet('Stock', 'Separated', IgnoreCase = $false)][string] $HeldDownload,
-    [ValidateSet('Positive','PlainBundleCopy','PlayerCopy','WrongRoute','Disabled','Performance','OutputOverlap','SourceChanged','SyncWait','GuardReview','OfficialOutput','PublishChanged', IgnoreCase = $false)]
+    [ValidateSet('Positive','PlainBundleCopy','PlayerCopy','WrongRoute','Disabled','Performance','OutputOverlap','SourceChanged','SyncWait','GuardReview','OfficialOutput','PublishChanged','LateKeyFailure','TargetConflict','AmbiguousGroups','RemoteClosure','OrdinaryDependency','BadDependency','MultiGroup','PrePublishAbort','MissingPlayerRuntime','ChangedPlayerOutput','LocalNoHash','LocalNoHashCollision', IgnoreCase = $false)]
     [string] $EncryptionCase = 'Positive',
+    [ValidateSet('Remote','Embedded','Mixed', IgnoreCase = $false)][string] $DeliveryLayout = 'Remote',
     [string] $EncryptionPackReceipt,
     [string] $ReleaseManifest,
     [string] $SourceCommit,
     [switch] $KeepArtifacts,
+    [switch] $ContentUpdate,
     [ValidateSet('IL2CPP','Mono', IgnoreCase = $false)][string] $Backend = 'IL2CPP'
 )
 
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'Resource Addressables Player acceptance requires Windows.' }
+if ($ContentUpdate) {
+    if ($BuildFlavor -cne 'Release' -or $ScopeCloseBenchmark -or $HeldDownload -or $StockSizeControl -or
+        $VerifiedSizeSnapshot -or $EncryptionPackReceipt -or $ReleaseManifest -or $SourceCommit -or
+        $PSBoundParameters.ContainsKey('EncryptionCase') -or $PSBoundParameters.ContainsKey('DeliveryLayout')) {
+        throw '-ContentUpdate is a separate Win64 Release workload using the current source packages.'
+    }
+    if ($EncryptedRemoteGroup) {
+        $arguments = @{ Profile = $Profile; Unity = $Unity; WorkspaceRoot = $WorkspaceRoot; Backend = $Backend; ContentUpdate = $true }
+        & (Join-Path $PSScriptRoot 'ResourceEncryption/Invoke-FrozenDelivery.ps1') @arguments
+    } else {
+        if ($Backend -cne 'IL2CPP') { throw 'The plain content update cell uses IL2CPP.' }
+        $arguments = @{ $Profile = $Unity; WorkspaceRoot = $WorkspaceRoot; Cell = "$Profile-Plain-$Backend" }
+        & (Join-Path $PSScriptRoot 'ResourceUpdates/Invoke-ContentUpdates.ps1') @arguments
+    }
+    return
+}
 if ($ScopeCloseBenchmark -and ($BuildFlavor -cne 'Release' -or -not $Graphics)) {
     throw 'Scope close measurement requires -BuildFlavor Release -Graphics.'
 }
@@ -37,7 +55,7 @@ $fixedRelease = $PSBoundParameters.ContainsKey('ReleaseManifest') -or $PSBoundPa
 if ($fixedRelease -and ([string]::IsNullOrWhiteSpace($ReleaseManifest) -or [string]::IsNullOrWhiteSpace($SourceCommit) -or $PSBoundParameters.ContainsKey('EncryptionPackReceipt'))) {
     throw '-ReleaseManifest and -SourceCommit must be supplied together, without -EncryptionPackReceipt.'
 }
-if (($PSBoundParameters.ContainsKey('EncryptionCase') -or $EncryptionPackReceipt -or $fixedRelease) -and (-not $EncryptedRemoteGroup -or $HeldDownload -or $VerifiedSizeSnapshot -or $StockSizeControl)) {
+if (($PSBoundParameters.ContainsKey('EncryptionCase') -or $PSBoundParameters.ContainsKey('DeliveryLayout') -or $EncryptionPackReceipt -or $fixedRelease) -and (-not $EncryptedRemoteGroup -or $HeldDownload -or $VerifiedSizeSnapshot -or $StockSizeControl)) {
     throw 'Select exactly one encrypted Player workload.'
 }
 if ($Backend -ceq 'Mono' -and (-not $EncryptedRemoteGroup -or $HeldDownload -or $VerifiedSizeSnapshot -or $StockSizeControl)) {
@@ -60,7 +78,7 @@ if ($EncryptedRemoteGroup -and -not ($HeldDownload -or $VerifiedSizeSnapshot -or
     $artifactArguments = if ($fixedRelease) { @{ ReleaseManifest = $ReleaseManifest; SourceCommit = $SourceCommit } }
         elseif ($EncryptionPackReceipt) { @{ PackReceipt = $EncryptionPackReceipt } } else { @{} }
     & (Join-Path $PSScriptRoot 'ResourceEncryption/Invoke-FrozenDelivery.ps1') -Profile $Profile -Unity $Unity -WorkspaceRoot $root `
-        -Mode $EncryptionCase -Backend $Backend -KeepArtifacts:$KeepArtifacts @artifactArguments
+        -Mode $EncryptionCase -DeliveryLayout $DeliveryLayout -Backend $Backend -KeepArtifacts:$KeepArtifacts @artifactArguments
     return
 }
 $configurationPath = 'Tools/Testing/TestSuites.json'

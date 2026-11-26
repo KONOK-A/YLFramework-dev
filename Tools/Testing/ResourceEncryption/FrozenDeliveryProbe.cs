@@ -21,7 +21,9 @@ namespace YLFramework.Testing
         public const string ProtectedTwinKey = "frozen/secret-twin";
         public const string OrdinaryKey = "frozen/plain";
         public const string LocalKey = "frozen/local";
+        public const string NoHashBundle = "plainlocal_assets_all.bundle";
         public const string Mixed = "frozen/mixed";
+        public const string FourGroupLabel = "frozen/four-groups";
 
         [SerializeField] private string _token;
         [SerializeField] private string _backend;
@@ -38,6 +40,9 @@ namespace YLFramework.Testing
         }
         private string _output;
         private Row _row;
+        private Keys _experimentKeys;
+        private string _experimentCache;
+        private Task<EncryptedDeliverySession> _experimentOpen;
 
         [Serializable]
         private sealed class Row
@@ -47,15 +52,25 @@ namespace YLFramework.Testing
             public int pid, bits, creates, unloads, streamsClosed, openKeys, issuedKeys, returnKeys, bundlesAfterStop, leasesAfterStop;
             public int[] nativeBeforeStop, nativeAfterStop;
             public PerformanceEvidence performance;
+            public LargeDownloadEvidence largeDownload;
+            public BufferEvidence buffers;
+            public CacheInspectionEvidence cacheInspection;
+            public bool experimentClosed, experimentFaultRecovered;
+            public string experimentFailure;
             public long coldBytes, mixedBytes, cacheBytes;
             public long heldTransferBytes, heldLoadBytes, completedTransferBytes, completedLoadBytes;
             public bool quit, sentinel, verifiedStartup, externalAfterStop, stableFile, exclusiveAfterUnload, remount, remountDuringUnload, noParts, predownloadOnly;
             public bool sawOwnedPart, rejectedBeforeCreate, invalidatedSize, refusedCloseWithExternalOwner;
+            public string abandonedTransferFileId, abandonedTransferCreated;
+            public long abandonedTransferReceivedBytes;
             public bool rejectedReorderedCandidates, matchedFirstCandidate, rejectedAfterDrift, leftForeignRegistration, reopenedCacheLock;
             public bool observerStartedTransfer, loadedWhileTransferHeld, observerCanceledWhileTransferHeld, downloadReleasedBeforeAsset, keyLeasesReturned;
             public bool retriedWithPrefetchHeld, singleLoadAttempt, refusedCloseWithPrefetchOwner;
             public bool closeWaitedForUnload, sharedClose, reenteredCloseDuringKeyReturn;
             public bool stockDefaultsVerified, mixedPrefetchVerified;
+            public bool localBeforeRemoteReady, remoteCacheWasBlocked, refusedUnpreparedRemote, installedPrefetchValidated, remotePrepared, readySnapshotZero;
+            public bool localBeforePreparationReleased;
+            public bool installedRootWriteDenied, installedContentWriteDenied;
         }
 
         private IEnumerator Start()
@@ -75,6 +90,7 @@ namespace YLFramework.Testing
 #endif
             var stack = new Stack<IEnumerator>();
             stack.Push(Run());
+            Exception failure = null;
             while (stack.Count != 0)
             {
                 object next;
@@ -85,13 +101,85 @@ namespace YLFramework.Testing
                 }
                 catch (Exception error)
                 {
-                    foreach (var iterator in stack) (iterator as IDisposable)?.Dispose();
-                    Finish(error);
-                    yield break;
+                    failure = error;
+                    while (stack.Count != 0)
+                    {
+                        try { (stack.Pop() as IDisposable)?.Dispose(); }
+                        catch (Exception cleanup) { failure = new AggregateException(failure, cleanup); }
+                    }
+                    break;
                 }
                 if (next is IEnumerator nested) stack.Push(nested); else yield return next;
             }
-            Finish(null);
+            if (_experimentKeys != null)
+            {
+                var close = CloseExperimentAsync();
+                float deadline = Time.realtimeSinceStartup + 140f;
+                while (!close.IsCompleted && Time.realtimeSinceStartup < deadline)
+                    yield return null;
+                Exception cleanup = close.IsCompleted
+                    ? close.Exception?.GetBaseException()
+                    : new TimeoutException("The fixture session did not release its pending work.");
+                if (cleanup != null)
+                    failure = failure == null ? cleanup : new AggregateException(failure, cleanup);
+            }
+            if (_row.scenario == "buffer-capacity-prefetch-fault")
+            {
+                if (failure is ExperimentPrefetchFault && _row.experimentClosed && _row.keyLeasesReturned &&
+                    _row.openKeys == 0 && _row.creates == 0)
+                {
+                    _row.experimentFaultRecovered = true;
+                    _row.experimentFailure = failure.Message;
+                    failure = null;
+                }
+                else if (failure == null)
+                    failure = new InvalidOperationException("The held prefetch failure was not exercised.");
+            }
+            Finish(failure);
+        }
+
+        private Task<EncryptedDeliverySession> OpenExperimentSession(string cache)
+        {
+            _experimentKeys = new Keys(Argument("-ylFrozenKey"), _row.scenario, peerKeyFile: Argument("-ylFrozenPeerKey"));
+            _experimentCache = cache;
+            return _experimentOpen = EncryptedDeliverySession.StartCoreAsync(cache, _experimentKeys, true);
+        }
+
+        private async Task CloseExperimentAsync()
+        {
+            try
+            {
+                if (_experimentOpen == null)
+                    return;
+                // 启动自身的错误由探针主路径保留。仅在成功建立会话后负责收尾。
+                if (!_experimentOpen.IsCompleted)
+                {
+                    try { await _experimentOpen; }
+                    catch (Exception) when (_experimentOpen.IsFaulted || _experimentOpen.IsCanceled) { return; }
+                }
+                if (_experimentOpen.Status != TaskStatus.RanToCompletion)
+                    return;
+                var session = _experimentOpen.GetAwaiter().GetResult();
+                while (session.Provider.Pending != 0 || session.Provider.HasOwners)
+                    await Task.Yield();
+                _row.creates = session.Provider.Creates;
+                await session.CloseAsync();
+                CheckKeyReturns(_experimentKeys);
+                // 验证锁确已释放，避免仅凭 Close 的返回状态认定完成。
+                using var unlocked = new FileStream(Path.Combine(_experimentCache, EncryptedBundleCache.OwnerFile),
+                    FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                _row.experimentClosed = true;
+                if (_row.cacheInspection != null)
+                {
+                    try { _ = EncryptedDeliverySession.InspectCacheAsync(_experimentCache, session); }
+                    catch (ArgumentException) { _row.cacheInspection.closedSessionRejected = true; }
+                    Require(_row.cacheInspection.closedSessionRejected, "A closed session still supplied cache ownership evidence.");
+                }
+            }
+            finally
+            {
+                _experimentKeys.Dispose();
+            }
         }
 
         private IEnumerator Run()
@@ -100,21 +188,39 @@ namespace YLFramework.Testing
             Require(!Application.isEditor && Application.isBatchMode && !Debug.isDebugBuild && Application.platform == RuntimePlatform.WindowsPlayer &&
                 _row.backend == _backend && _row.architecture == "X64" && _row.bits == 64 && _row.graphics != "Null",
                 "The fixture must use a native Win64 Release graphics Player.");
-            using (var catalog = OwnedWindowsFiles.OpenRead(Path.Combine(Addressables.RuntimePath, _catalogName)))
-                _row.catalogSha256 = AuthenticatedBundleStream.Hash(catalog, default);
-            string descriptionPath = Path.Combine(Addressables.RuntimePath, EncryptedBundleDescription.FileName);
-            if (File.Exists(descriptionPath))
-                using (var description = OwnedWindowsFiles.OpenRead(descriptionPath))
-                    _row.descriptionSha256 = AuthenticatedBundleStream.Hash(description, default);
             string player = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            if (scenario.StartsWith("cache-usage-", StringComparison.Ordinal))
+            {
+                CaptureInstalledIdentity();
+                yield return scenario == "cache-usage-cold" ? InspectColdCache() : InspectOpenCache();
+                yield break;
+            }
+            if (scenario.StartsWith("large-download-", StringComparison.Ordinal) ||
+                scenario == "buffer-capacity" || scenario == "buffer-capacity-prefetch-fault")
+            {
+                CaptureInstalledIdentity();
+                yield return scenario.StartsWith("large-download-", StringComparison.Ordinal) ? MeasureLargeDownload() :
+                    MeasureBufferCapacity(scenario == "buffer-capacity-prefetch-fault");
+                yield break;
+            }
+            if (scenario.StartsWith("performance-", StringComparison.Ordinal))
+            {
+                yield return Performance(player);
+                CaptureInstalledIdentity();
+                yield break;
+            }
+            CaptureInstalledIdentity();
             if (scenario == "disabled") { yield return Disabled(); yield break; }
-            if (scenario.StartsWith("performance-", StringComparison.Ordinal)) { yield return Performance(player); yield break; }
+            if (scenario.StartsWith("layout-", StringComparison.Ordinal)) { yield return EmbeddedLayout(scenario); yield break; }
+            if (scenario == "ordinary-dependency") { yield return OrdinaryDependency(); yield break; }
+            if (scenario == "bad-dependency") { yield return BadDependency(); yield break; }
+            if (scenario == "multi-group") { yield return MultiGroup(); yield break; }
             bool isolated = scenario == "no-cache-offline" || scenario == "held-download" || scenario == "held-load" || scenario == "tamper-prefetched";
             string cacheName = scenario == "fault-abort" || scenario == "fault-recovery" ? "Cache-abort" :
                 isolated ? "Cache-" + scenario : "CipherCache";
             string cache = Path.Combine(player, cacheName);
             Action onKeyReturn = null;
-            using var keys = new Keys(Path.GetFullPath(Path.Combine(player, "..", "fixture.key")), scenario, () => onKeyReturn?.Invoke());
+            using var keys = new Keys(Argument("-ylFrozenKey"), scenario, () => onKeyReturn?.Invoke());
             if (scenario == "shadow")
             {
                 var shadow = new ResourceLocationMap("unexpected test locator");
@@ -171,9 +277,15 @@ namespace YLFramework.Testing
             if (scenario == "fault-abort")
             {
                 var transfer = Addressables.DownloadDependenciesAsync(ProtectedKey, false);
-                yield return Until(() => Directory.EnumerateFiles(cache, "*.part").Any());
-                _row.sawOwnedPart = !transfer.IsDone && !File.Exists(final) && session.Provider.Creates == 0 && keys.Opens == 0 &&
-                    Directory.EnumerateFiles(cache, "*.part").Count() == 1;
+                yield return Until(() => transfer.GetDownloadStatus().DownloadedBytes > 0);
+                string part = Directory.EnumerateFiles(cache, "*.part").Single();
+                var staged = CacheEntryMetadata(part);
+                var proof = CacheEntryMetadata(part + EncryptedBundleCache.TransferProofSuffix);
+                _row.abandonedTransferReceivedBytes = transfer.GetDownloadStatus().DownloadedBytes;
+                _row.abandonedTransferFileId = staged.fileId;
+                _row.abandonedTransferCreated = staged.created;
+                _row.sawOwnedPart = !transfer.IsDone && proof.bytes > 0 && !File.Exists(final) &&
+                    session.Provider.Creates == 0 && keys.Opens == 0;
                 Require(_row.sawOwnedPart, "Crash was not during an owned ciphertext attempt.");
                 _row.status = "BeforeUnexpectedExit";
                 Write(_output);
@@ -239,7 +351,7 @@ namespace YLFramework.Testing
             }
             else if (scenario == "fault-recovery" || scenario == "repair")
             {
-                Require(!Directory.EnumerateFiles(cache, "*.part").Any(), "Owned abandoned attempt was not removed on restart.");
+                Require(!HasTransferTemporaries(cache), "Owned abandoned transfer or provenance was not removed on restart.");
                 yield return GoodOfficial(ProtectedKey);
             }
             else if (scenario == "cold")
@@ -501,12 +613,218 @@ namespace YLFramework.Testing
                 Require(released.Length == record.CipherLength && AuthenticatedBundleStream.Hash(released, default) == record.CipherSha256,
                     "Verified ciphertext was not retained unchanged.");
             }
-            _row.noParts = !Directory.EnumerateFiles(cache, "*.part").Any();
+            _row.noParts = !HasTransferTemporaries(cache);
             Require(_row.noParts, "A transfer left temporary ciphertext.");
             var stop = session.CloseAsync();
             yield return Until(() => stop.IsCompleted);
             stop.GetAwaiter().GetResult();
             CheckKeyReturns(keys);
+        }
+
+        private static bool HasTransferTemporaries(string cache) =>
+            Directory.EnumerateFiles(cache, "*.part").Any() ||
+            Directory.EnumerateFiles(cache, "*.part" + EncryptedBundleCache.TransferProofSuffix).Any();
+
+        private void CaptureInstalledIdentity()
+        {
+            using (var catalog = OwnedWindowsFiles.OpenRead(Path.Combine(Addressables.RuntimePath, _catalogName)))
+                _row.catalogSha256 = AuthenticatedBundleStream.Hash(catalog, default);
+            string path = Path.Combine(Addressables.RuntimePath, EncryptedBundleDescription.FileName);
+            if (File.Exists(path))
+                using (var description = OwnedWindowsFiles.OpenRead(path))
+                    _row.descriptionSha256 = AuthenticatedBundleStream.Hash(description, default);
+        }
+
+        private IEnumerator EmbeddedLayout(string scenario)
+        {
+            var description = EncryptedDeliverySession.ReadShippedDescription(Addressables.RuntimePath, true, default);
+            var local = description.Bundles.Single(row => row.Binding.KeyId == "K1");
+            Require(local.Binding.Mode == EncryptedBundleDeliveryMode.Embedded, "First chapter must be installed.");
+            bool mixed = description.ReleasePrefix != null, offline = scenario == "layout-offline", bad = scenario == "layout-bad-embedded";
+            if (offline)
+            {
+                AssertInstalledDirectoryReadOnly(Path.GetDirectoryName(Application.dataPath));
+                _row.installedRootWriteDenied = true;
+                AssertInstalledDirectoryReadOnly(Path.Combine(Addressables.RuntimePath, EncryptedBundleBinding.EmbeddedFolder, local.Binding.GroupGuid));
+                _row.installedContentWriteDenied = true;
+            }
+            string cache = Argument("-ylFrozenCache");
+            Require(!Directory.Exists(cache), "The fresh installation must not have a cipher cache.");
+            IDisposable heldLock = null;
+            using var keys = new Keys(Argument("-ylFrozenKey"), scenario, peerKeyFile: OptionalArgument("-ylFrozenPeerKey"));
+            try
+            {
+                if (mixed && offline)
+                {
+                    Directory.CreateDirectory(cache);
+                    heldLock = OwnedWindowsFiles.LockPinned(Path.Combine(cache, ".yl-cache.lock"));
+                }
+                var starting = EncryptedDeliverySession.StartCoreAsync(mixed ? cache : null, keys, true);
+                yield return Until(() => starting.IsCompleted);
+                var session = starting.GetAwaiter().GetResult();
+                Require(!session.IsRemoteReady && keys.Opens == 0 && session.Provider.Creates == 0 && session.EmbeddedCipherHashBytes == 0,
+                    "Local readiness touched bundle bytes, mounted content, or prepared remote.");
+                long transfer = mixed ? description.Bundles.Where(row => row.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps).Sum(row => row.CipherLength) : 0;
+                var barrier = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+                System.Threading.Tasks.Task preparing = null;
+                var size = Addressables.GetDownloadSizeAsync(new[] { ProtectedKey, ProtectedTwinKey, ProtectedKey });
+                try
+                {
+                    yield return Until(() => size.IsDone);
+                    Require(size.Status == AsyncOperationStatus.Succeeded && size.Result == transfer, "The protected Union size is not the sum of unique remote locations.");
+                    _row.mixedBytes = size.Result;
+                }
+                finally { Addressables.Release(size); }
+                if (mixed)
+                {
+                    var blocked = Addressables.DownloadDependenciesAsync(ProtectedTwinKey, false);
+                    try
+                    {
+                        yield return Until(() => blocked.IsDone);
+                        Require(blocked.Status == AsyncOperationStatus.Failed && blocked.OperationException.ToString().Contains("not ready") &&
+                            keys.Opens == 0 && session.Provider.Creates == 0, "Remote prefetch must reject before any work while unprepared.");
+                        _row.refusedUnpreparedRemote = true;
+                    }
+                    finally { Addressables.Release(blocked); }
+                    if (offline)
+                    {
+                        var blockedPreparation = session.PrepareRemoteAsync();
+                        yield return Until(() => blockedPreparation.IsCompleted);
+                        Require(blockedPreparation.IsFaulted && blockedPreparation.Exception.GetBaseException() is IOException && !session.IsRemoteReady,
+                            "A held cache lock must prevent remote preparation without invalidating the installed chapter.");
+                        _row.remoteCacheWasBlocked = true;
+                    }
+                    else if (!bad)
+                        preparing = session.PrepareRemoteAsync(default, barrier.Task);
+                }
+                var prefetch = Addressables.DownloadDependenciesAsync(ProtectedKey, false);
+                try
+                {
+                    yield return Until(() => prefetch.IsDone);
+                    Require(prefetch.Status == (bad ? AsyncOperationStatus.Failed : AsyncOperationStatus.Succeeded) && keys.Opens == 0 &&
+                        session.Provider.Creates == 0 && session.EmbeddedCipherHashBytes == (bad ? 0 : local.CipherLength),
+                        "Installed prefetch must check ciphertext without renting keys or mounting.");
+                    _row.installedPrefetchValidated = true;
+                    var first = Addressables.LoadAssetAsync<TextAsset>(ProtectedKey);
+                    try
+                    {
+                        yield return Until(() => first.IsDone);
+                        if (bad)
+                        {
+                            Require(first.Status == AsyncOperationStatus.Failed && keys.Opens == 0 && session.Provider.Creates == 0,
+                                "A bad installed Bundle reached key rental or Unity mount.");
+                            _row.rejectedBeforeCreate = true;
+                        }
+                        else
+                        {
+                            Require(first.Status == AsyncOperationStatus.Succeeded && first.Result.text == _token && !session.IsRemoteReady && keys.Opens == 1,
+                                "First chapter was not material-ready independently of the protected remote cache.");
+                            _row.sentinel = _row.localBeforeRemoteReady = true;
+                            if (preparing != null)
+                            {
+                                Require(!preparing.IsCompleted && !barrier.Task.IsCompleted && !Directory.Exists(cache),
+                                    "Installed content waited for, or implicitly completed, the held remote preparation.");
+                                _row.localBeforePreparationReleased = true;
+                            }
+                        }
+                    }
+                    finally { Addressables.Release(first); }
+                }
+                finally { Addressables.Release(prefetch); }
+                if (mixed && !offline && !bad)
+                {
+                    using var canceled = new System.Threading.CancellationTokenSource();
+                    var firstWaiter = session.PrepareRemoteAsync(canceled.Token);
+                    var shared = session.PrepareRemoteAsync();
+                    Require(ReferenceEquals(shared, preparing), "Overlapping preparations did not coalesce.");
+                    canceled.Cancel();
+                    barrier.SetResult(true);
+                    yield return Until(() => firstWaiter.IsCompleted && shared.IsCompleted);
+                    shared.GetAwaiter().GetResult();
+                    Require(firstWaiter.IsCanceled && session.IsRemoteReady, "A canceled waiter changed shared readiness.");
+                    _row.remotePrepared = true;
+                    var download = Addressables.DownloadDependenciesAsync(ProtectedTwinKey, false);
+                    try
+                    {
+                        yield return Until(() => download.IsDone);
+                        Require(download.Status == AsyncOperationStatus.Succeeded && keys.Opens == 1 && session.Provider.Creates == 1,
+                            "A remote prefetch borrowed the peer key or mounted its bundle.");
+                        _row.completedTransferBytes = CompletedDownloadBytes(download, transfer);
+                        var peer = Addressables.LoadAssetAsync<TextAsset>(ProtectedTwinKey);
+                        try
+                        {
+                            yield return Until(() => peer.IsDone);
+                            Require(peer.Status == AsyncOperationStatus.Succeeded && peer.Result.text == "peer:" + _token,
+                                "The remote peer did not load from the verified cache with its group key.");
+                            _row.readySnapshotZero = session.Cache.VerifiedCipherHashBytes == 2 * transfer;
+                        }
+                        finally { Addressables.Release(peer); }
+                    }
+                    finally { Addressables.Release(download); }
+                }
+                if (!mixed && !offline && !bad)
+                {
+                    var peer = Addressables.LoadAssetAsync<TextAsset>(ProtectedTwinKey);
+                    try
+                    {
+                        yield return Until(() => peer.IsDone);
+                        Require(peer.Status == AsyncOperationStatus.Succeeded && peer.Result.text == "peer:" + _token,
+                            "The second installed group did not use its own Bundle and key.");
+                    }
+                    finally { Addressables.Release(peer); }
+                }
+                if (scenario == "layout-nohash")
+                {
+                    var location = Addressables.LoadResourceLocationsAsync(LocalKey, typeof(TextAsset));
+                    try
+                    {
+                        yield return Until(() => location.IsDone);
+                        Require(location.Status == AsyncOperationStatus.Succeeded, "The stock local asset did not resolve.");
+                        var bundle = location.Result.Single().Dependencies.Single(dep => Path.GetFileName(dep.InternalId) == NoHashBundle);
+                        Require(bundle.ProviderId == typeof(AssetBundleProvider).FullName, "The local NoHash Bundle must use the stock provider.");
+                    }
+                    finally { Addressables.Release(location); }
+                    var stock = Addressables.LoadAssetAsync<TextAsset>(LocalKey);
+                    try
+                    {
+                        yield return Until(() => stock.IsDone);
+                        Require(stock.Status == AsyncOperationStatus.Succeeded && stock.Result.text == "local:" + _token && keys.Opens == 2 && session.Provider.Creates == 2,
+                            "The stock local NoHash group did not coexist with the two protected groups.");
+                    }
+                    finally { Addressables.Release(stock); }
+                }
+                if (!session.IsRemoteReady)
+                    Require(!Directory.Exists(cache) || (mixed && offline && Directory.GetFiles(cache).Select(Path.GetFileName).SequenceEqual(new[] { ".yl-cache.lock" })),
+                        "Content not using the protected CDN wrote remote cache bytes.");
+                var close = session.CloseAsync();
+                yield return Until(() => close.IsCompleted);
+                close.GetAwaiter().GetResult();
+                yield return Until(() => !AssetBundle.GetAllLoadedAssetBundles().Any());
+                CheckKeyReturns(keys);
+            }
+            finally { heldLock?.Dispose(); }
+        }
+
+        private static void AssertInstalledDirectoryReadOnly(string directory)
+        {
+            Require(Directory.Exists(directory), "The read-only probe needs an installed directory.");
+            string path = Path.Combine(directory, ".yl-write-probe-" + Guid.NewGuid().ToString("N"));
+            bool denied = false;
+            try { using var created = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None); }
+            catch (UnauthorizedAccessException) { denied = true; }
+            if (!denied)
+            {
+                File.Delete(path);
+                throw new InvalidOperationException("The installed directory allows the Player to create files: " + directory);
+            }
+            denied = false;
+            try { Directory.CreateDirectory(path); }
+            catch (UnauthorizedAccessException) { denied = true; }
+            if (!denied)
+            {
+                Directory.Delete(path);
+                throw new InvalidOperationException("The installed directory allows the Player to create subdirectories: " + directory);
+            }
         }
 
         private void CheckKeyReturns(Keys keys)
@@ -515,6 +833,162 @@ namespace YLFramework.Testing
             Require(_row.issuedKeys == _row.returnKeys && keys.DuplicateReturns == 0,
                 $"Not every issued key lease was returned once: issued {_row.issuedKeys}, returned {_row.returnKeys}, duplicates {keys.DuplicateReturns}.");
             _row.keyLeasesReturned = true;
+        }
+
+        private IEnumerator OrdinaryDependency()
+        {
+            using var keys = new Keys(Argument("-ylFrozenKey"), _row.scenario, peerKeyFile: Argument("-ylFrozenPeerKey"));
+            var opening = EncryptedDeliverySession.StartCoreAsync(Argument("-ylFrozenCache"), keys, true);
+            yield return Until(() => opening.IsCompleted);
+            var session = opening.GetAwaiter().GetResult();
+            var prepare = session.PrepareRemoteAsync();
+            yield return Until(() => prepare.IsCompleted);
+            prepare.GetAwaiter().GetResult();
+            var handle = Addressables.LoadAssetAsync<GameObject>("frozen/remote-with-ordinary");
+            try
+            {
+                yield return Until(() => handle.IsDone);
+                var sprite = handle.Result ? handle.Result.GetComponent<SpriteRenderer>().sprite : null;
+                Require(handle.Status == AsyncOperationStatus.Succeeded && sprite && sprite.name == "public-texture" && sprite.rect.width == 8 &&
+                    keys.Opens == 1 && session.Provider.Creates == 1, "The remote protected prefab did not resolve its stock remote dependency.");
+                _row.sentinel = true;
+            }
+            finally { Addressables.Release(handle); }
+            var close = session.CloseAsync();
+            yield return Until(() => close.IsCompleted);
+            close.GetAwaiter().GetResult();
+            yield return Until(() => !AssetBundle.GetAllLoadedAssetBundles().Any());
+            CheckKeyReturns(keys);
+        }
+
+        private IEnumerator MultiGroup()
+        {
+            using var keys = new Keys(Argument("-ylFrozenKey"), _row.scenario, peerKeyFile: Argument("-ylFrozenPeerKey"));
+            var description = EncryptedDeliverySession.ReadShippedDescription(Addressables.RuntimePath, true, default);
+            var remotes = description.Bundles.Where(row => row.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps).ToArray();
+            Require(description.Bundles.Count == 4 && description.Bundles.Select(row => row.Binding.GroupGuid).Distinct().Count() == 4 && remotes.Length == 2,
+                "The mixed test must have two distinct groups in each layout.");
+            string cache = Argument("-ylFrozenCache");
+            var starting = EncryptedDeliverySession.StartCoreAsync(cache, keys, true);
+            yield return Until(() => starting.IsCompleted);
+            var session = starting.GetAwaiter().GetResult();
+            long bytes = remotes.Sum(row => row.CipherLength);
+            var size = Addressables.GetDownloadSizeAsync(new[] { FourGroupLabel, ProtectedTwinKey, ProtectedKey });
+            try
+            {
+                yield return Until(() => size.IsDone);
+                Require(!session.IsRemoteReady && !Directory.Exists(cache) && size.Status == AsyncOperationStatus.Succeeded && size.Result == bytes,
+                    "The mixed Union must count both remote groups exactly once and leave the cache untouched.");
+            }
+            finally { Addressables.Release(size); }
+            var prepare = session.PrepareRemoteAsync();
+            yield return Until(() => prepare.IsCompleted);
+            prepare.GetAwaiter().GetResult();
+            var prefetch = Addressables.DownloadDependenciesAsync((object)FourGroupLabel, false);
+            try
+            {
+                yield return Until(() => prefetch.IsDone);
+                Require(prefetch.Status == AsyncOperationStatus.Succeeded && keys.Opens == 0 && session.Provider.Creates == 0,
+                    "The four-group prefetch must not borrow keys or mount content.");
+                _row.completedTransferBytes = CompletedDownloadBytes(prefetch, bytes);
+                var load = Addressables.LoadAssetsAsync<TextAsset>((object)FourGroupLabel, null);
+                try
+                {
+                    yield return Until(() => load.IsDone);
+                    var expected = new HashSet<string>(new[] { _token, "peer:" + _token, "local-2:" + _token, "remote-2:" + _token }, StringComparer.Ordinal);
+                    Require(load.Status == AsyncOperationStatus.Succeeded && load.Result.Count == 4 && expected.SetEquals(load.Result.Select(asset => asset.text)) &&
+                        session.Provider.Mounted == 4 && keys.Opens == 4, "The shared Label did not load the correct asset from all four groups.");
+                    _row.sentinel = true;
+                }
+                finally { Addressables.Release(load); }
+            }
+            finally { Addressables.Release(prefetch); }
+            var close = session.CloseAsync();
+            yield return Until(() => close.IsCompleted);
+            close.GetAwaiter().GetResult();
+            yield return Until(() => !AssetBundle.GetAllLoadedAssetBundles().Any());
+            _row.creates = session.Provider.Creates;
+            _row.streamsClosed = session.Provider.StreamsClosed;
+            CheckKeyReturns(keys);
+        }
+
+        private IEnumerator BadDependency()
+        {
+            const string address = "frozen/remote-with-embedded";
+            using var keys = new Keys(Argument("-ylFrozenKey"), _row.scenario, peerKeyFile: Argument("-ylFrozenPeerKey"));
+            var starting = EncryptedDeliverySession.StartCoreAsync(Argument("-ylFrozenCache"), keys, true);
+            yield return Until(() => starting.IsCompleted);
+            var session = starting.GetAwaiter().GetResult();
+            var prepare = session.PrepareRemoteAsync();
+            yield return Until(() => prepare.IsCompleted);
+            prepare.GetAwaiter().GetResult();
+            var locations = Addressables.LoadResourceLocationsAsync(address, typeof(GameObject));
+            var localLocations = Addressables.LoadResourceLocationsAsync(ProtectedKey, typeof(TextAsset));
+            EncryptedBundleRecord remote;
+            try
+            {
+                yield return Until(() => locations.IsDone && localLocations.IsDone);
+                Require(locations.Status == AsyncOperationStatus.Succeeded && localLocations.Status == AsyncOperationStatus.Succeeded,
+                    "The installed Catalog did not resolve the test assets.");
+                EncryptedBundleRecord[] Transfers(IResourceLocation asset) => asset.Dependencies
+                    .Where(dep => dep.ProviderId == session.Provider.ProviderId && dep.ResourceType == typeof(IAssetBundleResource))
+                    .Select(session.ResolveTransfer).ToArray();
+                var pair = Transfers(locations.Result.Single());
+                var local = Transfers(localLocations.Result.Single()).Single();
+                Require(pair.Length == 2 && local.Binding.Mode == EncryptedBundleDeliveryMode.Embedded && pair.Contains(local),
+                    "The Catalog must give the remote asset the very same installed Bundle as the independent owner.");
+                remote = pair.Single(row => row.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps);
+            }
+            finally
+            {
+                Addressables.Release(localLocations);
+                Addressables.Release(locations);
+            }
+            var owner = Addressables.LoadAssetAsync<TextAsset>(ProtectedKey);
+            try
+            {
+                yield return Until(() => owner.IsDone);
+                Require(owner.Status == AsyncOperationStatus.Succeeded && owner.Result.text == _token && keys.Opens == 1 && session.Provider.Creates == 1,
+                    "The independent installed owner failed to mount A.");
+                var prefetch = Addressables.DownloadDependenciesAsync(address, false);
+                try
+                {
+                    yield return Until(() => prefetch.IsDone);
+                    Require(prefetch.Status == AsyncOperationStatus.Succeeded && keys.Opens == 1 && session.Provider.Creates == 1,
+                        "Prefetch of the shared dependency set borrowed a new key or mounted B.");
+                    _row.completedTransferBytes = CompletedDownloadBytes(prefetch, remote.CipherLength);
+                    Require(session.Cache.TryGetVerifiedPath(remote, out string path), "Prefetch did not leave verified remote bytes.");
+                    using (var file = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    {
+                        int first = file.ReadByte();
+                        Require(first >= 0, "No fixture ciphertext to damage.");
+                        file.Position = 0;
+                        file.WriteByte((byte)(first ^ 1));
+                    }
+                    var failed = Addressables.LoadAssetAsync<GameObject>(address);
+                    try
+                    {
+                        yield return Until(() => failed.IsDone);
+                        Require(failed.Status == AsyncOperationStatus.Failed && (failed.OperationException?.ToString().Contains(nameof(EncryptedBundleIntegrityException)) ?? false) &&
+                            keys.Opens == 1 && session.Provider.Creates == 1 && session.Provider.Mounted == 1 && owner.Result.text == _token,
+                            "The bad Bundle must not mount or displace the independent owner of the good Bundle. " + failed.OperationException);
+                        _row.rejectedBeforeCreate = _row.sentinel = true;
+                    }
+                    finally { Addressables.Release(failed); }
+                }
+                finally { Addressables.Release(prefetch); }
+            }
+            finally { Addressables.Release(owner); }
+            var close = session.CloseAsync();
+            yield return Until(() => close.IsCompleted);
+            close.GetAwaiter().GetResult();
+            yield return Until(() => !AssetBundle.GetAllLoadedAssetBundles().Any());
+            _row.creates = session.Provider.Creates;
+            _row.unloads = session.Provider.Unloads;
+            _row.streamsClosed = session.Provider.StreamsClosed;
+            Require(_row.creates == 1 && _row.unloads == 1 && _row.streamsClosed == 1,
+                "Only the good Bundle should mount and release a native stream.");
+            CheckKeyReturns(keys);
         }
 
         private IEnumerator Sizes(ResourceSystem system, string[] keys, long expected, bool mixed)
@@ -604,7 +1078,7 @@ namespace YLFramework.Testing
             var next = Addressables.LoadAssetAsync<TextAsset>(ProtectedTwinKey);
             yield return Until(() => next.IsDone);
             _row.rejectedAfterDrift = next.Status == AsyncOperationStatus.Failed && !next.Result &&
-                (next.OperationException?.ToString().Contains("must not change after startup") ?? false) && session.Provider.Creates == creates && keys.Returns == returns + 1;
+                (next.OperationException?.ToString().Contains("must remain fixed throughout the session") ?? false) && session.Provider.Creates == creates && keys.Returns == returns + 1;
             Addressables.Release(next);
             Require(_row.rejectedAfterDrift, "A new protected operation or old owner did not settle correctly after drift.");
             yield return Stop(startup);
@@ -648,17 +1122,21 @@ namespace YLFramework.Testing
             public override void Provide(ProvideHandle handle) => throw new InvalidOperationException("Unexpected test provider must never be invoked.");
         }
 
-        private static IEnumerator Until(Func<bool> condition)
+        private static IEnumerator Until(Func<bool> condition, float timeoutSeconds = 35)
         {
-            float deadline = Time.realtimeSinceStartup + 35;
+            float deadline = Time.realtimeSinceStartup + timeoutSeconds;
             while (!condition()) { Require(Time.realtimeSinceStartup < deadline, "Fixture operation timed out."); yield return null; }
         }
 
         private static string Argument(string name)
+            => OptionalArgument(name) ?? throw new InvalidOperationException("Required fixture argument " + name);
+
+        private static string OptionalArgument(string name)
         {
             var args = Environment.GetCommandLineArgs();
             int index = Array.IndexOf(args, name);
-            Require(index >= 0 && index == Array.LastIndexOf(args, name) && index + 1 < args.Length, "Required fixture argument " + name);
+            if (index < 0) return null;
+            Require(index == Array.LastIndexOf(args, name) && index + 1 < args.Length, "Invalid fixture argument " + name);
             return args[index + 1];
         }
 
@@ -690,25 +1168,37 @@ namespace YLFramework.Testing
         public sealed class Keys : IEncryptedBundleKeySource, IDisposable
         {
             private readonly byte[] _bytes = new byte[32];
+            private readonly byte[] _peer;
             private readonly string _mode;
-            private readonly Action _onAuthorReturn;
+            public Action OnReturn;
             public int Opens, Issued, Returns, DuplicateReturns;
 
-            public Keys(string file, string mode, Action onAuthorReturn = null)
+            public Keys(string file, string mode, Action onAuthorReturn = null, string peerKeyFile = null)
+            {
+                Read(file, _bytes);
+                if (peerKeyFile != null)
+                {
+                    _peer = new byte[_bytes.Length];
+                    Read(peerKeyFile, _peer);
+                }
+                _mode = mode;
+                OnReturn = onAuthorReturn;
+                if (mode == "wrong-key") _bytes[0] ^= 1;
+            }
+
+            private static void Read(string file, byte[] key)
             {
                 using var input = OwnedWindowsFiles.OpenRead(file);
-                Require(input.Length == _bytes.Length && input.Read(_bytes, 0, _bytes.Length) == _bytes.Length, "Missing ephemeral fixture key.");
-                _mode = mode;
-                _onAuthorReturn = onAuthorReturn;
-                if (mode == "wrong-key") _bytes[0] ^= 1;
+                Require(input.Length == key.Length && input.Read(key, 0, key.Length) == key.Length, "Missing ephemeral fixture key.");
             }
 
             public EncryptedBundleKeyLease OpenReadKey(string keyId)
             {
                 System.Threading.Interlocked.Increment(ref Opens);
-                if (_mode == "missing-key" ? keyId != "K2" : keyId != "K1") return null;
+                var material = keyId == "K1" ? _bytes : keyId == "K2" ? _peer : null;
+                if (_mode == "missing-key" || (_mode == "LateKeyFailure" && Opens == 2) || material == null) return null;
                 int returned = 0;
-                var lease = new EncryptedBundleKeyLease(_bytes, () =>
+                var lease = new EncryptedBundleKeyLease(material, () =>
                 {
                     if (System.Threading.Interlocked.Exchange(ref returned, 1) != 0)
                     {
@@ -716,14 +1206,18 @@ namespace YLFramework.Testing
                         return;
                     }
                     System.Threading.Interlocked.Increment(ref Returns);
-                    _onAuthorReturn?.Invoke();
+                    OnReturn?.Invoke();
                     if (_mode == "key-return")
                         throw new InvalidOperationException("Fixture key return callback failed.");
                 });
                 System.Threading.Interlocked.Increment(ref Issued);
                 return lease;
             }
-            public void Dispose() => Array.Clear(_bytes, 0, _bytes.Length);
+            public void Dispose()
+            {
+                Array.Clear(_bytes, 0, _bytes.Length);
+                if (_peer != null) Array.Clear(_peer, 0, _peer.Length);
+            }
         }
     }
 }

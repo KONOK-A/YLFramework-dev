@@ -2,7 +2,7 @@
   "name": "com.kano.ylframework.resource-encryption",
   "version": "0.1.0-preview.1",
   "displayName": "YLFramework Encrypted Resource Delivery",
-  "description": "Optional fixed-catalog Windows x64 encrypted Addressables Bundle delivery.",
+  "description": "Optional Windows x64 encrypted Addressables Bundle delivery and signed content updates.",
   "unity": "2022.3",
   "unityRelease": "62f3",
   "license": "MIT",

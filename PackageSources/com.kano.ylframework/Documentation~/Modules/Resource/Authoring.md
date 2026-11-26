@@ -2,7 +2,7 @@
 
 > [资源管理](../Resource.md) · [内容交付](Delivery.md) · [文档首页](../../README.md)
 
-在官方 Addressables Settings、Groups、Labels、Profiles 和 Entries 中编辑内容，场景和脚本通过地址或 `AssetReference` 引用。YL 提供校验、导航、常量生成和正式构建编排。这里是普通内容流程；固定目录加密另见[可选的远端 Bundle 加密](Delivery.md#可选的远端-bundle-加密)。
+在官方 Addressables Settings、Groups、Labels、Profiles 和 Entries 中编辑内容，场景和脚本通过地址或 `AssetReference` 引用。YL 提供校验、导航、常量生成和正式构建编排。这里是普通内容流程；加密另见[可选的 Bundle 加密](Delivery.md#可选的-bundle-加密)。
 
 ## 第一次配置
 
@@ -57,10 +57,46 @@ UnityEngine.Debug.Log(report.Summary);
 
 先在官方工具检查并处理内容更新限制；YL 工具不会移动 Entry/Group 来掩盖冲突。Bundle 身份、缓存复用与 Catalog 变化仍由官方决定，参见 [Unity Content Update](https://docs.unity3d.com/Packages/com.unity.addressables@2.10/manual/ContentUpdateWorkflow.html) 与[启动更新窗口](Delivery.md#启动更新窗口)。
 
+### 签名版本发布
+
+使用事务启动的普通交付分两步构建。先构建安装基线 A 和一次 Player，后续版本 B 只构建官方内容更新。发布端的 Editor 脚本引用 `YLFramework.Editor`、`YLFramework.Runtime` 和 Addressables 程序集。加密交付由选装包构建器封装制品并沿用同一份清单协议。
+
+1. 在 A 的官方 Settings 开启 **Build Remote Catalog**，填好远端 Catalog 的构建及加载路径。保留 **Only update catalogs manually**，把 **Build Addressables on Player Build** 设为 **Do not Build Addressables content on Player Build**。以已保存的目标平台和 Profile 构建 A。为官方内容状态和封存文件准备独立的归档目录。
+2. 调用 `BuildBaseline`。它保留官方内容状态的原样字节和随包 Catalog，原位改写 Player 将复制的构建输出 `settings.json`。结果只有一个本地 Catalog 入口，且该入口没有远端、持久缓存或本地 hash 依赖。归档记录包含启动配置摘要、Catalog 摘要、官方状态摘要及构建身份。使用默认 Catalog 格式，Unity 2022.3 / Addressables 1.25.0 为 JSON，Unity 6.3 / Addressables 2.10.3 为二进制。
+3. 把 A 的所有 Bundle 放入约定的安装源根。可用 `InspectCatalog(baseline.CatalogPath, Addressables.RuntimePath)` 获取准确的 Bundle 路由和依赖，再用 `DescribeInstalledArtifacts` 对照实际待安装的目录及相对路径生成 A 的制品表。以 `ResourceContentManifestWriter.Serialize` 生成 A 的清单，为需要离线启动的 Bundle 填写启动根，签名验证会展开这些根的依赖。A 的清单和分离签名随 Player 安装。核对实际安装的 `settings.json`、Catalog 和 Bundle 与封存值一致。
+4. 保存 A 的归档、已签清单、实际包解析、BuildReport、Build Layout 及安装文件清点，再制作 B 的资源。保持 A 的 Editor、Addressables、平台、Settings、Profile、官方 Player 内容版本及逻辑远端 Catalog 加载路径。将 B 的 Catalog 构建路径设置为新建的私有空目录。Bundle 构建路径使用该目录或官方本地构建临时目录。
+
+以下为发布端 Editor 方法体中的基线和更新调用。示例的目录由发布任务预先创建，B 在更新后的内容与 Profile 已保存后执行。
+
+```csharp
+// 基线 A。随后把签名清单放随包，使用本次已审计的启动设置构建 Player。
+var baseline = ResourceContentUpdateAuthoring.BuildBaseline(settings, archivedStatePath);
+var archiveReceipt = baseline.ReceiptPath;
+
+// 内容 B。在另一个 Editor 进程也可以重新读取封存的 A。
+var archivedBaseline = ResourceContentUpdateAuthoring.ReadBaseline(archiveReceipt);
+var originalManifest = ResourceContentManifest.Verify(aPayload, aSignature, installedTrust);
+var update = ResourceContentUpdateAuthoring.BuildContentUpdate(settings, archivedBaseline, privateRemoteBuildRoot);
+var artifacts = ResourceContentUpdateAuthoring.StageUpdateArtifacts(update, originalManifest,
+    Addressables.RuntimePath, releaseId, privateStagingRoot, immutableDownloadRoot);
+var payload = ResourceContentManifestWriter.Serialize(application, channel, update.Baseline.Target.ToString(),
+    compatibility, releaseId, sequence, expiresAtUtc, update.Baseline.StartupSettingsSha256,
+    update.Baseline.CatalogRoute, descriptionRoute: null, artifacts: artifacts, startupRoutes: startupBundleRoutes);
+var signature = ResourceContentManifestWriter.Sign(payload, keyId, signingKey);
+```
+
+`StageUpdateArtifacts` 核对 B 的 Catalog 依赖、Provider 与资产类型，并按 `objects/<releaseId>/<sha256>.<ext>` 暂存新对象。继续引用未变化的 A Bundle 时，制品项保留原发布身份、来源和摘要。对启用了 **Strip Bundle Download Options** 的普通本地 Bundle，构建工具按实际 SBP 制品的长度和 SHA-256 判断同名文件能否复用。已随 Player 安装的内建场景仍须存在于该 Player 的 Build Settings。若已安装的 Player 显式支持 A 的 Catalog 中没有出现过的资产类型，在应用启动策略及发布端的兼容列表中登记相同类型。B 清单的启动配置摘要仍引用 A。
+
+安装源相对路径、Catalog 制品路由和下载对象 URL 使用 `/` 分隔。路径段使用 ASCII 字母、数字、点、下划线和连字符。带空格的 `Chapter One/` 等目录在创建制品表或序列化清单时会被拒绝。下载根使用带结尾 `/` 的规范 HTTPS URI。
+
+使用独立的发布签名私钥签署清单，Player 只预置对应的受信公钥。加密交付的内容钥另行提供。先写入并核对清单指向的全部不可变对象，再更新应用配置的受信公告入口。补丁发布目录以签名清单列明的 Catalog、Bundle 和选装扩展制品为准。归档中的官方构建状态及 A 的启动配置保留在构建端。应用装配与恢复流程见[内容交付](Delivery.md)。
+
 ## 运行资源样例
 
 1. 在 Package Manager 的 Samples 中导入 **Resource Startup**。准备并保存官方 Settings 后，执行 `YLFramework/Samples/Create Resource Startup Example`。生成器只保存本次创建的样例资产和场景，不保存或关闭用户已有场景。
 2. 打开生成的 `Bootstrap.unity`，进入 Play Mode。在 `ResourceStartupExample` 组件上下文菜单选择 **Start Addressables Example (Play Only)**，查看 Inspector 的 **Runtime Result**。
 3. 用 **Stop Or Retry Example Shutdown** 等待正常关闭；Player 验证则先按上述流程构建正式内容。源码见[样例运行组件](../../../Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs)。
+
+若需复查进入 Play 时很快结束的请求，先选 **YLFramework → Resource → Record Next Play**，复现后打开 **Workbench → Runtime Diagnostics** 查看请求事件。录制周期、指纹与手动快照的区别见[停止与诊断](../Resource.md#停止与诊断)。
 
 旧私有资源配置与制品不是官方 Addressables 构建输入。保留项目原资产与 `.meta`，在官方 Groups 中登记源资产并重新构建配套内容；不能把旧 Catalog、Bundle 或 HybridCLR 基座当作本次构建输出。

@@ -14,8 +14,8 @@ using UnityEngine.ResourceManagement.ResourceProviders;
 
 namespace YLFramework.Resource.Encryption
 {
-    /// <summary>Explicit application startup gate for one shipped, immutable Addressables catalog.</summary>
-    public sealed class EncryptedDeliverySession
+    /// <summary>Explicit application startup gate for one immutable content version and its Addressables catalog.</summary>
+    public sealed partial class EncryptedDeliverySession : IEncryptedBundleSession
     {
         private static bool _attempted;
         private readonly Dictionary<string, EncryptedBundleRecord> _transfers;
@@ -26,11 +26,21 @@ namespace YLFramework.Resource.Encryption
         private readonly HashSet<string> _providerIds;
         private readonly string _providerId;
         private readonly int _thread;
+        private readonly EncryptedBundleDescription _description;
+        private readonly string _versionContentRoot;
+        private readonly string _cacheRoot;
+        private readonly CancellationTokenSource _remoteLifetime;
+        private Task _remotePreparation;
         private Task _closing;
+        private long _embeddedCipherHashBytes;
 
-        private EncryptedDeliverySession(EncryptedBundleDescription description, EncryptedBundleCache cache,
-            IEncryptedBundleKeySource keys, EncryptedAssetBundleProvider provider, IResourceLocator[] locators)
+        private EncryptedDeliverySession(EncryptedBundleDescription description, string versionContentRoot, string cacheRoot,
+            EncryptedBundleCache cache, IEncryptedBundleKeySource keys, EncryptedAssetBundleProvider provider, IResourceLocator[] locators)
         {
+            _description = description;
+            _versionContentRoot = versionContentRoot;
+            _cacheRoot = cacheRoot;
+            _remoteLifetime = description.ReleasePrefix != null ? new CancellationTokenSource() : null;
             Cache = cache;
             Keys = keys;
             Provider = provider;
@@ -39,15 +49,19 @@ namespace YLFramework.Resource.Encryption
             _providerIds = new HashSet<string>(_providers.Select(candidate => candidate.ProviderId), StringComparer.Ordinal);
             _providerId = provider.ProviderId;
             _thread = Environment.CurrentManagedThreadId;
-            _transfers = description.Bundles.ToDictionary(item => item.Binding.Url, StringComparer.Ordinal);
+            _transfers = description.Bundles.ToDictionary(item => ResolveSourceId(item.Binding.SourceId), StringComparer.Ordinal);
             _mounts = description.Bundles.ToDictionary(item => FrozenAddressablesRoutes.MountId(item.Binding), StringComparer.Ordinal);
             _transform = Transform;
         }
 
         internal EncryptedBundleCache Cache
         {
-            get;
+            get; private set;
         }
+        internal long EmbeddedCipherHashBytes => Interlocked.Read(ref _embeddedCipherHashBytes);
+
+        /// <summary>Whether the dedicated remote cache is ready for protected downloads and loads in this session.</summary>
+        public bool IsRemoteReady => Cache != null && _closing == null;
         internal IEncryptedBundleKeySource Keys
         {
             get;
@@ -94,19 +108,20 @@ namespace YLFramework.Resource.Encryption
                     var locator = await handle.Task;
                     token.ThrowIfCancellationRequested();
                     var locators = FrozenAddressablesRoutes.CheckLocators(locator);
-                    var providerId = description.Bundles[0].Binding.ProviderId;
+                    var providerId = description.ProviderId;
                     var candidates = Addressables.ResourceManager.ResourceProviders.Where(provider => provider.ProviderId == providerId).ToArray();
                     if (candidates.Length != 1 || !(candidates[0] is EncryptedAssetBundleProvider correct))
                         throw new InvalidDataException("The expected protected Bundle Provider was not registered by the shipped catalog.");
                     FrozenAddressablesRoutes.CheckResolved(locator, description);
                     var providers = Addressables.ResourceManager.ResourceProviders.ToArray();
-                    cache = await EncryptedBundleCache.OpenAsync(dedicatedCipherCache, description, token);
+                    if (description.Bundles.All(row => row.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps))
+                        cache = await OpenRemoteAsync(dedicatedCipherCache, root, description, token);
                     token.ThrowIfCancellationRequested();
-                    var session = new EncryptedDeliverySession(description, cache, keys, correct, locators);
                     if (Addressables.InternalIdTransformFunc != null || Addressables.WebRequestOverride != null ||
                         !Addressables.ResourceLocators.SequenceEqual(locators) || !Addressables.ResourceManager.ResourceProviders.SequenceEqual(providers) ||
                         !SameLocalPath(Addressables.ResolveInternalId(FrozenAddressablesRoutes.RuntimeToken + "/" + description.CatalogName), expectedCatalog))
                         throw new InvalidDataException("Addressables settings changed during startup.");
+                    var session = new EncryptedDeliverySession(description, root, dedicatedCipherCache, cache, keys, correct, locators);
                     correct.Attach(session);
                     Addressables.InternalIdTransformFunc = session._transform;
                     return session;
@@ -119,6 +134,65 @@ namespace YLFramework.Resource.Encryption
                 throw;
             }
 #endif
+        }
+
+        /// <summary>On the Unity thread, prepare the configured protected remote cache. Embedded content is already available.</summary>
+        /// <remarks>Overlapping callers share preparation. Cancelling one wait leaves the shared work running.</remarks>
+        public Task PrepareRemoteAsync(CancellationToken token = default) => PrepareRemoteAsync(token, null);
+
+        // Allows the Player fixture to hold readiness before any filesystem work, without replacing the real cache.
+        internal Task PrepareRemoteAsync(CancellationToken token, Task beforeCache)
+        {
+            CheckUnchanged();
+            if (token.IsCancellationRequested)
+                return Task.FromCanceled(token);
+            if (_remoteLifetime == null)
+                throw new InvalidOperationException("This content version does not configure protected remote Bundles.");
+            if (Cache != null)
+                return Task.CompletedTask;
+            if (_remotePreparation == null || _remotePreparation.IsCompleted)
+            {
+                var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _remotePreparation = completion.Task;
+                _ = _remotePreparation.ContinueWith(done => { _ = done.Exception; }, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                _ = PrepareRemoteCoreAsync(completion, beforeCache);
+            }
+            return token.CanBeCanceled ? EncryptedBundleCache.ObserveAsync(_remotePreparation, token) : _remotePreparation;
+        }
+
+        private async Task PrepareRemoteCoreAsync(TaskCompletionSource<bool> completion, Task beforeCache)
+        {
+            EncryptedBundleCache candidate = null;
+            try
+            {
+                var token = _remoteLifetime.Token;
+                if (beforeCache != null)
+                    await EncryptedBundleCache.ObserveAsync(beforeCache, token);
+                candidate = await OpenRemoteAsync(_cacheRoot, _versionContentRoot, _description, token);
+                token.ThrowIfCancellationRequested();
+                CheckUnchanged();
+                Cache = candidate;
+                completion.TrySetResult(true);
+            }
+            catch (Exception error)
+            {
+                try
+                {
+                    if (candidate != null)
+                        await candidate.CloseAsync();
+                }
+                catch (Exception cleanup) { error = new AggregateException("Remote cache preparation and release both failed.", error, cleanup); }
+                completion.TrySetException(error);
+            }
+        }
+
+        private static Task<EncryptedBundleCache> OpenRemoteAsync(string cacheRoot, string versionRoot,
+            EncryptedBundleDescription description, CancellationToken token)
+        {
+            if (string.IsNullOrEmpty(cacheRoot))
+                throw new ArgumentException("Protected remote Bundles require a dedicated cipher cache path.", nameof(cacheRoot));
+            return EncryptedBundleCache.OpenAsync(cacheRoot, description, token, excludedRoot: versionRoot);
         }
 
         internal static EncryptedBundleDescription ReadShippedDescription(string root, bool allowLoopback, CancellationToken token)
@@ -198,22 +272,31 @@ namespace YLFramework.Resource.Encryption
             return text.ReadToEnd();
         }
 
+        void IEncryptedBundleSession.CheckUnchanged() => CheckUnchanged();
+
         internal void CheckUnchanged()
         {
             if (Environment.CurrentManagedThreadId != _thread || _closing != null || Addressables.InternalIdTransformFunc != _transform ||
                 Addressables.WebRequestOverride != null || !Addressables.ResourceLocators.SequenceEqual(_locators) ||
                 !Addressables.ResourceManager.ResourceProviders.Where(candidate => _providerIds.Contains(candidate.ProviderId)).SequenceEqual(_providers))
-                throw new InvalidOperationException("The protected Addressables session must not change after startup; use a new Player and catalog.");
+                throw new InvalidOperationException("The selected protected content and Addressables configuration must remain fixed throughout the session.");
         }
+
+        private string ResolveSourceId(string source) => source.StartsWith(EncryptedBundleBinding.EmbeddedPrefix, StringComparison.Ordinal)
+            ? _versionContentRoot.Replace('\\', '/') + source.Substring(FrozenAddressablesRoutes.RuntimeToken.Length) : source;
+
+        EncryptedBundleRecord IEncryptedBundleSession.ResolveTransfer(IResourceLocation location) => ResolveTransfer(location);
 
         internal EncryptedBundleRecord ResolveTransfer(IResourceLocation location)
         {
-            if (location.ProviderId != _providerId || !_transfers.TryGetValue(location.InternalId, out var record) ||
+            if (location.ProviderId != _providerId || !_transfers.TryGetValue(ResolveSourceId(location.InternalId.Replace('\\', '/')), out var record) ||
                 !(location.Data is AssetBundleRequestOptions options) || options.BundleName != record.Binding.BundleName ||
                 options.BundleSize != record.CipherLength || !FrozenAddressablesRoutes.NoUnityCacheVersion(options.Hash))
                 throw new InvalidDataException("Unverified protected transfer route.");
             return record;
         }
+
+        EncryptedBundleRecord IEncryptedBundleSession.ResolveMount(IResourceLocation location) => ResolveMount(location);
 
         internal EncryptedBundleRecord ResolveMount(IResourceLocation location) => location.ProviderId == _providerId &&
             _mounts.TryGetValue(location.InternalId, out var record) ? record : throw new InvalidDataException("Unverified protected mount route.");
@@ -223,8 +306,55 @@ namespace YLFramework.Resource.Encryption
             if (location.ProviderId != _providerId || location.ResourceType != typeof(IAssetBundleResource))
                 return location.InternalId;
             CheckUnchanged();
-            return Cache.TryGetVerifiedPath(ResolveTransfer(location), out string path) ? path : location.InternalId;
+            var record = ResolveTransfer(location);
+            if (record.Binding.Mode == EncryptedBundleDeliveryMode.Embedded)
+                return EmbeddedPath(record);
+            return Cache != null && Cache.TryGetVerifiedPath(record, out string path) ? path : record.Binding.SourceId;
         }
+
+        private string EmbeddedPath(EncryptedBundleRecord record) => Path.Combine(_versionContentRoot,
+            EncryptedBundleBinding.EmbeddedFolder, record.Binding.GroupGuid, record.Binding.RelativePath);
+
+        Task IEncryptedBundleSession.EnsureCiphertextAsync(EncryptedBundleRecord record, Action<EncryptedBundleCache.TransferProgress> progress)
+            => EnsureCiphertextAsync(record, progress);
+
+        internal Task EnsureCiphertextAsync(EncryptedBundleRecord record, Action<EncryptedBundleCache.TransferProgress> progress)
+        {
+            if (record.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps)
+                return RequireRemote().EnsureAsync(record, reportProgress: progress);
+            progress(new EncryptedBundleCache.TransferProgress(0));
+            return Task.Run(() =>
+            {
+                using var file = OpenEmbedded(record);
+                RecordEmbeddedHash(AuthenticatedBundleStream.ValidateCipher(file, record, CancellationToken.None));
+            });
+        }
+
+        Task<AuthenticatedBundleStream> IEncryptedBundleSession.OpenBundleAsync(EncryptedBundleRecord record,
+            Action<EncryptedBundleCache.TransferProgress> progress) => OpenBundleAsync(record, progress);
+
+        internal Task<AuthenticatedBundleStream> OpenBundleAsync(EncryptedBundleRecord record,
+            Action<EncryptedBundleCache.TransferProgress> progress)
+        {
+            if (record.Binding.Mode == EncryptedBundleDeliveryMode.RemoteHttps)
+                return RequireRemote().OpenAuthenticatedAsync(record, Keys, reportProgress: progress);
+            progress(new EncryptedBundleCache.TransferProgress(0));
+            return Task.Run(() => AuthenticatedBundleStream.OpenVerified(OpenEmbedded(record), record, Keys,
+                CancellationToken.None, RecordEmbeddedHash));
+        }
+
+        private void RecordEmbeddedHash(long bytes) => Interlocked.Add(ref _embeddedCipherHashBytes, bytes);
+
+        private FileStream OpenEmbedded(EncryptedBundleRecord record)
+        {
+            try
+            {
+                return OwnedWindowsFiles.OpenRead(EmbeddedPath(record));
+            }
+            catch (IOException error) { throw new EncryptedBundleIntegrityException("The installed protected Bundle is missing or unreadable.", error); }
+        }
+
+        private EncryptedBundleCache RequireRemote() => Cache ?? throw new InvalidOperationException("The protected remote cache is not ready. Call PrepareRemoteAsync first.");
 
         /// <summary>After all protected handles are released, wait for native unload and key return before closing the cipher cache.</summary>
         /// <remarks>Call on the Unity thread. Outstanding owners or provider work are rejected; accepted calls share one terminal task.
@@ -249,11 +379,22 @@ namespace YLFramework.Resource.Encryption
         {
             try
             {
+                _remoteLifetime?.Cancel();
+                if (_remotePreparation != null)
+                {
+                    try
+                    {
+                        await _remotePreparation;
+                    }
+                    catch (Exception) { /* The preparation task exposes its own failure. */ }
+                }
                 await Provider.DrainUnloadsAsync();
                 if (Addressables.InternalIdTransformFunc == _transform)
                     Addressables.InternalIdTransformFunc = null;
                 Provider.Detach();
-                await Cache.CloseAsync();
+                if (Cache != null)
+                    await Cache.CloseAsync();
+                _remoteLifetime?.Dispose();
                 completion.TrySetResult(true);
             }
             catch (Exception error)

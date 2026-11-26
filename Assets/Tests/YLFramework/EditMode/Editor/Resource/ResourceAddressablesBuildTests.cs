@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Threading;
 using NUnit.Framework;
 using UnityEditor;
@@ -22,6 +23,7 @@ using UnityEngine.ResourceManagement.ResourceLocations;
 using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.SceneManagement;
 using YLFramework.Editor.Resource;
+using YLFramework.Resource;
 using YLFramework.Testing;
 
 namespace YLFramework.Tests.Resource
@@ -163,8 +165,172 @@ namespace YLFramework.Tests.Resource
         [Test]
         public void ContentUpdateCannotUseTheLiveOverwritableBuildStateAsItsFrozenBaseline()
         {
-            var liveState = Path.Combine(ContentUpdateScript.GetContentStateDataPath(false, _settings), "addressables_content_state.bin");
+            var liveState = ContentUpdateScript.GetContentStateDataPath(false, _settings);
             Assert.Throws<ArgumentException>(() => ResourceEditorOperations.BuildContentUpdate(_settings, liveState));
+        }
+
+#if UNITY_6000_3_OR_NEWER
+        [Test]
+        [Category(PackedContract)]
+        public void OrdinaryUpdateUsesOfficialBytesForSameNameStrippedLocalBundles()
+        {
+            var scratch = Path.GetFullPath("Temp/OrdinaryUpdate-" + Guid.NewGuid().ToString("N"));
+            string CreateFolder(string name) => Directory.CreateDirectory(Path.Combine(scratch, name)).FullName;
+            try
+            {
+                var remoteA = CreateFolder("remote-a");
+                var remoteB = CreateFolder("remote-b");
+                var state = CreateFolder("official-state");
+                var archive = CreateFolder("archive");
+                var install = CreateFolder("install");
+                var stage = CreateFolder("stage");
+                var downloadRoot = new Uri("https://cdn.example.invalid/content/");
+                _settings.BuildRemoteCatalog = true;
+                _settings.BuildAddressablesWithPlayerBuild = AddressableAssetSettings.PlayerBuildOption.DoNotBuildWithPlayer;
+                _settings.OverridePlayerVersion = "ordinary-catalog-test";
+                _settings.ContentStateBuildPath = state.Replace('\\', '/');
+                const string buildVariable = "ContentTest.RemoteBuild";
+                const string loadVariable = "ContentTest.RemoteLoad";
+                _settings.profileSettings.CreateValue(buildVariable, remoteA.Replace('\\', '/'));
+                _settings.profileSettings.CreateValue(loadVariable, downloadRoot.AbsoluteUri.TrimEnd('/'));
+                _settings.RemoteCatalogBuildPath.SetVariableByName(_settings, buildVariable);
+                _settings.RemoteCatalogLoadPath.SetVariableByName(_settings, loadVariable);
+
+                var changedGroup = StrippedGroup("Changed");
+                var unchangedGroup = StrippedGroup("Unchanged");
+                var changed = Add("original", "ordinary/changed", changedGroup);
+                Add("same", "ordinary/unchanged", unchangedGroup);
+                SaveSettings();
+
+                var baseline = ResourceContentUpdateAuthoring.BuildBaseline(_settings, Path.Combine(archive, "addressables_content_state.bin"));
+                var runtimeRoot = Addressables.RuntimePath;
+                var routes = ResourceContentUpdateAuthoring.InspectCatalog(baseline.CatalogPath, runtimeRoot);
+                var catalogLeaf = Path.GetFileName(baseline.CatalogPath);
+                File.Copy(baseline.CatalogPath, Path.Combine(install, catalogLeaf));
+                var installedPaths = new Dictionary<string, string>();
+                var groups = new Dictionary<AddressableAssetGroup, string>();
+                foreach (var route in routes.Keys)
+                {
+                    var leaf = Path.GetFileName(route);
+                    var output = baseline.Build.Result.AssetBundleBuildResults.Single(result => Path.GetFileName(result.FilePath) == leaf);
+                    File.Copy(output.FilePath, Path.Combine(install, leaf));
+                    installedPaths.Add(route, leaf);
+                    groups[output.SourceAssetGroup] = route;
+                }
+
+                var changedRoute = groups[changedGroup];
+                var unchangedRoute = groups[unchangedGroup];
+                var invalidRelativePaths = new Dictionary<string, string>(installedPaths)
+                {
+                    [changedRoute] = "Chapter One/" + installedPaths[changedRoute]
+                };
+                Directory.CreateDirectory(Path.Combine(install, "Chapter One"));
+                File.Copy(Path.Combine(install, installedPaths[changedRoute]), Path.Combine(install, invalidRelativePaths[changedRoute]));
+                var error = Assert.Throws<InvalidDataException>(() => ResourceContentUpdateAuthoring.DescribeInstalledArtifacts(
+                    baseline, runtimeRoot, install, "A", catalogLeaf, invalidRelativePaths));
+                StringAssert.Contains("Chapter One/", error.Message);
+
+                var installed = ResourceContentUpdateAuthoring.DescribeInstalledArtifacts(baseline, runtimeRoot, install, "A", catalogLeaf, installedPaths);
+                var payload = ResourceContentManifestWriter.Serialize("app", "stable", baseline.Target.ToString(), "test",
+                    "A", 10, DateTimeOffset.UtcNow.AddDays(1), baseline.StartupSettingsSha256, baseline.CatalogRoute,
+                    null, installed, routes.Keys);
+                using var signer = new RSACryptoServiceProvider(3072) { PersistKeyInCsp = false };
+                var trust = new ResourceContentManifestTrust("app", "stable", baseline.Target.ToString(), "test", baseline.StartupSettingsSha256,
+                    new Dictionary<string, RSAParameters> { ["release"] = signer.ExportParameters(false) }, new[] { downloadRoot });
+                var manifest = ResourceContentManifest.Verify(payload, ResourceContentManifestWriter.Sign(payload, "release", signer), trust);
+
+                File.WriteAllText(changed.AssetPath, "modified");
+                AssetDatabase.ImportAsset(changed.AssetPath, ImportAssetOptions.ForceSynchronousImport);
+                _settings.profileSettings.SetValue(_settings.activeProfileId, buildVariable, remoteB.Replace('\\', '/'));
+                SaveSettings();
+                var update = ResourceContentUpdateAuthoring.BuildContentUpdate(_settings, baseline, remoteB);
+                Assert.Throws<ArgumentException>(() => ResourceContentUpdateAuthoring.StageUpdateArtifacts(
+                    update, manifest, runtimeRoot, "B", stage, new Uri("https://cdn.example.invalid/Chapter%20One/")));
+                Assert.That(Directory.EnumerateFileSystemEntries(stage), Is.Empty);
+                var staged = ResourceContentUpdateAuthoring.StageUpdateArtifacts(update, manifest, runtimeRoot, "B", stage, downloadRoot)
+                    .ToDictionary(artifact => artifact.Route);
+
+                Assert.That(staged[unchangedRoute].OriginReleaseId, Is.EqualTo("A"));
+                Assert.That(staged[unchangedRoute].Sha256, Is.EqualTo(manifest.Artifacts[unchangedRoute].Sha256));
+                Assert.That(staged[changedRoute].OriginReleaseId, Is.EqualTo("B"));
+                Assert.That(staged[changedRoute].Sha256, Is.Not.EqualTo(manifest.Artifacts[changedRoute].Sha256));
+            }
+            finally
+            {
+                if (Directory.Exists(scratch))
+                    Directory.Delete(scratch, true);
+            }
+
+            AddressableAssetGroup StrippedGroup(string name)
+            {
+                var group = Group(name);
+                group.GetSchema<ContentUpdateGroupSchema>().StaticContent = false;
+                var schema = group.GetSchema<BundledAssetGroupSchema>();
+                schema.UseDefaultSchemaSettings = false;
+                schema.StripDownloadOptions = true;
+                schema.UseUnityWebRequestForLocalBundles = false;
+                schema.BundleNaming = BundledAssetGroupSchema.BundleNamingStyle.NoHash;
+                return group;
+            }
+        }
+#endif
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TransactionSettingsFreezeOnlyOfficialHashLocations(bool addUnexpectedLocation)
+        {
+            var version = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(AddressableAssetSettings).Assembly).version;
+            var leaf = version == "1.25.0" ? "catalog.json" : "catalog.bin";
+            var runtimePath = "{UnityEngine.AddressableAssets.Addressables.RuntimePath}";
+            var catalogRoute = runtimePath + "/" + leaf;
+            var key = ResourceManagerRuntimeData.kCatalogAddress;
+            var cacheKey = key + "CacheHash";
+            var remoteKey = key + "RemoteHash";
+            var runtime = new ResourceManagerRuntimeData
+            {
+                BuildTarget = EditorUserBuildSettings.activeBuildTarget.ToString(),
+                AddressablesVersion = version
+            };
+            runtime.CatalogLocations.Add(new ResourceLocationData(new[] { cacheKey },
+                "{UnityEngine.Application.persistentDataPath}/com.unity.addressables/catalog_a.hash", typeof(TextDataProvider), typeof(string)));
+            runtime.CatalogLocations.Add(new ResourceLocationData(new[] { remoteKey },
+                "https://example.invalid/catalog_a.hash", typeof(TextDataProvider), typeof(string)));
+            runtime.CatalogLocations.Add(new ResourceLocationData(new[] { key }, catalogRoute,
+                typeof(ContentCatalogProvider), typeof(ContentCatalogData), new[] { remoteKey, cacheKey })
+            {
+                Data = new ProviderLoadRequestOptions { IgnoreFailures = true }
+            });
+            if (addUnexpectedLocation)
+            {
+                runtime.CatalogLocations.Add(new ResourceLocationData(new[] { "OtherCatalog" },
+                    runtimePath + "/other.json", typeof(ContentCatalogProvider), typeof(ContentCatalogData)));
+            }
+
+            var path = Path.Combine(Path.GetTempPath(), "kilo", "YLStartupSettings-" + Guid.NewGuid().ToString("N") + ".json");
+            var original = JsonUtility.ToJson(runtime);
+            File.WriteAllText(path, original);
+            try
+            {
+                if (addUnexpectedLocation)
+                {
+                    Assert.Throws<InvalidDataException>(() => ResourceContentUpdateAuthoring.FreezeStartupSettings(path, leaf, path));
+                    Assert.That(File.ReadAllText(path), Is.EqualTo(original));
+                }
+                else
+                {
+                    Assert.That(ResourceContentUpdateAuthoring.FreezeStartupSettings(path, leaf, path), Is.EqualTo(catalogRoute));
+                    var frozen = JsonUtility.FromJson<ResourceManagerRuntimeData>(File.ReadAllText(path));
+                    Assert.That(frozen.DisableCatalogUpdateOnStartup, Is.True);
+                    Assert.That(frozen.CatalogLocations.Count, Is.EqualTo(1));
+                    Assert.That(frozen.CatalogLocations[0].InternalId, Is.EqualTo(catalogRoute));
+                    Assert.That(frozen.CatalogLocations[0].Dependencies, Is.Empty);
+                    Assert.That(frozen.CatalogLocations[0].Data, Is.Null);
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
         }
 
         [TestCase("Settings")]
@@ -615,6 +781,16 @@ namespace YLFramework.Tests.Resource
                 }
                 AssertSceneKeyLocations(locator, assets.DisabledKey, typeof(SceneInstance));
                 AssertSceneKeyLocations(locator, SceneLabel, typeof(SceneInstance), assets.Bundled.AssetPath);
+
+                var runtimeRoot = Addressables.RuntimePath;
+                var catalog = ResourceContentCatalog.InspectLocator(locator, runtimeRoot);
+                Assert.That(locator.Locate(SceneLabel, typeof(SceneInstance), out var packed), Is.True);
+                Assert.That(catalog.GetScenePath(packed.Single(), runtimeRoot), Is.EqualTo(assets.Bundled.AssetPath));
+                if (assets.EmitsBuiltInScenes)
+                {
+                    Assert.That(locator.Locate(assets.CrossKey, typeof(SceneInstance), out var builtIn), Is.True);
+                    Assert.That(catalog.GetScenePath(builtIn.Single(), runtimeRoot), Is.EqualTo(assets.CrossPath));
+                }
             }));
 
             // Addressables 1.25 strips Assets/ and the .unity extension for Build Settings scene locations.

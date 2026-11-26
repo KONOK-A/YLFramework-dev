@@ -20,15 +20,15 @@ namespace YLFramework.Resource
         public ResourceRequest<AssetBatchLease<T>> AcquireBatchAsync<T>(IEnumerable<string> keys, CancellationToken cancellation = default) where T : Object
         {
             CheckThread();
-            var request = Track(new ResourceRequest<AssetBatchLease<T>>(lease => lease.Dispose()));
+            var request = new ResourceRequest<AssetBatchLease<T>>(lease => lease.Dispose())
+            {
+                EventTrace = BeginEvent(ResourceEventSource.Batch)
+            };
             try
             {
                 RequireAvailable();
-                var frozen = FreezeDeliveryKeys(keys);
-                request.DiagnosticIdentity.Key = string.Join(", ", frozen);
-                if (request.IsDone)
+                if (!TryTrackFrozenKeys(request, keys, out var frozen))
                     return request;
-                RequireAvailable();
                 _businessStarted = true;
                 BindCancellation(request, cancellation);
                 if (!request.IsDone)

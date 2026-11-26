@@ -11,12 +11,37 @@
     { "name": "Abseil", "version": "20260526.0", "archiveSha256": "6e1aee535473414164bf83e4ebc40240dec71a4701f8a642d906e95bea1aea0c" },
     { "name": "BoringSSL", "version": "0.20260803.0", "archiveSha256": "585c91782fc0651ba6f2376b672acdc30437705d8a50b4967c20e6293e318969" }
   ],
+  "configuredOnlyDependencies": [
+    { "name": "protobuf", "version": "30.2", "archiveSha256": "6544e5ceec7f29d00397193360435ca8b3c4e843de3cf5698a99d36b72d65342" }
+  ],
   "sourceRecipe": "Tools/Packaging/Native/ResourceEncryption/CMakeLists.txt",
-  "toolchain": "Visual Studio 18 2026 x64 Release, C++17, static MSVC runtime, OPENSSL_NO_ASM=ON, TINK_BUILD_TESTS=OFF",
+  "diagnosticBuildRecipe": "Tools/Packaging/Native/ResourceEncryption/Build-Diagnostics.ps1",
+  "toolchain": "Visual Studio 18 2026 x64 Release, C++17, static MSVC runtime",
+  "buildInputs": {
+    "cmake": { "version": "4.3.1-msvc1", "sha256": "87fafbe6507d4b23c38ccaf72a1859219d070acb57ef0160332df10945d2dfac" },
+    "msvc": { "toolset": "14.51.36231", "compilerVersion": "19.51.36260.0", "clSha256": "b0a1818ebae6da7f18230a84e76ce839212584ac4c2ab55b97a0d5268085da57", "linkSha256": "a8c42e25c91ca2453e1110540ac08f0fc12d7539454a11b9af8baeecb469837d" },
+    "windowsSdk": { "version": "10.0.26100.0", "rcSha256": "9e2ee68da28b3318f50a9f1008d64567a9b402bda384a007a9b71a3f16bd011b", "windowsHeaderSha256": "b337d661d03a4abefb7b86a2742ce1ad5d19b57cd8b858bd13e7bbcc1dbeeaaa", "kernel32LibrarySha256": "842f5ce7ad8cf5aab7491b791e7968d2be510ae93f4019d3311797289399d221" },
+    "nasm": { "version": "2.16.03", "archiveSha256": "3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6", "sha256": "a93276636266516421cc9b422f47476c21f7a2949f1ae251556b2f1d33a3be04" },
+    "flags": ["OPENSSL_NO_ASM=OFF", "YL_ALIGNED_READER=ON", "YL_PAYLOAD_TRACE=OFF", "YL_DISPATCH_TRACE=OFF", "BUILD_SHARED_LIBS=OFF", "TINK_BUILD_TESTS=OFF", "TINK_USE_SYSTEM_OPENSSL=OFF", "TINK_USE_INSTALLED_ABSEIL=OFF", "TINK_USE_INSTALLED_PROTOBUF=OFF"],
+    "rebuildGuarantee": "A fresh pinned build passed the same ABI and oracle contract. Its DLL SHA-256 is not the packaged SHA-256. The packaged artifact was tested directly."
+  },
+  "reader": {
+    "implementation": "Tink NewDecryptingRandomAccessStream with a segment-aligned bridge cache and a pinned adaptation to avoid copying the ciphertext input vector",
+    "sourceAdaptation": "Tools/Packaging/Native/ResourceEncryption/TinkRandomAccess.cmake",
+    "headerBytes": 40,
+    "firstPlainSegmentBytes": 1048520,
+    "subsequentPlainSegmentBytes": 1048560,
+    "nativePayloadCapacityUpperBoundBytes": 3149808,
+    "managedAndNativePayloadCapacityUpperBoundBytes": 3284976,
+    "capacityScope": "Source-derived per-stream payload capacities, not measured process memory, allocator overhead, or Unity buffers",
+    "cpuDispatch": "BoringSSL capability dispatch; no global AES-NI or AVX requirement"
+  },
+  "javaOracle": { "version": "1.18.0", "jarSha256": "30df12a1f59045637213477656e01f6fbcc02616c20da1696cbd4643ada668ef" },
   "artifact": {
     "relativePath": "Runtime/Plugins/Win64/ylresource_tink.dll",
     "machine": "AMD64",
-    "sha256": "963ba62687c2f895649923138083b78acff7bba470ce92ba90228c27e9a46f5c",
+    "sha256": "6968545e0378b18291998fc8fa49a7c83429d85c90d13915ad87c9d85d9cf9fa",
+    "exports": ["yl_seal", "yl_open", "yl_read", "yl_close", "yl_read_statistics"],
     "importerSha256": "66631371d78c62e2d09347f070ad5fc5c365fa390b0e0a3bcf12e37bec446baf"
   }
 }

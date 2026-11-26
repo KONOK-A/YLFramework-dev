@@ -77,7 +77,7 @@ YLFramework 为 Unity C# 项目提供按需组合的基础机制、业务与表�
 | `com.kano.ylframework.reddot` | [红点聚合、已读状态与诊断](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.reddot/Documentation~/README.md) |
 | `com.kano.ylframework.excel` | [Excel 工作簿作者流程与 Gameplay 适配](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.excel/Documentation~/README.md) |
 | `com.kano.ylframework.hybridclr` | [HybridCLR 构建、补丁与运行时](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.hybridclr/Documentation~/README.md) |
-| `com.kano.ylframework.resource-encryption` | [Windows x64 远端 Bundle 加密手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.resource-encryption/Documentation~/README.md) · [与普通内容交付的区别](Modules/Resource/Delivery.md#可选的远端-bundle-加密) |
+| `com.kano.ylframework.resource-encryption` | [Windows x64 Bundle 加密手册](https://github.com/KONOK-A/YLFramework-dev/blob/main/PackageSources/com.kano.ylframework.resource-encryption/Documentation~/README.md) · [与普通内容交付的区别](Modules/Resource/Delivery.md#可选的-bundle-加密) |
 
 包选择、依赖和条件适配见[安装指南](Installation.md#选择能力包)。轻量 FSM 属于主包，配置式 StateMachine 属于选装包，两者使用不同执行内核。
 

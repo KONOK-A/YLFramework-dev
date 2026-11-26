@@ -80,3 +80,66 @@ function Assert-YLFrozenPlayerBackend {
         ($Row['bits'] -isnot [int] -and $Row['bits'] -isnot [long]) -or $Row['bits'] -ne 64 -or
         $Row['graphics'] -isnot [string] -or $Row['graphics'] -cin @('', 'Null')) { throw 'Actual Win64 Release graphics Player backend evidence differs.' }
 }
+
+function Invoke-YLFrozenReadOnlyInstallation {
+    param([string] $OwnedHostRoot, [string] $InstallRoot, [scriptblock] $RunPlayer,
+        [ValidateSet('layout-offline', 'P', IgnoreCase = $false)][string] $InstallDirectoryName = 'layout-offline')
+    $root = Get-YLTestPath $InstallRoot
+    if ([IO.Path]::GetDirectoryName($root) -ine (Get-YLTestPath $OwnedHostRoot) -or [IO.Path]::GetFileName($root) -cne $InstallDirectoryName) {
+        throw 'Read-only testing may only seal the separate offline installation under its owned host.'
+    }
+    $snapshot = {
+        $result = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        $pending = [Collections.Generic.Stack[string]]::new()
+        $pending.Push($root)
+        while ($pending.Count) {
+            $path = Get-YLTestPath $pending.Pop()
+            if ([IO.Directory]::Exists($path)) {
+                $result.Add($path, 'directory')
+                foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($path)) { $pending.Push($entry) }
+            } else { $result.Add($path, (Get-YLFrozenFileSha256 $path)) }
+        }
+        return $result
+    }
+    $before = & $snapshot
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try { $sid = $user.User } finally { $user.Dispose() }
+    $rights = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor
+        [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
+    $deny = [Security.AccessControl.FileSystemAccessRule]::new($sid, $rights, 'Deny')
+    $section = [Security.AccessControl.AccessControlSections]::Access
+    $sealed = [Collections.Generic.List[object]]::new()
+    try {
+        foreach ($path in $before.Keys) {
+            $item = if ($before[$path] -ceq 'directory') { [IO.DirectoryInfo]::new($path) } else { [IO.FileInfo]::new($path) }
+            $acl = [IO.FileSystemAclExtensions]::GetAccessControl($item, $section)
+            $record = @{ item = $item; acl = $acl; original = $acl.GetSecurityDescriptorSddlForm($section) }
+            $sealed.Add($record)
+            $acl.AddAccessRule($deny)
+            [IO.FileSystemAclExtensions]::SetAccessControl($item, $acl)
+            $record.applied = ([IO.FileSystemAclExtensions]::GetAccessControl($item, $section)).GetSecurityDescriptorSddlForm($section)
+        }
+        $process = & $RunPlayer
+        $after = & $snapshot
+        if ($before.Count -ne $after.Count) { throw 'The offline Player changed the installation inventory.' }
+        foreach ($entry in $sealed) {
+            $path = $entry.item.FullName
+            if (-not $after.ContainsKey($path) -or $before[$path] -cne $after[$path] -or
+                ([IO.FileSystemAclExtensions]::GetAccessControl($entry.item, $section)).GetSecurityDescriptorSddlForm($section) -cne $entry.applied) {
+                throw "The offline Player changed the installation bytes, paths or ACL: $path"
+            }
+        }
+        return @{ process = $process; proof = @{ unchanged = $true; directories = @($before.Values | Where-Object { $_ -ceq 'directory' }).Count;
+                files = @($before.Values | Where-Object { $_ -cne 'directory' }).Count } }
+    } finally {
+        $restoreFailures = [Collections.Generic.List[string]]::new()
+        foreach ($entry in $sealed) {
+            try {
+                $null = Get-YLTestPath $entry.item.FullName
+                $entry.acl.SetSecurityDescriptorSddlForm($entry.original, $section)
+                [IO.FileSystemAclExtensions]::SetAccessControl($entry.item, $entry.acl)
+            } catch { $restoreFailures.Add($_.Exception.Message) }
+        }
+        if ($restoreFailures.Count) { throw ('Could not restore the offline fixture access rules: ' + ($restoreFailures -join '; ')) }
+    }
+}

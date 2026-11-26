@@ -29,6 +29,7 @@ namespace YLFramework.Tests.Resource
         private ResourceSystem _system;
         private ResourceLocationMap _extraLocator;
         private string _entryScenePath;
+        private SceneDependencyGate _dependencyGate;
         private readonly List<Scene> _neutralScenes = new();
         private readonly List<AsyncOperationHandle<SceneInstance>> _externalScenes = new();
 
@@ -53,9 +54,13 @@ namespace YLFramework.Tests.Resource
         [UnityTearDown]
         public IEnumerator TearDown()
         {
+            ResourceEventHistory.SetRecording(false);
+            ResourceEventHistory.Clear();
+            _dependencyGate?.Open();
             if (_system != null)
             {
                 SetUnloader(null);
+                _system.SceneActivator = null;
                 _neutralScenes.Add(SceneManager.CreateScene("YL.SceneTest.Cleanup." + Guid.NewGuid().ToString("N")));
                 foreach (var lease in Owners().ToArray())
                 {
@@ -89,6 +94,11 @@ namespace YLFramework.Tests.Resource
             {
                 Addressables.RemoveResourceLocator(_extraLocator);
                 _extraLocator = null;
+            }
+            if (_dependencyGate != null)
+            {
+                Addressables.ResourceManager.ResourceProviders.Remove(_dependencyGate);
+                _dependencyGate = null;
             }
             var restorePath = string.IsNullOrEmpty(_entryScenePath) ? NeutralPath : _entryScenePath;
             var restored = SceneManager.GetSceneByPath(restorePath);
@@ -324,17 +334,44 @@ namespace YLFramework.Tests.Resource
         [UnityTest]
         public IEnumerator CanceledDeferredScene_DrainsQueue()
         {
+            ResourceEventHistory.SetRecording(true);
+            using var query = new LocationQuery(SceneAddress);
+            yield return query.Handle;
+            var original = query.Handle.Result.Single();
+            _dependencyGate = new SceneDependencyGate();
+            Addressables.ResourceManager.ResourceProviders.Add(_dependencyGate);
+            const string key = "ownership/gated-scene";
+            var gate = new ResourceLocationBase(key + "/gate", key + "/gate", _dependencyGate.ProviderId, typeof(IAssetBundleResource));
+            var dependencies = original.Dependencies.Concat(new[] { gate }).ToArray();
+            _extraLocator = new ResourceLocationMap(key);
+            _extraLocator.Add(key, new ResourceLocationBase(key, original.InternalId, original.ProviderId, typeof(SceneInstance), dependencies));
+            Addressables.AddResourceLocator(_extraLocator);
             using var cancellation = new CancellationTokenSource();
-            using var load = _system.LoadSceneAsync(SceneAddress, activateOnLoad: false, cancellation: cancellation.Token);
-            yield return Wait(() => Owners().Any(lease => LoadHandle(lease).IsValid()) && !load.IsDone);
+            using var load = _system.LoadSceneAsync(key, activateOnLoad: false, cancellation: cancellation.Token);
+            yield return Wait(() => _dependencyGate.Pending && Owners().Any(lease => LoadHandle(lease).IsValid()));
             var owner = Owners().Single();
             var handle = LoadHandle(owner);
             cancellation.Cancel();
-            Assert.That(handle.IsValid(), Is.True, "Canceling the waiter must not release the in-flight Scene load reference.");
             yield return Wait(() => load.IsDone);
             Assert.That(load.Status, Is.EqualTo(ResourceRequestStatus.Canceled));
+            Assert.That(handle.IsValid() && !handle.IsDone, Is.True);
+            var id = load.EventTrace.Id;
+            Assert.That(ResourceEventHistory.Read().Any(row => row.RequestId == id && row.Phase == ResourceEventPhase.SceneLoad), Is.False);
+            _dependencyGate.Open();
             yield return Wait(() => owner.IsSettled);
             Assert.That(handle.IsValid(), Is.False);
+            Assert.That(_dependencyGate.Releases, Is.EqualTo(1));
+            var rows = ResourceEventHistory.Read().Where(row => row.RequestId == id).ToArray();
+            Assert.That(rows.All(row => row.Source == ResourceEventSource.Scene && row.LoadId == id), Is.True);
+            var canceled = rows.Single(row => row.Kind == ResourceEventKind.Terminal);
+            Assert.That(canceled.Status, Is.EqualTo(ResourceRequestStatus.Canceled));
+            var loadResult = rows.Single(row => row.Phase == ResourceEventPhase.SceneLoad && row.Kind == ResourceEventKind.Work);
+            var release = rows.Single(row => row.Phase == ResourceEventPhase.SceneLoad && row.Kind == ResourceEventKind.Release);
+            Assert.That(release.WorkId, Is.EqualTo(loadResult.WorkId));
+            var unload = rows.Single(row => row.Phase == ResourceEventPhase.SceneUnload && row.Kind == ResourceEventKind.Work);
+            var cleanup = rows.Single(row => row.Phase == ResourceEventPhase.SceneCleanup && row.Kind == ResourceEventKind.Work);
+            Assert.That(new[] { canceled.Sequence, loadResult.Sequence, unload.Sequence, release.Sequence, cleanup.Sequence }, Is.Ordered);
+            Assert.That(new[] { loadResult, unload, release, cleanup }.All(row => row.Status == ResourceRequestStatus.Succeeded && row.Late), Is.True);
             using var next = _system.LoadSceneAsync(SceneAddress);
             yield return Wait(() => next.IsDone);
             Assert.That(Take(next).Scene.isLoaded, Is.True, "The canceled activation gate must not block the next native scene operation.");
@@ -381,13 +418,25 @@ namespace YLFramework.Tests.Resource
         [UnityTest]
         public IEnumerator InvalidActivationLimits_RejectBeforeStartingNativeWork()
         {
+            ResourceEventHistory.SetRecording(true);
+            var before = _system.GetDiagnostics();
+            var rejectedIds = new List<long>();
             foreach (var limit in new[] { 0f, -1f, 301f, float.NaN, float.PositiveInfinity })
             {
                 using var load = _system.LoadSceneAsync(SceneAddress, activateOnLoad: false, activationTimeoutSeconds: limit);
                 Assert.That(load.Status, Is.EqualTo(ResourceRequestStatus.Failed));
                 Assert.That(load.Error.Kind, Is.EqualTo(ResourceError.InvalidConfiguration));
+                rejectedIds.Add(load.EventTrace.Id);
             }
             Assert.That(Owners(), Is.Empty);
+            var after = _system.GetDiagnostics();
+            Assert.That(after.RequestCount, Is.EqualTo(before.RequestCount));
+            Assert.That(after.PendingWorkCount, Is.EqualTo(before.PendingWorkCount));
+            var rows = ResourceEventHistory.Read().Where(row => row.Source == ResourceEventSource.Scene).ToArray();
+            CollectionAssert.AreEqual(rejectedIds, rows.Select(row => row.RequestId));
+            Assert.That(rejectedIds.Distinct().Count(), Is.EqualTo(rejectedIds.Count));
+            Assert.That(rows.All(row => row.Kind == ResourceEventKind.Terminal && row.Status == ResourceRequestStatus.Failed &&
+                row.Error == ResourceError.InvalidConfiguration && row.WorkId == 0), Is.True);
             yield return null;
         }
 
@@ -440,6 +489,77 @@ namespace YLFramework.Tests.Resource
             using var retry = survivor.UnloadAsync();
             yield return Wait(() => retry.IsDone);
             Assert.That(retry.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), retry.Error?.ToString());
+        }
+
+        [UnityTest]
+        public IEnumerator CanceledDeferredActivationRecordsEachCleanupFailureBeforeRetry()
+        {
+            ResourceEventHistory.SetRecording(true);
+            var probe = SceneManager.CreateScene("YL.SceneTest.CompletedActivationProbe");
+            var completed = SceneManager.UnloadSceneAsync(probe);
+            yield return completed;
+            using var load = _system.LoadSceneAsync(SceneAddress, activateOnLoad: false);
+            yield return Wait(() => Owners().Any(lease => LoadHandle(lease).IsValid()) && !load.IsDone);
+            var owner = Owners().Single();
+            var handle = LoadHandle(owner);
+            int attempts = 0;
+            _system.SceneActivator = _ =>
+            {
+                attempts++;
+                if (attempts == 1)
+                    throw new InvalidOperationException("activation submission failed");
+                return attempts == 2 ? null : completed;
+            };
+            load.Cancel();
+            foreach (var expected in new[] { ResourceError.LoadFailed, ResourceError.LoadFailed, ResourceError.SceneUnloaded })
+            {
+                using var close = owner.UnloadAsync();
+                yield return Wait(() => close.IsDone);
+                Assert.That(close.Error.Kind, Is.EqualTo(expected));
+                Assert.That(owner.IsSettled, Is.False);
+                Assert.That(handle.IsValid(), Is.True);
+                var rows = ResourceEventHistory.Read().Where(row => row.RequestId == load.EventTrace.Id).ToArray();
+                var failures = rows.Where(row => row.Phase == ResourceEventPhase.SceneCleanup).ToArray();
+                Assert.That(failures.Length, Is.EqualTo(attempts));
+                Assert.That(failures.Last().Error, Is.EqualTo(expected));
+                Assert.That(failures.All(row => row.Kind == ResourceEventKind.Work && row.Status == ResourceRequestStatus.Failed &&
+                    row.Late && row.LoadId == load.EventTrace.Id && row.WorkId != 0), Is.True);
+                Assert.That(failures.Select(row => row.WorkId).Distinct().Count(), Is.EqualTo(attempts));
+                Assert.That(rows.Any(row => row.Phase == ResourceEventPhase.SceneUnload), Is.False);
+            }
+            _system.SceneActivator = null;
+            using var retry = owner.UnloadAsync();
+            yield return Wait(() => retry.IsDone);
+            Assert.That(retry.TakeResult(), Is.True);
+            Assert.That(owner.IsSettled && !handle.IsValid(), Is.True);
+            var final = ResourceEventHistory.Read().Where(row => row.RequestId == load.EventTrace.Id).ToArray();
+            Assert.That(final.Single(row => row.Phase == ResourceEventPhase.SceneUnload).Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
+            Assert.That(final.Last(row => row.Phase == ResourceEventPhase.SceneCleanup).Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
+        }
+
+        [UnityTest]
+        public IEnumerator ManualDeferredActivationFailureRecordsOnlyItsWaiter()
+        {
+            ResourceEventHistory.SetRecording(true);
+            using var load = _system.LoadSceneAsync(SceneAddress, activateOnLoad: false);
+            yield return Wait(() => load.IsDone);
+            var owner = Take(load);
+            _system.SceneActivator = _ => null;
+            using var activation = owner.ActivateAsync();
+            yield return Wait(() => activation.IsDone);
+            Assert.That(activation.Error.Kind, Is.EqualTo(ResourceError.LoadFailed));
+            var rows = ResourceEventHistory.Read();
+            var terminal = rows.Single(row => row.RequestId == activation.EventTrace.Id);
+            Assert.That(terminal.Source, Is.EqualTo(ResourceEventSource.SceneActivate));
+            Assert.That(terminal.Status, Is.EqualTo(ResourceRequestStatus.Failed));
+            Assert.That(rows.Any(row => row.Phase == ResourceEventPhase.SceneCleanup || row.Phase == ResourceEventPhase.SceneUnload), Is.False);
+            _system.SceneActivator = null;
+            using var retry = owner.ActivateAsync();
+            yield return Wait(() => retry.IsDone);
+            Assert.That(retry.TakeResult() && owner.Scene.isLoaded, Is.True);
+            using var close = owner.UnloadAsync();
+            yield return Wait(() => close.IsDone);
+            Assert.That(close.TakeResult(), Is.True);
         }
 
         [UnityTest]
@@ -669,6 +789,7 @@ namespace YLFramework.Tests.Resource
         [UnityTest]
         public IEnumerator SingleCancel_DoesNotClaimRollback()
         {
+            ResourceEventHistory.SetRecording(true);
             var oldScene = SceneManager.GetActiveScene();
             using var load = _system.LoadSceneAsync(SceneAddress, LoadSceneMode.Single, activateOnLoad: false);
             yield return Wait(() => Owners().Any(lease => LoadHandle(lease).IsValid()) && !load.IsDone);
@@ -682,11 +803,21 @@ namespace YLFramework.Tests.Resource
             Assert.That(owner.LastError.Kind, Is.EqualTo(ResourceError.Busy));
             Assert.That(owner.IsSettled, Is.False);
             Assert.That(handle.IsValid(), Is.True, "A last-scene drain failure must remain owned even though the request was canceled.");
+            var rows = ResourceEventHistory.Read().Where(row => row.RequestId == load.EventTrace.Id).ToArray();
+            var busy = rows.Single(row => row.Phase == ResourceEventPhase.SceneCleanup);
+            Assert.That(busy.Status, Is.EqualTo(ResourceRequestStatus.Failed));
+            Assert.That(busy.Error, Is.EqualTo(ResourceError.Busy));
+            Assert.That(busy.Late, Is.True);
+            Assert.That(rows.Any(row => row.Phase == ResourceEventPhase.SceneUnload), Is.False);
             _neutralScenes.Add(SceneManager.CreateScene("YL.SceneTest.SingleRetry"));
             using var retry = owner.UnloadAsync();
             yield return Wait(() => retry.IsDone);
             Assert.That(retry.Status, Is.EqualTo(ResourceRequestStatus.Succeeded), retry.Error?.ToString());
             Assert.That(handle.IsValid(), Is.False);
+            rows = ResourceEventHistory.Read().Where(row => row.RequestId == load.EventTrace.Id).ToArray();
+            Assert.That(rows.Where(row => row.Phase == ResourceEventPhase.SceneCleanup).Select(row => row.Status),
+                Is.EqualTo(new[] { ResourceRequestStatus.Failed, ResourceRequestStatus.Succeeded }));
+            Assert.That(rows.Single(row => row.Phase == ResourceEventPhase.SceneUnload).Status, Is.EqualTo(ResourceRequestStatus.Succeeded));
         }
 
         [UnityTest]
@@ -730,10 +861,17 @@ namespace YLFramework.Tests.Resource
             using var ambiguous = _system.LoadSceneAsync(prefix + ".ambiguous");
             yield return Wait(() => ambiguous.IsDone);
             Assert.That(ambiguous.Status, Is.EqualTo(ResourceRequestStatus.Failed));
+            ResourceEventHistory.SetRecording(true);
             using var missing = _system.LoadSceneAsync(prefix + ".missing");
             yield return Wait(() => missing.IsDone);
             Assert.That(missing.Status, Is.EqualTo(ResourceRequestStatus.Failed));
             Assert.That(missing.Error.Kind, Is.EqualTo(ResourceError.AddressNotFound));
+            var rows = ResourceEventHistory.Read().Where(row => row.RequestId == missing.EventTrace.Id).ToArray();
+            var locate = rows.Where(row => row.Phase == ResourceEventPhase.SceneLocate).ToArray();
+            Assert.That(locate.Select(row => row.Kind), Is.EqualTo(new[] { ResourceEventKind.Work, ResourceEventKind.Release }));
+            Assert.That(locate.All(row => row.Status == ResourceRequestStatus.Succeeded && !row.Late), Is.True);
+            Assert.That(locate[1].WorkId, Is.EqualTo(locate[0].WorkId));
+            Assert.That(rows.Any(row => row.Phase == ResourceEventPhase.SceneLoad), Is.False);
             using var custom = _system.LoadSceneAsync(prefix + ".custom");
             yield return Wait(() => custom.IsDone);
             Assert.That(custom.Status, Is.EqualTo(ResourceRequestStatus.Failed));
@@ -816,6 +954,35 @@ namespace YLFramework.Tests.Resource
             {
                 Assert.That(Time.realtimeSinceStartup, Is.LessThan(deadline), "The Scene owner did not reach its expected state.");
                 yield return null;
+            }
+        }
+
+        private sealed class SceneDependencyGate : ResourceProviderBase, IAssetBundleResource
+        {
+            private ProvideHandle? _pending;
+            private bool _open;
+            internal bool Pending => _pending.HasValue;
+            internal int Releases { get; private set; }
+
+            internal SceneDependencyGate() => m_ProviderId = "YL.SceneTest.Gate." + Guid.NewGuid().ToString("N");
+            public override Type GetDefaultType(IResourceLocation location) => typeof(IAssetBundleResource);
+            public override void Provide(ProvideHandle handle)
+            {
+                _pending = handle;
+                if (_open)
+                    Open();
+            }
+            public AssetBundle GetAssetBundle() => null;
+            public override void Release(IResourceLocation location, object asset) => Releases++;
+
+            internal void Open()
+            {
+                _open = true;
+                if (!_pending.HasValue)
+                    return;
+                var handle = _pending.Value;
+                _pending = null;
+                handle.Complete<IAssetBundleResource>(this, true, null);
             }
         }
 

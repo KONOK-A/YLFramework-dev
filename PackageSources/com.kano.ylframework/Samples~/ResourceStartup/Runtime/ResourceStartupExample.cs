@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+using UnityEngine.ResourceManagement.Exceptions;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using YLFramework.Audio;
@@ -41,7 +43,7 @@ namespace YLFramework.Samples.Resource
 
         public ResourceStartup Startup => _session?.Startup;
         public string Result => _session?.Result ?? "Not started";
-        public Exception LastFailure => _session?.CleanupError ?? _session?.BusinessError;
+        public Exception LastFailure => _session?.StartFailure ?? _session?.CleanupError ?? _session?.BusinessError;
         public static int PendingShutdownCount => _pendingShutdowns.Count;
         public static string PendingShutdownDetails => string.Join("\n", _pendingShutdowns.Select(session => session.Result));
 
@@ -84,6 +86,7 @@ namespace YLFramework.Samples.Resource
             var session = new Session
             {
                 Startup = new ResourceStartup(new ResourceConfiguration(enableStartupCatalogUpdates: catalogId != null), bindCoreResourceProvider, projects),
+                CallerToken = cancellation,
                 Cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellation, CancellationToken.None),
                 Owner = gameObject,
                 Label = "ResourceStartupExample/" + GetInstanceID()
@@ -95,7 +98,7 @@ namespace YLFramework.Samples.Resource
         }
 
         /// <summary>取消本例等待，先等业务结束和 Scope 真正关闭，再停止本例拥有的 Root 服务；失败可原 owner 重试。</summary>
-        public Task StopExampleAsync() => _session == null ? Task.CompletedTask : CloseSessionAsync(_session);
+        public Task StopExampleAsync() => _session == null || _session.Closed ? Task.CompletedTask : CloseSessionAsync(_session);
 
         /// <summary>显式重试已销毁组件留下的真实关闭责任，不丢 owner、不强制释放外部租约。</summary>
         public static Task RetryPendingShutdownsAsync() => Task.WhenAll(_pendingShutdowns.ToArray().Select(CloseSessionAsync));
@@ -119,7 +122,7 @@ namespace YLFramework.Samples.Resource
             token.ThrowIfCancellationRequested();
             await session.Startup.StartAsync();
             token.ThrowIfCancellationRequested();
-            var resources = session.Startup.Resources;
+            var resources = session.Resources = session.Startup.Resources;
             if (options.Catalog != null)
             {
                 var available = await resources.CheckForCatalogUpdatesAsync(token);
@@ -151,36 +154,60 @@ namespace YLFramework.Samples.Resource
             token.ThrowIfCancellationRequested();
 
             // 默认借用不需要租约。只有另一段独立业务需要越出当前借用时才 Acquire/Retain，并各自归还。
-            using var independent = await resources.AcquireAsync<TextAsset>(messageKey, token);
-            using var retained = independent.Retain(session.Label + "/independent-read");
-            independent.Dispose();
-            token.ThrowIfCancellationRequested();
-            var core = "off";
-            if (options.Project != null && session.Startup.CoreProvider != null)
+            var locals = new List<IDisposable>();
+            string result;
+            Exception failure = null;
+            try
             {
-                using var read = session.Startup.CoreProvider.ReadTextAsync(options.Project, "message");
-                while (read.keepWaiting)
+                var independent = await resources.AcquireAsync<TextAsset>(messageKey, token);
+                locals.Add(independent);
+                var retained = independent.Retain(session.Label + "/independent-read");
+                locals.Add(retained);
+                locals.Remove(independent);
+                independent.Dispose();
+                token.ThrowIfCancellationRequested();
+                var core = "off";
+                if (options.Project != null && session.Startup.CoreProvider != null)
                 {
-                    token.ThrowIfCancellationRequested();
-                    await Task.Yield();
+                    var read = session.Startup.CoreProvider.ReadTextAsync(options.Project, "message");
+                    locals.Add(read);
+                    while (read.keepWaiting)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        await Task.Yield();
+                    }
+                    if (read.TakeResult() != text.text)
+                    {
+                        throw new InvalidOperationException("Core did not read the authored message.");
+                    }
+                    core = "ok";
                 }
-                if (read.TakeResult() != text.text)
+                token.ThrowIfCancellationRequested();
+                var image = "off";
+                if (options.Preview != null || options.Cue)
                 {
-                    throw new InvalidOperationException("Core did not read the authored message.");
+                    image = await PresentAsync(session, options.Project, options.Preview, options.Cue, options.CueLabel, token);
                 }
-                core = "ok";
+                token.ThrowIfCancellationRequested();
+                result = text.text + " / " + configuration.text + " / " + instance.name + " / retained=" + retained.Asset.text.Length +
+                    " / core=" + core + " / audio=" + (options.Cue ? "ok" : "off") + " / image=" + image +
+                    " / instance=" + (reuse ? "prewarmed, reset and reused" : "fresh") +
+                    (options.CueLabel != null ? " / audio-preload=dependencies, batch, exact key" : "");
             }
-            token.ThrowIfCancellationRequested();
-            var image = "off";
-            if (options.Preview != null || options.Cue)
+            catch (Exception error)
             {
-                image = await PresentAsync(session, options.Project, options.Preview, options.Cue, options.CueLabel, token);
+                failure = error;
+                throw;
             }
-            token.ThrowIfCancellationRequested();
-            var result = text.text + " / " + configuration.text + " / " + instance.name + " / retained=" + retained.Asset.text.Length +
-                " / core=" + core + " / audio=" + (options.Cue ? "ok" : "off") + " / image=" + image +
-                " / instance=" + (reuse ? "prewarmed, reset and reused" : "fresh") +
-                (options.CueLabel != null ? " / audio-preload=dependencies, batch, exact key" : "");
+            finally
+            {
+                ReleaseLocals(locals, failure);
+            }
+            CheckActive(session);
+            if (options.Preview != null)
+            {
+                CheckDisplay(session);
+            }
             session.Result = "Running: " + result + ". Await StopExampleAsync before destroying the owner.";
             return result;
         }
@@ -188,33 +215,55 @@ namespace YLFramework.Samples.Resource
         private static async Task<GameObject> RentPrewarmedAsync(Session session, string key, Scene destination, CancellationToken token)
         {
             var resources = session.Startup.Resources;
-            using var prefabLease = await resources.AcquireAsync<GameObject>(key, token);
-            token.ThrowIfCancellationRequested();
-            var pool = resources.GetOrCreateInstanceCache(prefabLease, scene: destination);
-            pool.Prewarm(1);
-            GameObject previous;
-            string name;
-            using (var first = pool.Rent())
+            var locals = new List<IDisposable>();
+            Exception failure = null;
+            try
             {
-                previous = first.GameObject;
-                name = previous.name;
+                var prefabLease = await resources.AcquireAsync<GameObject>(key, token);
+                locals.Add(prefabLease);
+                token.ThrowIfCancellationRequested();
+                var pool = resources.GetOrCreateInstanceCache(prefabLease, scene: destination);
+                pool.Prewarm(1);
+                var first = pool.Rent();
+                locals.Add(first);
+                var previous = first.GameObject;
+                var name = previous.name;
                 // Application-owned per-borrow state is reset before the checkout returns to the pool.
                 previous.name = "Sample first checkout";
                 previous.name = name;
-            }
-            var next = pool.Rent();
-            try
-            {
-                if (next.GameObject != previous || next.GameObject.name != name)
+                locals.Remove(first);
+                first.Dispose();
+                var next = pool.Rent();
+                try
                 {
-                    throw new InvalidOperationException("Prewarmed instance was not reset and reused.");
+                    if (next.GameObject != previous || next.GameObject.name != name)
+                    {
+                        throw new InvalidOperationException("Prewarmed instance was not reset and reused.");
+                    }
+                    session.Scope.Own(next);
                 }
-                return session.Scope.Own(next).GameObject;
+                catch (Exception error)
+                {
+                    try
+                    {
+                        next.Discard();
+                    }
+                    catch (Exception cleanup)
+                    {
+                        throw new AggregateException(error, cleanup);
+                    }
+                    throw;
+                }
+                return next.GameObject;
             }
-            catch
+            catch (Exception error)
             {
-                next.Discard();
+                failure = error;
                 throw;
+            }
+            finally
+            {
+                ReleaseLocals(locals, failure);
             }
         }
 
@@ -234,37 +283,49 @@ namespace YLFramework.Samples.Resource
                 var target = image.GetComponent<RawImage>();
                 target.raycastTarget = false;
                 target.rectTransform.sizeDelta = new Vector2(96, 96);
-                var binding = session.Image = image.AddComponent<ResourceImage>();
-                binding.SetAddress(previewKey);
-                while (binding && binding.Status == ResourceRequestStatus.Pending)
+                session.Image = target;
+                session.Previous = target.texture;
+                SetImage(session, Texture2D.whiteTexture);
+                session.PreviewScope = session.Startup.Resources.CreateScope(session.Label + "/preview");
+                var request = session.PreviewScope.LoadAsync<UnityEngine.Object>(previewKey, token);
+                ResourceException contentError = null;
+                UnityEngine.Object asset = null;
+                try
                 {
-                    token.ThrowIfCancellationRequested();
-                    await Task.Yield();
+                    asset = await request;
                 }
-                token.ThrowIfCancellationRequested();
-                if (!binding || binding.Status != ResourceRequestStatus.Succeeded || !target.texture)
+                catch (ResourceException error) when (ReferenceEquals(error, request.Error) &&
+                    request.Status == ResourceRequestStatus.Failed && (
+                        (error.Kind == ResourceError.AddressNotFound && error.InnerException == null) ||
+                        (error.Kind is ResourceError.AddressNotFound or ResourceError.LoadFailed or ResourceError.TypeMismatch) &&
+                        error.InnerException is ProviderException))
                 {
-                    var error = binding ? binding.Error : null;
-                    if (error == null || (error.Kind != ResourceError.AddressNotFound && error.Kind != ResourceError.InvalidAddress &&
-                        error.Kind != ResourceError.TypeMismatch && error.Kind != ResourceError.LoadFailed))
-                    {
-                        throw error ?? new ResourceException(ResourceError.LoadFailed, "The example image was not displayed.");
-                    }
-                    // Clear 会清空 Error；保留完整诊断，包括 Provider 或显示恢复的内部异常。
-                    imageResult = $"skipped ({previewKey}: {error.Kind})\n{error}";
+                    contentError = error;
+                }
+                CheckActive(session);
+                CheckDisplay(session);
+                if (contentError == null && !(asset is Texture))
+                {
+                    contentError = new ResourceException(ResourceError.TypeMismatch, "RawImage requires a Texture: " + previewKey);
+                }
+                if (contentError != null)
+                {
                     try
                     {
-                        binding.Clear();
+                        await session.PreviewScope.CloseAsync();
+                        session.PreviewScope = null;
                     }
-                    catch (Exception cleanupError)
+                    catch (Exception cleanup)
                     {
-                        throw new AggregateException("The optional preview could not be cleared: " + previewKey, error, cleanupError);
+                        throw new AggregateException(contentError, cleanup);
                     }
-                    session.Image = null;
-                    Destroy(canvas);
+                    CheckActive(session);
+                    CheckDisplay(session);
+                    imageResult = $"skipped ({previewKey}: {contentError.Kind})\n{contentError}";
                 }
                 else
                 {
+                    SetImage(session, (Texture)asset);
                     imageResult = "ok";
                 }
             }
@@ -277,26 +338,115 @@ namespace YLFramework.Samples.Resource
                     // Download prepares bundle bytes, not an AudioClip. A batch lease also does not publish a single-key entry.
                     await resources.DownloadDependenciesAsync(labels, token);
                 }
-                using var batch = labels == null ? null : await resources.AcquireBatchAsync<AudioClip>(labels, token);
-                var cueKey = projectId + "/cue";
-                var clip = await session.Scope.LoadAsync<AudioClip>(cueKey, token);
-                token.ThrowIfCancellationRequested();
-                if (batch != null && !batch.Assets.Contains(clip))
+                var locals = new List<IDisposable>();
+                Exception failure = null;
+                try
                 {
-                    throw new InvalidOperationException($"The sample label '{cueLabel}' does not contain '{cueKey}'.");
+                    var batch = labels == null ? null : await resources.AcquireBatchAsync<AudioClip>(labels, token);
+                    if (batch != null)
+                    {
+                        locals.Add(batch);
+                    }
+                    var cueKey = projectId + "/cue";
+                    var clip = await session.Scope.LoadAsync<AudioClip>(cueKey, token);
+                    token.ThrowIfCancellationRequested();
+                    if (batch != null && !batch.Assets.Contains(clip))
+                    {
+                        throw new InvalidOperationException($"The sample label '{cueLabel}' does not contain '{cueKey}'.");
+                    }
+                    // The bridge owns its own lease after this synchronous read.
+                    session.Cue = resources.GetAudioClipProvider(projectId).Load("cue");
+                    if (session.Cue.Clip != clip)
+                    {
+                        throw new InvalidOperationException("Audio did not borrow the warmed clip.");
+                    }
+                    var source = session.Audio = session.View.AddComponent<AudioSource>();
+                    source.playOnAwake = false;
+                    source.clip = session.Cue.Clip;
+                    source.Play();
                 }
-                // The bridge owns its own lease after this synchronous read.
-                session.Cue = resources.GetAudioClipProvider(projectId).Load("cue");
-                if (session.Cue.Clip != clip)
+                catch (Exception error)
                 {
-                    throw new InvalidOperationException("Audio did not borrow the warmed clip.");
+                    failure = error;
+                    throw;
                 }
-                var source = session.Audio = session.View.AddComponent<AudioSource>();
-                source.playOnAwake = false;
-                source.clip = session.Cue.Clip;
-                source.Play();
+                finally
+                {
+                    ReleaseLocals(locals, failure);
+                }
             }
             return imageResult;
+        }
+
+        private static void SetImage(Session session, Texture texture)
+        {
+            // RawImage changes its texture before invoking dirty callbacks, which can throw or replace it.
+            session.Assigned = texture;
+            session.Image.texture = texture;
+            CheckDisplay(session);
+        }
+
+        private static void CheckDisplay(Session session)
+        {
+            var target = session.Image;
+            if (!target || !target.isActiveAndEnabled || !target.canvas || !target.canvas.isActiveAndEnabled ||
+                !session.Assigned || target.texture != session.Assigned)
+            {
+                throw new InvalidOperationException("The example preview is no longer displayed.");
+            }
+        }
+
+        private static void CheckActive(Session session)
+        {
+            session.CallerToken.ThrowIfCancellationRequested();
+            session.Cancellation.Token.ThrowIfCancellationRequested();
+            var resources = session.Resources;
+            if (session.Stopping || !session.Owner || resources == null || !ReferenceEquals(resources, ResourceSystem.Current) ||
+                !resources.IsSessionActive || resources.State != ResourceSystemState.Ready || session.Scope == null || session.Scope.IsDisposed)
+            {
+                throw new ResourceException(ResourceError.SessionUnavailable, "The original preview owner or resource session ended.");
+            }
+        }
+
+        private static void ReleaseLocals(List<IDisposable> locals, Exception primary)
+        {
+            var errors = new List<Exception>();
+            for (int i = locals.Count - 1; i >= 0; i--)
+            {
+                Attempt(locals[i].Dispose, errors);
+            }
+            if (errors.Count != 0)
+            {
+                if (primary != null)
+                {
+                    errors.Insert(0, primary);
+                }
+                ThrowErrors(errors);
+            }
+        }
+
+        private static void Attempt(Action cleanup, List<Exception> errors)
+        {
+            try
+            {
+                cleanup();
+            }
+            catch (Exception error)
+            {
+                errors.Add(error);
+            }
+        }
+
+        private static void ThrowErrors(List<Exception> errors)
+        {
+            if (errors.Count == 1)
+            {
+                ExceptionDispatchInfo.Capture(errors[0]).Throw();
+            }
+            if (errors.Count > 1)
+            {
+                throw new AggregateException(errors);
+            }
         }
 
         private static async Task<string> ObserveStartAsync(Session session)
@@ -314,7 +464,8 @@ namespace YLFramework.Samples.Resource
                 }
                 catch (Exception cleanup)
                 {
-                    throw new AggregateException("Business failed and shutdown remains incomplete. Retry the original owner.", error, cleanup);
+                    session.StartFailure = new AggregateException("Business and shutdown both reported errors.", error, cleanup);
+                    throw session.StartFailure;
                 }
                 throw;
             }
@@ -322,8 +473,9 @@ namespace YLFramework.Samples.Resource
 
         private static Task CloseSessionAsync(Session session)
         {
-            if (session.Shutdown == null || session.Shutdown.IsFaulted || session.Shutdown.IsCanceled)
+            if (!session.Closed && (session.Shutdown == null || session.Shutdown.IsFaulted || session.Shutdown.IsCanceled))
             {
+                session.Stopping = true;
                 session.Shutdown = CloseCoreAsync(session);
                 session.Cancellation.Cancel();
             }
@@ -346,40 +498,77 @@ namespace YLFramework.Samples.Resource
                     // 原业务 Task 仍向 StartExampleAsync 的调用方交付原异常；关闭只结算所有权，不改写失败为成功。
                     session.BusinessError = error;
                 }
+                var errors = new List<Exception>();
                 if (session.Audio)
                 {
-                    session.Audio.Stop();
-                    session.Audio.clip = null;
+                    Attempt(session.Audio.Stop, errors);
+                    Attempt(() => session.Audio.clip = null, errors);
                     session.Audio = null;
                 }
-                session.Cue?.Dispose();
+                var cue = session.Cue;
                 session.Cue = null;
-                if (session.Image)
+                if (cue != null)
                 {
-                    session.Image.Clear();
+                    Attempt(cue.Dispose, errors);
+                }
+                if (session.Image && session.Image.texture == session.Assigned)
+                {
+                    Attempt(() => session.Image.texture = session.Previous, errors);
                 }
                 session.Image = null;
+                session.Assigned = null;
+                session.Previous = null;
                 if (session.View)
                 {
-                    Destroy(session.View);
+                    Attempt(() => Destroy(session.View), errors);
                 }
                 session.View = null;
+                if (session.PreviewScope != null)
+                {
+                    try
+                    {
+                        await session.PreviewScope.CloseAsync();
+                        session.PreviewScope = null;
+                    }
+                    catch (Exception error)
+                    {
+                        errors.Add(error);
+                    }
+                }
                 if (session.Scope != null)
                 {
-                    await session.Scope.CloseAsync();
-                    session.Scope = null;
+                    try
+                    {
+                        await session.Scope.CloseAsync();
+                        session.Scope = null;
+                    }
+                    catch (Exception error)
+                    {
+                        errors.Add(error);
+                    }
                 }
-                // 真实应用也应在这里之前完成全部业务 Module/Audio 播放的退出，而不是由 Root 抢先强关。
-                await session.Startup.StopAsync();
-                session.Closed = true;
-                session.Cancellation.Dispose();
-                _pendingShutdowns.Remove(session);
+                try
+                {
+                    await session.Startup.StopAsync();
+                    session.Resources = null;
+                    session.PreviewScope = null;
+                    session.Scope = null;
+                    session.Closed = true;
+                    session.Cancellation.Dispose();
+                    _pendingShutdowns.Remove(session);
+                }
+                catch (Exception error)
+                {
+                    errors.Add(error);
+                }
+                ThrowErrors(errors);
                 session.Result = "Stopped: owned cleanup completed." + (session.BusinessError == null ? "" : "\nBusiness outcome: " + session.BusinessError);
             }
             catch (Exception error)
             {
                 session.CleanupError = error;
-                session.Result = "Shutdown incomplete; retain this owner and retry after returning the listed responsibilities.\n" +
+                session.Result = (session.Closed ? "Stopped with cleanup errors.\n" :
+                    "Shutdown incomplete; retain this owner and retry after returning the listed responsibilities.\n") +
                     error + (session.BusinessError == null ? "" : "\nBusiness outcome: " + session.BusinessError) +
                     "\n" + Responsibilities(session.Startup.Resources);
                 throw;
@@ -464,16 +653,23 @@ namespace YLFramework.Samples.Resource
         private sealed class Session
         {
             public ResourceStartup Startup;
+            public ResourceSystem Resources;
             public ResourceScope Scope;
             public GameObject Owner;
             public GameObject View;
-            public ResourceImage Image;
+            public RawImage Image;
+            public Texture Previous;
+            public Texture Assigned;
+            public ResourceScope PreviewScope;
+            public CancellationToken CallerToken;
+            public bool Stopping;
             public AudioSource Audio;
             public AudioClipLease Cue;
             public CancellationTokenSource Cancellation;
             public Task<string> Business;
             public Task Shutdown;
             public Exception BusinessError;
+            public Exception StartFailure;
             public Exception CleanupError;
             public string Label;
             public string Result = "Starting";

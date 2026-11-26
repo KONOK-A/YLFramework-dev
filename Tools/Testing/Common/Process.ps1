@@ -118,7 +118,9 @@ function Invoke-YLTestProcess {
         [Parameter(Mandatory)][Diagnostics.ProcessStartInfo] $StartInfo,
         [Parameter(Mandatory)][string] $Log,
         [Parameter(Mandatory)][ValidateRange(1, 2147483647)][int] $TimeoutMilliseconds,
-        [Threading.CancellationToken] $CancellationToken = [Threading.CancellationToken]::None
+        [ValidateRange(0, 60000)][int] $DescendantGraceMilliseconds = 2000,
+        [Threading.CancellationToken] $CancellationToken = [Threading.CancellationToken]::None,
+        [scriptblock] $KillWhen
     )
     Set-StrictMode -Version 3.0
     $ErrorActionPreference = 'Stop'
@@ -149,6 +151,7 @@ function Invoke-YLTestProcess {
         jobAssigned = $false; activeProcesses = $null; streamsDrained = $false
     }
     foreach ($entry in $initial.GetEnumerator()) { $record.Add($entry.Key, $entry.Value) }
+    if ($null -ne $KillWhen) { $record['killObservation'] = $null }
     $job = $null
     $stdout = $null
     $stderr = $null
@@ -156,6 +159,7 @@ function Invoke-YLTestProcess {
     $started = $false
     $startAttempted = $false
     $identityWritten = $false
+    $killFacts = $null
     $jsonOptions = [Text.Json.JsonSerializerOptions]::new()
     $jsonOptions.WriteIndented = $true
     try {
@@ -181,6 +185,29 @@ function Invoke-YLTestProcess {
         Write-YLTestJson -Path ($Log + '.started.json') -Value $record
         while (-not $process.HasExited) {
             $CancellationToken.ThrowIfCancellationRequested()
+            if ($null -ne $KillWhen) {
+                # The callback observes a fixture signal. Only this controller owns the original process handle.
+                $observation = & $KillWhen $process.Id
+                if ($null -ne $observation) {
+                    if ($process.HasExited) { throw 'Child exited before its observed kill point could be exercised.' }
+                    $killFacts = $observation
+                    $document = [Text.Json.JsonDocument]::Parse((ConvertTo-Json -InputObject $observation -Depth 8 -Compress))
+                    try { $record['killObservation'] = $document.RootElement.Clone() }
+                    finally { $document.Dispose() }
+                    # The killed process can take longer to exit under build load. Keep the original handle and the observation deadline.
+                    $killDeadline = [Math]::Min([long]$TimeoutMilliseconds,
+                        $clock.ElapsedMilliseconds + [Math]::Max(5000, $DescendantGraceMilliseconds))
+                    $process.Kill()
+                    while (-not $process.HasExited) {
+                        $CancellationToken.ThrowIfCancellationRequested()
+                        $killRemaining = $killDeadline - $clock.ElapsedMilliseconds
+                        if ($killRemaining -le 0) { throw 'Observed test kill did not terminate the direct child.' }
+                        $null = $process.WaitForExit([int][Math]::Min(100, $killRemaining))
+                    }
+                    $record['status'] = 'ObservationKill'
+                    break
+                }
+            }
             $remaining = [long]$TimeoutMilliseconds - $clock.ElapsedMilliseconds
             if ($remaining -le 0) {
                 $record['status'] = 'TimedOut'
@@ -215,9 +242,11 @@ function Invoke-YLTestProcess {
         }
         if ($started) {
             try {
-                if ($process.HasExited -and $record['jobAssigned'] -and $record['status'] -cin @('Exited', 'NonZeroExit')) {
+                if ($process.HasExited -and $record['jobAssigned'] -and $record['status'] -cin @('Exited', 'NonZeroExit', 'ObservationKill')) {
                     $grace = [Diagnostics.Stopwatch]::StartNew()
-                    while ($job.ActiveProcesses -ne 0 -and $grace.ElapsedMilliseconds -lt 2000) { [Threading.Thread]::Sleep(25) }
+                    while ($job.ActiveProcesses -ne 0 -and $grace.ElapsedMilliseconds -lt $DescendantGraceMilliseconds) {
+                        [Threading.Thread]::Sleep(25)
+                    }
                     if ($job.ActiveProcesses -ne 0) { $record['status'] = 'DescendantsAlive' }
                 }
                 if (-not $process.HasExited -or ($record['jobAssigned'] -and $job.ActiveProcesses -ne 0)) {
@@ -278,6 +307,7 @@ function Invoke-YLTestProcess {
     }
     $facts = @{}
     foreach ($entry in $record.GetEnumerator()) { $facts[$entry.Key] = $entry.Value }
+    if ($null -ne $KillWhen) { $facts['killObservation'] = $killFacts }
     return [pscustomobject]$facts
 }
 
@@ -293,7 +323,7 @@ function Read-YLTestProcessResult {
     $after = [IO.File]::ReadAllText($terminal) | ConvertFrom-Json -AsHashtable -DateKind String
     if ($before['purpose'] -cne 'YLTesting.Process' -or $after['purpose'] -cne 'YLTesting.Process' -or
         $after['schemaVersion'] -ne 1 -or $before['invocationId'] -cne $after['invocationId'] -or
-        $after['log'] -ine $Log -or $after['status'] -cnotin @('Exited', 'NonZeroExit', 'TimedOut', 'Cancelled', 'StartFailed', 'ObserverError', 'DescendantsAlive')) {
+        $after['log'] -ine $Log -or $after['status'] -cnotin @('Exited', 'NonZeroExit', 'TimedOut', 'Cancelled', 'StartFailed', 'ObserverError', 'DescendantsAlive', 'ObservationKill')) {
         throw 'Process evidence identity or terminal state is invalid.'
     }
     return [pscustomobject]$after

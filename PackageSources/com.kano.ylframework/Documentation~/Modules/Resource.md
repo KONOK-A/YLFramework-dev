@@ -6,7 +6,7 @@ YL Resource 以官方 Addressables 为唯一资源内核。官方负责定位、
 
 Runtime namespace 为 `YLFramework.Resource`，Editor 为 `YLFramework.Editor.Resource`，属于主包。主包正式依赖 Addressables；安装包、构造配置、读取 `ResourceSystem.Current` 或打开工作台都不会初始化资源。操作及 Unity 对象访问在主线程，不把 `Task.Run` 当加载入口。
 
-先按[作者指南](Resource/Authoring.md#第一次配置)配置官方 Settings 与 Entries。需要 Windows x64 固定 Catalog 的加密 Bundle 时，[另选加密交付](Resource/Delivery.md#可选的远端-bundle-加密)，不改变普通资源的安装要求。
+先按[作者指南](Resource/Authoring.md#第一次配置)配置官方 Settings 与 Entries。需要 Windows x64 加密 Bundle 时，[另选加密交付](Resource/Delivery.md#可选的-bundle-加密)，不改变普通资源的安装要求。
 
 ## 最小接入
 
@@ -22,7 +22,7 @@ var resources = startup.Resources;
 
 Core 默认绑定；可传 `false` 只使用资源能力。音频命名空间登记不启动 Audio、不修改偏好或接管 Audio 生命周期。已有外部 Core Provider 冲突会明确失败，不强制替换。
 
-完整组件、取消、失败、`OnDestroy` 收尾及重试见随包的 [Resource Startup](../../Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs)；按[样例步骤](Resource/Authoring.md#运行资源样例)导入、建场景并显式运行。样例展示 Scope 重用与销毁绑定、预热与归还前复位、Core 文本、音频 Clip 租约和 `ResourceImage`。可选的 `startupCatalogId` 只在受控首次启动检查后应用指定 Catalog，再开放业务；本地样例默认不更新。
+完整组件、取消、失败、`OnDestroy` 收尾及重试见随包的 [Resource Startup](../../Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs)；按[样例步骤](Resource/Authoring.md#运行资源样例)导入、建场景并显式运行。样例展示 Scope 重用与销毁绑定、预热与归还前复位、Core 文本和音频 Clip 租约。配置预览后，独立的预览 Scope 持有图片，`RawImage` 显示占位图或已加载的纹理。可选的 `startupCatalogId` 只在受控首次启动检查后应用指定 Catalog，再开放业务；本地样例默认不更新。
 
 ## 默认用 Scope 借读
 
@@ -106,7 +106,9 @@ foreach (var text in batch.Assets)
 
 [Resource Startup 样例](../../Samples~/ResourceStartup/Runtime/ResourceStartupExample.cs) 串联上述三种用法。音频引用用来选定 `AudioClip`；运行时按 `项目名/cue` 加载，cue 组不必发布 GUID。使用预热 Label 时必须登记、分配给 cue 并发布；仅 cue 自身的 Label 与其地址同名是合法的。message 始终按 GUID 加载，只有启用 Core 命名读取时还需发布 `项目名/message`。
 
-必需项失败会等本次业务 Scope 关闭。可选预览图加载或显示失败时，`StartExampleAsync()` 的返回文本和运行中的 `Result` 保留键、错误类型及完整异常链；清空图片后可继续音频等业务。调用者取消、会话结束或清空图片本身失败不会被当作可忽略的错误。
+必需的 message、data、音频或预热批次失败时，样例结算本轮责任，并将原因交给 `StartExampleAsync()` 的调用者。未配置预览时结果为 `image=off`。配置预览后，活跃的 `RawImage` 先显示借用的 `Texture2D.whiteTexture`。样例用独立的预览 Scope 加载一次，取得 `Texture` 后才替换占位图。缺失、内容类型不符或官方 Provider 的普通内容失败时，会等预览 Scope 关闭成功，复核原会话、业务 Scope 和占位图仍有效，再以 `image=skipped` 继续。返回文本保留该预览的原因。
+
+缺少匹配的 Provider、提交阶段抛错、Provider 或其依赖取消、调用者取消、主动停止、owner 销毁、会话失效、显示或恢复出错、归还失败均终止本轮启动。业务和清理同时失败时，调用者可以检查两次异常。成功的预览由预览 Scope 持有到停止，只在目标仍显示本轮设置的图时恢复。全部局部租约结算完毕后才发布 `Running`。若停止返回 `Busy`，应由外部持有人归还其独立 Lease，再通过原 owner 重试。
 
 ## await 与协程
 
@@ -176,7 +178,11 @@ Core 通过 `ICoreResourceProvider` 消费资源；应用用 `ResourceStartup` �
 
 编辑器禁用 Domain Reload 时，仅在本方退役启动仍待结算期间推进原 Addressables Manager，每次编辑器更新至多推进同一 Manager 一次，即使已经进入下一轮 Play。独立且已经完成的句柄只触发一次更新，不同步等待初始化、IO 或业务加载；这也可能推进原 Manager 上其他所有者的回调，但不会回滚 Unity 状态、重置全局 Addressables 或接管其他 Provider 的所有权。
 
-`GetDiagnostics()` 返回 YL lease、owner/key、Scope、请求、工作和排空的值快照，不保活资源，不是官方总引用数/native 内存。默认无历史；配置非零 `diagnosticHistoryCapacity` 后仅将显式查询的快照记录到有界历史，使用 `GetDiagnosticsHistory/ClearDiagnosticsHistory` 读取/清除。不开窗口不自动扫描全图或采样。
+在编辑器的 **YLFramework → Resource → Record Next Play** 勾选下一轮录制，或在 Play 期间打开 **Workbench → Runtime Diagnostics** 开始录制。默认关闭。关窗后仍可录制，停止录制会保留最近 256 条事件及淘汰数。手动清空后，已有操作继续归还资源，旧回调不会写回。服务停止后仍可开窗查看，同一轮 Play 启动下一服务或退出 Play 会清空旧记录。
+
+请求事件包含资产、Scope 等待者、动态图片、批次、实例、场景、依赖下载和官方 Catalog 请求的终态、耗时及错误类别。共享等待者可按加载 ID 找到同一次定位和提供工作。下载与 Catalog 的工作耗时从调用官方入口前开始，包含同步提交时间。取消、实际工作完成、本方句柄归还分别记录，已预约的 await 在成功后发生领取前失效也单列。已登记的请求还可按 `Snapshot DiagnosticId` 对照同一服务的手动快照。工作台显示资产定位与提供、官方交付和场景句柄的实际结果。批次子项、实例创建与租还、图片排队与缓存只提供请求终态。资源与自定义 owner 仅显示会话指纹。Editor 录制不进入 Player，外部直接调用 Addressables 的引用与实际网络完成时刻也不在其观测范围内。
+
+需要查看当前具体责任时，可点击 **Capture Snapshot (Read Only)** 或调用 `GetDiagnostics()`。手动快照包含原始 owner、key、排空信息和错误详情，分享前请自行脱敏。配置非零 `DiagnosticHistoryCapacity` 后才保存显式查询产生的快照，使用 `GetDiagnosticsHistory()` 和 `ClearDiagnosticsHistory()` 读取和清除。打开工作台、重绘或读取请求事件均不会产生手动快照。
 
 缺失 key 检查官方 Entry/类型；歧义明确修配置；`ConfigurationConflict` 检查唯一 Startup 与外部绑定；`Busy` 找真实持有者；`SessionUnavailable` 结算旧会话而不是把旧请求挂新会话。性能以相同内容、分包、平台与正确生命周期测量，不能由包装层代码量推断优于裸 Addressables。
 

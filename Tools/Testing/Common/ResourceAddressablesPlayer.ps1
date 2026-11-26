@@ -68,7 +68,7 @@ function Assert-YLResourceAddressablesPlayerReport {
         Assert-YLResourceAddressablesPerformance -Report $Report -Round $Round
         return
     }
-    $required = @('ScopeReadOnce', 'IndependentLease', 'StopBusy', 'FreshVsRent', 'AdditiveSceneClosed', 'OfficialCache', 'FinalOwnershipZero')
+    $required = @('ScopeReadOnce', 'ScopedFinalReleaseFailure', 'ProviderProgressReentrantCancel', 'IndependentLease', 'StopBusy', 'FreshVsRent', 'AdditiveSceneClosed', 'OfficialCache', 'FinalOwnershipZero')
     if ($null -ne $publicationHash) { $required += 'PackedPublishedKeys' }
     $hasSprite = $Build.Contains('packedSpriteGuid') -or $Build.Contains('packedSpriteFixture')
     if ($hasSprite) { $required += 'PackedSpriteTypedOwnership', 'PackedSpriteBroadAmbiguity' }

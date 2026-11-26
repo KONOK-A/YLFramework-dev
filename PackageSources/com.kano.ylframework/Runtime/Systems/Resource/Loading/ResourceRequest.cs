@@ -23,6 +23,7 @@ namespace YLFramework.Resource
     /// <summary>供资源会话批量冻结请求、释放未交付责任并通知观察者的内部协议。</summary>
     internal interface IResourceRequest : IDisposable
     {
+        void DisposeFromScope();
         bool IsDone
         {
             get;
@@ -54,10 +55,12 @@ namespace YLFramework.Resource
         private bool _awaitReserved;
         private bool _awaitContinuationRegistered;
         private float _progress;
+        private bool _readingProgress;
         internal Action OwnershipEnded;
         internal Action Terminal;
         internal Action ValidateBeforeTake;
         internal CancellationToken Cancellation;
+        internal ResourceEventTrace EventTrace;
         internal int DiagnosticId;
         internal (string Operation, string Key, string Owner) DiagnosticIdentity;
 
@@ -82,14 +85,19 @@ namespace YLFramework.Resource
         }
         /// <summary>供协程等待终态，不隐式领取或转移结果。</summary>
         public override bool keepWaiting => !IsDone;
-        /// <summary>在途借读 producer 进度；成功为 1，其他终态冻结最后样本，不能代替 IsDone 判断。</summary>
+        /// <summary>在途借读 producer 进度；成功为 1，其他终态冻结最后样本；采样期间结束时沿用上一份已返回的值，首次采样前为零。</summary>
         public float Progress
         {
             get
             {
                 CheckThread();
-                var value = _progressReader == null ? _progress : _progressReader();
-                return float.IsNaN(value) ? 0 : Mathf.Clamp01(value);
+                if (IsDone)
+                {
+                    FreezeProgress();
+                    return _progress;
+                }
+                SampleProgress(_progressReader, false);
+                return _progress;
             }
         }
 
@@ -173,14 +181,55 @@ namespace YLFramework.Resource
         /// <summary>冻结进度和终态，解除在途绑定并结算终态跟踪。</summary>
         private void SetTerminal(ResourceRequestStatus status, ResourceException error)
         {
-            _progress = status == ResourceRequestStatus.Succeeded ? 1 : Progress;
             Status = status;
             Error = error;
+            EventTrace.Record(ResourceEventKind.Terminal, status, error?.Kind);
             _cancel = null;
-            _progressReader = null;
+            if (status == ResourceRequestStatus.Succeeded)
+            {
+                _progress = 1;
+                _progressReader = null;
+            }
             var terminal = Terminal;
             Terminal = null;
             terminal?.Invoke();
+        }
+
+        // Provider 的进度读取器可以同步回调用户代码；先摘下读取器以免再次取样。
+        private void FreezeProgress()
+        {
+            var read = _progressReader;
+            _progressReader = null;
+            SampleProgress(read, true);
+        }
+
+        private void SampleProgress(Func<float> read, bool terminalSample)
+        {
+            if (read == null || _readingProgress)
+                return;
+            _readingProgress = true;
+            try
+            {
+                float value = read();
+                if (terminalSample || !IsDone)
+                    _progress = float.IsNaN(value) ? 0 : Mathf.Clamp01(value);
+            }
+            finally
+            {
+                _readingProgress = false;
+            }
+        }
+
+        private void FreezeProgressAndDetach(Action detach)
+        {
+            try
+            {
+                FreezeProgress();
+            }
+            finally
+            {
+                detach?.Invoke();
+            }
         }
 
         /// <summary>移走当前观察者快照后逐个通知，避免重入重复派发。</summary>
@@ -188,7 +237,15 @@ namespace YLFramework.Resource
         {
             var snapshot = _observers;
             _observers = null;
-            NotifyObservers(snapshot);
+            try
+            {
+                if (IsDone)
+                    FreezeProgress();
+            }
+            finally
+            {
+                NotifyObservers(snapshot);
+            }
         }
 
         /// <summary>逐个调用已捕获的观察者，不受通知期间退订影响。</summary>
@@ -353,7 +410,9 @@ namespace YLFramework.Resource
         }
 
         /// <summary>只退出自己的等待；已完成时无副作用，存在其他消费者时不撤销共享生产。</summary>
-        public void Cancel()
+        public void Cancel() => Cancel(ResourceEventRole.Caller);
+
+        internal void Cancel(ResourceEventRole role)
         {
             CheckThread();
             if (IsDone)
@@ -361,10 +420,19 @@ namespace YLFramework.Resource
                 return;
             }
 
+            EventTrace = EventTrace.WithRole(role);
             var detach = _cancel;
+            var observers = _observers;
+            _observers = null;
             SetTerminal(ResourceRequestStatus.Canceled, new ResourceException(ResourceError.Canceled, "The resource consumer canceled its wait."));
-            detach?.Invoke();
-            NotifyCompletion();
+            try
+            {
+                FreezeProgressAndDetach(detach);
+            }
+            finally
+            {
+                NotifyObservers(observers);
+            }
         }
 
         /// <summary>先冻结本请求，防止退出回调重入改写同批请求的结束原因。</summary>
@@ -377,6 +445,7 @@ namespace YLFramework.Resource
 
             if (!IsDone)
             {
+                EventTrace = EventTrace.WithRole(ResourceEventRole.Session);
                 _invalidationDetach = _cancel;
                 SetTerminal(ResourceRequestStatus.Invalidated, new ResourceException(ResourceError.SessionUnavailable, "The resource session ended."));
             }
@@ -385,6 +454,7 @@ namespace YLFramework.Resource
                 // 生产终态不变；更早的观察者可能在已预约的续体领取前结束会话。
                 if (Status == ResourceRequestStatus.Succeeded)
                 {
+                    EventTrace.WithRole(ResourceEventRole.Session).Record(ResourceEventKind.ClaimInvalidated, ResourceRequestStatus.Invalidated, ResourceError.SessionUnavailable);
                     _reservedAwaitError = new ResourceException(ResourceError.SessionUnavailable, "The resource session ended before the result was delivered.");
                 }
                 else if (Status == ResourceRequestStatus.Failed)
@@ -404,7 +474,7 @@ namespace YLFramework.Resource
             _invalidationDetach = null;
             try
             {
-                detach?.Invoke();
+                FreezeProgressAndDetach(detach);
             }
             finally
             {
@@ -431,7 +501,11 @@ namespace YLFramework.Resource
         /// <summary>关闭本请求；在途时取消自己的等待，成功时只归还尚未领取的结果。</summary>
         /// <remarks>先标记关闭再清理，防止重入重复释放；结果归还动作的异常会向外传播。</remarks>
         /// <exception cref="InvalidOperationException">未在接受请求的 Unity 主线程调用。</exception>
-        public void Dispose()
+        public void Dispose() => Dispose(ResourceEventRole.Caller);
+
+        void IResourceRequest.DisposeFromScope() => Dispose(ResourceEventRole.ScopeClose);
+
+        internal void Dispose(ResourceEventRole role)
         {
             CheckThread();
             if (IsDisposed)
@@ -444,7 +518,7 @@ namespace YLFramework.Resource
             {
                 if (!IsDone)
                 {
-                    Cancel();
+                    Cancel(role);
                 }
                 else
                 {

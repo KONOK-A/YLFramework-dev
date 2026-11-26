@@ -1,20 +1,73 @@
 cmake_minimum_required(VERSION 3.22)
 project(YLResourceEncryption LANGUAGES C CXX)
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
 
-if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR
+   NOT CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
   message(FATAL_ERROR "The bundled Unity backend is Windows x64 MSVC only")
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Use only the pinned static dependencies" FORCE)
 set(TINK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(OPENSSL_NO_ASM ON CACHE BOOL "" FORCE)
+set(TINK_USE_INSTALLED_ABSEIL OFF CACHE BOOL "" FORCE)
+set(TINK_USE_INSTALLED_PROTOBUF OFF CACHE BOOL "" FORCE)
+set(TINK_USE_SYSTEM_OPENSSL OFF CACHE BOOL "" FORCE)
+option(OPENSSL_NO_ASM "Build BoringSSL without CPU-dispatched assembly" ON)
+option(YL_ALIGNED_READER "Evaluate the segment-aligned Tink random-access reader" OFF)
+option(YL_PAYLOAD_TRACE "Trace aligned-reader allocation capacities, not for timing or distribution" OFF)
+option(YL_DISPATCH_TRACE "Use BoringSSL's dispatch test flags, not for timing or distribution" OFF)
+
+if(YL_PAYLOAD_TRACE AND NOT YL_ALIGNED_READER)
+  message(FATAL_ERROR "YL_PAYLOAD_TRACE requires YL_ALIGNED_READER")
+endif()
+if(YL_DISPATCH_TRACE AND OPENSSL_NO_ASM)
+  message(FATAL_ERROR "YL_DISPATCH_TRACE requires the BoringSSL assembly build")
+endif()
+if(NOT OPENSSL_NO_ASM)
+  # Compile NASM output for win64 before BoringSSL's subdirectory is configured.
+  enable_language(ASM_NASM)
+  if(NOT CMAKE_ASM_NASM_COMPILER_ID STREQUAL "NASM")
+    message(FATAL_ERROR "An explicit win64 NASM toolchain is required for the assembly comparison")
+  endif()
+endif()
 
 include(FetchContent)
-FetchContent_Declare(tink_pin
-  URL https://codeload.github.com/tink-crypto/tink-cc/tar.gz/6e9682859227bbe3cb93db4a36ff929263dc1517
-  URL_HASH SHA256=3e4587e072c0f944ba3a8d6cdb3372e5a7c94aa44bf69b9b2c20bb756da07f42)
+function(yl_pinned_archive name filename upstream sha256)
+  string(TOUPPER "${name}" upper)
+  if(FETCHCONTENT_SOURCE_DIR_${upper} OR FETCHCONTENT_FULLY_DISCONNECTED)
+    message(FATAL_ERROR "${name}: use a hash-verified archive, not an unchecked source override")
+  endif()
+  set(YL_${upper}_ARCHIVE "" CACHE FILEPATH "Optional local byte-identical ${name} archive")
+  set(archive "${upstream}")
+  if(YL_${upper}_ARCHIVE)
+    set(archive "${YL_${upper}_ARCHIVE}")
+    file(SHA256 "${archive}" actual)
+    if(NOT actual STREQUAL sha256)
+      message(FATAL_ERROR "${name} archive SHA256 differs: ${actual}")
+    endif()
+  endif()
+  message(STATUS "YL input ${name}: ${filename} SHA256=${sha256} (${archive})")
+  FetchContent_Declare(${name} URL "${archive}" URL_HASH "SHA256=${sha256}")
+endfunction()
+
+# First declarations are authoritative even when Tink's HttpArchive declares them again.
+yl_pinned_archive(tink_pin tink-cc-6e968285.tar.gz
+  https://codeload.github.com/tink-crypto/tink-cc/tar.gz/6e9682859227bbe3cb93db4a36ff929263dc1517
+  3e4587e072c0f944ba3a8d6cdb3372e5a7c94aa44bf69b9b2c20bb756da07f42)
+yl_pinned_archive(abseil abseil-cpp-20260526.0.tar.gz
+  https://github.com/abseil/abseil-cpp/releases/download/20260526.0/abseil-cpp-20260526.0.tar.gz
+  6e1aee535473414164bf83e4ebc40240dec71a4701f8a642d906e95bea1aea0c)
+yl_pinned_archive(boringssl boringssl-0.20260803.0.tar.gz
+  https://github.com/google/boringssl/releases/download/0.20260803.0/boringssl-0.20260803.0.tar.gz
+  585c91782fc0651ba6f2376b672acdc30437705d8a50b4967c20e6293e318969)
+yl_pinned_archive(protobuf protobuf-30.2.zip
+  https://github.com/protocolbuffers/protobuf/releases/download/v30.2/protobuf-30.2.zip
+  6544e5ceec7f29d00397193360435ca8b3c4e843de3cf5698a99d36b72d65342)
 FetchContent_GetProperties(tink_pin)
 if(NOT tink_pin_POPULATED)
   if(POLICY CMP0169)
@@ -22,8 +75,26 @@ if(NOT tink_pin_POPULATED)
   endif()
   FetchContent_Populate(tink_pin)
 endif()
+set(yl_build_type "${CMAKE_BUILD_TYPE}")
+if(YL_DISPATCH_TRACE)
+  # The pinned BoringSSL enables its dispatch counters for this configuration name.
+  set(CMAKE_BUILD_TYPE RelWithAssert)
+elseif(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
 add_subdirectory("${tink_pin_SOURCE_DIR}" "${tink_pin_BINARY_DIR}" EXCLUDE_FROM_ALL)
+set(CMAKE_BUILD_TYPE "${yl_build_type}")
 
 add_library(ylresource_tink SHARED StreamingBridge.cc)
 target_include_directories(ylresource_tink PRIVATE "${tink_pin_SOURCE_DIR}")
 target_link_libraries(ylresource_tink PRIVATE tink::subtle::aes_gcm_hkdf_streaming tink::util::buffer absl::statusor absl::strings)
+if(YL_ALIGNED_READER)
+  include(TinkRandomAccess.cmake)
+  target_compile_definitions(ylresource_tink PRIVATE YL_ALIGNED_READER)
+endif()
+if(YL_PAYLOAD_TRACE)
+  target_compile_definitions(ylresource_tink PRIVATE YL_PAYLOAD_TRACE)
+endif()
+if(YL_DISPATCH_TRACE)
+  target_compile_definitions(ylresource_tink PRIVATE YL_DISPATCH_TRACE)
+endif()

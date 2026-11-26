@@ -99,8 +99,26 @@ namespace YLFramework.Testing.Editor
                 {
                     throw new InvalidOperationException("The selected package does not expose its declared sample.");
                 }
-                // 这里是已核验的工具宿主；复用宿主也必须消费本轮包中的样例，不能沿用上次导入的代码。
-                if (!samples[0].Import(UnityEditor.PackageManager.UI.Sample.ImportOptions.OverridePreviousImports))
+                var sample = samples[0];
+                var receipt = Path.Combine(Path.GetDirectoryName(Application.dataPath), ".yl-samples.json");
+                if (input.package == "com.kano.ylframework" && input.name == "Resource Startup" && File.Exists(receipt))
+                {
+                    // 宿主已逐项核过回执。2022 强制重导相同样例会删除导入路径的父目录 .meta。
+                    // 再对照本轮已解析包的实际文件，再次发现/运行仍须消费完全相同的样例。
+                    if (!sample.isImported || JsonUtility.FromJson<InputReceipt>(File.ReadAllText(receipt)).inputHash != _request.inputHash)
+                    {
+                        throw new InvalidOperationException("Resource Startup import does not match the current host receipt.");
+                    }
+                    foreach (var source in Directory.GetFiles(sample.resolvedPath, "*", SearchOption.AllDirectories))
+                    {
+                        var imported = Path.Combine(sample.importPath, Path.GetRelativePath(sample.resolvedPath, source));
+                        if (!File.Exists(imported) || !File.ReadAllBytes(source).SequenceEqual(File.ReadAllBytes(imported)))
+                        {
+                            throw new InvalidOperationException("Resource Startup import differs from the selected package: " + imported);
+                        }
+                    }
+                }
+                else if (!sample.Import(UnityEditor.PackageManager.UI.Sample.ImportOptions.OverridePreviousImports))
                 {
                     throw new InvalidOperationException("The selected sample was not imported.");
                 }

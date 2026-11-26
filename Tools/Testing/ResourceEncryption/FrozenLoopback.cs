@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -15,15 +16,17 @@ namespace YLFramework.Testing
     {
         public sealed class Request
         {
-            public string method, target, path, at;
+            public string method, target, path, at, endedAt, termination, entity, range, ifRange, contentRange, contentEncoding;
             public int status;
-            public long bytes;
+            public long bytes, declared, startOffset, requestHeaderBytes, responseHeaderBytes;
             public volatile bool held;
             public volatile bool completed;
         }
 
         private readonly ConcurrentQueue<Request> _requests = new ConcurrentQueue<Request>();
         private readonly Dictionary<string, (string Path, string Relative)> _routes = new Dictionary<string, (string, string)>(StringComparer.Ordinal);
+        private readonly Dictionary<string, (long Rate, long Stop, string Entity, string Behavior)> _shaped =
+            new Dictionary<string, (long, long, string, string)>(StringComparer.Ordinal);
         private readonly List<Task> _handlers = new List<Task>();
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
         private readonly int _port;
@@ -32,6 +35,8 @@ namespace YLFramework.Testing
         private Task _accepting;
         private Task _parseGate;
         private int _interrupt;
+        private string _interruptRoute;
+        private string _updateAnnouncementRoute;
         private string _heldDirectory;
         private volatile bool _disposed;
 
@@ -58,6 +63,82 @@ namespace YLFramework.Testing
             }
         }
 
+        public void AddUpdateArtifact(string root, string route, string relative)
+        {
+            ValidateUpdateRoute(route);
+            lock (_routes) _routes.Add(route, (ResolveUpdateFile(root, relative), relative));
+        }
+
+        public void PublishUpdateAnnouncement(string root, string route, string relative)
+        {
+            ValidateUpdateRoute(route);
+            string path = ResolveUpdateFile(root, relative);
+            lock (_routes)
+            {
+                if (_updateAnnouncementRoute == null && _routes.ContainsKey(route) ||
+                    _updateAnnouncementRoute != null && _updateAnnouncementRoute != route)
+                    throw new InvalidOperationException("Use one dedicated announcement route without replacing immutable files.");
+                _updateAnnouncementRoute = route;
+                _routes[route] = (path, relative);
+            }
+        }
+
+        public void InterruptNextUpdateTransfer(string route)
+        {
+            ValidateUpdateRoute(route);
+            if (Interlocked.CompareExchange(ref _interruptRoute, route, null) != null)
+                throw new InvalidOperationException("An update transfer interruption is already armed.");
+        }
+
+        public void ShapeTransfer(string route, long bytesPerSecond, long stopAfter, string sha256, string behavior = "honor")
+        {
+            ValidateUpdateRoute(route);
+            if (bytesPerSecond < 1 || stopAfter < 0 || sha256.Length != 64 ||
+                !new[] { "honor", "ignore", "wrong-range", "short-range", "changed", "weak", "missing-etag", "changed-range",
+                    "unsatisfiable", "bad-encoding" }.Contains(behavior) ||
+                Array.Exists(sha256.ToCharArray(), character => !Uri.IsHexDigit(character)))
+                throw new ArgumentException("Invalid transfer experiment parameters.");
+            lock (_routes)
+            {
+                if (!_routes.ContainsKey(route))
+                    throw new ArgumentException("The experiment requires a registered artifact route.", nameof(route));
+                _shaped[route] = (bytesPerSecond, stopAfter, (behavior == "weak" ? "W/" : "") + '"' + sha256 + '"', behavior);
+            }
+        }
+
+        public void ClearTransferShape(string route)
+        {
+            lock (_routes) _shaped.Remove(route);
+        }
+
+        private static void ValidateUpdateRoute(string route)
+        {
+            if (string.IsNullOrEmpty(route) || !route.StartsWith("/", StringComparison.Ordinal))
+                throw new InvalidDataException("An update route must start with /.");
+            ValidateUpdatePath(route.Substring(1));
+        }
+
+        private static void ValidateUpdatePath(string relative)
+        {
+            if (string.IsNullOrEmpty(relative) || Array.Exists(relative.Split('/'), part =>
+                part.Length == 0 || part == "." || part == ".." ||
+                part.IndexOfAny(new[] { '\\', ':', '%', '?', '#' }) >= 0))
+                throw new InvalidDataException("An update path must identify an owned file.");
+        }
+
+        private static string ResolveUpdateFile(string root, string relative)
+        {
+            ValidateUpdatePath(relative);
+            var path = root;
+            foreach (string part in relative.Split('/'))
+            {
+                path = Path.Combine(path, part);
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Unexpected update source link.");
+            }
+            return path;
+        }
+
         public void InterruptNextProtectedTransfer() => Interlocked.Exchange(ref _interrupt, 1);
 
         public void HoldNextRequestParsing(Task gate)
@@ -77,14 +158,17 @@ namespace YLFramework.Testing
         {
             lock (_routes)
             {
-                foreach (var file in cipher) Add("/r/", protectedRoot, file);
+                foreach (var file in cipher) Add("/r/Delivery/", protectedRoot, file);
                 foreach (var file in plain) Add("/o/", ordinaryRoot, file);
             }
         }
 
         private void Add(string segment, string root, string relative)
         {
-            if (relative != Path.GetFileName(relative)) throw new InvalidDataException("Fixture route must name one file.");
+            var parts = relative.Split('/');
+            if (parts.Length > (segment == "/r/Delivery/" ? 2 : 1) || Array.Exists(parts,
+                part => part.Length == 0 || part == "." || part == ".." || part.IndexOfAny(new[] { '\\', ':', '%', '?', '#' }) >= 0))
+                throw new InvalidDataException("Fixture route must name one owned file.");
             string path = Path.Combine(root, relative);
             if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new IOException("Unexpected loopback source link.");
             _routes.Add(segment + relative, (path, relative));
@@ -139,18 +223,92 @@ namespace YLFramework.Testing
                     string[] tokens = first.Split(' ');
                     row = new Request { method = tokens[0], target = tokens.Length > 1 ? tokens[1] : "", at = DateTime.UtcNow.ToString("o") };
                     _requests.Enqueue(row); // Count every attempt at ingress, including HEAD/404/short writes.
-                    while (!string.IsNullOrEmpty(await reader.ReadLineAsync(shutdown).ConfigureAwait(false))) { }
+                    row.requestHeaderBytes = first.Length + 4;
+                    string line;
+                    while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync(shutdown).ConfigureAwait(false)))
+                    {
+                        row.requestHeaderBytes += line.Length + 2;
+                        if (line.StartsWith("Range:", StringComparison.OrdinalIgnoreCase))
+                            row.range = line.Substring(6).Trim();
+                        else if (line.StartsWith("If-Range:", StringComparison.OrdinalIgnoreCase))
+                            row.ifRange = line.Substring(9).Trim();
+                    }
                     (string Path, string Relative) route;
+                    (long Rate, long Stop, string Entity, string Behavior) shape;
                     bool known;
-                    lock (_routes) { known = _routes.TryGetValue(row.target, out route); }
+                    lock (_routes)
+                    {
+                        known = _routes.TryGetValue(row.target, out route);
+                        _shaped.TryGetValue(row.target, out shape);
+                    }
                     row.path = known ? route.Relative : row.target;
                     row.status = known && (row.method == "GET" || row.method == "HEAD") ? 200 : 404;
                     using var file = row.status == 200 ? File.OpenRead(route.Path) : null;
-                    string reason = row.status == 200 ? "OK" : "Not Found";
-                    var header = Encoding.ASCII.GetBytes($"HTTP/1.1 {row.status} {reason}\r\nContent-Length: {file?.Length ?? 0}\r\nConnection: close\r\n\r\n");
+                    row.declared = file?.Length ?? 0;
+                    row.entity = shape.Behavior == "missing-etag" ? null : shape.Entity;
+                    string coding = "";
+                    if (file != null && row.method == "GET" && shape.Rate > 0 && shape.Behavior is not ("ignore" or "weak" or "missing-etag") &&
+                        row.ifRange == row.entity && row.range != null && row.range.StartsWith("bytes=", StringComparison.Ordinal) &&
+                        row.range.EndsWith("-", StringComparison.Ordinal) && long.TryParse(row.range.AsSpan(6, row.range.Length - 7), out long offset))
+                    {
+                        if (offset < 0 || offset >= file.Length || shape.Behavior == "unsatisfiable")
+                        {
+                            row.status = 416;
+                            row.contentRange = $"bytes */{file.Length}";
+                            row.declared = 0;
+                        }
+                        else
+                        {
+                            row.status = 206;
+                            row.startOffset = offset;
+                            long end = shape.Behavior == "short-range" && offset < file.Length / 2 ? file.Length / 2 - 1 : file.Length - 1;
+                            row.declared = end - offset + 1;
+                            row.contentRange = $"bytes {(shape.Behavior == "wrong-range" ? offset - 1 : offset)}-{end}/{file.Length}";
+                            if (shape.Behavior == "changed-range")
+                                row.entity = "\"changed-entity\"";
+                            if (shape.Behavior == "bad-encoding")
+                            {
+                                row.contentEncoding = "gzip";
+                                coding = "Content-Encoding: gzip\r\n";
+                            }
+                            file.Position = offset;
+                        }
+                    }
+                    string reason = row.status switch { 200 => "OK", 206 => "Partial Content", 416 => "Range Not Satisfiable", _ => "Not Found" };
+                    string entityHeader = row.entity == null ? "" : $"ETag: {row.entity}\r\n";
+                    string rangeHeader = row.contentRange == null ? "" : $"Content-Range: {row.contentRange}\r\n";
+                    var header = Encoding.ASCII.GetBytes($"HTTP/1.1 {row.status} {reason}\r\nContent-Length: {row.declared}\r\n{entityHeader}{rangeHeader}{coding}Connection: close\r\n\r\n");
+                    row.responseHeaderBytes = header.Length;
                     await stream.WriteAsync(header, shutdown).ConfigureAwait(false);
                     if (file != null && row.method == "GET")
                     {
+                        if (shape.Rate > 0)
+                        {
+                            var elapsed = Stopwatch.StartNew();
+                            long end = shape.Stop > 0 ? Math.Clamp(shape.Stop - row.startOffset, 0, row.declared) : row.declared;
+                            var slice = new byte[(int)Math.Min(64 * 1024, Math.Max(1, shape.Rate / 8))];
+                            while (row.bytes < end)
+                            {
+                                int chunk = (int)Math.Min(slice.Length, end - row.bytes);
+                                var wait = TimeSpan.FromSeconds((double)(row.bytes + chunk) / shape.Rate) - elapsed.Elapsed;
+                                if (wait > TimeSpan.Zero)
+                                    await Task.Delay(wait, shutdown).ConfigureAwait(false);
+                                await file.ReadExactlyAsync(slice.AsMemory(0, chunk), shutdown).ConfigureAwait(false);
+                                if (shape.Behavior == "changed" && row.startOffset == 0 && row.bytes == 0)
+                                    slice[0] ^= 1;
+                                await stream.WriteAsync(slice.AsMemory(0, chunk), shutdown).ConfigureAwait(false);
+                                row.bytes += chunk;
+                            }
+                            if (row.bytes != row.declared)
+                            {
+                                row.termination = "EndpointTruncated";
+                                await stream.FlushAsync(shutdown).ConfigureAwait(false);
+                                return;
+                            }
+                            row.termination = "Complete";
+                            row.completed = true;
+                            return;
+                        }
                         var buffer = new byte[64 * 1024];
                         bool protectedBundle = row.target.StartsWith("/r/", StringComparison.Ordinal);
                         string held = protectedBundle ? Interlocked.Exchange(ref _heldDirectory, null) : null;
@@ -161,7 +319,11 @@ namespace YLFramework.Testing
                             await stream.WriteAsync(buffer.AsMemory(0, prefix), shutdown).ConfigureAwait(false);
                             row.bytes += prefix;
                             row.held = true;
-                            using (File.Open(Path.Combine(held, "in-flight"), FileMode.CreateNew)) { }
+                            string marker = Path.Combine(held, "in-flight");
+                            string pending = marker + ".tmp";
+                            using (var writer = new StreamWriter(File.Open(pending, FileMode.CreateNew)))
+                                writer.Write(prefix.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                            File.Move(pending, marker);
                             var wait = Stopwatch.StartNew();
                             while (!File.Exists(Path.Combine(held, "release")))
                             {
@@ -169,11 +331,24 @@ namespace YLFramework.Testing
                                 await Task.Delay(10, shutdown).ConfigureAwait(false);
                             }
                         }
-                        if (protectedBundle && Interlocked.Exchange(ref _interrupt, 0) == 1)
+                        string updateInterrupt = Volatile.Read(ref _interruptRoute);
+                        bool interruptUpdate = updateInterrupt == row.target &&
+                            Interlocked.CompareExchange(ref _interruptRoute, null, updateInterrupt) == updateInterrupt;
+                        if (interruptUpdate || (protectedBundle && Interlocked.Exchange(ref _interrupt, 0) == 1))
                         {
-                            int prefix = await file.ReadAsync(buffer.AsMemory(0, (int)Math.Min(file.Length / 2, buffer.Length))).ConfigureAwait(false);
+                            int prefix;
+                            if (interruptUpdate)
+                            {
+                                prefix = (int)Math.Min(file.Length / 2, 384 * 1024);
+                                if (prefix == 0) throw new IOException("The update transfer must have a nonempty partial body.");
+                                buffer = new byte[prefix];
+                                await file.ReadExactlyAsync(buffer, shutdown).ConfigureAwait(false);
+                            }
+                            else
+                                prefix = await file.ReadAsync(buffer.AsMemory(0, (int)Math.Min(file.Length / 2, buffer.Length))).ConfigureAwait(false);
                             await stream.WriteAsync(buffer.AsMemory(0, prefix), shutdown).ConfigureAwait(false);
                             row.bytes += prefix;
+                            if (interruptUpdate) row.held = true;
                             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
                             deadline.CancelAfter(TimeSpan.FromSeconds(40));
                             try { await stream.ReadAsync(buffer.AsMemory(0, 1), deadline.Token).ConfigureAwait(false); }
@@ -189,10 +364,21 @@ namespace YLFramework.Testing
                     }
                     await stream.FlushAsync(shutdown).ConfigureAwait(false);
                     row.completed = true;
+                    row.termination = "Complete";
                 }
-                catch (IOException) when (row != null || shutdown.IsCancellationRequested) { /* An interrupted request stays in the ledger. */ }
-                catch (SocketException) when (row != null || shutdown.IsCancellationRequested) { }
+                catch (IOException) when (row != null || shutdown.IsCancellationRequested)
+                {
+                    if (row != null) row.termination = "SocketClosed";
+                }
+                catch (SocketException) when (row != null || shutdown.IsCancellationRequested)
+                {
+                    if (row != null) row.termination = "SocketClosed";
+                }
                 catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
+                finally
+                {
+                    if (row != null) row.endedAt = DateTime.UtcNow.ToString("o");
+                }
             }
         }
 

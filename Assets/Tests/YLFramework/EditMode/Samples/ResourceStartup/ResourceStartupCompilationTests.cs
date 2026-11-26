@@ -30,7 +30,7 @@ namespace YLFramework.Tests.ResourceBuild
             Assert.That(players.Any(assembly => assembly.name == "YLFramework.ResourceStartup.Sample.Editor"), Is.False);
             var sample = players.Single(assembly => assembly.name == "YLFramework.ResourceStartup.Sample");
             var direct = sample.assemblyReferences.Select(assembly => assembly.name).ToArray();
-            CollectionAssert.IsSubsetOf(new[] { "YLFramework.Runtime", "Unity.Addressables" }, direct);
+            CollectionAssert.IsSubsetOf(new[] { "YLFramework.Runtime", "Unity.Addressables", "Unity.ResourceManager", "UnityEngine.UI" }, direct);
             CollectionAssert.IsSubsetOf(direct, new[] { "YLFramework.Runtime", "Unity.Addressables", "Unity.ResourceManager", "Unity.Profiling.Core", "UnityEngine.UI" });
             var graph = players.Concat(CompilationPipeline.GetAssemblies(AssembliesType.Editor)).ToArray();
             var approved = ApprovedPackages(graph);

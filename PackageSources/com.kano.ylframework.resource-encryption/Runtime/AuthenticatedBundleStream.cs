@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -21,6 +22,14 @@ namespace YLFramework.Resource.Encryption
         {
             get; private set;
         }
+        internal double CipherShaMs
+        {
+            get; private set;
+        }
+        internal double AuthenticationMs
+        {
+            get; private set;
+        }
         private bool _failed;
 
         [DllImport(Library, EntryPoint = "yl_seal", CallingConvention = CallingConvention.Cdecl)]
@@ -38,6 +47,15 @@ namespace YLFramework.Resource.Encryption
         [DllImport(Library, EntryPoint = "yl_read_statistics", CallingConvention = CallingConvention.Cdecl)]
         private static extern void ReadStatisticsNative(IntPtr reader, out long served, out long source, out long pages, out long nativePayloadBound);
 
+        internal static Action<int, bool> HashBufferBoundary
+        {
+            get; set;
+        }
+        internal static Action<int> DiagnosticPhase
+        {
+            get; set;
+        }
+
         private AuthenticatedBundleStream(FileStream cipher, EncryptedBundleKeyLease key, EncryptedBundleBinding binding)
         {
             _cipher = cipher;
@@ -53,13 +71,18 @@ namespace YLFramework.Resource.Encryption
 
         // Takes ownership of the exact handle used for both hashes, including on failure.
         internal static AuthenticatedBundleStream OpenVerified(FileStream cipher, EncryptedBundleRecord record,
-            IEncryptedBundleKeySource keys, CancellationToken cancellationToken, Action<long> onCipherVerified = null)
+            IEncryptedBundleKeySource keys, CancellationToken cancellationToken, Action<long> onCipherVerified = null,
+            CancellationToken? sharedCipherValidation = null)
         {
             EncryptedBundleKeyLease key = null;
             AuthenticatedBundleStream result = null;
+            var phase = DiagnosticPhase;
             try
             {
-                long checkedBytes = ValidateCipher(cipher, record, cancellationToken);
+                phase?.Invoke(1);
+                long started = Stopwatch.GetTimestamp();
+                long checkedBytes = ValidateCipher(cipher, record, sharedCipherValidation ?? cancellationToken);
+                double cipherShaMs = ElapsedMs(started);
                 onCipherVerified?.Invoke(checkedBytes);
                 cancellationToken.ThrowIfCancellationRequested();
                 key = EncryptedBundleKeyLease.Rent(keys, record.Binding.KeyId);
@@ -67,12 +90,15 @@ namespace YLFramework.Resource.Encryption
                 {
                     throw new EncryptedBundleKeyUnavailableException(record.Binding.KeyId);
                 }
+                started = Stopwatch.GetTimestamp();
                 result = new AuthenticatedBundleStream(cipher, key, record.Binding);
                 if (Hash(result, cancellationToken, clearBuffer: true) != record.Binding.PlainSha256)
                 {
                     throw new EncryptedBundleAuthenticationException();
                 }
                 result.PreAuthenticationCipherBytes = result.ReadStatistics().Physical;
+                result.CipherShaMs = cipherShaMs;
+                result.AuthenticationMs = ElapsedMs(started);
                 result.Position = 0;
                 return result;
             }
@@ -99,6 +125,7 @@ namespace YLFramework.Resource.Encryption
                 }
                 throw;
             }
+            finally { phase?.Invoke(0); }
         }
 
         internal static long ValidateCipher(FileStream cipher, EncryptedBundleRecord record, CancellationToken token)
@@ -126,34 +153,75 @@ namespace YLFramework.Resource.Encryption
 
         internal static string Hash(Stream input, CancellationToken token, bool clearBuffer = false) => HashCore(input, token, clearBuffer, out _);
 
+        internal static double ElapsedMs(long start) => (Stopwatch.GetTimestamp() - start) * (1000d / Stopwatch.Frequency);
+
         private static string HashCore(Stream input, CancellationToken token, bool clearBuffer, out long bytesRead)
         {
             input.Position = 0;
             bytesRead = 0;
-            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            token.ThrowIfCancellationRequested();
             var buffer = new byte[ReadLimit];
+            var observeBuffer = HashBufferBoundary;
+            // Let the Windows primitive provider dispatch SHA-256, independent of Mono's managed implementation.
+            IntPtr algorithm = IntPtr.Zero;
             try
             {
-                while (true)
+                observeBuffer?.Invoke(buffer.Length, true);
+                CheckSha(BCryptOpenAlgorithmProvider(out algorithm, "SHA256", "Microsoft Primitive Provider", 0));
+                CheckSha(BCryptCreateHash(algorithm, out IntPtr hash, IntPtr.Zero, 0, IntPtr.Zero, 0, 0));
+                try
                 {
-                    token.ThrowIfCancellationRequested();
-                    int read = input.Read(buffer, 0, buffer.Length);
-                    if (read == 0)
+                    var pinned = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+                    try
                     {
-                        return Hex(hash.GetHashAndReset());
+                        IntPtr bytes = pinned.AddrOfPinnedObject();
+                        while (true)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            int read = input.Read(buffer, 0, buffer.Length);
+                            if (read == 0)
+                                break;
+                            CheckSha(BCryptHashData(hash, bytes, read, 0));
+                            bytesRead += read;
+                        }
+                        var digest = new byte[32];
+                        CheckSha(BCryptFinishHash(hash, digest, digest.Length, 0));
+                        return Hex(digest);
                     }
-                    hash.AppendData(buffer, 0, read);
-                    bytesRead += read;
+                    finally { pinned.Free(); }
                 }
+                finally { BCryptDestroyHash(hash); }
             }
             finally
             {
+                if (algorithm != IntPtr.Zero)
+                    BCryptCloseAlgorithmProvider(algorithm, 0);
                 if (clearBuffer)
                 {
                     Array.Clear(buffer, 0, buffer.Length);
                 }
+                observeBuffer?.Invoke(buffer.Length, false);
             }
         }
+
+        private static void CheckSha(int status)
+        {
+            if (status < 0)
+                throw new CryptographicException("Windows SHA-256 failed: NTSTATUS 0x" + status.ToString("X8"));
+        }
+
+        [DllImport("bcrypt.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int BCryptOpenAlgorithmProvider(out IntPtr algorithm, string id, string implementation, uint flags);
+        [DllImport("bcrypt.dll", ExactSpelling = true)]
+        private static extern int BCryptCreateHash(IntPtr algorithm, out IntPtr hash, IntPtr hashObject, uint objectSize, IntPtr secret, uint secretSize, uint flags);
+        [DllImport("bcrypt.dll", ExactSpelling = true)]
+        private static extern int BCryptHashData(IntPtr hash, IntPtr input, int byteCount, uint flags);
+        [DllImport("bcrypt.dll", ExactSpelling = true)]
+        private static extern int BCryptFinishHash(IntPtr hash, [Out] byte[] output, int byteCount, uint flags);
+        [DllImport("bcrypt.dll", ExactSpelling = true)]
+        private static extern int BCryptDestroyHash(IntPtr hash);
+        [DllImport("bcrypt.dll", ExactSpelling = true)]
+        private static extern int BCryptCloseAlgorithmProvider(IntPtr algorithm, uint flags);
 
         internal static string Hex(byte[] bytes) => BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
 
@@ -225,8 +293,10 @@ namespace YLFramework.Resource.Encryption
                     return 0;
                 }
                 var pin = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+                var phase = PreAuthenticationCipherBytes > 0 ? DiagnosticPhase : null;
                 try
                 {
+                    phase?.Invoke(2);
                     int done = 0;
                     while (done < size)
                     {
@@ -242,7 +312,11 @@ namespace YLFramework.Resource.Encryption
                     _position += done;
                     return done;
                 }
-                finally { pin.Free(); }
+                finally
+                {
+                    pin.Free();
+                    phase?.Invoke(0);
+                }
             }
         }
 

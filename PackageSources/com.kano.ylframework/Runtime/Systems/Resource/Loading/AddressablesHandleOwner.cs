@@ -14,6 +14,26 @@ namespace YLFramework.Resource
         private bool _disposed;
         private bool _released;
         internal Action<Exception> DrainReleaseFailed;
+        internal ResourceEventTrace WorkTrace;
+        private bool _observed;
+        private bool _late;
+
+        internal void ObserveWork(bool late)
+        {
+            if (_observed || WorkTrace.Id == 0)
+                return;
+            _observed = true;
+            _late = late;
+            var success = _handle.Status == AsyncOperationStatus.Succeeded;
+            WorkTrace.Record(ResourceEventKind.Work, success ? ResourceRequestStatus.Succeeded : ResourceRequestStatus.Failed,
+                success ? (ResourceError?)null : (_handle.OperationException as ResourceException)?.Kind ?? ResourceError.LoadFailed, late);
+        }
+
+        internal void SetLate(bool late)
+        {
+            if (!_observed)
+                _late = late;
+        }
 
         private AddressablesHandleOwner(ResourceManager manager, AsyncOperationHandle<T> handle)
         {
@@ -94,11 +114,21 @@ namespace YLFramework.Resource
 
         private void Release()
         {
+            ObserveWork(_late);
             var handle = _handle;
             _released = true;
             _handle = default;
             handle.Completed -= Drain;
-            _manager.Release(handle);
+            try
+            {
+                _manager.Release(handle);
+            }
+            catch (Exception error)
+            {
+                WorkTrace.Record(ResourceEventKind.Release, ResourceRequestStatus.Failed, (error as ResourceException)?.Kind ?? ResourceError.LoadFailed, _late);
+                throw;
+            }
+            WorkTrace.Record(ResourceEventKind.Release, ResourceRequestStatus.Succeeded, late: _late);
         }
 
         private static void Validate(ResourceManager manager, AsyncOperationHandle<T> handle)

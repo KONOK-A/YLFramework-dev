@@ -16,7 +16,10 @@ namespace YLFramework.Resource
         private readonly HashSet<SceneLease> _sceneLeases = new();
         private long _nextSceneSequence;
 
+        internal bool UsesSignedContent => _startup.ContentUpdates != null;
+
         // Only the native submission is replaceable by lifecycle regression tests.
+        internal Func<SceneInstance, AsyncOperation> SceneActivator;
         internal Func<Scene, UnloadSceneOptions, AsyncOperation> SceneUnloader;
 
         /// <summary>Load one scene resolved by an Addressables key with the official default SceneProvider.</summary>
@@ -33,9 +36,16 @@ namespace YLFramework.Resource
         /// <param name="activationTimeoutSeconds">Finite deferred-activation limit from submission, in (0, 300].</param>
         public ResourceRequest<SceneLease> LoadSceneAsync(string key, LoadSceneMode mode = LoadSceneMode.Additive,
             bool activateOnLoad = true, int priority = 100, CancellationToken cancellation = default,
-            float activationTimeoutSeconds = 30)
+            float activationTimeoutSeconds = 30) =>
+            LoadSceneCore(key, mode, activateOnLoad, priority, cancellation, activationTimeoutSeconds);
+
+        internal ResourceRequest<SceneLease> LoadSceneCore(string key, LoadSceneMode mode, bool activateOnLoad,
+            int priority, CancellationToken cancellation, float activationTimeoutSeconds,
+            Action<ResourceRequest<SceneLease>> onAdmitted = null)
         {
             CheckThread();
+            var trace = BeginEvent(ResourceEventSource.Scene, key);
+            trace = trace.WithLoad(trace.Id);
             try
             {
                 RequireAvailable();
@@ -51,14 +61,15 @@ namespace YLFramework.Resource
             }
             catch (Exception error)
             {
-                return Failure<SceneLease>(error);
+                return Fail(new ResourceRequest<SceneLease> { EventTrace = trace }, error);
             }
 
-            var request = Track(new ResourceRequest<SceneLease>(lease => lease.Dispose()), key);
+            var request = Track(new ResourceRequest<SceneLease>(lease => lease.Dispose()) { EventTrace = trace }, key, operation: nameof(LoadSceneAsync));
             _businessStarted = true;
             request.Cancellation = cancellation;
             if (cancellation.IsCancellationRequested)
             {
+                onAdmitted?.Invoke(request);
                 request.Cancel();
                 return request;
             }
@@ -76,6 +87,7 @@ namespace YLFramework.Resource
             _sceneLeases.Add(owner);
             RegisterLease(owner, key, "SceneLease #" + owner.LoadSequence);
             MakeInternal(owner);
+            onAdmitted?.Invoke(request);
             owner.Start();
             return request;
         }
