@@ -583,7 +583,7 @@ try {
                 Assert-That ([regex]::Matches([IO.File]::ReadAllText($metadata), '(?m)^guid: [0-9a-f]{32}\s*$').Count -eq 1) "Unity cannot import a malformed standalone fixture identity: $metadata"
             }
         }
-        Test-Case 'ResourceUpdates and ResourceCurrentPublication select only official Addressables workflows' {
+        Test-Case 'ResourceUpdates selects catalog and signed update contracts and keeps ResourceCurrentPublication separate' {
             $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
             $configuration = [IO.File]::ReadAllText((Join-Path $repository 'Tools/Testing/TestSuites.json')) | ConvertFrom-Json -DateKind String
             $modules = @($configuration.modules | Where-Object name -CEQ 'ResourceUpdates')
@@ -596,9 +596,16 @@ try {
                 $definition.shortHostKey -and $definition.graphics) 'Official catalog and download tests require their saved owned scene and native host.'
             $closure = @(Get-YLUpmPackages -Repository $repository -Ids @($definition.packageInputs))
             Assert-That (($closure.id -join ',') -ceq 'com.kano.ylframework') 'Resource updates cannot acquire Audio, Localization, DataAssets or other optional products.'
-            $expected = 'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesUpdateTests.cs'
+            $resourceTests = 'Assets/Tests/YLFramework/EditMode/Systems/Resource'
+            $expected = @(
+                "$resourceTests/ResourceAddressablesUpdateTests.cs"
+                "$resourceTests/ResourceContentCatalogTests.cs"
+                "$resourceTests/ResourceContentManifestTests.cs"
+                "$resourceTests/ResourceContentStoreTests.cs"
+            )
             $ownership = 'Assets/Tests/YLFramework/EditMode/Systems/Resource/ResourceAddressablesOwnershipTests.cs'
-            Assert-That (($definition.editTests -join ',') -ceq $expected) 'ResourceUpdates must select the official catalog update suite only.'
+            Assert-That (($definition.editTests -join ',') -ceq ($expected -join ',') -and
+                @($definition.playTests).Count -eq 0) 'ResourceUpdates must select exactly the four declared EditMode suites.'
             Assert-That (@($definition.sourceEnvironment).Count -eq 0 -and
                 ($definition.outputEnvironment -join ',') -ceq 'YL_TEST_OUTPUT_ROOT') 'ResourceUpdates must not need legacy release paths or credentials.'
             $tokens = $null; $errors = $null
@@ -608,16 +615,18 @@ try {
             . ([scriptblock]::Create($function.Extent.Text))
             $profile = @($configuration.editors | Where-Object version -CEQ '6000.3.27f1')[0]
             $selected = Get-SelectedSources -Native -EditorProfile $profile
-            Assert-That (($selected.tests -join ',') -ceq $expected) 'The actual selector must execute the official catalog update suite.'
-            foreach ($source in @($expected, $ownership, 'Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs')) {
+            Assert-That (($selected.tests -join ',') -ceq ($expected -join ',')) 'The actual selector must execute all four ResourceUpdates suites.'
+            foreach ($source in $expected + @($ownership, 'Assets/Tests/YLFramework/Fixtures/Shared/PackageTestPaths.cs')) {
                 Assert-That (@($selected.inputs) -ccontains $source -and @($selected.inputs) -ccontains ($source + '.meta')) "The actual native input identity lost source or metadata: $source"
+            }
+            foreach ($source in $expected) {
+                Assert-That ([IO.File]::ReadAllText((Join-Path $repository $source)).Contains('[Category("YL.Special.ResourceUpdates")]')) "The ResourceUpdates category is missing from $source."
             }
             foreach ($source in @('Assets/Tests/YLFramework/EditMode/Editor/Resource/ResourceCurrentPublicationTests.cs',
                 'Assets/Tests/YLFramework/Fixtures/ResourceCurrent/ResourceCurrentPlayerProbe.cs')) {
                 Assert-That (@($selected.inputs) -cnotcontains $source) "Author asset/Player acceptance remains a separate native selection: $source"
             }
-            Assert-That ([IO.File]::ReadAllText((Join-Path $repository $expected)).Contains('[Category("YL.Special.ResourceUpdates")]')) 'The official update tests would be silently unselected.'
-            Assert-That (@($selected.inputs | Where-Object { $_ -cmatch '/(?:ArtifactStoreQueryTests|ResourceContent(?:Update|Build)?Tests|ResourceSignatureTests|ResourceDownloadTests|ResourceUpdateTests)(?:[./]|$)' }).Count -eq 0) 'The official update host must not compile retired private tests.'
+            Assert-That (@($selected.inputs | Where-Object { $_ -cmatch '/(?:ArtifactStoreQueryTests|ResourceContent(?:Update|Build)?Tests|ResourceSignatureTests|ResourceDownloadTests|ResourceUpdateTests)(?:[./]|$)' }).Count -eq 0) 'The ResourceUpdates host must not compile retired private tests.'
             $definition = @($configuration.modules | Where-Object name -CEQ 'ResourceCurrentPublication')[0]
             Assert-That ($definition.specialBackend -ceq 'SessionNative' -and $definition.specialCategory -ceq 'YL.Special.ResourceCurrent' -and
                 $definition.nativeLayout -ceq 'Framework' -and ($definition.packageInputs -join ',') -ceq 'com.kano.ylframework') 'Current Resource authors and actual Players require their own main-only native selection.'
