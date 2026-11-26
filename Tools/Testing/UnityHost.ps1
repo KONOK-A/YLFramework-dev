@@ -333,14 +333,14 @@ function Invoke-YLUnitySuite {
     $hybridSdk = $null
     $nativeTools = @($Unity)
     if ($dotween) {
-        if ($Definition.nativeSdk -isnot [string] -or $Definition.nativeSdk -cne 'DOTween' -or $Module -cne 'DOTween' -or
+        if ($Definition.nativeSdk -isnot [string] -or $Definition.nativeSdk -cne 'DOTween' -or $Module -cne 'DOTween' -or $Suite -cne 'Special' -or
             $Definition.nativeLayout -cne 'Framework' -or [string]::IsNullOrWhiteSpace($DOTweenArchive)) { throw 'PrerequisiteNotMet: DOTween native behavior requires its explicit approved Standard archive in the Framework module.' }
         $DOTweenArchive = Get-YLTestPath -Path $DOTweenArchive -ReadOnly
         $nativeTools += $DOTweenArchive
     } elseif ($DOTweenArchive) { throw 'An ordinary native module cannot deploy a DOTween SDK.' }
     if ($hybridClr) {
-        if ($Module -cnotin @('HybridCLR', 'ResourceAddressablesHybridCLR') -or $Suite -cne 'Daily' -or $Definition.nativeLayout -cne 'Framework' -or
-            ('com.kano.ylframework.hybridclr' -cnotin @($Definition.packageInputs))) { throw 'PrerequisiteNotMet: HybridCLR SDK requires its explicit Daily Framework integration module and package.' }
+        if ($Module -cnotin @('HybridCLR', 'ResourceAddressablesHybridCLR') -or $Suite -cne 'Special' -or $Definition.nativeLayout -cne 'Framework' -or
+            ('com.kano.ylframework.hybridclr' -cnotin @($Definition.packageInputs))) { throw 'PrerequisiteNotMet: HybridCLR SDK requires its explicit Special Framework integration module and package.' }
         $hybridSdk = Get-YLIntegrationHybridSdk -Repository $Repository
     }
     $profile = "Unity-$($EditorProfile.version)-UTF$($EditorProfile.testFramework)-UGUI$($EditorProfile.ugui)-$Suite-$($Definition.nativeLayout)-Graphics$($Definition.graphics)-IsolatedModes"
@@ -503,6 +503,7 @@ function Invoke-YLUnitySuite {
         function Invoke-NativeOperation([string] $Operation, [object[]] $Tests = @(), [string] $Mode = '') {
             $output = Join-Path $run.path $(if ($Mode) { "$Operation-$Mode" } else { $Operation })
             $null = [IO.Directory]::CreateDirectory($output)
+            $prepareContent = $Operation -ceq 'Run'
             $request = [ordered]@{
                 schemaVersion = 1; hostId = $hostRecord.id; workspaceId = $workspace.id; resultId = $run.id
                 expectedUnityVersion = $EditorProfile.version; inputHash = $identity.sha256
@@ -512,9 +513,9 @@ function Invoke-YLUnitySuite {
                 disableDomainReload = ($Suite -ceq 'Special' -and 'disableDomainReload' -cin $Definition.PSObject.Properties.Name -and $Definition.disableDomainReload)
                 prepareSceneTemplates = ('prepareSceneTemplates' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareSceneTemplates)
                 prepareSessionScene = ($sessionScene -and $Mode -cne 'PlayMode')
-                prepareAddressablesContent = ('prepareAddressablesContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareAddressablesContent)
-                prepareAddressablesConsumerContent = ('prepareAddressablesConsumerContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareAddressablesConsumerContent)
-                prepareCoreContent = ('prepareCoreContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareCoreContent)
+                prepareAddressablesContent = ($prepareContent -and 'prepareAddressablesContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareAddressablesContent)
+                prepareAddressablesConsumerContent = ($prepareContent -and 'prepareAddressablesConsumerContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareAddressablesConsumerContent)
+                prepareCoreContent = ($prepareContent -and 'prepareCoreContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareCoreContent)
                 prepareLocalizationContent = ('prepareLocalizationContent' -cin $Definition.PSObject.Properties.Name -and $Definition.prepareLocalizationContent)
                 interactiveDesktop = $desktop
             }

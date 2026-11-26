@@ -217,10 +217,25 @@ function Get-YLTestTreeFiles {
 
 function Remove-YLTestDirectory {
     [CmdletBinding(SupportsShouldProcess)]
-    param([object] $Workspace, [string] $Path, [switch] $Apply, [string] $ExpectedId, [IO.FileStream] $HeldLease)
+    param([object] $Workspace, [string] $Path, [switch] $Apply, [string] $ExpectedId, [IO.FileStream] $HeldLease,
+        [ValidatePattern('^[A-Za-z0-9_.-]+$')][string[]] $KeepEntries = @())
     $owner = Get-YLTestDirectory -Workspace $Workspace -Path $Path
     if ($ExpectedId -and $owner.id -cne $ExpectedId) { throw 'Output ownership changed before cleanup.' }
     $Path = $owner.path
+    $kept = $null
+    if ($KeepEntries.Count) {
+        if ($owner.kind -cne 'Host' -or -not $ExpectedId -or $null -eq $HeldLease) {
+            throw 'Partial host cleanup requires the original lease and matching output identity.'
+        }
+        $kept = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($name in $KeepEntries + @('.yl-owner.json', '.lease')) {
+            $entry = Get-YLTestPath (Join-Path $Path $name)
+            if ([IO.Path]::GetDirectoryName($entry) -ine $Path -or -not [IO.Path]::Exists($entry)) {
+                throw "Missing or invalid retained host entry: $entry"
+            }
+            $null = $kept.Add($name)
+        }
+    }
     $pin = Join-Path $Path '.pinned'
     if ([IO.Path]::Exists($pin)) { throw "Pinned output is protected: $Path" }
     $handles = [Collections.Generic.List[IO.FileStream]]::new()
@@ -234,6 +249,7 @@ function Remove-YLTestDirectory {
         $files = @(Get-YLTestTreeFiles $Path -ForCleanup -ProtectNested:([bool]$ExpectedId))
         foreach ($file in $files) {
             if ($file -ieq (Join-Path $Path '.lease')) { continue }
+            if ($null -ne $kept -and $kept.Contains(([IO.Path]::GetRelativePath($Path, $file) -split '\\', 2)[0])) { continue }
             try { $handles.Add([IO.File]::Open($file, 'Open', 'Read', 'Delete')) }
             catch [IO.IOException] { throw "Output file is in use: $file" }
         }
@@ -242,6 +258,15 @@ function Remove-YLTestDirectory {
         $null = @(Get-YLTestTreeFiles $Path -ForCleanup -ProtectNested:([bool]$ExpectedId))
         if ([IO.Path]::Exists($pin)) { throw "Pinned output is protected: $Path" }
         if ($remove) {
+            if ($null -ne $kept) {
+                foreach ($entry in [IO.Directory]::GetFileSystemEntries($Path)) {
+                    if ($kept.Contains([IO.Path]::GetFileName($entry))) { continue }
+                    $entry = Get-YLTestPath $entry
+                    if ([IO.Directory]::Exists($entry)) { [IO.Directory]::Delete($entry, $true) }
+                    else { [IO.File]::Delete($entry) }
+                }
+                return [pscustomobject]@{ path = $Path; status = 'Pruned' }
+            }
             [IO.Directory]::Delete($Path, $true)
             return [pscustomobject]@{ path = $Path; status = 'Removed' }
         }

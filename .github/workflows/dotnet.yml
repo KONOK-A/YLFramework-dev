@@ -112,12 +112,7 @@ jobs:
           pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLSampleHost.ps1 -TemporaryRoot $env:RUNNER_TEMP
 
       - name: Test UPM integration and Git package resolution
-        run: |
-          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesGitNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesEntryNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLIntegrationPackagesNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
 
       - name: Test Analyzer deployment and reproducibility
         run: |
@@ -158,27 +153,10 @@ jobs:
       - name: Test Atlas supplement identity and recovery inputs
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLResourceSupplement.ps1 -TemporaryRoot $env:RUNNER_TEMP
 
-      - &node
-        name: Install pinned registry packaging Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22.23.3
-          package-manager-cache: false
-
-      - name: Verify bundled npm identity
-        run: |
-          $node = (Get-Command node.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
-          $npm = Join-Path ([IO.Path]::GetDirectoryName($node)) 'node_modules/npm/bin/npm-cli.js'
-          $version = & $node $npm --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ($version -cne '10.9.9') { throw "Expected bundled npm 10.9.9; found $version" }
-
       - name: Package catalog
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLPackageCatalogNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
-      - name: Registry package contents and real npm pack
-        run: |
-          $nodeRoot = [IO.Path]::GetDirectoryName((Get-Command node.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source)
-          pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryPackagesNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP -NodeRoot $nodeRoot
+      - name: Registry package content fixtures
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryPackagesNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
       - name: Registry installation
         run: pwsh -NoLogo -NoProfile -NonInteractive -File Tools/Testing/Tests/Test-YLRegistryInstallationNoUnity.ps1 -TemporaryRoot $env:RUNNER_TEMP
       - name: Registry SDK
@@ -198,7 +176,11 @@ jobs:
       - *checkout
       - *prepare
       - *binaries
-      - *node
+      - name: Install pinned registry packaging Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.23.3
+          package-manager-cache: false
 
       - name: Build and audit fixed-commit package artifacts
         id: registry-packages

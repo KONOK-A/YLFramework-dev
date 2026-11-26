@@ -103,7 +103,7 @@ function New-UpdateHostInputs([object] $Context, [object] $Editor) {
         'Tools/Testing/ResourceEncryption/FrozenPlayerBuildEvidence.cs' = 'Assets/F/Editor/FrozenPlayerBuildEvidence.cs'
     }
     $tools = @('Tools/Testing/ResourceUpdates/Invoke-ContentUpdates.ps1', 'Tools/Testing/ResourceUpdates/ContentUpdateBuilds.ps1',
-        'Tools/Testing/ResourceUpdates/ContentUpdateScenarios.ps1',
+        'Tools/Testing/ResourceUpdates/ContentUpdateScenarios.ps1', 'Tools/Testing/ResourceUpdates/ContentUpdateRetention.ps1',
         'Tools/Testing/ResourceEncryption/FrozenLoopback.cs', 'Tools/Testing/Common/FrozenPlayerEvidence.ps1',
         'Tools/Testing/Common/FrozenEncryptionInputs.ps1', 'Tools/Testing/Common/Process.ps1', 'Tools/Testing/Common/Workspace.ps1',
         'Tools/Testing/Common/Results.ps1', 'Tools/Testing/Common/IntegrationPackageContent.ps1',
@@ -222,7 +222,7 @@ function Invoke-UpdateEditorBuild([object] $Context, [ValidateSet('A', 'B', 'C',
     return $build
 }
 
-function New-UpdateReplayContext([object] $Context, [string] $FrozenPackageHost) {
+function Initialize-UpdateReplayContext([object] $Context, [string] $FrozenPackageHost, [object] $Result, [bool] $KeepArtifacts) {
     $frozenPath = Get-YLTestPath -Path $FrozenPackageHost -ReadOnly
     $hosts = [IO.Path]::GetDirectoryName($frozenPath)
     if ([IO.Path]::GetFileName($hosts) -cne 'Hosts') { throw 'The frozen source must be a direct child of an owned Hosts directory.' }
@@ -290,64 +290,62 @@ function New-UpdateReplayContext([object] $Context, [string] $FrozenPackageHost)
         }
         $inputs[$entry.relative] = $bytes
     }
+    $trustSha256 = Get-YLFrozenFileSha256 (Join-Path $Context.host.path $trust)
     $record = New-YLTestDirectory -Workspace $workspace -Kind Host -Key ('RP' + [Guid]::NewGuid().ToString('N').Substring(0, 8)) -NewOnly
     $replayResults = Join-Path $Context.results 'baseline-replay'
-    $null = [IO.Directory]::CreateDirectory($replayResults)
     $values = [ordered]@{}
     foreach ($property in $Context.PSObject.Properties) { $values[$property.Name] = $property.Value }
     $values.host = $record
     $values.install = Join-Path $record.path 'P'
     $values.results = $replayResults
     $values.userData = Join-Path $record.path 'D'
+    $values.lease = $null
     $values.perRun = 0
     $values.generation = $null
     $values.tuned = $false
     $values.report = [ordered]@{
         runs = [Collections.Generic.List[object]]::new(); inputHash = $identified.sha256; sourceInputHash = $source.inputHash
-        trustSha256 = Get-YLFrozenFileSha256 (Join-Path $Context.host.path $trust)
+        trustSha256 = $trustSha256
         catalogFile = $catalogFile; catalogSha256 = $catalog[0].sha256
-        host = $record.path; userData = $values.userData
+        host = $record.path; hostId = $record.id; userData = $values.userData
     }
     $replay = [pscustomobject]$values
+    # The caller retains evidence and releases the lease even if the replay build fails.
+    $Context.replay = $replay
     $Context.report['baselineReplay'] = $replay.report
     $replay.lease = Lock-YLTestDirectory -Workspace $workspace -Path $record.path
-    try {
-        Sync-YLUnityHost -HostRecord $record -Files $inputs -Identity $identified -EditorVersion $Context.editorVersion
-        Write-YLTestJson -Path (Join-Path $replayResults 'input-identity.json') -Value $identified
-        $null = [IO.Directory]::CreateDirectory($replay.userData)
-        $build = Invoke-UpdateEditorBuild $replay 'Replay'
-        $replay.exe = Get-UpdateOwnedPath $replay.install $build.playerExe -File
-        $argsForBinaries = @{
-            Player = $replay.exe; Build = $build; Backend = $replay.backend; ProbeAssembly = 'YLFramework.ResourceUpdates.Fixture'
-        }
-        if ($replay.encrypted) {
-            $native = 'PackageSources/com.kano.ylframework.resource-encryption/Runtime/Plugins/Win64/ylresource_tink.dll'
-            $argsForBinaries['ExtensionAssembly'] = 'YLFramework.Resource.Encryption'
-            $argsForBinaries['NativePluginSha256'] = Get-YLFrozenFileSha256 (Join-Path $record.path $native)
-        }
-        Assert-YLFrozenPlayerBinaries @argsForBinaries
-        $original = @(Get-UpdateInventory (Join-Path $Context.host.path $installedAa))
-        $other = @(Get-UpdateInventory (Join-Path $replay.install 'P_Data/StreamingAssets/aa'))
-        if ((ConvertTo-Json -Compress -InputObject $original) -cne (ConvertTo-Json -Compress -InputObject $other) -or
-            $build.catalogSha256 -cne $replay.report.catalogSha256 -or $build.trustSha256 -cne $replay.report.trustSha256) {
-            throw 'The replay does not contain the same actual A content and public trust.'
-        }
-        $replay.inventory = @(Get-UpdateInventory $replay.install)
-        if ($replay.encrypted) {
-            $baselineNative = @($replay.inventory | Where-Object { [IO.Path]::GetFileName($_.path) -ceq 'ylresource_tink.dll' })
-            $tunedNative = @($Context.inventory | Where-Object { [IO.Path]::GetFileName($_.path) -ceq 'ylresource_tink.dll' })
-            if ($baselineNative.Count -ne 1 -or $tunedNative.Count -ne 1 -or $baselineNative[0].sha256 -cne $tunedNative[0].sha256) {
-                throw 'Signed transport comparison requires the same actually installed native DLL.'
-            }
-            $replay.report['nativePluginSha256'] = $baselineNative[0].sha256
-        }
-        Write-YLTestJson -Path (Join-Path $replayResults 'installation.json') -Value $replay.inventory
-        $replay.report['installationSha256'] = Get-YLFrozenFileSha256 (Join-Path $replayResults 'installation.json')
-        return $replay
-    } catch {
-        $replay.lease.Dispose()
-        throw
+    Start-UpdateHostRetention $replay $Result $KeepArtifacts
+    Sync-YLUnityHost -HostRecord $record -Files $inputs -Identity $identified -EditorVersion $Context.editorVersion
+    Write-YLTestJson -Path (Join-Path $replayResults 'input-identity.json') -Value $identified
+    $null = [IO.Directory]::CreateDirectory($replay.userData)
+    $build = Invoke-UpdateEditorBuild $replay 'Replay'
+    $replay.exe = Get-UpdateOwnedPath $replay.install $build.playerExe -File
+    $argsForBinaries = @{
+        Player = $replay.exe; Build = $build; Backend = $replay.backend; ProbeAssembly = 'YLFramework.ResourceUpdates.Fixture'
     }
+    if ($replay.encrypted) {
+        $native = 'PackageSources/com.kano.ylframework.resource-encryption/Runtime/Plugins/Win64/ylresource_tink.dll'
+        $argsForBinaries['ExtensionAssembly'] = 'YLFramework.Resource.Encryption'
+        $argsForBinaries['NativePluginSha256'] = Get-YLFrozenFileSha256 (Join-Path $record.path $native)
+    }
+    Assert-YLFrozenPlayerBinaries @argsForBinaries
+    $original = @(Get-UpdateInventory (Join-Path $Context.host.path $installedAa))
+    $other = @(Get-UpdateInventory (Join-Path $replay.install 'P_Data/StreamingAssets/aa'))
+    if ((ConvertTo-Json -Compress -InputObject $original) -cne (ConvertTo-Json -Compress -InputObject $other) -or
+        $build.catalogSha256 -cne $replay.report.catalogSha256 -or $build.trustSha256 -cne $replay.report.trustSha256) {
+        throw 'The replay does not contain the same actual A content and public trust.'
+    }
+    $replay.inventory = @(Get-UpdateInventory $replay.install)
+    if ($replay.encrypted) {
+        $baselineNative = @($replay.inventory | Where-Object { [IO.Path]::GetFileName($_.path) -ceq 'ylresource_tink.dll' })
+        $tunedNative = @($Context.inventory | Where-Object { [IO.Path]::GetFileName($_.path) -ceq 'ylresource_tink.dll' })
+        if ($baselineNative.Count -ne 1 -or $tunedNative.Count -ne 1 -or $baselineNative[0].sha256 -cne $tunedNative[0].sha256) {
+            throw 'Signed transport comparison requires the same actually installed native DLL.'
+        }
+        $replay.report['nativePluginSha256'] = $baselineNative[0].sha256
+    }
+    Write-YLTestJson -Path (Join-Path $replayResults 'installation.json') -Value $replay.inventory
+    $replay.report['installationSha256'] = Get-YLFrozenFileSha256 (Join-Path $replayResults 'installation.json')
 }
 
 function Assert-UpdateBaseline([object] $Context, [Collections.IDictionary] $Build) {

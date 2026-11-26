@@ -24,7 +24,7 @@ if ($ContentUpdate) {
         $PSBoundParameters.ContainsKey('DeliveryLayout')) {
         throw '-ContentUpdate is a separate frozen Player workload using the current source packages.'
     }
-    $arguments = @{ $Profile = $Unity; WorkspaceRoot = $WorkspaceRoot; Cell = "$Profile-Encrypted-$Backend" }
+    $arguments = @{ $Profile = $Unity; WorkspaceRoot = $WorkspaceRoot; Cell = "$Profile-Encrypted-$Backend"; KeepArtifacts = $KeepArtifacts }
     & (Join-Path $PSScriptRoot '../ResourceUpdates/Invoke-ContentUpdates.ps1') @arguments
     return
 }

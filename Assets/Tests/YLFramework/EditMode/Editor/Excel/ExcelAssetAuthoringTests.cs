@@ -183,6 +183,7 @@ namespace YLFramework.Tests.Extensions.Data
 
 #if YL_GAMEPLAY_PACKAGE
         [Test]
+        [Category("YL.Module.ExcelGameplay")]
         public void LegacyBuffIdWorkbookUpdatesTheSameOwnedSubassetWithoutChangingItsIdentity()
         {
             var owner = ScriptableObject.CreateInstance<YLFramework.Buff.BuffsConfig>();

@@ -113,6 +113,7 @@ namespace YLFramework.Tests.Extensions.Data
 
 #if YL_GAMEPLAY_PACKAGE
         [Test]
+        [Category("YL.Module.ExcelGameplay")]
         public void EveryExistingDomainColumnHasAnExplicitAssemblyIndependentName()
         {
             var owners = new[] { typeof(YLFramework.Skill.SkillsConfig), typeof(YLFramework.Skill.SkillConfigData), typeof(YLFramework.Buff.BuffsConfig),
@@ -224,6 +225,7 @@ namespace YLFramework.Tests.Extensions.Data
         [TestCase(typeof(YLFramework.Buff.BuffConfigData), "buff_id", "id", "buff_name", "buffName")]
         [TestCase(typeof(YLFramework.Skill.SkillConfigData), "id", "id", "skill_name", "skillName")]
         [TestCase(typeof(YLFramework.Equipment.EquipmentConfigData), "id", "id", "equipment_name", "equipmentName")]
+        [Category("YL.Module.ExcelGameplay")]
         public void ExistingDomainWorkbookHeadersRemainStableAfterFieldRenames(Type type, string oldId,
             string currentId, string oldName, string currentName)
         {

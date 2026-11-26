@@ -686,6 +686,7 @@ function Invoke-YLRegistryPackageBuild {
                 $assetName = $package.id + '-' + $package.version + '.tgz'
                 if ($packed -isnot [array] -or $packed.Count -ne 1 -or $packed[0]['filename'] -cne $assetName) { throw 'npm pack did not produce the exact expected asset filename.' }
                 $payload = Read-YLRegistryTarball -Path (Join-Path $destination $assetName) -Catalog $catalog
+                if ($packed[0]['integrity'] -cne $payload.integrity) { throw "npm integrity differs from the verified tarball bytes: $($package.id)" }
                 if ($payload.id -cne $package.id -or $payload.version -cne $package.version -or $payload.payloadSha256 -cne $package.payloadSha256) { throw "npm packed content differs from fixed-commit package inputs: $($package.id)" }
                 if ($null -eq $first) { $first = $payload } elseif ($payload.payloadSha256 -cne $first.payloadSha256) { throw 'Same-commit/toolchain repack content is not reproducible.' }
             }
@@ -693,7 +694,15 @@ function Invoke-YLRegistryPackageBuild {
         }
         Assert-YLRegistryPackageBatch -Packages $frozen.ToArray() -Catalog $catalog
         $after = @(Get-YLRegistryPackageSet -Root (Join-Path $checkout 'PackageSources') -Catalog $catalog)
-        foreach ($package in $after) { if ($package.payloadSha256 -cne @($packages | Where-Object id -CEQ $package.id)[0].payloadSha256) { throw 'Product inputs changed during packaging.' } }
+        foreach ($package in $after) {
+            $before = @($packages | Where-Object id -CEQ $package.id)[0]
+            # The payload digest covers all paths and all ordinary file bytes. Check the raw manifest separately.
+            $beforeManifest = $before.files | Where-Object path -CEQ 'package.json'
+            $afterManifest = $package.files | Where-Object path -CEQ 'package.json'
+            if ($package.payloadSha256 -cne $before.payloadSha256 -or $afterManifest.sha256 -cne $beforeManifest.sha256) {
+                throw "Product inputs changed during packaging: $($package.id)"
+            }
+        }
         $dirty = Invoke-YLRegistryProcess -Exe $git -Arguments ($gitOptions + @('status', '--porcelain=v1', '--untracked-files=all', '--', 'PackageSources')) -Directory $checkout -Log (Join-Path $run.path 'source-status-after.log') -EnvironmentRoot $cache.path
         if ($dirty.Trim()) { throw 'Fixed-commit product checkout changed during packaging.' }
         foreach ($payload in $frozen) {

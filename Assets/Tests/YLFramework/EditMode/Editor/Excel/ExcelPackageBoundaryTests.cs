@@ -22,6 +22,7 @@ namespace YLFramework.Tests
         }
 
         [Test]
+        [Category("YL.Module.ExcelGameplay")]
         public void GenericBackendHasNoGameplayReferenceAndTheAdapterFollowsActualPackagePresence()
         {
             Assert.That(typeof(ExcelAuthoring).Assembly.GetReferencedAssemblies().Any(reference =>

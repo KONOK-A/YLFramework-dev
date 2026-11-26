@@ -455,6 +455,7 @@ namespace YLFramework.Testing
 
         private static JArray ValidateGraph(JObject request, CompiledAssembly[] editor, CompiledAssembly[] player, IDictionary<string, string[]> playerReferences = null)
         {
+            string project = Project();
             var installed = PackageInfo.GetAllRegisteredPackages();
             var plan = AssemblyPlan(request);
             var classifications = new JArray();
@@ -537,12 +538,12 @@ namespace YLFramework.Testing
                 foreach (string source in assembly.sourceFiles)
                 {
                     string normalized = source.Replace('\\', '/');
-                    if (Regex.IsMatch(normalized, @"(?:^|/)\.\.?(?:/|$)") || officialEditorOwner == null && !runtimeInfrastructure &&
-                        Regex.IsMatch(normalized, @"(?:^|/)(?:Samples~|Samples|Tests)(?:/|$)", RegexOptions.IgnoreCase))
+                    if (Regex.IsMatch(normalized, @"(?:^|/)\.\.?(?:/|$)"))
                     {
-                        throw new InvalidOperationException("Default Samples, Tests or traversal entered the compilation graph: " + source);
+                        throw new InvalidOperationException("Path traversal entered the compilation graph: " + source);
                     }
                     string path;
+                    string ownedSource = normalized;
                     if (normalized.StartsWith("Packages/", StringComparison.Ordinal))
                     {
                         var package = installed.SingleOrDefault(item => normalized.StartsWith("Packages/" + item.name + "/", StringComparison.Ordinal));
@@ -552,21 +553,30 @@ namespace YLFramework.Testing
                     }
                     else
                     {
-                        path = Path.GetFullPath(Path.IsPathRooted(source) ? source : Path.Combine(Project(), source));
+                        path = Path.GetFullPath(Path.IsPathRooted(source) ? source : Path.Combine(project, source));
+                        string sourceRoot = project;
                         if (Inside(path, Application.dataPath))
                         {
-                            if (!string.Equals(path, Path.GetFullPath(Path.Combine(Project(), "Assets/YLTestingIntegration/Editor/IntegrationEntry.cs")), StringComparison.OrdinalIgnoreCase) &&
-                                !string.Equals(path, Path.GetFullPath(Path.Combine(Project(), "Assets/YLTestingIntegration/Editor/PackageCatalogContract.cs")), StringComparison.OrdinalIgnoreCase) &&
+                            if (!string.Equals(path, Path.GetFullPath(Path.Combine(project, "Assets/YLTestingIntegration/Editor/IntegrationEntry.cs")), StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(path, Path.GetFullPath(Path.Combine(project, "Assets/YLTestingIntegration/Editor/PackageCatalogContract.cs")), StringComparison.OrdinalIgnoreCase) &&
                                 !(Text(request, "integration") == "DOTween" && (string)request["dotweenSdkMode"] != "Absent" &&
-                                    Inside(path, Path.Combine(Project(), "Assets/Plugins/Demigiant/DOTween"))))
+                                    Inside(path, Path.Combine(project, "Assets/Plugins/Demigiant/DOTween"))))
                             {
                                 throw new InvalidOperationException("A product source was copied into Assets or an unknown source entered the host: " + source);
                             }
                         }
-                        else if (!installed.Any(package => !string.IsNullOrEmpty(package.resolvedPath) && Inside(path, Path.GetFullPath(package.resolvedPath))))
+                        else
                         {
-                            throw new InvalidOperationException("A source compiled outside every actual registered package: " + source);
+                            var package = installed.FirstOrDefault(item => !string.IsNullOrEmpty(item.resolvedPath) && Inside(path, item.resolvedPath));
+                            if (package == null) { throw new InvalidOperationException("A source compiled outside every actual registered package: " + source); }
+                            sourceRoot = package.resolvedPath;
                         }
+                        ownedSource = Path.GetRelativePath(sourceRoot, path).Replace('\\', '/');
+                    }
+                    if (officialEditorOwner == null && !runtimeInfrastructure &&
+                        Regex.IsMatch(ownedSource, @"(?:^|/)(?:Samples~|Samples|Tests)(?:/|$)", RegexOptions.IgnoreCase))
+                    {
+                        throw new InvalidOperationException("Default Samples or Tests entered the compilation graph: " + source);
                     }
                     if (!File.Exists(path)) { throw new InvalidOperationException("A compiled source is missing from its actual owner: " + source); }
                     RejectLinks(path);

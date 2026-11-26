@@ -9,6 +9,7 @@ using YLFramework.Integrations.Excel.Editor;
 
 namespace YLFramework.Domain.Excel.Tests
 {
+    [Category("YL.Module.ExcelGameplay")]
     public class DomainExcelTests
     {
         private string _path;

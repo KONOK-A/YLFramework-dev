@@ -421,6 +421,7 @@ namespace YLFramework.Tests.Resource
 
         [Test]
         [Category("YL.Resource.Addressables.ContentBuild")]
+        [Category(PackedContract)]
         public void FullBuildArchivesTheActualOfficialContentState()
         {
             Add("content", "demo/text/content");
